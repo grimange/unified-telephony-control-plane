@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/security/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+
+printf '== Namespace Pod Security labels ==\n'
+for ns in "${UTCP_NAMESPACES[@]}"; do
+  printf '%s\t' "$ns"
+  kube get namespace "$ns" -o jsonpath='{.metadata.labels.pod-security\.kubernetes\.io/enforce}{" "}{.metadata.labels.pod-security\.kubernetes\.io/enforce-version}{" "}{.metadata.labels.pod-security\.kubernetes\.io/audit}{" "}{.metadata.labels.pod-security\.kubernetes\.io/warn}{"\n"}'
+done
+
+printf '\n== NetworkPolicies ==\n'
+kube get networkpolicy -n utcp-platform
+kube get networkpolicy -n utcp-data
+kube get networkpolicy -n traefik-system
+kube get networkpolicy -n utcp-runtime
+kube get networkpolicy -n utcp-observability
+
+printf '\n== Default deny coverage ==\n'
+for ns in "${DEFAULT_DENY_NAMESPACES[@]}"; do
+  if kube -n "$ns" get networkpolicy default-deny >/dev/null 2>&1; then
+    printf '%s/default-deny=present\n' "$ns"
+  else
+    printf '%s/default-deny=missing\n' "$ns"
+  fi
+done
+
+printf '\n== Key allowed flows ==\n'
+printf 'traefik-system/traefik -> utcp-platform/gateway:8080\n'
+printf 'utcp-platform/gateway -> utcp-platform/web:8080, api:9000\n'
+printf 'utcp-platform/api,worker,scheduler,migration -> utcp-data/postgres:5432, redis:6379\n'
+printf 'traefik-system/traefik -> default/kubernetes:%s TCP/443\n' "$(service_cluster_ip default kubernetes)"
+printf 'traefik-system/traefik -> utcp-platform/gateway:%s TCP/8080\n' "$(service_cluster_ip utcp-platform gateway)"
+printf 'utcp-platform/gateway -> web:%s TCP/8080, api:%s TCP/9000\n' "$(service_cluster_ip utcp-platform web)" "$(service_cluster_ip utcp-platform api)"
+printf 'utcp-platform/backend roles -> postgres:%s TCP/5432, redis:%s TCP/6379\n' "$(service_cluster_ip utcp-data postgres)" "$(service_cluster_ip utcp-data redis)"
+
+printf '\n== ServiceAccounts ==\n'
+kube get serviceaccount -n utcp-platform
+kube get serviceaccount -n utcp-data
+kube get serviceaccount -n traefik-system
+
+printf '\n== Application token automount ==\n'
+kube get deploy -n utcp-platform -o jsonpath='{range .items[*]}{.metadata.name}{" automount="}{.spec.template.spec.automountServiceAccountToken}{" serviceAccount="}{.spec.template.spec.serviceAccountName}{"\n"}{end}'
+kube get statefulset -n utcp-data -o jsonpath='{range .items[*]}{.metadata.name}{" automount="}{.spec.template.spec.automountServiceAccountToken}{" serviceAccount="}{.spec.template.spec.serviceAccountName}{"\n"}{end}'
+kube get job -n utcp-platform utcp-migrate -o jsonpath='{.metadata.name}{" automount="}{.spec.template.spec.automountServiceAccountToken}{" serviceAccount="}{.spec.template.spec.serviceAccountName}{"\n"}' 2>/dev/null || true
+
+printf '\n== RBAC summary ==\n'
+kube get roles,rolebindings -n utcp-platform
+kube get roles,rolebindings -n utcp-data
+kube get clusterrole,clusterrolebinding -o name | grep -E 'traefik|utcp' || true
+
+printf '\n== Workload readiness ==\n'
+kube get statefulset -n utcp-data
+kube get deploy -n utcp-platform
+kube get deploy -n traefik-system traefik
+
+printf '\n== Gateway status ==\n'
+kube get gatewayclass utcp-traefik
+kube -n traefik-system get gateway utcp-local
+kube -n utcp-platform get httproute

@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: telephony-command-worker
+  namespace: utcp-platform
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: telephony-command-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: utcp
+      app.kubernetes.io/component: telephony-command-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: utcp
+        app.kubernetes.io/component: telephony-command-worker
+        utcp.io/network-role: worker
+    spec:
+      serviceAccountName: utcp-platform-app
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33
+        runAsGroup: 33
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: command-worker
+          image: utcp-api
+          imagePullPolicy: Always
+          args:
+            - telephony-command-worker
+          envFrom:
+            - configMapRef:
+                name: utcp-application-config
+            - secretRef:
+                name: utcp-local-data-credentials
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL

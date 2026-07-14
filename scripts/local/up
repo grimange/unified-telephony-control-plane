@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/local/lib
+. "$ROOT/scripts/local/lib"
+
+require_no_persistent_compose
+
+"$ROOT/scripts/k3d/create"
+"$ROOT/scripts/k3d/registry-proof"
+"$ROOT/scripts/kubernetes/image-build"
+"$ROOT/scripts/kubernetes/image-push"
+"$ROOT/scripts/kubernetes/apply"
+"$ROOT/scripts/gateway/tls-apply"
+"$ROOT/scripts/gateway/apply"
+"$ROOT/scripts/security/apply"
+"$ROOT/scripts/observability/apply"
+"$ROOT/scripts/runtime-engine/status"
+
+printf 'local Kubernetes runtime is active\n'

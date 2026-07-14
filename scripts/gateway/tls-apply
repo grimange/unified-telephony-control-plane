@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/gateway/lib
+. "$SCRIPT_DIR/lib"
+
+cert_pubkey_hash() {
+  openssl x509 -in "$TLS_CERT" -noout -pubkey |
+    openssl pkey -pubin -outform DER |
+    openssl dgst -sha256 |
+    awk '{print $2}'
+}
+
+key_pubkey_hash() {
+  openssl pkey -in "$TLS_KEY" -pubout -outform DER |
+    openssl dgst -sha256 |
+    awk '{print $2}'
+}
+
+cert_fingerprint() {
+  openssl x509 -in "$1" -noout -fingerprint -sha256 |
+    sed 's/^sha256 Fingerprint=//;s/^SHA256 Fingerprint=//;s/://g' |
+    tr 'A-F' 'a-f'
+}
+
+validate_tls_pair() {
+  if [ ! -s "$TLS_CERT" ]; then
+    printf 'prepared TLS certificate missing: %s\n' "$TLS_CERT" >&2
+    exit 1
+  fi
+  if [ ! -s "$TLS_KEY" ]; then
+    printf 'prepared TLS private key missing: %s\n' "$TLS_KEY" >&2
+    exit 1
+  fi
+
+  openssl x509 -in "$TLS_CERT" -noout >/dev/null
+  openssl pkey -in "$TLS_KEY" -noout >/dev/null
+
+  if [ "$(cert_pubkey_hash)" != "$(key_pubkey_hash)" ]; then
+    printf 'prepared TLS certificate and private key do not match\n' >&2
+    exit 1
+  fi
+
+  if ! openssl x509 -in "$TLS_CERT" -noout -checkend 0 >/dev/null; then
+    printf 'prepared TLS certificate is expired\n' >&2
+    exit 1
+  fi
+
+  if openssl x509 -in "$TLS_CERT" -noout -text | grep -A2 'Basic Constraints' | grep -Fq 'CA:TRUE'; then
+    printf 'prepared TLS certificate is a CA certificate, not a leaf server certificate\n' >&2
+    exit 1
+  fi
+
+  local issuer subject
+  issuer="$(openssl x509 -in "$TLS_CERT" -noout -issuer | sed 's/^issuer=//')"
+  subject="$(openssl x509 -in "$TLS_CERT" -noout -subject | sed 's/^subject=//')"
+  if [ "$issuer" = "$subject" ]; then
+    printf 'prepared TLS certificate is self-issued; expected operator-prepared leaf certificate\n' >&2
+    exit 1
+  fi
+
+  local cert_text
+  cert_text="$(openssl x509 -in "$TLS_CERT" -noout -text)"
+  if printf '%s\n' "$cert_text" | grep -Fq 'TLS Web Server Authentication'; then
+    :
+  elif printf '%s\n' "$cert_text" | grep -Fq 'X509v3 Extended Key Usage'; then
+    printf 'prepared TLS certificate has EKU but not serverAuth\n' >&2
+    exit 1
+  fi
+
+  for host in "$UTCP_APP_HOSTNAME" "$UTCP_ROOT_HOSTNAME"; do
+    if ! printf '%s\n' "$cert_text" | grep -Fq "DNS:$host"; then
+      printf 'prepared TLS certificate missing required SAN: %s\n' "$host" >&2
+      exit 1
+    fi
+  done
+
+  for host in "$UTCP_RESERVED_SIP_HOSTNAME" "$UTCP_RESERVED_EVENTS_HOSTNAME"; do
+    if ! printf '%s\n' "$cert_text" | grep -Fq "DNS:$host"; then
+      printf 'deferred future SAN missing from prepared certificate: %s\n' "$host" >&2
+    fi
+  done
+
+  local mode
+  mode="$(stat -c '%a' "$TLS_KEY")"
+  case "$mode" in
+    400|500|600|700) ;;
+    *)
+      printf 'prepared TLS private key has unsafe file mode: %s %s\n' "$mode" "$TLS_KEY" >&2
+      exit 1
+      ;;
+  esac
+
+  if git -C "$ROOT" ls-files --error-unmatch "${TLS_CERT#$ROOT/}" >/dev/null 2>&1 ||
+    git -C "$ROOT" ls-files --error-unmatch "${TLS_KEY#$ROOT/}" >/dev/null 2>&1; then
+    printf 'prepared TLS certificate or key is tracked by Git\n' >&2
+    exit 1
+  fi
+
+  if find "$ROOT" -path "$ROOT/.git" -prune -o -type f -name '*ca.key' -path "$ROOT/*" -print | grep -q .; then
+    printf 'root CA private key exists inside the repository working tree\n' >&2
+    find "$ROOT" -path "$ROOT/.git" -prune -o -type f -name '*ca.key' -path "$ROOT/*" -print >&2
+    exit 1
+  fi
+}
+
+served_fingerprint() {
+  local host="$1"
+  local tmp
+  tmp="$(mktemp)"
+  trap 'rm -f "$tmp"' RETURN
+  openssl s_client -connect "${UTCP_EDGE_HTTPS_HOST}:${UTCP_EDGE_HTTPS_HOST_PORT}" \
+    -servername "$host" -showcerts </dev/null 2>/dev/null |
+    openssl x509 -out "$tmp"
+  cert_fingerprint "$tmp"
+}
+
+required_tools
+ensure_kubeconfig
+validate_tls_pair
+
+kube -n "$UTCP_GATEWAY_NAMESPACE" create secret tls "$UTCP_GATEWAY_TLS_SECRET" \
+  --cert="$TLS_CERT" \
+  --key="$TLS_KEY" \
+  --dry-run=client -o yaml | kube apply -f -
+
+wait_traefik
+wait_gateway
+
+expected="$(cert_fingerprint "$TLS_CERT")"
+served="$(served_fingerprint "$UTCP_APP_HOSTNAME")"
+if [ "$expected" != "$served" ]; then
+  printf 'served TLS certificate fingerprint mismatch\nexpected=%s\nserved=%s\n' "$expected" "$served" >&2
+  exit 1
+fi
+
+"$SCRIPT_DIR/proof"
+
+printf 'prepared local TLS certificate applied and verified\n'
+printf 'certificate_fingerprint_sha256=%s\n' "$expected"
+cert_summary

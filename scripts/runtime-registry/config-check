@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+fail() {
+  printf 'runtime registry config check failed: %s\n' "$1" >&2
+  exit 1
+}
+
+for file in \
+  apps/api/config/runtime_registry.php \
+  apps/api/config/identity.php \
+  apps/api/app/RuntimeRegistry/RuntimeRegistryCatalog.php \
+  apps/api/app/RuntimeRegistry/RuntimeRegistryService.php \
+  apps/api/app/Http/Controllers/RuntimeRegistry/AdminRuntimeNodeController.php \
+  apps/api/database/migrations/2026_07_14_130000_create_runtime_registry_tables.php \
+  apps/api/tests/Feature/RuntimeRegistry/RuntimeRegistryTest.php
+do
+  [ -s "$file" ] || fail "missing required C2 file: $file"
+done
+
+php -l apps/api/config/runtime_registry.php >/dev/null
+php -l apps/api/config/identity.php >/dev/null
+php -l apps/api/routes/web.php >/dev/null
+php -l apps/api/routes/console.php >/dev/null
+find apps/api/app/RuntimeRegistry apps/api/app/Http/Controllers/RuntimeRegistry -name '*.php' -print0 |
+  xargs -0 -n1 php -l >/dev/null
+
+php -r '
+$catalog = require "apps/api/config/runtime_registry.php";
+foreach (["asterisk", "freeswitch"] as $family) {
+  if (! isset($catalog["runtime_families"][$family])) {
+    fwrite(STDERR, "missing runtime family: {$family}\n");
+    exit(1);
+  }
+}
+foreach (["asterisk-ari", "freeswitch-esl"] as $adapter) {
+  if (! isset($catalog["adapter_keys"][$adapter])) {
+    fwrite(STDERR, "missing adapter key: {$adapter}\n");
+    exit(1);
+  }
+}
+foreach (["draft", "active", "draining", "disabled"] as $state) {
+  if (! in_array($state, $catalog["desired_states"], true)) {
+    fwrite(STDERR, "missing desired state: {$state}\n");
+    exit(1);
+  }
+}
+foreach (["unobserved", "unknown"] as $state) {
+  if (! in_array($state, $catalog["observed_states"], true)) {
+    fwrite(STDERR, "missing bounded observed state: {$state}\n");
+    exit(1);
+  }
+}
+foreach (["conference.execution", "channel.control", "event.stream", "registration.observation", "recording"] as $capability) {
+  if (! isset($catalog["runtime_capabilities"][$capability])) {
+    fwrite(STDERR, "missing runtime capability: {$capability}\n");
+    exit(1);
+  }
+}
+foreach (array_keys($catalog["runtime_capabilities"]) as $capability) {
+  if (preg_match("/ari\\.|esl\\.|asterisk\\.|freeswitch\\.|sip\\.|rtp\\.|media\\.|trunk\\.|carrier\\./i", $capability)) {
+    fwrite(STDERR, "adapter-specific or telephony-transport capability is not allowed in C2: {$capability}\n");
+    exit(1);
+  }
+}
+'
+
+php -r '
+$catalog = require "apps/api/config/identity.php";
+foreach (["runtime.nodes.view", "runtime.nodes.manage", "runtime.credentials.rotate"] as $capability) {
+  if (! isset($catalog["capabilities"][$capability])) {
+    fwrite(STDERR, "missing C2 identity capability: {$capability}\n");
+    exit(1);
+  }
+  if (! in_array($capability, $catalog["roles"]["tenant-admin"]["capabilities"], true)) {
+    fwrite(STDERR, "tenant-admin does not project {$capability}\n");
+    exit(1);
+  }
+  if (in_array($capability, $catalog["roles"]["tenant-member"]["capabilities"], true)) {
+    fwrite(STDERR, "tenant-member must not project {$capability}\n");
+    exit(1);
+  }
+}
+'
+
+if rg -n "AriController|EslController|ProviderNode|TelephonyServer|PBXServer|AsteriskServer|FreeSwitchServer" apps/api/app apps/api/routes apps/web/src >/dev/null; then
+  fail "found forbidden parallel authority, live connection, or manual readiness surface"
+fi
+
+if rg -n "test-connection|mark-ready|manual.*healthy" apps/api/app/RuntimeRegistry apps/api/app/Http/Controllers/RuntimeRegistry apps/api/routes apps/web/src >/dev/null; then
+  fail "found forbidden parallel authority, live connection, or manual readiness surface"
+fi
+
+if rg -n "Http::|fsockopen|stream_socket|curl_init|WebSocket|Ratchet|ari-client|esl-client" apps/api/app/RuntimeRegistry apps/api/app/Http/Controllers/RuntimeRegistry >/dev/null; then
+  fail "runtime registry contains live runtime connection code"
+fi
+
+if rg -n "api/v1/admin/(ari|esl|asterisk|freeswitch)" apps/api/routes apps/web/src >/dev/null; then
+  fail "found runtime-specific administrative route"
+fi
+
+if rg -n "encrypted_secret|secret_fingerprint" apps/api/app/Http/Controllers/RuntimeRegistry apps/web/src >/dev/null; then
+  fail "credential storage internals are exposed outside the service boundary"
+fi
+
+cd apps/api
+php artisan route:list --path=api/v1/admin/runtime-nodes >/dev/null
+route_text="$(php artisan route:list --path=api/v1/admin)"
+printf '%s\n' "$route_text" | grep -Fq 'runtime-nodes' || fail "runtime-node routes are missing"
+if printf '%s\n' "$route_text" | grep -E 'ari|esl|asterisk|freeswitch|test-connection|mark-ready' >/dev/null; then
+  fail "runtime-specific or live-operation route is present"
+fi
+
+printf 'runtime registry config check passed\n'

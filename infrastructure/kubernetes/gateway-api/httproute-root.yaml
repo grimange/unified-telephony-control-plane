@@ -1,0 +1,42 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: root-http-redirect
+  namespace: utcp-platform
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: gateway-api
+spec:
+  parentRefs:
+    - name: utcp-local
+      namespace: traefik-system
+      sectionName: web
+  hostnames:
+    - utcp.local.test
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            hostname: app.utcp.local.test
+            statusCode: 301
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: root-https
+  namespace: utcp-platform
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: gateway-api
+spec:
+  parentRefs:
+    - name: utcp-local
+      namespace: traefik-system
+      sectionName: websecure
+  hostnames:
+    - utcp.local.test
+  rules:
+    - backendRefs:
+        - name: gateway
+          port: 8080

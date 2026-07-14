@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/k3d/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+"$SCRIPT_DIR/config-check" >/dev/null
+validate_ports_available_for_create
+
+before_context="$(kubectl config current-context 2>/dev/null || true)"
+
+if cluster_exists; then
+  printf 'k3d cluster already exists: %s\n' "$K3D_CLUSTER_NAME"
+else
+  k3d cluster create --config "$CLUSTER_CONFIG" --timeout 180s --wait=false --kubeconfig-update-default=false --kubeconfig-switch-context=false
+fi
+
+write_kubeconfig
+apply_namespaces
+wait_for_nodes
+wait_for_system_pods
+"$SCRIPT_DIR/verify"
+
+after_context="$(kubectl config current-context 2>/dev/null || true)"
+if [ "$before_context" != "$after_context" ]; then
+  printf 'global Kubernetes context changed unexpectedly: before=%s after=%s\n' "$before_context" "$after_context" >&2
+  exit 1
+fi
+
+printf 'K0 cluster ready: %s\n' "$K3D_CLUSTER_NAME"
+printf 'repository kubeconfig: %s\n' "$KUBECONFIG_FILE"
+printf 'use: scripts/k3d/kube get nodes\n'

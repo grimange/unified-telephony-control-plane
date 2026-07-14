@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/gateway/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+download_gateway_crds
+
+tmp_gateway="$(mktemp)"
+tmp_traefik="$(mktemp)"
+tmp_chart="$(mktemp -d)"
+trap 'rm -f "$tmp_gateway" "$tmp_traefik"; rm -rf "$tmp_chart"' EXIT
+
+render_gateway > "$tmp_gateway"
+render_traefik > "$tmp_traefik"
+
+helm_cmd pull traefik \
+  --repo "$TRAEFIK_HELM_REPOSITORY" \
+  --version "$TRAEFIK_HELM_CHART_VERSION" \
+  --untar \
+  --untardir "$tmp_chart" >/dev/null
+helm_cmd lint "$tmp_chart/traefik" \
+  --values "$TRAEFIK_VALUES" >/dev/null
+
+grep -Fq "tag: $TRAEFIK_PROXY_VERSION" "$TRAEFIK_VALUES"
+grep -Fq "enabled: true" "$TRAEFIK_VALUES"
+grep -Fq "kubernetesGateway:" "$TRAEFIK_VALUES"
+grep -Fq "kubernetesIngress:" "$TRAEFIK_VALUES"
+grep -Fq "kubernetesCRD:" "$TRAEFIK_VALUES"
+grep -Fq "dashboard: false" "$TRAEFIK_VALUES"
+grep -Fq "insecure: false" "$TRAEFIK_VALUES"
+grep -Fq 'image: docker.io/traefik:v3.7.7' "$tmp_traefik"
+grep -Fq 'containerPort: 80' "$tmp_traefik"
+grep -Fq 'containerPort: 443' "$tmp_traefik"
+grep -Fq 'type: LoadBalancer' "$tmp_traefik"
+grep -Fq 'allowPrivilegeEscalation: false' "$tmp_traefik"
+grep -Fq 'runAsNonRoot: true' "$tmp_traefik"
+grep -Fq 'type: RuntimeDefault' "$tmp_traefik"
+
+grep -Fq "name: $UTCP_GATEWAY_CLASS" "$tmp_gateway"
+grep -Fq 'controllerName: traefik.io/gateway-controller' "$tmp_gateway"
+grep -Fq 'namespace: traefik-system' "$tmp_gateway"
+grep -Fq 'port: 80' "$tmp_gateway"
+grep -Fq 'port: 443' "$tmp_gateway"
+grep -Fq 'utcp.io/gateway-access: enabled' "$ROOT/infrastructure/k3d/namespaces.yaml"
+grep -Fq 'from: Selector' "$tmp_gateway"
+grep -Fq 'app.utcp.local.test' "$tmp_gateway"
+grep -Fq 'utcp.local.test' "$tmp_gateway"
+if grep -Eq '18080|18443|port:[[:space:]]*(18080|18443)' "$tmp_gateway" "$tmp_traefik" "$TRAEFIK_VALUES"; then
+  printf 'gateway config check failed: custom edge ports remain in active configuration\n' >&2
+  exit 1
+fi
+grep -Fq 'name: gateway' "$tmp_gateway"
+grep -Fq 'port: 8080' "$tmp_gateway"
+
+if grep -Eiq 'sip\.utcp\.local\.test|events\.utcp\.local\.test|kind:[[:space:]]*(TCPRoute|UDPRoute|TLSRoute)|asterisk|freeswitch|kamailio|rtpengine|hostNetwork:[[:space:]]*true|hostPath:|privileged:[[:space:]]*true|nodePort:' "$tmp_gateway" "$tmp_traefik"; then
+  printf 'gateway config check failed: prohibited telephony, reserved hostname, host, or NodePort configuration found\n' >&2
+  exit 1
+fi
+
+for required_crd in \
+  backendtlspolicies.gateway.networking.k8s.io \
+  gatewayclasses.gateway.networking.k8s.io \
+  gateways.gateway.networking.k8s.io \
+  grpcroutes.gateway.networking.k8s.io \
+  httproutes.gateway.networking.k8s.io \
+  listenersets.gateway.networking.k8s.io \
+  referencegrants.gateway.networking.k8s.io \
+  tlsroutes.gateway.networking.k8s.io; do
+  grep -Fq "name: $required_crd" "$CRD_MANIFEST"
+done
+
+if grep -Eiq 'tcproutes\.gateway\.networking\.k8s\.io|udproutes\.gateway\.networking\.k8s\.io' "$CRD_MANIFEST"; then
+  printf 'gateway config check failed: experimental Gateway API routes are enabled or installed\n' >&2
+  exit 1
+fi
+
+if grep -Eiq -- '--providers\.kubernetesgateway\.experimentalchannel=true' "$tmp_traefik"; then
+  printf 'gateway config check failed: Traefik Gateway API experimental channel is enabled\n' >&2
+  exit 1
+fi
+
+if grep -Eiq 'kind:[[:space:]]*Ingress|IngressRoute|api@internal|PathPrefix\(`/dashboard`\)|PathPrefix\(`/api`\)' "$tmp_traefik"; then
+  printf 'gateway config check failed: dashboard or ingress exposure found\n' >&2
+  exit 1
+fi
+
+printf 'Gateway API %s standard CRD manifest checksum verified\n' "$GATEWAY_API_VERSION"
+printf 'Traefik Helm chart %s renders proxy image %s\n' "$TRAEFIK_HELM_CHART_VERSION" "$TRAEFIK_PROXY_IMAGE"
+printf 'gateway config check passed\n'

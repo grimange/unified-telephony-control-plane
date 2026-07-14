@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+project="${UTCP_COMPOSE_PROJECT_NAME:-utcp-compose-proof-$$}"
+gateway_port="${UTCP_GATEWAY_PORT:-18088}"
+
+case "$project" in
+  utcp|utcp-debug)
+    printf 'compose-proof requires an isolated disposable project, got: %s\n' "$project" >&2
+    exit 1
+    ;;
+esac
+
+if [ "$gateway_port" = "80" ] || [ "$gateway_port" = "443" ]; then
+  printf 'compose-proof must not bind standard Kubernetes edge ports: %s\n' "$gateway_port" >&2
+  exit 1
+fi
+
+compose=(docker compose --env-file versions.env --env-file infrastructure/compose/env.example -f infrastructure/compose/compose.yaml -p "$project")
+base_url="http://127.0.0.1:${gateway_port}"
+cleanup_ran=0
+
+cleanup() {
+  if [ "$cleanup_ran" -eq 0 ]; then
+    cleanup_ran=1
+    UTCP_GATEWAY_PORT="$gateway_port" "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+UTCP_GATEWAY_PORT="$gateway_port" "${compose[@]}" config --quiet
+UTCP_GATEWAY_PORT="$gateway_port" "${compose[@]}" config --format json | scripts/compose/static_check.py
+UTCP_GATEWAY_PORT="$gateway_port" "${compose[@]}" up -d --build --wait --wait-timeout 240
+
+expected_services=(postgres redis migrate api worker scheduler web gateway control-plane-outbox-dispatcher telephony-command-worker telephony-event-normalizer telephony-reconciler)
+
+service_container() {
+  "${compose[@]}" ps --all -q "$1"
+}
+
+require_container() {
+  local service="$1"
+  local container
+  container="$(service_container "$service")"
+  if [ -z "$container" ]; then
+    printf 'missing container for service: %s\n' "$service" >&2
+    exit 1
+  fi
+  printf '%s' "$container"
+}
+
+require_health() {
+  local service="$1"
+  local container
+  local health
+  container="$(require_container "$service")"
+  health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")"
+  if [ "$health" != "healthy" ] && [ "$health" != "running" ]; then
+    printf '%s health is %s\n' "$service" "$health" >&2
+    exit 1
+  fi
+}
+
+for service in "${expected_services[@]}"; do
+  require_container "$service" >/dev/null
+done
+
+require_health postgres
+require_health redis
+require_health api
+require_health web
+require_health gateway
+
+migrate_container="$(require_container migrate)"
+migrate_state="$(docker inspect --format '{{.State.Status}} {{.State.ExitCode}}' "$migrate_container")"
+if [ "$migrate_state" != "exited 0" ]; then
+  printf 'migration job did not complete successfully: %s\n' "$migrate_state" >&2
+  exit 1
+fi
+
+for service in worker scheduler control-plane-outbox-dispatcher telephony-command-worker telephony-event-normalizer telephony-reconciler; do
+  container="$(require_container "$service")"
+  state="$(docker inspect --format '{{.State.Status}}' "$container")"
+  if [ "$state" != "running" ]; then
+    printf '%s is not running: %s\n' "$service" "$state" >&2
+    exit 1
+  fi
+done
+
+for service in postgres redis; do
+  ports="$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$(require_container "$service")")"
+  if [ "$ports" != "null" ] && [ "$ports" != "{}" ]; then
+    printf '%s unexpectedly publishes ports: %s\n' "$service" "$ports" >&2
+    exit 1
+  fi
+done
+
+curl -fsS "${base_url}/healthz" | grep -qx 'ok'
+root_payload="$(curl -fsS "${base_url}/")"
+printf '%s' "$root_payload" | grep -q '<div id="app"></div>'
+asset_path="$(printf '%s' "$root_payload" | sed -n 's/.*src="\([^"]*\/assets\/[^"]*\.js\)".*/\1/p' | head -n 1)"
+if [ -z "$asset_path" ]; then
+  printf 'frontend root did not reference a built JavaScript asset\n' >&2
+  exit 1
+fi
+curl -fsS -o /dev/null "${base_url}${asset_path}"
+curl -fsS "${base_url}/api/health/live" | grep -q '"status":"ok"'
+ready_payload="$(curl -fsS "${base_url}/api/health/ready")"
+printf '%s' "$ready_payload" | grep -q '"status":"ready"'
+printf '%s' "$ready_payload" | grep -q '"postgres":"ok"'
+printf '%s' "$ready_payload" | grep -q '"redis":"ok"'
+curl -fsS "${base_url}/api/version" | grep -q '"service":"utcp-api"'
+
+api_cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$(require_container api)")"
+worker_cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$(require_container worker)")"
+scheduler_cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$(require_container scheduler)")"
+if [ "$api_cmd" != '["api"]' ] || [ "$worker_cmd" != '["worker"]' ] || [ "$scheduler_cmd" != '["scheduler"]' ]; then
+  printf 'unexpected api/worker/scheduler roles: api=%s worker=%s scheduler=%s\n' "$api_cmd" "$worker_cmd" "$scheduler_cmd" >&2
+  exit 1
+fi
+
+api_image_id="$(docker inspect --format '{{.Image}}' "$(require_container api)")"
+for service in control-plane-outbox-dispatcher telephony-command-worker telephony-event-normalizer telephony-reconciler; do
+  container="$(require_container "$service")"
+  cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$container")"
+  if [ "$cmd" != "[\"$service\"]" ]; then
+    printf 'unexpected %s role command: %s\n' "$service" "$cmd" >&2
+    exit 1
+  fi
+  image_id="$(docker inspect --format '{{.Image}}' "$container")"
+  if [ "$image_id" != "$api_image_id" ]; then
+    printf '%s does not share the current api image: %s != %s\n' "$service" "$image_id" "$api_image_id" >&2
+    exit 1
+  fi
+done
+
+"${compose[@]}" exec -T postgres psql -U "${UTCP_POSTGRES_USER:-utcp}" -d "${UTCP_POSTGRES_DB:-utcp}" -c 'select 1;' >/dev/null
+"${compose[@]}" exec -T redis redis-cli ping | grep -qx 'PONG'
+
+printf 'compose proof passed\n'
+printf 'gateway_url=%s\n' "$base_url"
+printf 'services=%s\n' "${expected_services[*]}"
+cleanup
+printf 'compose cleanup passed\n'

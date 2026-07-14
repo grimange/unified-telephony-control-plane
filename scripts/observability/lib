@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  cd "$script_dir/../.." && pwd
+}
+
+ROOT="$(repo_root)"
+VERSIONS_FILE="$ROOT/versions.env"
+
+if [ -d /tmp/utcp-tools/gateway ]; then
+  PATH="/tmp/utcp-tools/gateway:$PATH"
+fi
+
+# shellcheck disable=SC1090
+. "$VERSIONS_FILE"
+
+K3D_CONTEXT_NAME="${K3D_CONTEXT_NAME:-k3d-utcp-local}"
+KUBECONFIG_FILE="$ROOT/.runtime/kubeconfig/utcp-local.yaml"
+OBSERVABILITY_NAMESPACE="${OBSERVABILITY_NAMESPACE:-utcp-observability}"
+OBSERVABILITY_HELM_DIR="$ROOT/infrastructure/helm/observability"
+OBSERVABILITY_KUSTOMIZATION="$ROOT/infrastructure/kubernetes/observability"
+OBSERVABILITY_RUNTIME_DIR="$ROOT/.runtime/observability"
+GRAFANA_SECRET_FILE="$OBSERVABILITY_RUNTIME_DIR/grafana-admin.env"
+OBSERVABILITY_APISERVER_TEMPLATE="$OBSERVABILITY_KUSTOMIZATION/network-policies/allow-apiserver-egress.template.yaml"
+OBSERVABILITY_APISERVER_POLICY="$OBSERVABILITY_RUNTIME_DIR/allow-apiserver-egress.yaml"
+GRAFANA_DEPLOYMENT="kube-prometheus-stack-grafana"
+GRAFANA_SERVICE="kube-prometheus-stack-grafana"
+
+export HELM_CONFIG_HOME="${HELM_CONFIG_HOME:-$ROOT/.runtime/helm/config}"
+export HELM_CACHE_HOME="${HELM_CACHE_HOME:-$ROOT/.runtime/helm/cache}"
+export HELM_DATA_HOME="${HELM_DATA_HOME:-$ROOT/.runtime/helm/data}"
+
+required_tools() {
+  local missing=0
+  for tool in kubectl helm curl awk grep sed openssl jq; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      printf 'missing required K4 tool: %s\n' "$tool" >&2
+      missing=1
+    fi
+  done
+  if [ "$missing" -ne 0 ]; then
+    exit 1
+  fi
+  if ! kubectl kustomize --help >/dev/null 2>&1; then
+    printf 'missing required K4 capability: kubectl kustomize\n' >&2
+    exit 1
+  fi
+}
+
+kube() {
+  KUBECONFIG="$KUBECONFIG_FILE" kubectl --context "$K3D_CONTEXT_NAME" "$@"
+}
+
+helm_cmd() {
+  mkdir -p "$HELM_CONFIG_HOME" "$HELM_CACHE_HOME" "$HELM_DATA_HOME"
+  KUBECONFIG="$KUBECONFIG_FILE" helm "$@"
+}
+
+ensure_kubeconfig() {
+  if [ ! -s "$KUBECONFIG_FILE" ]; then
+    printf 'repository kubeconfig is missing: %s\n' "$KUBECONFIG_FILE" >&2
+    exit 1
+  fi
+}
+
+ensure_cluster() {
+  required_tools
+  ensure_kubeconfig
+  "$ROOT/scripts/k3d/verify" >/dev/null
+}
+
+render_observability() {
+  kubectl kustomize "$OBSERVABILITY_KUSTOMIZATION"
+}
+
+service_cluster_ip() {
+  local namespace="$1"
+  local service="$2"
+  kube -n "$namespace" get service "$service" -o jsonpath='{.spec.clusterIP}'
+}
+
+service_endpoint_ip() {
+  local namespace="$1"
+  local service="$2"
+  local ip
+  ip="$(kube -n "$namespace" get endpoints "$service" -o jsonpath='{.subsets[0].addresses[0].ip}')"
+  if ! printf '%s\n' "$ip" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+    printf 'service endpoint is not a single IPv4 address: %s/%s -> %s\n' "$namespace" "$service" "$ip" >&2
+    exit 1
+  fi
+  printf '%s\n' "$ip"
+}
+
+service_endpoint_port() {
+  local namespace="$1"
+  local service="$2"
+  local port
+  port="$(kube -n "$namespace" get endpoints "$service" -o jsonpath='{.subsets[0].ports[0].port}')"
+  if ! printf '%s\n' "$port" | grep -Eq '^[0-9]+$'; then
+    printf 'service endpoint port is not numeric: %s/%s -> %s\n' "$namespace" "$service" "$port" >&2
+    exit 1
+  fi
+  printf '%s\n' "$port"
+}
+
+render_apiserver_policy() {
+  mkdir -p "$OBSERVABILITY_RUNTIME_DIR"
+  local ip endpoint_ip endpoint_port
+  ip="$(service_cluster_ip default kubernetes)"
+  endpoint_ip="$(service_endpoint_ip default kubernetes)"
+  endpoint_port="$(service_endpoint_port default kubernetes)"
+  for value in "$ip" "$endpoint_ip"; do
+    if ! printf '%s\n' "$value" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+      printf 'Kubernetes API address is not a single IPv4 address: %s\n' "$value" >&2
+      exit 1
+    fi
+  done
+  sed \
+    -e "s#__KUBERNETES_API_CIDR__#${ip}/32#g" \
+    -e "s#__KUBERNETES_API_ENDPOINT_CIDR__#${endpoint_ip}/32#g" \
+    -e "s#__KUBERNETES_API_ENDPOINT_PORT__#${endpoint_port}#g" \
+    "$OBSERVABILITY_APISERVER_TEMPLATE" > "$OBSERVABILITY_APISERVER_POLICY"
+  printf 'rendered observability Kubernetes API egress policy service=%s/32 endpoint=%s/32:%s\n' \
+    "$ip" "$endpoint_ip" "$endpoint_port"
+}
+
+create_grafana_secret_file() {
+  mkdir -p "$OBSERVABILITY_RUNTIME_DIR"
+  chmod 700 "$OBSERVABILITY_RUNTIME_DIR"
+  if [ ! -s "$GRAFANA_SECRET_FILE" ]; then
+    {
+      printf 'GRAFANA_ADMIN_USER=admin\n'
+      printf 'GRAFANA_ADMIN_PASSWORD=%s\n' "$(openssl rand -base64 32 | tr -d '\n')"
+    } > "$GRAFANA_SECRET_FILE"
+    chmod 600 "$GRAFANA_SECRET_FILE"
+  fi
+}
+
+apply_grafana_secret() {
+  create_grafana_secret_file
+  # shellcheck disable=SC1090
+  . "$GRAFANA_SECRET_FILE"
+  kube -n "$OBSERVABILITY_NAMESPACE" create secret generic utcp-grafana-admin \
+    --from-literal=admin-user="$GRAFANA_ADMIN_USER" \
+    --from-literal=admin-password="$GRAFANA_ADMIN_PASSWORD" \
+    --dry-run=client -o yaml | kube apply -f - >/dev/null
+  printf 'Grafana admin Secret ensured in namespace %s\n' "$OBSERVABILITY_NAMESPACE"
+}
+
+wait_workloads() {
+  kube -n "$OBSERVABILITY_NAMESPACE" rollout status deployment/utcp-monitoring-operator --timeout=300s
+  kube -n "$OBSERVABILITY_NAMESPACE" rollout status "deployment/$GRAFANA_DEPLOYMENT" --timeout=300s
+  kube -n "$OBSERVABILITY_NAMESPACE" rollout status deployment/alloy --timeout=300s
+  kube -n "$OBSERVABILITY_NAMESPACE" rollout status statefulset/prometheus-utcp-monitoring-prometheus --timeout=300s
+  kube -n "$OBSERVABILITY_NAMESPACE" rollout status statefulset/alertmanager-utcp-monitoring-alertmanager --timeout=300s
+  kube -n "$OBSERVABILITY_NAMESPACE" rollout status statefulset/loki --timeout=300s
+  kube -n "$OBSERVABILITY_NAMESPACE" wait --for=condition=Ready pod -l app.kubernetes.io/name=prometheus --timeout=240s >/dev/null
+  kube -n "$OBSERVABILITY_NAMESPACE" wait --for=condition=Ready pod -l app.kubernetes.io/name=alertmanager --timeout=240s >/dev/null
+  kube -n "$OBSERVABILITY_NAMESPACE" wait --for=condition=Ready pod -l app.kubernetes.io/name=grafana --timeout=240s >/dev/null
+  kube -n "$OBSERVABILITY_NAMESPACE" wait --for=condition=Ready pod -l app.kubernetes.io/name=loki --timeout=240s >/dev/null
+  kube -n "$OBSERVABILITY_NAMESPACE" wait --for=condition=Ready pod -l app.kubernetes.io/name=alloy --timeout=240s >/dev/null
+}
+
+port_forward() {
+  local namespace="$1"
+  local resource="$2"
+  local local_port="$3"
+  local remote_port="$4"
+  kube -n "$namespace" port-forward "$resource" "${local_port}:${remote_port}" >/tmp/utcp-k4-portforward.log 2>&1 &
+  local pid=$!
+  sleep 2
+  if ! kill -0 "$pid" >/dev/null 2>&1; then
+    cat /tmp/utcp-k4-portforward.log >&2 || true
+    printf 'port-forward failed: %s/%s %s:%s\n' "$namespace" "$resource" "$local_port" "$remote_port" >&2
+    exit 1
+  fi
+  printf '%s\n' "$pid"
+}
+
+stop_port_forward() {
+  local pid="${1:-}"
+  if [ -n "$pid" ]; then
+    kill "$pid" >/dev/null 2>&1 || true
+    wait "$pid" >/dev/null 2>&1 || true
+  fi
+}
+
+prometheus_query() {
+  local port="$1"
+  local query="$2"
+  curl --fail --silent --show-error --get \
+    --data-urlencode "query=$query" \
+    "http://127.0.0.1:${port}/api/v1/query"
+}
+
+loki_query() {
+  local port="$1"
+  local query="$2"
+  curl --fail --silent --show-error --get \
+    --data-urlencode "query=$query" \
+    "http://127.0.0.1:${port}/loki/api/v1/query_range"
+}
+
+grafana_auth() {
+  create_grafana_secret_file
+  # shellcheck disable=SC1090
+  . "$GRAFANA_SECRET_FILE"
+  printf '%s:%s\n' "$GRAFANA_ADMIN_USER" "$GRAFANA_ADMIN_PASSWORD"
+}

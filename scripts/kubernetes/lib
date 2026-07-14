@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  cd "$script_dir/../.." && pwd
+}
+
+ROOT="$(repo_root)"
+VERSIONS_FILE="$ROOT/versions.env"
+
+# shellcheck disable=SC1090
+. "$VERSIONS_FILE"
+
+K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME:-utcp-local}"
+K3D_CONTEXT_NAME="${K3D_CONTEXT_NAME:-k3d-utcp-local}"
+K3D_REGISTRY_NAME="${K3D_REGISTRY_NAME:-utcp-local-registry}"
+K3D_REGISTRY_HOST="${K3D_REGISTRY_HOST:-127.0.0.1}"
+K3D_REGISTRY_HOST_PORT="${K3D_REGISTRY_HOST_PORT:-5001}"
+KUBECONFIG_FILE="$ROOT/.runtime/kubeconfig/utcp-local.yaml"
+K8S_OVERLAY="$ROOT/infrastructure/kubernetes/overlays/local"
+K8S_DATA_OVERLAY="$K8S_OVERLAY/data"
+K8S_MIGRATION_OVERLAY="$K8S_OVERLAY/migration"
+K8S_PLATFORM_OVERLAY="$K8S_OVERLAY/platform"
+K8S_PLATFORM_NAMESPACE="utcp-platform"
+K8S_DATA_NAMESPACE="utcp-data"
+K8S_PROOF_PORT="${K8S_PROOF_PORT:-18089}"
+K1_IMAGE_TAG="${K1_IMAGE_TAG:-0.1.0-k1-dev}"
+HOST_REGISTRY="${K3D_REGISTRY_HOST}:${K3D_REGISTRY_HOST_PORT}"
+CLUSTER_REGISTRY="${K3D_REGISTRY_NAME}:5000"
+API_LOCAL_IMAGE="${UTCP_API_IMAGE:-utcp-api:dev}"
+WEB_LOCAL_IMAGE="${UTCP_WEB_IMAGE:-utcp-web:dev}"
+GATEWAY_LOCAL_IMAGE="${UTCP_GATEWAY_IMAGE:-utcp-gateway:dev}"
+API_HOST_IMAGE="$HOST_REGISTRY/utcp/api:$K1_IMAGE_TAG"
+WEB_HOST_IMAGE="$HOST_REGISTRY/utcp/web:$K1_IMAGE_TAG"
+GATEWAY_HOST_IMAGE="$HOST_REGISTRY/utcp/gateway:$K1_IMAGE_TAG"
+
+required_tools() {
+  local missing=0
+  for tool in docker k3d kubectl curl awk grep sed; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      printf 'missing required K1 tool: %s\n' "$tool" >&2
+      missing=1
+    fi
+  done
+  if [ "$missing" -ne 0 ]; then
+    exit 1
+  fi
+  if ! kubectl kustomize --help >/dev/null 2>&1; then
+    printf 'missing required K1 capability: kubectl kustomize\n' >&2
+    exit 1
+  fi
+}
+
+kube() {
+  KUBECONFIG="$KUBECONFIG_FILE" kubectl --context "$K3D_CONTEXT_NAME" "$@"
+}
+
+ensure_kubeconfig() {
+  if [ ! -s "$KUBECONFIG_FILE" ]; then
+    printf 'repository kubeconfig is missing: %s\n' "$KUBECONFIG_FILE" >&2
+    exit 1
+  fi
+}
+
+ensure_cluster() {
+  required_tools
+  ensure_kubeconfig
+  "$ROOT/scripts/k3d/verify" >/dev/null
+}
+
+ensure_registry() {
+  if ! k3d registry list -o json 2>/dev/null | grep -q "\"name\":\"$K3D_REGISTRY_NAME\""; then
+    printf 'missing k3d registry: %s\n' "$K3D_REGISTRY_NAME" >&2
+    exit 1
+  fi
+  docker ps --format '{{.Names}}\t{{.Status}}\t{{.Ports}}' \
+    | "$ROOT/scripts/k3d/registry-container-check" "$K3D_REGISTRY_NAME" "$K3D_REGISTRY_HOST" "$K3D_REGISTRY_HOST_PORT" >/dev/null
+}
+
+check_k1_tag() {
+  if [ -z "$K1_IMAGE_TAG" ] || [ "$K1_IMAGE_TAG" = "latest" ]; then
+    printf 'K1_IMAGE_TAG must be explicit and must not be latest\n' >&2
+    exit 1
+  fi
+}
+
+render_overlay() {
+  kubectl kustomize "$K8S_OVERLAY"
+}
+
+wait_data() {
+  kube -n "$K8S_DATA_NAMESPACE" rollout status statefulset/postgres --timeout=240s
+  kube -n "$K8S_DATA_NAMESPACE" rollout status statefulset/redis --timeout=180s
+  kube -n "$K8S_DATA_NAMESPACE" wait --for=condition=Ready pod -l app.kubernetes.io/component=postgres --timeout=180s
+  kube -n "$K8S_DATA_NAMESPACE" wait --for=condition=Ready pod -l app.kubernetes.io/component=redis --timeout=180s
+}
+
+delete_migration_job() {
+  kube -n "$K8S_PLATFORM_NAMESPACE" delete job utcp-migrate --ignore-not-found >/dev/null
+}
+
+wait_migration() {
+  if ! kube -n "$K8S_PLATFORM_NAMESPACE" wait --for=condition=Complete job/utcp-migrate --timeout=180s; then
+    kube -n "$K8S_PLATFORM_NAMESPACE" logs job/utcp-migrate --tail=100 >&2 || true
+    exit 1
+  fi
+}
+
+wait_platform() {
+  for deployment in api worker scheduler web gateway; do
+    kube -n "$K8S_PLATFORM_NAMESPACE" rollout status "deployment/$deployment" --timeout=240s
+  done
+}
+
+http_get() {
+  local path="$1"
+  curl --fail --silent --show-error --max-time 10 "http://127.0.0.1:${K8S_PROOF_PORT}${path}"
+}
+
+port_forward_gateway() {
+  local log_file="$1"
+  kube -n "$K8S_PLATFORM_NAMESPACE" port-forward --address 127.0.0.1 service/gateway "${K8S_PROOF_PORT}:8080" >"$log_file" 2>&1 &
+  printf '%s\n' "$!"
+}

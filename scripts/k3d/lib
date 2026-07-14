@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  cd "$script_dir/../.." && pwd
+}
+
+ROOT="$(repo_root)"
+VERSIONS_FILE="$ROOT/versions.env"
+CLUSTER_CONFIG="$ROOT/infrastructure/k3d/cluster.yaml"
+NAMESPACES_FILE="$ROOT/infrastructure/k3d/namespaces.yaml"
+RUNTIME_DIR="$ROOT/.runtime/kubeconfig"
+KUBECONFIG_FILE="$RUNTIME_DIR/utcp-local.yaml"
+
+# shellcheck disable=SC1090
+. "$VERSIONS_FILE"
+
+K3D_CLUSTER_NAME="${K3D_CLUSTER_NAME:-utcp-local}"
+K3D_CONTEXT_NAME="${K3D_CONTEXT_NAME:-k3d-utcp-local}"
+K3D_SERVER_COUNT="${K3D_SERVER_COUNT:-1}"
+K3D_AGENT_COUNT="${K3D_AGENT_COUNT:-2}"
+K3D_API_HOST="${K3D_API_HOST:-127.0.0.1}"
+K3D_API_HOST_PORT="${K3D_API_HOST_PORT:-6550}"
+K3D_REGISTRY_NAME="${K3D_REGISTRY_NAME:-utcp-local-registry}"
+K3D_REGISTRY_HOST="${K3D_REGISTRY_HOST:-127.0.0.1}"
+K3D_REGISTRY_HOST_PORT="${K3D_REGISTRY_HOST_PORT:-5001}"
+UTCP_EDGE_HTTP_HOST="${UTCP_EDGE_HTTP_HOST:-127.0.0.1}"
+UTCP_EDGE_HTTP_HOST_PORT="${UTCP_EDGE_HTTP_HOST_PORT:-80}"
+UTCP_EDGE_HTTPS_HOST="${UTCP_EDGE_HTTPS_HOST:-127.0.0.1}"
+UTCP_EDGE_HTTPS_HOST_PORT="${UTCP_EDGE_HTTPS_HOST_PORT:-443}"
+
+required_tools() {
+  local missing=0
+  for tool in docker k3d kubectl; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      printf 'missing required K0 tool: %s\n' "$tool" >&2
+      missing=1
+    fi
+  done
+  if [ "$missing" -ne 0 ]; then
+    exit 1
+  fi
+}
+
+cluster_exists() {
+  k3d cluster list -o json 2>/dev/null | grep -q "\"name\":\"$K3D_CLUSTER_NAME\""
+}
+
+registry_exists() {
+  k3d registry list -o json 2>/dev/null | grep -q "\"name\":\"$K3D_REGISTRY_NAME\""
+}
+
+port_in_use() {
+  local host="$1"
+  local port="$2"
+  ss -ltn | awk '{print $4}' | grep -Eq "(^|\\[::ffff:${host}\\]:|${host}:|:${port}$).*:${port}$|${host}:${port}$"
+}
+
+edge_port_owner_report() {
+  local port="$1"
+  printf 'loopback listener inspection for 127.0.0.1:%s:\n' "$port"
+  ss -ltnp 2>/dev/null | awk -v port=":$port" '$4 ~ port "$" {print}' || true
+  printf 'Docker published-port inspection for %s:\n' "$port"
+  docker ps --format '{{.Names}}\t{{.Ports}}' | grep -E "(^|:)${port}->|127\\.0\\.0\\.1:${port}->|0\\.0\\.0\\.0:${port}->|\\[::\\]:${port}->" || true
+}
+
+canonical_utcp_edge_owns_port() {
+  local port="$1"
+  local target="$2"
+  docker ps --filter "name=k3d-${K3D_CLUSTER_NAME}-serverlb" --format '{{.Ports}}' |
+    grep -Fq "${UTCP_EDGE_HTTP_HOST}:${port}->${target}/tcp"
+}
+
+validate_standard_edge_ports_available() {
+  if [ "$UTCP_EDGE_HTTP_HOST" != "127.0.0.1" ] ||
+    [ "$UTCP_EDGE_HTTPS_HOST" != "127.0.0.1" ] ||
+    [ "$UTCP_EDGE_HTTP_HOST_PORT" != "80" ] ||
+    [ "$UTCP_EDGE_HTTPS_HOST_PORT" != "443" ]; then
+    printf 'K2 standard edge requires 127.0.0.1:80 and 127.0.0.1:443\n' >&2
+    exit 1
+  fi
+
+  if port_in_use "$UTCP_EDGE_HTTP_HOST" "$UTCP_EDGE_HTTP_HOST_PORT" &&
+    ! canonical_utcp_edge_owns_port "$UTCP_EDGE_HTTP_HOST_PORT" 80; then
+    printf 'K2_STANDARD_PORT_SWITCH_BLOCKED\n' >&2
+    edge_port_owner_report "$UTCP_EDGE_HTTP_HOST_PORT" >&2
+    exit 1
+  fi
+
+  if port_in_use "$UTCP_EDGE_HTTPS_HOST" "$UTCP_EDGE_HTTPS_HOST_PORT" &&
+    ! canonical_utcp_edge_owns_port "$UTCP_EDGE_HTTPS_HOST_PORT" 443; then
+    printf 'K2_STANDARD_PORT_SWITCH_BLOCKED\n' >&2
+    edge_port_owner_report "$UTCP_EDGE_HTTPS_HOST_PORT" >&2
+    exit 1
+  fi
+}
+
+validate_ports_available_for_create() {
+  validate_standard_edge_ports_available
+
+  if ! cluster_exists; then
+    if port_in_use "$K3D_API_HOST" "$K3D_API_HOST_PORT"; then
+      printf 'Kubernetes API port is already in use: %s:%s\n' "$K3D_API_HOST" "$K3D_API_HOST_PORT" >&2
+      exit 1
+    fi
+  fi
+
+  if ! registry_exists; then
+    if port_in_use "$K3D_REGISTRY_HOST" "$K3D_REGISTRY_HOST_PORT"; then
+      printf 'registry port is already in use: %s:%s\n' "$K3D_REGISTRY_HOST" "$K3D_REGISTRY_HOST_PORT" >&2
+      exit 1
+    fi
+  fi
+}
+
+kube() {
+  KUBECONFIG="$KUBECONFIG_FILE" kubectl --context "$K3D_CONTEXT_NAME" "$@"
+}
+
+ensure_kubeconfig() {
+  if [ ! -s "$KUBECONFIG_FILE" ]; then
+    printf 'repository kubeconfig is missing: %s\n' "$KUBECONFIG_FILE" >&2
+    exit 1
+  fi
+}
+
+write_kubeconfig() {
+  mkdir -p "$RUNTIME_DIR"
+  k3d kubeconfig get "$K3D_CLUSTER_NAME" > "$KUBECONFIG_FILE"
+  KUBECONFIG="$KUBECONFIG_FILE" kubectl config set-context "$K3D_CONTEXT_NAME" --namespace=utcp-platform >/dev/null
+}
+
+wait_for_nodes() {
+  kube wait --for=condition=Ready nodes --all --timeout=180s >/dev/null
+}
+
+apply_namespaces() {
+  kube apply -f "$NAMESPACES_FILE" >/dev/null
+}
+
+wait_for_system_pods() {
+  kube -n kube-system rollout status deployment/coredns --timeout=180s >/dev/null
+  kube -n kube-system wait --for=condition=Ready pods --all --timeout=180s >/dev/null
+}
+
+compose_state() {
+  docker compose ls --format json 2>/dev/null | grep '"Name":"utcp"' || true
+}
+
+print_versions() {
+  printf 'k3d=%s\n' "$(k3d version | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+  printf 'kubectl=%s\n' "$(kubectl version --client=true --output=yaml | awk '/gitVersion:/ {print $2; exit}')"
+}

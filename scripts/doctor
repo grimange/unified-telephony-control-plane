@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -u
+
+status=0
+
+tool_status() {
+  local category="$1"
+  local name="$2"
+  local command="$3"
+  local detail="${4:-}"
+
+  if command -v "$command" >/dev/null 2>&1; then
+    printf '[installed] %-34s %-12s %s\n' "$name" "$category" "$detail"
+  elif [ -x "/tmp/utcp-tools/gateway/$command" ]; then
+    printf '[installed] %-34s %-12s %s\n' "$name" "$category" "$detail (available in /tmp/utcp-tools/gateway)"
+  else
+    printf '[missing]   %-34s %-12s %s\n' "$name" "$category" "$detail"
+    if [ "$category" = "required-now" ]; then
+      status=1
+    fi
+  fi
+}
+
+docker_compose_status() {
+  if docker compose version >/dev/null 2>&1; then
+    printf '[installed] %-34s %-12s %s\n' "docker compose" "required-now" "required for F3 local orchestration and F4 CI-equivalent proof"
+  elif command -v docker-compose >/dev/null 2>&1; then
+    printf '[installed] %-34s %-12s %s\n' "docker-compose" "required-now" "legacy command available; Docker Compose v2 is preferred"
+  else
+    printf '[missing]   %-34s %-12s %s\n' "docker compose" "required-now" "required for F3 local orchestration and F4 CI-equivalent proof"
+    status=1
+  fi
+}
+
+kustomize_status() {
+  if command -v kustomize >/dev/null 2>&1; then
+    printf '[installed] %-34s %-12s %s\n' "kustomize" "required-now" "required for K1 Kubernetes application manifests"
+  elif command -v kubectl >/dev/null 2>&1 && kubectl kustomize --help >/dev/null 2>&1; then
+    printf '[installed] %-34s %-12s %s\n' "kubectl kustomize" "required-now" "required for K1 Kubernetes application manifests"
+  else
+    printf '[missing]   %-34s %-12s %s\n' "kustomize or kubectl kustomize" "required-now" "required for K1 Kubernetes application manifests"
+    status=1
+  fi
+}
+
+server_dry_run_status() {
+  printf '[installed] %-34s %-12s %s\n' "kubectl server dry-run" "required-now" "selected K1/K2 manifest validator; requires a reachable K0 cluster"
+}
+
+printf 'UTCP local tool doctor\n'
+printf 'This command only inspects available tool paths and does not install or modify host software.\n\n'
+
+printf 'Required now:\n'
+tool_status "required-now" "git" "git" "required for repository work"
+tool_status "required-now" "make" "make" "required for repository commands"
+tool_status "required-now" "bash" "bash" "required for F0 scripts"
+tool_status "required-now" "php" "php" "required for the Laravel API"
+tool_status "required-now" "composer" "composer" "required for Laravel dependency management"
+tool_status "required-now" "node" "node" "required for the Vue web app"
+tool_status "required-now" "npm" "npm" "selected Node package manager for Phase F1"
+tool_status "required-now" "docker" "docker" "required for F2 images, F4 CI-equivalent proof, and K0 k3d"
+docker_compose_status
+tool_status "required-now" "kubectl" "kubectl" "required for K0 local k3d cluster verification"
+tool_status "required-now" "k3d" "k3d" "required for K0 local cluster lifecycle"
+kustomize_status
+server_dry_run_status
+tool_status "required-now" "helm" "helm" "required for K2 Traefik chart lifecycle"
+tool_status "required-now" "openssl" "openssl" "required for K2 local development TLS"
+tool_status "required-now" "curl" "curl" "required for K2/K4 local HTTP, metrics, logs, and alert proof"
+tool_status "required-now" "jq" "jq" "required for K4 Grafana, Prometheus, Loki, and Alertmanager API proof"
+
+printf '\nRequired in later infrastructure phases:\n'
+printf '[installed] %-34s %-12s %s\n' "none" "later-phase" "no later-phase local tools are newly classified here"
+
+printf '\nOptional tools:\n'
+printf '[optional]  %-34s %-12s %s\n' "none" "optional" "no optional local tools are defined for this phase"
+
+exit "$status"

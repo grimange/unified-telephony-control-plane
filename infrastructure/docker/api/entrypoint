@@ -1,0 +1,100 @@
+#!/usr/bin/env sh
+set -eu
+
+role="${1:-api}"
+
+component="$role"
+if [ "$component" = "migrate" ]; then
+  component="migration"
+fi
+printf '{"timestamp":"%s","level":"info","service":"utcp","component":"%s","environment":"%s","message":"process starting"}\n' \
+  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$component" "${APP_ENV:-local}" >&2
+
+wait_for_postgres() {
+  attempts="${UTCP_MIGRATION_DB_WAIT_ATTEMPTS:-60}"
+  sleep_seconds="${UTCP_MIGRATION_DB_WAIT_SECONDS:-2}"
+  attempt=1
+
+  while [ "$attempt" -le "$attempts" ]; do
+    if php -r '
+      $host = getenv("DB_HOST") ?: "postgres";
+      $port = getenv("DB_PORT") ?: "5432";
+      $database = getenv("DB_DATABASE") ?: "";
+      $username = getenv("DB_USERNAME") ?: "";
+      $password = getenv("DB_PASSWORD") ?: "";
+      $dsn = "pgsql:host={$host};port={$port};dbname={$database}";
+      try {
+        $pdo = new PDO($dsn, $username, $password, [PDO::ATTR_TIMEOUT => 2, PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+        $pdo->query("select 1");
+        exit(0);
+      } catch (Throwable $exception) {
+        exit(1);
+      }
+    '; then
+      printf '{"timestamp":"%s","level":"info","service":"utcp","component":"migration","environment":"%s","message":"postgres ready for migration"}\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${APP_ENV:-local}" >&2
+      return 0
+    fi
+
+    if [ "$attempt" = "$attempts" ]; then
+      break
+    fi
+    sleep "$sleep_seconds"
+    attempt=$((attempt + 1))
+  done
+
+  printf '{"timestamp":"%s","level":"error","service":"utcp","component":"migration","environment":"%s","message":"postgres was not ready before migration timeout"}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${APP_ENV:-local}" >&2
+  return 1
+}
+
+case "$role" in
+  api)
+    shift || true
+    exec php-fpm -F "$@"
+    ;;
+  worker)
+    shift || true
+    exec php artisan queue:work --sleep=3 --tries=3 --max-time=3600 "$@"
+    ;;
+  scheduler)
+    shift || true
+    exec php artisan schedule:work "$@"
+    ;;
+  control-plane-outbox-dispatcher)
+    shift || true
+    exec php artisan runtime-engine:outbox-dispatcher "$@"
+    ;;
+  telephony-command-worker)
+    shift || true
+    exec php artisan runtime-engine:command-worker "$@"
+    ;;
+  telephony-event-normalizer)
+    shift || true
+    exec php artisan runtime-engine:event-normalizer "$@"
+    ;;
+  telephony-reconciler)
+    shift || true
+    exec php artisan runtime-engine:reconciler "$@"
+    ;;
+  simulator-event-source)
+    shift || true
+    exec php artisan simulator:event-source "$@"
+    ;;
+  migrate)
+    shift || true
+    wait_for_postgres
+    exec php artisan migrate --force "$@"
+    ;;
+  php|php-fpm|sh|bash)
+    exec "$@"
+    ;;
+  */*)
+    exec "$@"
+    ;;
+  *)
+    printf 'Unknown UTCP API process role: %s\n' "$role" >&2
+    printf 'Expected one of: api, worker, scheduler, migrate, control-plane-outbox-dispatcher, telephony-command-worker, telephony-event-normalizer, telephony-reconciler, simulator-event-source, or an explicit diagnostic command.\n' >&2
+    exit 64
+    ;;
+esac

@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf 'Composer audit policy: fail on any advisory in the committed lockfile.\n'
+(
+  cd apps/api
+  COMPOSER_CACHE_DIR="${COMPOSER_CACHE_DIR:-/tmp/utcp-composer-cache}" composer audit --locked
+)
+
+printf 'npm audit policy: fail on moderate, high, or critical advisories in all locked dependencies.\n'
+(
+  cd apps/web
+  npm audit --audit-level=moderate
+)
+
+printf 'Dependency audits passed\n'

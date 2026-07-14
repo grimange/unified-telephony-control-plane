@@ -1,0 +1,269 @@
+name: utcp
+
+x-api-environment: &api-environment
+  APP_NAME: "Unified Telephony Control Plane API"
+  APP_ENV: local
+  APP_KEY: ${UTCP_APP_KEY:-base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+  APP_DEBUG: "false"
+  APP_URL: http://localhost:${UTCP_GATEWAY_PORT:-8088}
+  LOG_CHANNEL: stderr
+  LOG_LEVEL: info
+  UTCP_SERVICE_NAME: utcp-api
+  UTCP_APP_VERSION: ${UTCP_BUILD_VERSION:-0.1.0-dev}
+  UTCP_BUILD_COMMIT: ${UTCP_BUILD_COMMIT:-unknown}
+  UTCP_BUILD_TIMESTAMP: ${UTCP_BUILD_CREATED:-unknown}
+  UTCP_READINESS_REQUIRED_DEPENDENCIES: postgres,redis
+  DB_CONNECTION: pgsql
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  DB_DATABASE: ${UTCP_POSTGRES_DB:-utcp}
+  DB_USERNAME: ${UTCP_POSTGRES_USER:-utcp}
+  DB_PASSWORD: ${UTCP_POSTGRES_PASSWORD:-utcp_local_password}
+  DB_CHARSET: utf8
+  DB_SSLMODE: disable
+  REDIS_CLIENT: phpredis
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_PASSWORD: ""
+  CACHE_STORE: redis
+  QUEUE_CONNECTION: redis
+  SESSION_DRIVER: redis
+  SESSION_SECURE_COOKIE: "true"
+  SESSION_HTTP_ONLY: "true"
+  SESSION_SAME_SITE: lax
+  BROADCAST_CONNECTION: log
+  FILESYSTEM_DISK: local
+  MAIL_MAILER: log
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17.6-alpine}
+    environment:
+      POSTGRES_DB: ${UTCP_POSTGRES_DB:-utcp}
+      POSTGRES_USER: ${UTCP_POSTGRES_USER:-utcp}
+      POSTGRES_PASSWORD: ${UTCP_POSTGRES_PASSWORD:-utcp_local_password}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - data
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:8.2.3-alpine}
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    volumes:
+      - redis-data:/data
+    networks:
+      - data
+
+  migrate:
+    image: ${UTCP_API_IMAGE:-utcp-api:dev}
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/api/Dockerfile
+      target: app-prod
+      args:
+        BUILD_VERSION: ${UTCP_BUILD_VERSION:-0.1.0-dev}
+        BUILD_COMMIT: ${UTCP_BUILD_COMMIT:-unknown}
+        BUILD_CREATED: ${UTCP_BUILD_CREATED:-unknown}
+        IMAGE_SOURCE: ${UTCP_IMAGE_SOURCE:-local}
+    command: ["migrate"]
+    environment:
+      <<: *api-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - data
+    restart: "no"
+
+  api:
+    image: ${UTCP_API_IMAGE:-utcp-api:dev}
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/api/Dockerfile
+      target: app-prod
+      args:
+        BUILD_VERSION: ${UTCP_BUILD_VERSION:-0.1.0-dev}
+        BUILD_COMMIT: ${UTCP_BUILD_COMMIT:-unknown}
+        BUILD_CREATED: ${UTCP_BUILD_CREATED:-unknown}
+        IMAGE_SOURCE: ${UTCP_IMAGE_SOURCE:-local}
+    command: ["api"]
+    environment:
+      <<: *api-environment
+    healthcheck:
+      test: ["CMD-SHELL", "php -r '$$s=@fsockopen(\"127.0.0.1\",9000); exit($$s ? 0 : 1);'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - platform
+      - data
+
+  worker:
+    image: ${UTCP_API_IMAGE:-utcp-api:dev}
+    command: ["worker"]
+    environment:
+      <<: *api-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - data
+
+  scheduler:
+    image: ${UTCP_API_IMAGE:-utcp-api:dev}
+    command: ["scheduler"]
+    environment:
+      <<: *api-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - data
+
+  control-plane-outbox-dispatcher:
+    image: ${UTCP_API_IMAGE:-utcp-api:dev}
+    command: ["control-plane-outbox-dispatcher"]
+    environment:
+      <<: *api-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - data
+
+  telephony-command-worker:
+    image: ${UTCP_API_IMAGE:-utcp-api:dev}
+    command: ["telephony-command-worker"]
+    environment:
+      <<: *api-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - data
+
+  telephony-event-normalizer:
+    image: ${UTCP_API_IMAGE:-utcp-api:dev}
+    command: ["telephony-event-normalizer"]
+    environment:
+      <<: *api-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - data
+
+  telephony-reconciler:
+    image: ${UTCP_API_IMAGE:-utcp-api:dev}
+    command: ["telephony-reconciler"]
+    environment:
+      <<: *api-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - data
+
+  web:
+    image: ${UTCP_WEB_IMAGE:-utcp-web:dev}
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/web/Dockerfile
+      target: app-prod
+      args:
+        BUILD_VERSION: ${UTCP_BUILD_VERSION:-0.1.0-dev}
+        BUILD_COMMIT: ${UTCP_BUILD_COMMIT:-unknown}
+        BUILD_CREATED: ${UTCP_BUILD_CREATED:-unknown}
+        IMAGE_SOURCE: ${UTCP_IMAGE_SOURCE:-local}
+        VITE_UTCP_API_BASE_URL: ""
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/healthz >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks:
+      - platform
+
+  gateway:
+    image: ${UTCP_GATEWAY_IMAGE:-utcp-gateway:dev}
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/gateway/Dockerfile
+      target: app-prod
+      args:
+        BUILD_VERSION: ${UTCP_BUILD_VERSION:-0.1.0-dev}
+        BUILD_COMMIT: ${UTCP_BUILD_COMMIT:-unknown}
+        BUILD_CREATED: ${UTCP_BUILD_CREATED:-unknown}
+        IMAGE_SOURCE: ${UTCP_IMAGE_SOURCE:-local}
+    ports:
+      - "127.0.0.1:${UTCP_GATEWAY_PORT:-8088}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/healthz >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    networks:
+      - edge
+      - platform
+
+networks:
+  edge: {}
+  platform:
+    internal: true
+  data:
+    internal: true
+
+volumes:
+  postgres-data: {}
+  redis-data: {}

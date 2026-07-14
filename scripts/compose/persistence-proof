@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project="${UTCP_COMPOSE_PROJECT_NAME:-utcp}"
+compose=(docker compose --env-file versions.env --env-file infrastructure/compose/env.example -f infrastructure/compose/compose.yaml -p "$project")
+marker="f3_persistence_probe"
+value="preserved"
+
+"${compose[@]}" exec -T postgres psql -U "${UTCP_POSTGRES_USER:-utcp}" -d "${UTCP_POSTGRES_DB:-utcp}" -v ON_ERROR_STOP=1 <<SQL >/dev/null
+create table if not exists ${marker} (id integer primary key, value text not null);
+insert into ${marker} (id, value) values (1, '${value}')
+on conflict (id) do update set value = excluded.value;
+SQL
+
+"${compose[@]}" down --remove-orphans
+"${compose[@]}" up -d --wait --wait-timeout 180
+
+result="$("${compose[@]}" exec -T postgres psql -U "${UTCP_POSTGRES_USER:-utcp}" -d "${UTCP_POSTGRES_DB:-utcp}" -At -c "select value from ${marker} where id = 1;")"
+if [ "$result" != "$value" ]; then
+  printf 'postgres persistence probe failed: %s\n' "$result" >&2
+  exit 1
+fi
+
+printf 'compose persistence proof passed\n'

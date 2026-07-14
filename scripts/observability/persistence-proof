@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/observability/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+
+prom_port=19090
+loki_port=19100
+grafana_port=19300
+prom_pid=""
+loki_pid=""
+grafana_pid=""
+cleanup() {
+  stop_port_forward "$prom_pid"
+  stop_port_forward "$loki_pid"
+  stop_port_forward "$grafana_pid"
+}
+trap cleanup EXIT
+
+wait_workloads
+prom_pid="$(port_forward "$OBSERVABILITY_NAMESPACE" service/utcp-monitoring-prometheus "$prom_port" 9090)"
+loki_pid="$(port_forward "$OBSERVABILITY_NAMESPACE" service/loki "$loki_port" 3100)"
+grafana_pid="$(port_forward "$OBSERVABILITY_NAMESPACE" "service/$GRAFANA_SERVICE" "$grafana_port" 80)"
+
+prometheus_query "$prom_port" 'up' | jq -e '.data.result | length > 0' >/dev/null
+kube -n "$OBSERVABILITY_NAMESPACE" delete pod -l app.kubernetes.io/name=prometheus >/dev/null
+stop_port_forward "$prom_pid"; prom_pid=""
+kube -n "$OBSERVABILITY_NAMESPACE" rollout status statefulset/prometheus-utcp-monitoring-prometheus --timeout=300s
+prom_pid="$(port_forward "$OBSERVABILITY_NAMESPACE" service/utcp-monitoring-prometheus "$prom_port" 9090)"
+prometheus_query "$prom_port" 'up' | jq -e '.data.result | length > 0' >/dev/null
+printf 'prometheus_persistence_proof=passed\n'
+
+headers="$(mktemp)"
+body="$(mktemp)"
+curl --fail --silent --show-error \
+  --cacert "$ROOT/.runtime/tls/utcp-local-ca.crt" \
+  --resolve "app.utcp.local.test:443:127.0.0.1" \
+  -D "$headers" \
+  -o "$body" \
+  "https://app.utcp.local.test/api/version"
+request_id="$(awk 'tolower($1) == "x-request-id:" {gsub("\r", "", $2); print $2; exit}' "$headers")"
+rm -f "$headers" "$body"
+if ! printf '%s\n' "$request_id" | grep -Eq '^[A-Fa-f0-9]{32}$'; then
+  printf 'missing or invalid X-Request-ID from persistence proof request: %s\n' "$request_id" >&2
+  exit 1
+fi
+deadline=$((SECONDS + 90))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  if loki_query "$loki_port" "{namespace=\"utcp-platform\"} |= \"$request_id\"" | jq -e '.data.result | length > 0' >/dev/null; then
+    break
+  fi
+  sleep 5
+done
+loki_query "$loki_port" "{namespace=\"utcp-platform\"} |= \"$request_id\"" | jq -e '.data.result | length > 0' >/dev/null
+kube -n "$OBSERVABILITY_NAMESPACE" delete pod -l app.kubernetes.io/name=loki >/dev/null
+stop_port_forward "$loki_pid"; loki_pid=""
+kube -n "$OBSERVABILITY_NAMESPACE" rollout status statefulset/loki --timeout=300s
+loki_pid="$(port_forward "$OBSERVABILITY_NAMESPACE" service/loki "$loki_port" 3100)"
+loki_query "$loki_port" "{namespace=\"utcp-platform\"} |= \"$request_id\"" | jq -e '.data.result | length > 0' >/dev/null
+printf 'loki_persistence_proof=passed request_id=%s\n' "$request_id"
+
+auth="$(grafana_auth)"
+curl --fail --silent --show-error -u "$auth" "http://127.0.0.1:${grafana_port}/api/search?query=UTCP" | jq -e 'length >= 2' >/dev/null
+kube -n "$OBSERVABILITY_NAMESPACE" delete pod -l app.kubernetes.io/name=grafana >/dev/null
+stop_port_forward "$grafana_pid"; grafana_pid=""
+kube -n "$OBSERVABILITY_NAMESPACE" rollout status "deployment/$GRAFANA_DEPLOYMENT" --timeout=300s
+grafana_pid="$(port_forward "$OBSERVABILITY_NAMESPACE" "service/$GRAFANA_SERVICE" "$grafana_port" 80)"
+curl --fail --silent --show-error -u "$auth" "http://127.0.0.1:${grafana_port}/api/datasources" | jq -e 'length >= 2' >/dev/null
+curl --fail --silent --show-error -u "$auth" "http://127.0.0.1:${grafana_port}/api/search?query=UTCP" | jq -e 'length >= 2' >/dev/null
+printf 'grafana_persistence_proof=passed\n'

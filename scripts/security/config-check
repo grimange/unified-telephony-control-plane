@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/security/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+render_security > "$tmp"
+kube apply --dry-run=server -f "$tmp" >/dev/null
+
+for ns in "${UTCP_NAMESPACES[@]}"; do
+  awk -v ns="$ns" '
+    /^---$/ {if (found_name && found_enforce && found_version) ok=1; found_name=0; found_enforce=0; found_version=0}
+    $0 == "  name: " ns {found_name=1}
+    $0 == "    pod-security.kubernetes.io/enforce: restricted" {found_enforce=1}
+    $0 == "    pod-security.kubernetes.io/enforce-version: v1.35" {found_version=1}
+    END {
+      if (found_name && found_enforce && found_version) ok=1
+      exit ok ? 0 : 1
+    }
+  ' "$tmp" || {
+    printf 'missing restricted Pod Security enforce label for namespace: %s\n' "$ns" >&2
+    exit 1
+  }
+done
+
+for ns in "${DEFAULT_DENY_NAMESPACES[@]}"; do
+  awk -v ns="$ns" '
+    $0 == "kind: NetworkPolicy" {in_np=1; found_name=0; found_ns=0; found_ingress=0; found_egress=0; found_empty=0}
+    in_np && $0 == "  name: default-deny" {found_name=1}
+    in_np && $0 == "  namespace: " ns {found_ns=1}
+    in_np && $0 == "  podSelector: {}" {found_empty=1}
+    in_np && $0 ~ /^[[:space:]]+- Ingress$/ {found_ingress=1}
+    in_np && $0 ~ /^[[:space:]]+- Egress$/ {found_egress=1}
+    /^---$/ && in_np {
+      if (found_name && found_ns && found_empty && found_ingress && found_egress) ok=1
+      in_np=0
+    }
+    END {
+      if (in_np && found_name && found_ns && found_empty && found_ingress && found_egress) ok=1
+      exit ok ? 0 : 1
+    }
+  ' "$tmp" || {
+    printf 'missing default deny ingress/egress policy for namespace: %s\n' "$ns" >&2
+    exit 1
+  }
+done
+
+for required in \
+  allow-gateway-required-traffic \
+  allow-web-from-gateway \
+  allow-api-required-traffic \
+  allow-worker-required-egress \
+  allow-scheduler-required-egress \
+  allow-migration-required-egress \
+  allow-postgres-from-backend-roles \
+  allow-redis-from-backend-roles \
+  allow-traefik-required-traffic; do
+  grep -Fq "name: $required" "$tmp" || {
+    printf 'missing required K3 NetworkPolicy: %s\n' "$required" >&2
+    exit 1
+  }
+done
+
+if grep -Eiq '18080|18443|5060|5061|10000|20000|sip|sips|rtp|rtpengine|asterisk|freeswitch|kamailio' "$tmp"; then
+  printf 'security manifests include custom edge or telephony material\n' >&2
+  exit 1
+fi
+
+if grep -Eq 'cidr: (0\.0\.0\.0/0|::/0)' "$tmp" "$SECURITY_APISERVER_TEMPLATE"; then
+  printf 'security manifests include broad CIDR egress\n' >&2
+  exit 1
+fi
+
+if kubectl kustomize "$ROOT/infrastructure/kubernetes/overlays/local" | grep -Eq 'automountServiceAccountToken: true|serviceAccountName: default'; then
+  printf 'K1 application manifests enable token automount or use default ServiceAccount\n' >&2
+  exit 1
+fi
+
+if kubectl kustomize "$ROOT/infrastructure/kubernetes/overlays/local" | grep -Eq 'cluster-admin|\*'; then
+  printf 'K1 application overlay includes broad RBAC material\n' >&2
+  exit 1
+fi
+
+printf 'K3 security config check passed\n'

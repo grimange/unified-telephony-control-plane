@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/gateway/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+download_gateway_crds
+
+kube apply -f "$CRD_MANIFEST"
+
+for crd in \
+  backendtlspolicies.gateway.networking.k8s.io \
+  gatewayclasses.gateway.networking.k8s.io \
+  gateways.gateway.networking.k8s.io \
+  grpcroutes.gateway.networking.k8s.io \
+  httproutes.gateway.networking.k8s.io \
+  listenersets.gateway.networking.k8s.io \
+  referencegrants.gateway.networking.k8s.io \
+  tlsroutes.gateway.networking.k8s.io; do
+  kube wait --for=condition=Established "crd/$crd" --timeout=120s
+done
+
+for prohibited_crd in \
+  tcproutes.gateway.networking.k8s.io \
+  udproutes.gateway.networking.k8s.io; do
+  if kube get "crd/$prohibited_crd" >/dev/null 2>&1; then
+    printf 'experimental or telephony-oriented Gateway API route CRD unexpectedly exists: %s\n' "$prohibited_crd" >&2
+    exit 1
+  fi
+done
+
+printf 'Gateway API Standard CRDs installed from pinned artifact: %s\n' "$GATEWAY_API_VERSION"

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+KUBECONFIG_FILE="$ROOT/.runtime/kubeconfig/utcp-local.yaml"
+
+if KUBECONFIG="$KUBECONFIG_FILE" kubectl --context k3d-utcp-local -n utcp-platform exec deploy/api -- \
+  php artisan list --raw 2>/dev/null | grep -qx 'runtime-engine:status'; then
+  KUBECONFIG="$KUBECONFIG_FILE" kubectl --context k3d-utcp-local -n utcp-platform exec deploy/api -- \
+    php artisan runtime-engine:status
+  exit 0
+fi
+
+printf 'runtime_engine_status_source=kubernetes-postgresql\n'
+printf '\n== C3 process roles ==\n'
+KUBECONFIG="$KUBECONFIG_FILE" kubectl --context k3d-utcp-local -n utcp-platform get deployments \
+  control-plane-outbox-dispatcher telephony-command-worker telephony-event-normalizer telephony-reconciler
+
+printf '\n== C3 schema presence ==\n'
+KUBECONFIG="$KUBECONFIG_FILE" kubectl --context k3d-utcp-local -n utcp-data exec -i statefulset/postgres -- \
+  psql -U utcp -d utcp -v ON_ERROR_STOP=1 -At <<'SQL'
+select required.table_name || '=' || case when tables.table_name is null then 'missing' else 'present' end
+from (values
+  ('runtime_operations'),
+  ('outbox_messages'),
+  ('runtime_event_receipts'),
+  ('runtime_observations'),
+  ('projection_checkpoints'),
+  ('reconciliation_states')
+) as required(table_name)
+left join information_schema.tables as tables
+  on tables.table_schema = 'public'
+ and tables.table_name = required.table_name;
+SQL

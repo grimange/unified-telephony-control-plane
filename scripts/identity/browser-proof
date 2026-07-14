@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PROOF_DIR="/tmp/utcp-c1-browser-proof"
+SPEC="$PROOF_DIR/browser-proof.spec.cjs"
+CONFIG="$PROOF_DIR/playwright.config.cjs"
+PACKAGE_JSON="$PROOF_DIR/package.json"
+CREDS="$ROOT/.runtime/identity/bootstrap.json"
+
+[ -s "$CREDS" ] || { printf 'missing identity bootstrap credentials file: %s\n' "$CREDS" >&2; exit 1; }
+mkdir -p "$ROOT/.runtime/identity" "$PROOF_DIR"
+
+if [ ! -s "$PACKAGE_JSON" ]; then
+  cat > "$PACKAGE_JSON" <<'JSON'
+{
+  "private": true,
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  }
+}
+JSON
+fi
+
+if [ ! -x "$PROOF_DIR/node_modules/.bin/playwright" ]; then
+  npm --prefix "$PROOF_DIR" install --no-audit --no-fund --ignore-scripts
+fi
+
+"$PROOF_DIR/node_modules/.bin/playwright" install chromium >/dev/null
+
+cat > "$SPEC" <<'SPEC'
+const { test, expect } = require('@playwright/test');
+const fs = require('node:fs');
+
+const root = process.env.UTCP_ROOT;
+const creds = JSON.parse(fs.readFileSync(`${root}/.runtime/identity/bootstrap.json`, 'utf8'));
+const baseUrl = 'https://app.utcp.local.test';
+
+test.use({ ignoreHTTPSErrors: true });
+
+test('natural identity login and administration proof', async ({ page, context }) => {
+  const suffix = `${Date.now()}`;
+  const tenantSlug = `browser-proof-${suffix}`;
+  const tenantName = `Browser Proof ${suffix}`;
+  const userEmail = `browser-proof-${suffix}@utcp.local.test`;
+  const userName = `Browser Proof User ${suffix}`;
+
+  await context.clearCookies();
+  await page.goto(`${baseUrl}/login`);
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+
+  await page.getByLabel('Email').fill(creds.email);
+  await page.getByLabel('Password').fill(creds.password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+
+  await expect(page.getByText('UTCP administration')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Tenants' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Users' })).toBeVisible();
+
+  const tenantSelect = page.getByLabel('Active tenant');
+  await expect(tenantSelect).toBeVisible();
+  await tenantSelect.selectOption({ index: 1 });
+  await expect(page.getByRole('button', { name: 'Memberships' })).toBeVisible();
+
+  await page.getByRole('button', { name: 'Tenants' }).click();
+  await page.getByPlaceholder('tenant-slug').fill(tenantSlug);
+  await page.getByPlaceholder('Tenant display name').fill(tenantName);
+  await page.getByRole('button', { name: 'Create tenant' }).click();
+  await expect(page.getByText(tenantSlug)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Users' }).click();
+  await page.getByPlaceholder('user@example.test').fill(userEmail);
+  await page.getByPlaceholder('Display name').fill(userName);
+  await page.getByRole('button', { name: 'Create user' }).click();
+  await expect(page.getByText(userEmail)).toBeVisible();
+  const temporaryPassword = await page.locator('.one-time-secret code').textContent();
+  expect(temporaryPassword).toBeTruthy();
+
+  await page.getByRole('button', { name: 'Memberships' }).click();
+  await page.locator('select').nth(1).selectOption({ label: userName });
+  await page.locator('select').nth(2).selectOption('tenant-admin');
+  await page.getByRole('button', { name: 'Add membership' }).click();
+  await expect(page.getByText(userEmail)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Log out' }).click();
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+  await page.goto(`${baseUrl}/admin/users`);
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+
+  await page.getByLabel('Email').fill(userEmail);
+  await page.getByLabel('Password').fill(temporaryPassword.trim());
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByRole('heading', { name: 'Change password' })).toBeVisible();
+  await page.getByLabel('Current password').fill(temporaryPassword.trim());
+  await page.getByLabel('New password').fill(`BrowserProof${suffix}!`);
+  await page.getByRole('button', { name: 'Save password' }).click();
+  await expect(page.getByText('UTCP administration')).toBeVisible();
+  await page.getByLabel('Active tenant').selectOption({ index: 1 });
+  await expect(page.getByRole('button', { name: 'Memberships' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Users' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Log out' }).click();
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+});
+SPEC
+
+cat > "$CONFIG" <<'CONFIG'
+module.exports = {
+  testDir: '/tmp/utcp-c1-browser-proof',
+  testMatch: /browser-proof\.spec\.cjs$/,
+  use: {
+    browserName: 'chromium',
+    launchOptions: {
+      args: ['--host-resolver-rules=MAP app.utcp.local.test 127.0.0.1'],
+    },
+  },
+};
+CONFIG
+
+UTCP_ROOT="$ROOT" "$PROOF_DIR/node_modules/.bin/playwright" test --config "$CONFIG" --reporter=line
+printf 'identity browser proof passed\n'

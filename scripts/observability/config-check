@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/observability/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
+helm_cmd template kube-prometheus-stack kube-prometheus-stack \
+  --repo "$KUBE_PROMETHEUS_STACK_HELM_REPOSITORY" \
+  --version "$KUBE_PROMETHEUS_STACK_HELM_CHART_VERSION" \
+  --namespace "$OBSERVABILITY_NAMESPACE" \
+  --values "$OBSERVABILITY_HELM_DIR/kube-prometheus-stack-values.yaml" > "$tmpdir/kps.yaml"
+
+helm_cmd template loki loki \
+  --repo "$LOKI_HELM_REPOSITORY" \
+  --version "$LOKI_HELM_CHART_VERSION" \
+  --namespace "$OBSERVABILITY_NAMESPACE" \
+  --values "$OBSERVABILITY_HELM_DIR/loki-values.yaml" > "$tmpdir/loki.yaml"
+
+helm_cmd template alloy alloy \
+  --repo "$ALLOY_HELM_REPOSITORY" \
+  --version "$ALLOY_HELM_CHART_VERSION" \
+  --namespace "$OBSERVABILITY_NAMESPACE" \
+  --values "$OBSERVABILITY_HELM_DIR/alloy-values.yaml" > "$tmpdir/alloy.yaml"
+
+render_observability > "$tmpdir/utcp-observability.yaml"
+
+for file in "$tmpdir"/*.yaml; do
+  if grep -Eiq '18080|18443|5060|5061|10000|20000|rtpengine|asterisk|freeswitch|kamailio|reverb|tempo|jaeger|zipkin|opentelemetry|name: (sip|sips|rtp)|port: (5060|5061)' "$file"; then
+    printf 'K4 manifests include forbidden custom edge, tracing, or telephony material: %s\n' "$file" >&2
+    exit 1
+  fi
+  if grep -Eiq 'hostPath:|hostNetwork: true|hostPID: true|hostIPC: true|privileged: true|/var/run/docker.sock|containerd.sock' "$file"; then
+    printf 'K4 manifests include forbidden host or privilege settings: %s\n' "$file" >&2
+    exit 1
+  fi
+  if grep -Eq 'type: (NodePort|LoadBalancer)|hostPort:' "$file"; then
+    printf 'K4 manifests include public observability exposure: %s\n' "$file" >&2
+    exit 1
+  fi
+  if grep -Eq 'cidr: (0\.0\.0\.0/0|::/0)' "$file"; then
+    printf 'K4 manifests include broad CIDR egress: %s\n' "$file" >&2
+    exit 1
+  fi
+done
+
+for image in \
+  "$PROMETHEUS_OPERATOR_IMAGE" \
+  "$PROMETHEUS_IMAGE" \
+  "$ALERTMANAGER_IMAGE" \
+  "$GRAFANA_IMAGE" \
+  "$GRAFANA_SIDECAR_IMAGE" \
+  "$KUBE_STATE_METRICS_IMAGE" \
+  "$LOKI_IMAGE" \
+  "$ALLOY_IMAGE"; do
+  if printf '%s\n' "$image" | grep -Eq ':latest$|:(main|master)$|:$'; then
+    printf 'K4 image is not pinned: %s\n' "$image" >&2
+    exit 1
+  fi
+done
+
+jq empty \
+  "$ROOT/infrastructure/kubernetes/observability/dashboards/platform-overview.yaml" \
+  >/dev/null 2>&1 || true
+for dashboard in "$ROOT"/infrastructure/kubernetes/observability/dashboards/*.yaml; do
+  awk '/^[[:space:]]+[a-zA-Z0-9_.-]+\.json: \|/{json=1; next} json {sub(/^    /, ""); print}' "$dashboard" | jq empty
+done
+
+grep -Fq 'retention: 72h' "$OBSERVABILITY_HELM_DIR/kube-prometheus-stack-values.yaml"
+grep -Fq 'retention_period: 72h' "$OBSERVABILITY_HELM_DIR/loki-values.yaml"
+grep -Fq 'grafana_dashboard: "1"' "$tmpdir/utcp-observability.yaml"
+grep -Fq 'kind: PrometheusRule' "$tmpdir/utcp-observability.yaml"
+grep -Fq 'kind: ServiceMonitor' "$tmpdir/utcp-observability.yaml"
+grep -Fq 'allow-traefik-metrics-from-prometheus' "$tmpdir/utcp-observability.yaml"
+
+if grep -E 'verbs:[[:space:]]*\[.*"\*"' "$tmpdir"/*.yaml >/dev/null; then
+  printf 'K4 RBAC includes wildcard verbs\n' >&2
+  exit 1
+fi
+if grep -E 'resources:[[:space:]]*\[.*"\*"' "$tmpdir"/*.yaml >/dev/null; then
+  printf 'K4 RBAC includes wildcard resources\n' >&2
+  exit 1
+fi
+
+if kube get crd servicemonitors.monitoring.coreos.com prometheusrules.monitoring.coreos.com >/dev/null 2>&1; then
+  kube apply --dry-run=server -f "$tmpdir/utcp-observability.yaml" >/dev/null
+fi
+
+printf 'K4 observability config check passed\n'

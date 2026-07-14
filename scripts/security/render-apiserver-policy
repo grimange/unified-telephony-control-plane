@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/security/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+render_apiserver_policy
+render_service_clusterip_policy

@@ -1,0 +1,298 @@
+fullnameOverride: utcp-monitoring
+
+crds:
+  enabled: true
+
+defaultRules:
+  create: false
+
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    replicas: 1
+    retention: 48h
+    image:
+      registry: quay.io
+      repository: prometheus/alertmanager
+      tag: v0.33.1
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 256Mi
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+      seccompProfile:
+        type: RuntimeDefault
+    containers:
+      - name: alertmanager
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: local-null
+      group_by:
+        - alertname
+        - namespace
+        - component
+      group_wait: 15s
+      group_interval: 1m
+      repeat_interval: 3h
+    receivers:
+      - name: local-null
+      - name: "null"
+
+grafana:
+  enabled: true
+  defaultDashboardsEnabled: false
+  replicas: 1
+  image:
+    registry: docker.io
+    repository: grafana/grafana
+    tag: 13.1.0
+  admin:
+    existingSecret: utcp-grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  testFramework:
+    enabled: false
+  initChownData:
+    enabled: false
+  persistence:
+    enabled: true
+    type: pvc
+    storageClassName: local-path
+    accessModes:
+      - ReadWriteOnce
+    size: 512Mi
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 472
+    runAsGroup: 472
+    fsGroup: 472
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  extraEmptyDirMounts:
+    - name: grafana-tmp
+      mountPath: /tmp
+      readOnly: false
+    - name: grafana-home-tmp
+      mountPath: /var/lib/grafana/plugins
+      readOnly: false
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          uid: Prometheus
+          type: prometheus
+          access: proxy
+          url: http://utcp-monitoring-prometheus:9090
+          isDefault: true
+        - name: Loki
+          uid: Loki
+          type: loki
+          access: proxy
+          url: http://loki:3100
+        - name: Alertmanager
+          uid: Alertmanager
+          type: alertmanager
+          access: proxy
+          url: http://utcp-monitoring-alertmanager:9093
+          jsonData:
+            implementation: prometheus
+  sidecar:
+    image:
+      registry: docker.io
+      repository: kiwigrid/k8s-sidecar
+      tag: 2.8.1
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+      seccompProfile:
+        type: RuntimeDefault
+    dashboards:
+      enabled: true
+      searchNamespace: utcp-observability
+      label: grafana_dashboard
+      labelValue: "1"
+      folder: /tmp/dashboards
+      provider:
+        disableDelete: false
+        foldersFromFilesStructure: true
+    datasources:
+      enabled: false
+  service:
+    type: ClusterIP
+  ingress:
+    enabled: false
+
+kubeStateMetrics:
+  enabled: true
+
+kube-state-metrics:
+  fullnameOverride: utcp-kube-state-metrics
+  image:
+    registry: registry.k8s.io
+    repository: kube-state-metrics/kube-state-metrics
+    tag: v2.19.1
+  serviceAccount:
+    automountServiceAccountToken: true
+  prometheus:
+    monitor:
+      enabled: true
+  securityContext:
+    enabled: true
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    readOnlyRootFilesystem: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+nodeExporter:
+  enabled: false
+
+kubeApiServer:
+  enabled: false
+kubelet:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+coreDns:
+  enabled: false
+kubeDns:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+prometheusOperator:
+  enabled: true
+  admissionWebhooks:
+    enabled: false
+  tls:
+    enabled: false
+  image:
+    registry: quay.io
+    repository: prometheus-operator/prometheus-operator
+    tag: v0.92.1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  serviceAccount:
+    automountServiceAccountToken: true
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65534
+    runAsGroup: 65534
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile:
+      type: RuntimeDefault
+  prometheusConfigReloader:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+prometheus:
+  enabled: true
+  prometheusSpec:
+    replicas: 1
+    retention: 72h
+    image:
+      registry: quay.io
+      repository: prometheus/prometheus
+      tag: v3.13.1-distroless
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+            - utcp-observability
+            - traefik-system
+    podMonitorNamespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+            - utcp-observability
+            - traefik-system
+    ruleNamespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: utcp-observability
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 2Gi
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 65534
+      runAsGroup: 65534
+      fsGroup: 65534
+      seccompProfile:
+        type: RuntimeDefault
+    containers:
+      - name: prometheus
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+  service:
+    type: ClusterIP

@@ -1,0 +1,112 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: utcp-platform-alerts
+  namespace: utcp-observability
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: observability
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: utcp.platform
+      rules:
+        - alert: UTCPDeploymentUnavailable
+          expr: kube_deployment_status_replicas_available{namespace="utcp-platform",deployment=~"api|gateway|web|worker|scheduler"} < 1
+          for: 2m
+          labels:
+            severity: critical
+            component: platform
+            namespace: utcp-platform
+          annotations:
+            summary: Required UTCP deployment is unavailable.
+        - alert: UTCPRuntimeEngineWorkerUnavailable
+          expr: kube_deployment_status_replicas_available{namespace="utcp-platform",deployment=~"control-plane-outbox-dispatcher|telephony-command-worker|telephony-event-normalizer|telephony-reconciler"} < 1
+          for: 2m
+          labels:
+            severity: critical
+            component: runtime-engine
+            namespace: utcp-platform
+          annotations:
+            summary: Required UTCP runtime-engine process role is unavailable.
+        - alert: UTCPStatefulSetUnavailable
+          expr: kube_statefulset_status_replicas_ready{namespace="utcp-data",statefulset=~"postgres|redis"} < 1
+          for: 2m
+          labels:
+            severity: critical
+            component: data
+            namespace: utcp-data
+          annotations:
+            summary: Required UTCP data StatefulSet is unavailable.
+        - alert: UTCPContainerRestarting
+          expr: increase(kube_pod_container_status_restarts_total{namespace=~"utcp-platform|utcp-data|traefik-system|utcp-observability"}[15m]) > 2
+          for: 5m
+          labels:
+            severity: warning
+            component: kubernetes
+            namespace: "{{ $labels.namespace }}"
+          annotations:
+            summary: A UTCP container restarted repeatedly.
+        - alert: UTCPMigrationJobFailed
+          expr: kube_job_status_failed{namespace="utcp-platform",job_name=~"migrate.*"} > 0
+          for: 1m
+          labels:
+            severity: critical
+            component: migration
+            namespace: utcp-platform
+          annotations:
+            summary: The UTCP migration Job failed.
+        - alert: UTCPPvcPending
+          expr: kube_persistentvolumeclaim_status_phase{namespace=~"utcp-data|utcp-observability",phase="Pending"} > 0
+          for: 2m
+          labels:
+            severity: warning
+            component: storage
+            namespace: "{{ $labels.namespace }}"
+          annotations:
+            summary: A UTCP PVC is pending.
+        - alert: UTCPTargetDown
+          expr: up{namespace=~"utcp-observability|traefik-system"} == 0
+          for: 2m
+          labels:
+            severity: warning
+            component: observability
+            namespace: "{{ $labels.namespace }}"
+          annotations:
+            summary: An expected observability target is down.
+        - alert: UTCPTraefikUnavailable
+          expr: kube_deployment_status_replicas_available{namespace="traefik-system",deployment="traefik"} < 1
+          for: 2m
+          labels:
+            severity: critical
+            component: traefik
+            namespace: traefik-system
+          annotations:
+            summary: Traefik is unavailable.
+        - alert: UTCPPrometheusUnavailable
+          expr: kube_statefulset_status_replicas_ready{namespace="utcp-observability",statefulset=~"prometheus-.*"} < 1
+          for: 2m
+          labels:
+            severity: critical
+            component: prometheus
+            namespace: utcp-observability
+          annotations:
+            summary: Prometheus is unavailable.
+        - alert: UTCPLokiUnavailable
+          expr: kube_statefulset_status_replicas_ready{namespace="utcp-observability",statefulset=~"loki.*"} < 1
+          for: 2m
+          labels:
+            severity: critical
+            component: loki
+            namespace: utcp-observability
+          annotations:
+            summary: Loki is unavailable.
+        - alert: UTCPAlloyUnavailable
+          expr: kube_deployment_status_replicas_available{namespace="utcp-observability",deployment=~".*alloy.*"} < 1
+          for: 2m
+          labels:
+            severity: critical
+            component: alloy
+            namespace: utcp-observability
+          annotations:
+            summary: Alloy log collection is unavailable.

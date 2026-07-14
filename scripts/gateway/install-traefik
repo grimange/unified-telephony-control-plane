@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/gateway/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+"$SCRIPT_DIR/config-check" >/dev/null
+
+helm_cmd upgrade --install traefik traefik \
+  --repo "$TRAEFIK_HELM_REPOSITORY" \
+  --version "$TRAEFIK_HELM_CHART_VERSION" \
+  --namespace "$UTCP_GATEWAY_NAMESPACE" \
+  --values "$TRAEFIK_VALUES" \
+  --wait \
+  --timeout 5m
+
+wait_traefik
+image="$(kube -n "$UTCP_GATEWAY_NAMESPACE" get deployment traefik -o jsonpath='{.spec.template.spec.containers[0].image}')"
+if [ "$image" != "$TRAEFIK_PROXY_IMAGE" ]; then
+  printf 'Traefik image mismatch: expected=%s observed=%s\n' "$TRAEFIK_PROXY_IMAGE" "$image" >&2
+  exit 1
+fi
+
+printf 'Traefik installed: chart=%s image=%s\n' "$TRAEFIK_HELM_CHART_VERSION" "$TRAEFIK_PROXY_IMAGE"

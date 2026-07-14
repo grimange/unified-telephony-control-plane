@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/kubernetes/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_registry
+check_k1_tag
+
+for local_image in "$API_LOCAL_IMAGE" "$WEB_LOCAL_IMAGE" "$GATEWAY_LOCAL_IMAGE"; do
+  docker image inspect "$local_image" >/dev/null
+done
+
+docker tag "$API_LOCAL_IMAGE" "$API_HOST_IMAGE"
+docker tag "$WEB_LOCAL_IMAGE" "$WEB_HOST_IMAGE"
+docker tag "$GATEWAY_LOCAL_IMAGE" "$GATEWAY_HOST_IMAGE"
+
+for image in "$API_HOST_IMAGE" "$WEB_HOST_IMAGE" "$GATEWAY_HOST_IMAGE"; do
+  docker push "$image" >/dev/null
+  docker pull "$image" >/dev/null
+  printf 'pushed=%s\n' "$image"
+done

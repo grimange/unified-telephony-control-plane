@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/gateway/lib
+. "$ROOT/scripts/gateway/lib"
+
+CREDS_FILE="$ROOT/.runtime/identity/bootstrap.json"
+[ -s "$CREDS_FILE" ] || { printf 'missing identity bootstrap credentials file: %s\n' "$CREDS_FILE" >&2; exit 1; }
+
+json_value() {
+  php -r '$d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); echo $d[$argv[2]] ?? "";' "$CREDS_FILE" "$1"
+}
+
+json_get() {
+  php -r '$d=json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR); foreach (explode(".", $argv[1]) as $p) { $d = $d[$p] ?? null; } if (is_array($d)) { echo json_encode($d); } else { echo $d; }' "$1"
+}
+
+email="$(json_value email)"
+password="$(json_value password)"
+tenant_slug="$(json_value tenant_slug)"
+cookie_jar="$(mktemp)"
+body_file="$(mktemp)"
+trap 'rm -f "$cookie_jar" "$body_file"' EXIT
+
+base="https://${UTCP_APP_HOSTNAME}"
+curl_base=(curl --silent --show-error --max-time 20 --resolve "${UTCP_APP_HOSTNAME}:${UTCP_EDGE_HTTPS_HOST_PORT}:${UTCP_EDGE_HTTPS_HOST}")
+if [ -s "$TLS_CA_CERT" ] && openssl verify -CAfile "$TLS_CA_CERT" "$TLS_CERT" >/dev/null 2>&1; then
+  curl_base+=(--cacert "$TLS_CA_CERT")
+fi
+
+unauth_code="$("${curl_base[@]}" --output /dev/null --write-out '%{http_code}' "$base/api/v1/auth/session" || true)"
+[ "$unauth_code" = "401" ] || { printf 'unauthenticated session lookup returned %s\n' "$unauth_code" >&2; exit 1; }
+
+csrf_json="$("${curl_base[@]}" --cookie-jar "$cookie_jar" "$base/api/v1/auth/csrf")"
+csrf="$(printf '%s' "$csrf_json" | json_get csrf_token)"
+[ -n "$csrf" ] || { printf 'missing CSRF token\n' >&2; exit 1; }
+
+login_payload="$(php -r 'echo json_encode(["email"=>$argv[1],"password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$email" "$password")"
+login_code="$("${curl_base[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$login_payload" --output "$body_file" --write-out '%{http_code}' "$base/api/v1/auth/login")"
+[ "$login_code" = "200" ] || { printf 'login failed with HTTP %s\n' "$login_code" >&2; cat "$body_file" >&2; exit 1; }
+
+csrf_json="$("${curl_base[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" "$base/api/v1/auth/csrf")"
+csrf="$(printf '%s' "$csrf_json" | json_get csrf_token)"
+[ -n "$csrf" ] || { printf 'missing post-login CSRF token\n' >&2; exit 1; }
+
+session_json="$("${curl_base[@]}" --cookie "$cookie_jar" "$base/api/v1/auth/session")"
+printf '%s' "$session_json" | grep -Fq 'platform.users.manage' || { printf 'platform capability missing\n' >&2; exit 1; }
+tenant_id="$(printf '%s' "$session_json" | php -r '$d=json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR); foreach ($d["memberships"] as $m) { if ($m["slug"] === $argv[1]) { echo $m["tenant_id"]; exit; }}' "$tenant_slug")"
+[ -n "$tenant_id" ] || { printf 'bootstrap tenant not available\n' >&2; exit 1; }
+
+tenant_payload="$(php -r 'echo json_encode(["tenant_id"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$tenant_id")"
+tenant_code="$("${curl_base[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$tenant_payload" --output "$body_file" --write-out '%{http_code}' "$base/api/v1/auth/tenant-context")"
+[ "$tenant_code" = "200" ] || { printf 'tenant selection failed with HTTP %s\n' "$tenant_code" >&2; cat "$body_file" >&2; exit 1; }
+grep -Fq 'tenant.memberships.manage' "$body_file" || { printf 'tenant capability missing\n' >&2; exit 1; }
+
+suffix="$(date +%s)"
+tenant_create_payload="$(php -r 'echo json_encode(["slug"=>"proof-".$argv[1],"display_name"=>"Proof Tenant ".$argv[1]], JSON_UNESCAPED_SLASHES);' "$suffix")"
+tenant_create_code="$("${curl_base[@]}" --cookie "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$tenant_create_payload" --output "$body_file" --write-out '%{http_code}' "$base/api/v1/admin/tenants")"
+[ "$tenant_create_code" = "201" ] || { printf 'tenant create failed with HTTP %s\n' "$tenant_create_code" >&2; cat "$body_file" >&2; exit 1; }
+proof_tenant_id="$(cat "$body_file" | json_get tenant.id)"
+
+user_create_payload="$(php -r 'echo json_encode(["email"=>"proof-user-".$argv[1]."@utcp.local.test","display_name"=>"Proof User ".$argv[1]], JSON_UNESCAPED_SLASHES);' "$suffix")"
+user_create_code="$("${curl_base[@]}" --cookie "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$user_create_payload" --output "$body_file" --write-out '%{http_code}' "$base/api/v1/admin/users")"
+[ "$user_create_code" = "201" ] || { printf 'user create failed with HTTP %s\n' "$user_create_code" >&2; cat "$body_file" >&2; exit 1; }
+proof_user_id="$(cat "$body_file" | json_get user.id)"
+
+membership_payload="$(php -r 'echo json_encode(["user_id"=>$argv[1],"role_key"=>"tenant-member"], JSON_UNESCAPED_SLASHES);' "$proof_user_id")"
+membership_code="$("${curl_base[@]}" --cookie "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$membership_payload" --output "$body_file" --write-out '%{http_code}' "$base/api/v1/admin/memberships")"
+[ "$membership_code" = "201" ] || { printf 'membership create failed with HTTP %s\n' "$membership_code" >&2; cat "$body_file" >&2; exit 1; }
+
+cross_payload="$(php -r 'echo json_encode(["tenant_id"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$proof_tenant_id")"
+cross_code="$("${curl_base[@]}" --cookie "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$cross_payload" --output "$body_file" --write-out '%{http_code}' "$base/api/v1/auth/tenant-context" || true)"
+[ "$cross_code" = "403" ] || { printf 'cross-tenant selection was not denied: HTTP %s\n' "$cross_code" >&2; cat "$body_file" >&2; exit 1; }
+
+logout_code="$("${curl_base[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "X-CSRF-TOKEN: $csrf" --request POST --output "$body_file" --write-out '%{http_code}' "$base/api/v1/auth/logout")"
+[ "$logout_code" = "200" ] || { printf 'logout failed with HTTP %s\n' "$logout_code" >&2; cat "$body_file" >&2; exit 1; }
+post_logout_code="$("${curl_base[@]}" --cookie "$cookie_jar" --output /dev/null --write-out '%{http_code}' "$base/api/v1/auth/session" || true)"
+[ "$post_logout_code" = "401" ] || { printf 'logged out cookie remained valid: HTTP %s\n' "$post_logout_code" >&2; exit 1; }
+
+printf 'identity api proof passed\n'
+printf 'proof_tenant_id=%s\n' "$proof_tenant_id"
+printf 'proof_user_id=%s\n' "$proof_user_id"

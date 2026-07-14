@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/gateway/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+"$ROOT/scripts/k3d/verify" >/dev/null
+"$ROOT/scripts/kubernetes/config-check" >/dev/null
+"$ROOT/scripts/kubernetes/status" >/dev/null
+check_edge_bindings
+"$SCRIPT_DIR/install-crds"
+"$SCRIPT_DIR/install-traefik"
+kube apply -k "$GATEWAY_KUSTOMIZATION"
+"$SCRIPT_DIR/tls-apply"
+wait_gateway
+"$SCRIPT_DIR/status"
+printf 'K2 gateway applied. Proof command: make gateway-proof\n'

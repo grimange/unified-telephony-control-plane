@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+project="${UTCP_CI_COMPOSE_PROJECT_NAME:-utcp-ci}"
+port="${UTCP_CI_GATEWAY_PORT:-18088}"
+default_project="${UTCP_COMPOSE_PROJECT_NAME:-utcp-debug}"
+default_port="${UTCP_GATEWAY_PORT:-18088}"
+
+if [ "$project" = "$default_project" ] || [ "$project" = "utcp" ]; then
+  printf 'refusing to run CI Compose proof against default project name: %s\n' "$project" >&2
+  exit 2
+fi
+
+if [ "$port" = "$default_port" ] && [ "$project" = "$default_project" ]; then
+  printf 'refusing to run CI Compose proof on default gateway port: %s\n' "$port" >&2
+  exit 2
+fi
+
+compose=(docker compose --env-file versions.env --env-file infrastructure/compose/env.example -f infrastructure/compose/compose.yaml -p "$project")
+status=0
+cleanup_status=0
+
+run_ci() {
+  UTCP_COMPOSE_PROJECT_NAME="$project" UTCP_GATEWAY_PORT="$port" ./scripts/compose/compose-proof
+}
+
+run_ci || status=$?
+
+"${compose[@]}" down --volumes --remove-orphans || cleanup_status=$?
+
+if [ "$status" -ne 0 ]; then
+  exit "$status"
+fi
+
+exit "$cleanup_status"

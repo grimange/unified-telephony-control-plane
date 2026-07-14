@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+KUBECONFIG_FILE="$ROOT/.runtime/kubeconfig/utcp-local.yaml"
+
+KUBECONFIG="$KUBECONFIG_FILE" kubectl --context k3d-utcp-local -n utcp-platform exec deploy/api -- \
+  php artisan identity:status

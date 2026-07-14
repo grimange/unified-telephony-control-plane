@@ -1,0 +1,14 @@
+* text=auto eol=lf
+
+*.md text eol=lf
+*.sh text eol=lf
+Makefile text eol=lf
+versions.env text eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.pdf binary
+*.ico binary

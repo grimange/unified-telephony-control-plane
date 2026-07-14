@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+actionlint_bin="$(./scripts/ci/install-actionlint)"
+
+./scripts/ci/check-action-pinning.py
+"$actionlint_bin" .github/workflows/*.yml

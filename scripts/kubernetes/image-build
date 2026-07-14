@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/kubernetes/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+check_k1_tag
+
+docker build \
+  --file "$ROOT/infrastructure/docker/api/Dockerfile" \
+  --target app-prod \
+  --tag "$API_LOCAL_IMAGE" \
+  --build-arg "BUILD_VERSION=${UTCP_CONTRACT_VERSION:-0.1.0-dev}" \
+  --build-arg "BUILD_COMMIT=unknown" \
+  --build-arg "BUILD_CREATED=unknown" \
+  --build-arg "IMAGE_SOURCE=local" \
+  "$ROOT"
+
+docker build \
+  --file "$ROOT/infrastructure/docker/web/Dockerfile" \
+  --target app-prod \
+  --tag "$WEB_LOCAL_IMAGE" \
+  --build-arg "BUILD_VERSION=${UTCP_CONTRACT_VERSION:-0.1.0-dev}" \
+  --build-arg "BUILD_COMMIT=unknown" \
+  --build-arg "BUILD_CREATED=unknown" \
+  --build-arg "IMAGE_SOURCE=local" \
+  "$ROOT"
+
+docker build \
+  --file "$ROOT/infrastructure/docker/gateway/Dockerfile" \
+  --tag "$GATEWAY_LOCAL_IMAGE" \
+  --build-arg "BUILD_VERSION=${UTCP_CONTRACT_VERSION:-0.1.0-dev}" \
+  --build-arg "BUILD_COMMIT=unknown" \
+  --build-arg "BUILD_CREATED=unknown" \
+  --build-arg "IMAGE_SOURCE=local" \
+  "$ROOT"
+
+printf 'K1 images built: %s %s %s\n' "$API_LOCAL_IMAGE" "$WEB_LOCAL_IMAGE" "$GATEWAY_LOCAL_IMAGE"

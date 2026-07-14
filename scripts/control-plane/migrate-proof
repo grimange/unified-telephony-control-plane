@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+project="${UTCP_COMPOSE_PROJECT_NAME:-utcp-control-plane-migrate-$$}"
+compose_file="${COMPOSE_FILE:-infrastructure/compose/compose.yaml}"
+compose_env=(--env-file versions.env --env-file infrastructure/compose/env.example)
+compose=(docker compose "${compose_env[@]}" -f "$compose_file" -p "$project")
+db_name="utcp_c0_migrate_${RANDOM}_$$"
+image="${UTCP_API_IMAGE:-utcp-api:dev}-c0-test"
+cleanup_ran=0
+
+cleanup() {
+  if [ "$cleanup_ran" -eq 0 ]; then
+    cleanup_ran=1
+    "${compose[@]}" exec -T postgres psql -U "${UTCP_POSTGRES_USER:-utcp}" -d postgres -v ON_ERROR_STOP=1 \
+      -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${db_name}'" >/dev/null 2>&1 || true
+    "${compose[@]}" exec -T postgres dropdb -U "${UTCP_POSTGRES_USER:-utcp}" --if-exists "$db_name" >/dev/null 2>&1 || true
+    "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+
+if [ "$project" = "utcp" ] || [ "$project" = "utcp-debug" ]; then
+  printf 'control-plane-migrate-proof requires a disposable Compose PostgreSQL project, got: %s\n' "$project" >&2
+  exit 1
+fi
+
+"${compose[@]}" up -d --wait --wait-timeout 120 postgres
+"${compose[@]}" exec -T postgres createdb -U "${UTCP_POSTGRES_USER:-utcp}" "$db_name"
+
+docker build \
+  --file infrastructure/docker/api/Dockerfile \
+  --target test \
+  --tag "$image" \
+  .
+
+run_artisan() {
+  docker run --rm \
+    --network "${project}_data" \
+    -e APP_ENV=testing \
+    -e APP_KEY="${UTCP_APP_KEY:-base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}" \
+    -e LOG_CHANNEL=stderr \
+    -e DB_CONNECTION=pgsql \
+    -e DB_HOST=postgres \
+    -e DB_PORT=5432 \
+    -e DB_DATABASE="$db_name" \
+    -e DB_USERNAME="${UTCP_POSTGRES_USER:-utcp}" \
+    -e DB_PASSWORD="${UTCP_POSTGRES_PASSWORD:-utcp_local_password}" \
+    -e DB_SSLMODE=disable \
+    -e REDIS_HOST=127.0.0.2 \
+    -e CACHE_STORE=array \
+    -e QUEUE_CONNECTION=sync \
+    "$image" php artisan "$@"
+}
+
+run_artisan migrate --force
+run_artisan migrate --force
+
+"${compose[@]}" exec -T postgres psql -U "${UTCP_POSTGRES_USER:-utcp}" -d "$db_name" -v ON_ERROR_STOP=1 <<'SQL'
+SELECT to_regclass('public.runtime_operations') IS NOT NULL AS runtime_operations_exists;
+SELECT to_regclass('public.control_plane_outbox_messages') IS NOT NULL AS outbox_exists;
+SELECT to_regclass('public.control_plane_inbox_messages') IS NOT NULL AS inbox_exists;
+SELECT to_regclass('public.control_plane_idempotency_records') IS NOT NULL AS idempotency_exists;
+SELECT to_regclass('public.control_plane_audit_records') IS NOT NULL AS audit_exists;
+SELECT indexname FROM pg_indexes WHERE indexname IN (
+  'runtime_ops_claim_idx',
+  'runtime_ops_idempotency_unique',
+  'inbox_consumer_key_unique',
+  'idempotency_scope_key_unique',
+  'audit_subject_idx'
+) ORDER BY indexname;
+SELECT tgname FROM pg_trigger WHERE tgname = 'control_plane_audit_no_update';
+SQL
+
+printf 'control-plane-migrate-proof: empty PostgreSQL migration and repeated lifecycle passed without Redis authority\n'

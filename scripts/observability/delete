@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/observability/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+
+kube delete -k "$OBSERVABILITY_KUSTOMIZATION" --ignore-not-found >/dev/null || true
+kube delete -f "$OBSERVABILITY_APISERVER_POLICY" --ignore-not-found >/dev/null 2>&1 || true
+helm_cmd uninstall alloy -n "$OBSERVABILITY_NAMESPACE" --ignore-not-found >/dev/null || true
+helm_cmd uninstall loki -n "$OBSERVABILITY_NAMESPACE" --ignore-not-found >/dev/null || true
+helm_cmd uninstall kube-prometheus-stack -n "$OBSERVABILITY_NAMESPACE" --ignore-not-found >/dev/null || true
+kube -n "$OBSERVABILITY_NAMESPACE" delete secret utcp-grafana-admin --ignore-not-found >/dev/null || true
+printf 'K4 observability resources removed. Observability PVCs are retained unless explicitly deleted by the operator.\n'

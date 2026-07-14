@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/local/lib
+. "$ROOT/scripts/local/lib"
+
+printf 'canonical_integrated_local_runtime=utcp-local Kubernetes\n'
+printf 'disposable_validation_runtime=Docker Compose\n'
+printf '\n== k3d ==\n'
+k3d cluster list || true
+printf '\n== edge ownership ==\n'
+docker ps --filter 'name=k3d-utcp-local-serverlb' --format '{{.Names}}\t{{.Ports}}' || true
+printf '\n== kubernetes workloads ==\n'
+"$ROOT/scripts/kubernetes/status" || true
+printf '\n== gateway ==\n'
+"$ROOT/scripts/gateway/status" || true
+printf '\n== security ==\n'
+"$ROOT/scripts/security/status" || true
+printf '\n== observability ==\n'
+"$ROOT/scripts/observability/status" || true
+printf '\n== runtime engine ==\n'
+"$ROOT/scripts/runtime-engine/status" || true
+printf '\n== prepared certificate ==\n'
+if [ -s "$ROOT/.runtime/tls/utcp-local.crt" ]; then
+  openssl x509 -in "$ROOT/.runtime/tls/utcp-local.crt" -noout -fingerprint -sha256 -subject -issuer -dates || true
+else
+  printf 'prepared_certificate=missing\n'
+fi
+printf '\n== compose authority drift ==\n'
+report_persistent_compose_projects || true

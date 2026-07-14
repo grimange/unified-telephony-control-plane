@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/security/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+trap cleanup_proof_pods EXIT
+cleanup_proof_pods
+
+probe_code='
+$host=getenv("TARGET_HOST");
+$port=(int)getenv("TARGET_PORT");
+$mode=getenv("PROBE_MODE") ?: "allow";
+$ip=gethostbyname($host);
+if ($ip === $host && !filter_var($host, FILTER_VALIDATE_IP)) {
+    fwrite(STDERR, "dns_failed host=$host\n");
+    exit(20);
+}
+$errno=0;
+$errstr="";
+$socket=@fsockopen($host, $port, $errno, $errstr, 2.0);
+if ($mode === "deny") {
+    if ($socket) {
+        fclose($socket);
+        fwrite(STDERR, "unexpected_connect host=$host port=$port resolved=$ip\n");
+        exit(30);
+    }
+    echo "connect_denied host=$host port=$port resolved=$ip errno=$errno\n";
+    exit(0);
+}
+if (!$socket) {
+    fwrite(STDERR, "connect_failed host=$host port=$port resolved=$ip errno=$errno error=$errstr\n");
+    exit(10);
+}
+fclose($socket);
+echo "connect_ok host=$host port=$port resolved=$ip\n";
+'
+
+run_probe() {
+  local name="$1"
+  local namespace="$2"
+  local role="$3"
+  local host="$4"
+  local port="$5"
+  local mode="$6"
+  local tmp
+  local labels="app.kubernetes.io/part-of=utcp,app.kubernetes.io/component=security-proof,utcp.io/security-proof=k3"
+  if [ "$namespace" = "traefik-system" ]; then
+    labels="$labels,app.kubernetes.io/name=traefik"
+  else
+    labels="$labels,utcp.io/network-role=$role"
+  fi
+  printf 'proof %s: %s/%s -> %s:%s expect=%s\n' "$name" "$namespace" "$role" "$host" "$port" "$mode"
+  tmp="$(mktemp)"
+  {
+    printf 'apiVersion: v1\n'
+    printf 'kind: Pod\n'
+    printf 'metadata:\n'
+    printf '  name: k3-proof-%s\n' "$name"
+    printf '  namespace: %s\n' "$namespace"
+    printf '  labels:\n'
+    printf '%s\n' "$labels" | tr ',' '\n' | while IFS='=' read -r key value; do
+      printf '    %s: "%s"\n' "$key" "$value"
+    done
+    printf 'spec:\n'
+    printf '  restartPolicy: Never\n'
+    printf '  automountServiceAccountToken: false\n'
+    printf '  securityContext:\n'
+    printf '    runAsNonRoot: true\n'
+    printf '    runAsUser: 33\n'
+    printf '    runAsGroup: 33\n'
+    printf '    seccompProfile:\n'
+    printf '      type: RuntimeDefault\n'
+    printf '  containers:\n'
+    printf '    - name: k3-proof-%s\n' "$name"
+    printf '      image: %s\n' "$SECURITY_PROOF_IMAGE"
+    printf '      imagePullPolicy: IfNotPresent\n'
+    printf '      command:\n'
+    printf '        - php\n'
+    printf '        - -r\n'
+    printf '        - |\n'
+    printf '%s\n' "$probe_code" | sed 's/^/          /'
+    printf '      env:\n'
+    printf '        - name: TARGET_HOST\n'
+    printf '          value: "%s"\n' "$host"
+    printf '        - name: TARGET_PORT\n'
+    printf '          value: "%s"\n' "$port"
+    printf '        - name: PROBE_MODE\n'
+    printf '          value: "%s"\n' "$mode"
+    printf '      securityContext:\n'
+    printf '        allowPrivilegeEscalation: false\n'
+    printf '        capabilities:\n'
+    printf '          drop:\n'
+    printf '            - ALL\n'
+  } > "$tmp"
+  kube apply -f "$tmp" >/dev/null
+  rm -f "$tmp"
+  local deadline=$((SECONDS + 90))
+  local phase
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    phase="$(kube -n "$namespace" get pod "k3-proof-$name" -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+    [ "$phase" = "Succeeded" ] && break
+    if [ "$phase" = "Failed" ]; then
+      kube -n "$namespace" logs "pod/k3-proof-$name" >&2 || true
+      exit 1
+    fi
+    sleep 2
+  done
+  if [ "$phase" != "Succeeded" ]; then
+    kube -n "$namespace" describe pod "k3-proof-$name" >&2 || true
+    kube -n "$namespace" logs "pod/k3-proof-$name" >&2 || true
+    exit 1
+  fi
+  kube -n "$namespace" logs "pod/k3-proof-$name"
+  kube -n "$namespace" delete pod "k3-proof-$name" --wait=false >/dev/null
+}
+
+exec_http_probe() {
+  local name="$1"
+  local namespace="$2"
+  local resource="$3"
+  local host="$4"
+  local port="$5"
+  local path="$6"
+  printf 'proof %s: %s/%s -> http://%s:%s%s expect=allow\n' "$name" "$namespace" "$resource" "$host" "$port" "$path"
+  kube -n "$namespace" exec "$resource" -- wget -q -T 3 -O- "http://$host:$port$path" >/dev/null
+  printf 'connect_ok host=%s port=%s\n' "$host" "$port"
+}
+
+exec_https_probe() {
+  local name="$1"
+  local namespace="$2"
+  local resource="$3"
+  local host="$4"
+  local path="$5"
+  printf 'proof %s: %s/%s -> https://%s%s expect=allow\n' "$name" "$namespace" "$resource" "$host" "$path"
+  kube -n "$namespace" exec "$resource" -- sh -c "wget -q -T 3 --no-check-certificate -S -O- https://$host$path 2>&1 | grep -Eq 'HTTP/|Unauthorized|Forbidden|401|403'"
+  printf 'connect_ok host=%s port=443\n' "$host"
+}
+
+exec_tcp_probe() {
+  local name="$1"
+  local namespace="$2"
+  local resource="$3"
+  local host="$4"
+  local port="$5"
+  printf 'proof %s: %s/%s -> %s:%s expect=allow\n' "$name" "$namespace" "$resource" "$host" "$port"
+  kube -n "$namespace" exec "$resource" -- nc -z -w 3 "$host" "$port"
+  printf 'connect_ok host=%s port=%s\n' "$host" "$port"
+}
+
+exec_php_tcp_probe() {
+  local name="$1"
+  local namespace="$2"
+  local resource="$3"
+  local host="$4"
+  local port="$5"
+  printf 'proof %s: %s/%s -> %s:%s expect=allow\n' "$name" "$namespace" "$resource" "$host" "$port"
+  kube -n "$namespace" exec "$resource" -- env TARGET_HOST="$host" TARGET_PORT="$port" php -r '
+$host=getenv("TARGET_HOST");
+$port=(int)getenv("TARGET_PORT");
+$errno=0;
+$errstr="";
+$socket=@fsockopen($host, $port, $errno, $errstr, 3.0);
+if (!$socket) {
+    fwrite(STDERR, "connect_failed host=$host port=$port errno=$errno error=$errstr\n");
+    exit(10);
+}
+fclose($socket);
+echo "connect_ok host=$host port=$port\n";
+'
+}
+
+psa_reject() {
+  local ns="$1"
+  local tmp
+  tmp="$(mktemp)"
+  cat > "$tmp" <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: k3-psa-reject
+  namespace: $ns
+  labels:
+    utcp.io/security-proof: k3
+spec:
+  automountServiceAccountToken: false
+  containers:
+    - name: reject
+      image: $SECURITY_PROOF_IMAGE
+      command: ["sh", "-c", "true"]
+      securityContext:
+        privileged: true
+EOF
+  if kube apply --dry-run=server -f "$tmp" >/tmp/utcp-k3-psa.out 2>&1; then
+    cat /tmp/utcp-k3-psa.out >&2
+    rm -f "$tmp" /tmp/utcp-k3-psa.out
+    printf 'Pod Security admission did not reject privileged proof Pod in namespace: %s\n' "$ns" >&2
+    exit 1
+  fi
+  grep -Eiq 'violates PodSecurity|restricted|privileged' /tmp/utcp-k3-psa.out || {
+    cat /tmp/utcp-k3-psa.out >&2
+    rm -f "$tmp" /tmp/utcp-k3-psa.out
+    printf 'Pod Security rejection did not include expected restricted-policy evidence for namespace: %s\n' "$ns" >&2
+    exit 1
+  }
+  printf 'psa_rejected namespace=%s\n' "$ns"
+  rm -f "$tmp" /tmp/utcp-k3-psa.out
+}
+
+for ns in "${UTCP_NAMESPACES[@]}"; do
+  psa_reject "$ns"
+done
+
+for pair in \
+  utcp-data/postgres \
+  utcp-data/redis \
+  utcp-platform/gateway \
+  utcp-platform/web \
+  utcp-platform/api; do
+  ensure_service_endpoints "${pair%/*}" "${pair#*/}"
+done
+
+postgres_ip="$(service_endpoint_ip utcp-data postgres)"
+redis_ip="$(service_endpoint_ip utcp-data redis)"
+gateway_ip="$(service_endpoint_ip utcp-platform gateway)"
+web_ip="$(service_endpoint_ip utcp-platform web)"
+api_ip="$(service_endpoint_ip utcp-platform api)"
+apiserver_ip="$(service_cluster_ip default kubernetes)"
+
+exec_http_probe traefik-gateway traefik-system deploy/traefik "$gateway_ip" 8080 /healthz
+exec_https_probe traefik-apiserver traefik-system deploy/traefik "$apiserver_ip" /version
+exec_http_probe gateway-web utcp-platform deploy/gateway "$web_ip" 8080 /
+exec_tcp_probe gateway-api utcp-platform deploy/gateway "$api_ip" 9000
+exec_php_tcp_probe api-postgres utcp-platform deploy/api "$postgres_ip" 5432
+exec_php_tcp_probe api-redis utcp-platform deploy/api "$redis_ip" 6379
+exec_php_tcp_probe worker-postgres utcp-platform deploy/worker "$postgres_ip" 5432
+exec_php_tcp_probe worker-redis utcp-platform deploy/worker "$redis_ip" 6379
+exec_php_tcp_probe scheduler-postgres utcp-platform deploy/scheduler "$postgres_ip" 5432
+exec_php_tcp_probe scheduler-redis utcp-platform deploy/scheduler "$redis_ip" 6379
+
+run_probe web-postgres-deny utcp-platform web "$postgres_ip" 5432 deny
+run_probe web-redis-deny utcp-platform web "$redis_ip" 6379 deny
+run_probe gateway-postgres-deny utcp-platform gateway "$postgres_ip" 5432 deny
+run_probe gateway-redis-deny utcp-platform gateway "$redis_ip" 6379 deny
+run_probe traefik-postgres-deny traefik-system traefik "$postgres_ip" 5432 deny
+run_probe traefik-redis-deny traefik-system traefik "$redis_ip" 6379 deny
+run_probe generic-postgres-deny utcp-platform generic "$postgres_ip" 5432 deny
+run_probe generic-redis-deny utcp-platform generic "$redis_ip" 6379 deny
+run_probe runtime-gateway-deny utcp-runtime generic "$gateway_ip" 8080 deny
+run_probe runtime-api-deny utcp-runtime generic "$api_ip" 9000 deny
+run_probe observability-gateway-deny utcp-observability generic "$gateway_ip" 8080 deny
+run_probe observability-api-deny utcp-observability generic "$api_ip" 9000 deny
+run_probe data-gateway-deny utcp-data generic "$gateway_ip" 8080 deny
+
+"$ROOT/scripts/gateway/proof" >/dev/null
+"$ROOT/scripts/kubernetes/proof" >/dev/null
+
+cleanup_proof_pods
+if kube get pods -A -l "$SECURITY_PROOF_LABEL" --no-headers 2>/dev/null | grep -q .; then
+  printf 'security proof resources remain after cleanup\n' >&2
+  kube get pods -A -l "$SECURITY_PROOF_LABEL" >&2
+  exit 1
+fi
+
+printf 'security proof passed\n'

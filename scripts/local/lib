@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+COMPOSE_FILE="$ROOT/infrastructure/compose/compose.yaml"
+
+persistent_compose_projects() {
+  docker compose ls --format json 2>/dev/null |
+    tr '{' '\n' |
+    awk -v cfg="$COMPOSE_FILE" '
+      $0 ~ cfg {
+        name = $0
+        status = $0
+        sub(/^.*"Name":"?/, "", name)
+        sub(/"?,.*$/, "", name)
+        sub(/^.*"Status":"?/, "", status)
+        sub(/"?,.*$/, "", status)
+        if (name !~ /^utcp-compose-proof-/ && name != "utcp-ci") {
+          printf "%s\t%s\n", name, status
+        }
+      }
+    '
+}
+
+report_persistent_compose_projects() {
+  local projects
+  projects="$(persistent_compose_projects || true)"
+  if [ -n "$projects" ]; then
+    printf 'persistent UTCP Compose project detected:\n'
+    printf '%s\n' "$projects"
+    return 1
+  fi
+  printf 'persistent_utcp_compose=none\n'
+}
+
+require_no_persistent_compose() {
+  local projects
+  projects="$(persistent_compose_projects || true)"
+  if [ -n "$projects" ]; then
+    printf 'persistent UTCP Compose project makes local proof ambiguous:\n' >&2
+    printf '%s\n' "$projects" >&2
+    printf 'Stop it explicitly before using Kubernetes as the canonical local runtime.\n' >&2
+    exit 1
+  fi
+}

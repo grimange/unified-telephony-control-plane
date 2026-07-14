@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/gateway/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+check_edge_bindings
+wait_traefik
+wait_gateway
+
+if pgrep -af 'kubectl.*port-forward.*(18089|gateway)' >/dev/null 2>&1; then
+  printf 'unexpected kubectl port-forward process exists\n' >&2
+  pgrep -af 'kubectl.*port-forward.*(18089|gateway)' >&2 || true
+  exit 1
+fi
+
+redirect_location="$(curl --silent --show-error --output /dev/null --write-out '%{redirect_url}' --max-time 10 \
+  --resolve "${UTCP_APP_HOSTNAME}:${UTCP_EDGE_HTTP_HOST_PORT}:${UTCP_EDGE_HTTP_HOST}" \
+  "http://${UTCP_APP_HOSTNAME}/api/version?proof=1")"
+if [ "$redirect_location" != "https://${UTCP_APP_HOSTNAME}/api/version?proof=1" ]; then
+  printf 'HTTP redirect mismatch: %s\n' "$redirect_location" >&2
+  exit 1
+fi
+
+healthz="$(curl_tls "$UTCP_APP_HOSTNAME" /healthz)"
+root="$(curl_tls "$UTCP_APP_HOSTNAME" /)"
+live="$(curl_tls "$UTCP_APP_HOSTNAME" /api/health/live)"
+ready="$(curl_tls "$UTCP_APP_HOSTNAME" /api/health/ready)"
+version="$(curl_tls "$UTCP_APP_HOSTNAME" /api/version)"
+root_alias="$(curl_tls "$UTCP_ROOT_HOSTNAME" /)"
+
+printf '%s\n' "$healthz" | grep -Fq 'ok'
+printf '%s\n' "$root" | grep -Fq 'id="app"'
+printf '%s\n' "$root" | grep -Fq '/assets/index-'
+printf '%s\n' "$live" | grep -Fq '"status":"ok"'
+printf '%s\n' "$ready" | grep -Fq '"status":"ready"'
+printf '%s\n' "$ready" | grep -Fq '"postgres":"ok"'
+printf '%s\n' "$ready" | grep -Fq '"redis":"ok"'
+printf '%s\n' "$version" | grep -Fq '"service":"utcp-api"'
+printf '%s\n' "$root_alias" | grep -Fq 'id="app"'
+
+for host in unknown.utcp.local.test "$UTCP_RESERVED_SIP_HOSTNAME" "$UTCP_RESERVED_EVENTS_HOSTNAME"; do
+  code="$(curl --silent --show-error --output /tmp/utcp-gateway-reserved.out --write-out '%{http_code}' --max-time 10 \
+    --resolve "${host}:${UTCP_EDGE_HTTP_HOST_PORT}:${UTCP_EDGE_HTTP_HOST}" \
+    "http://${host}/" || true)"
+  if [ "$code" = "200" ] && grep -Fq 'id="app"' /tmp/utcp-gateway-reserved.out; then
+    printf 'reserved or unknown hostname routed to application: %s\n' "$host" >&2
+    exit 1
+  fi
+done
+rm -f /tmp/utcp-gateway-reserved.out
+
+dashboard_args=(--silent --show-error --output /tmp/utcp-gateway-dashboard.out --write-out '%{http_code}' --max-time 15)
+if [ -s "$TLS_CA_CERT" ] && openssl verify -CAfile "$TLS_CA_CERT" "$TLS_CERT" >/dev/null 2>&1; then
+  dashboard_args+=(--cacert "$TLS_CA_CERT")
+fi
+dashboard_code="$(curl "${dashboard_args[@]}" \
+  --resolve "${UTCP_APP_HOSTNAME}:${UTCP_EDGE_HTTPS_HOST_PORT}:${UTCP_EDGE_HTTPS_HOST}" \
+  "https://${UTCP_APP_HOSTNAME}/api/rawdata" || true)"
+if [ "$dashboard_code" = "200" ] && grep -Eiq 'traefik|routers|middlewares' /tmp/utcp-gateway-dashboard.out; then
+  printf 'Traefik dashboard/API appears externally reachable\n' >&2
+  exit 1
+fi
+rm -f /tmp/utcp-gateway-dashboard.out
+
+if kube get service -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"="}{.spec.type}{"\n"}{end}' | grep -E 'utcp-(platform|data)/.*=(NodePort|LoadBalancer)' | grep -q .; then
+  printf 'K1 service is directly exposed\n' >&2
+  exit 1
+fi
+
+if kube -n utcp-runtime get pods,deployments,statefulsets,daemonsets,jobs,cronjobs --ignore-not-found --no-headers 2>/dev/null | grep -q .; then
+  printf 'utcp-runtime is not empty\n' >&2
+  exit 1
+fi
+
+if docker ps --filter 'name=k3d-utcp-local-serverlb' --format '{{.Ports}}' | grep -Eq '18080|18443'; then
+  printf 'custom UTCP edge ports remain published\n' >&2
+  docker ps --filter 'name=k3d-utcp-local-serverlb' --format '{{.Names}}\t{{.Ports}}' >&2
+  exit 1
+fi
+
+printf 'gateway proof passed\n'
+printf 'http_redirect=%s\n' "$redirect_location"
+printf 'healthz=%s\n' "$healthz"
+printf 'live=%s\n' "$live"
+printf 'ready=%s\n' "$ready"
+printf 'version=%s\n' "$version"
+cert_summary

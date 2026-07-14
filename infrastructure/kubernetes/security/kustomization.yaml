@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespaces/pod-security-labels.yaml
+  - platform/default-deny.yaml
+  - platform/allow-gateway.yaml
+  - platform/allow-web.yaml
+  - platform/allow-api.yaml
+  - platform/allow-worker.yaml
+  - platform/allow-scheduler.yaml
+  - platform/allow-migration.yaml
+  - data/default-deny.yaml
+  - data/allow-postgres.yaml
+  - data/allow-redis.yaml
+  - traefik/default-deny.yaml
+  - traefik/allow-traefik.yaml
+  - empty-namespaces/default-deny-runtime.yaml
+  - empty-namespaces/default-deny-observability.yaml

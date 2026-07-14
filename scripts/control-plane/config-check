@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+required_files=(
+  "apps/api/app/ControlPlane/Shared/ExecutionContext.php"
+  "apps/api/app/ControlPlane/RuntimeOperations/RuntimeOperationRepository.php"
+  "apps/api/app/ControlPlane/Messaging/OutboxRepository.php"
+  "apps/api/app/ControlPlane/Messaging/InboxRepository.php"
+  "apps/api/app/ControlPlane/Idempotency/IdempotencyStore.php"
+  "apps/api/app/ControlPlane/Audit/AuditRepository.php"
+  "apps/api/database/migrations/2026_07_14_090000_create_control_plane_kernel_tables.php"
+)
+
+for file in "${required_files[@]}"; do
+  test -f "$file"
+done
+
+printf 'control-plane-config-check: required C0 files exist\n'
+
+if rg -n --glob '!tests/**' --glob '!vendor/**' --glob '!database/migrations/**' --glob '*.php' --glob '*.yaml' --glob '*.yml' \
+  'Asterisk|FreeSwitch|FreeSWITCH|Kamailio|rtpengine|SimulatorRuntimeAdapter|FakeAsterisk|FakeFreeSwitch|SimulatedConference|SimulatedRegistration|AriController|\bARI\b|\bESL\b|\bSIP\b|\bWSS\b' \
+  apps/api/app apps/api/routes infrastructure/kubernetes >/tmp/utcp-c0-forbidden.txt; then
+  printf 'control-plane-config-check: forbidden runtime-specific vocabulary found in production code:\n' >&2
+  cat /tmp/utcp-c0-forbidden.txt >&2
+  exit 1
+fi
+
+printf 'control-plane-config-check: no runtime-specific production vocabulary found\n'
+
+if rg -n '/api/(ari|asterisk|freeswitch|runtime-nodes|conferences|telephony-sessions)' apps/api/routes >/tmp/utcp-c0-routes.txt; then
+  printf 'control-plane-config-check: forbidden runtime-specific public route found:\n' >&2
+  cat /tmp/utcp-c0-routes.txt >&2
+  exit 1
+fi
+
+printf 'control-plane-config-check: no runtime-specific public routes found\n'
+
+if rg -n 'asterisk-ari-events|freeswitch-esl-events|ari-worker|esl-worker' infrastructure/kubernetes >/tmp/utcp-c0-workloads.txt; then
+  printf 'control-plane-config-check: forbidden future process role deployed in Kubernetes manifests:\n' >&2
+  cat /tmp/utcp-c0-workloads.txt >&2
+  exit 1
+fi
+
+printf 'control-plane-config-check: no future process roles deployed\n'
+
+rg -n 'runtime_ops_claim_idx|runtime_ops_idempotency_unique|inbox_consumer_key_unique|idempotency_scope_key_unique|control_plane_audit_no_update' \
+  apps/api/database/migrations/2026_07_14_090000_create_control_plane_kernel_tables.php >/dev/null
+rg -n -F 'PayloadSafety::assertSafe' apps/api/app/ControlPlane >/dev/null
+rg -n -F 'PayloadSafety::redact' apps/api/app/ControlPlane >/dev/null
+rg -n -F 'StableJson::fingerprint' apps/api/app/ControlPlane >/dev/null
+rg -n -F 'lock(' apps/api/app/ControlPlane >/dev/null
+
+printf 'control-plane-config-check: migration indexes, safety checks, and locking primitives are present\n'
+
+find apps/api/app/ControlPlane apps/api/tests/Feature/ControlPlane apps/api/tests/Unit/ControlPlane -name '*.php' -print0 \
+  | xargs -0 -n1 php -l >/dev/null
+
+printf 'control-plane-config-check: PHP syntax valid\n'
+printf 'control-plane-config-check: PASS\n'

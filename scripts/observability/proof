@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/observability/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+
+prom_port=19090
+loki_port=19100
+grafana_port=19300
+alert_port=19093
+prom_pid=""
+loki_pid=""
+grafana_pid=""
+alert_pid=""
+cleanup() {
+  stop_port_forward "$prom_pid"
+  stop_port_forward "$loki_pid"
+  stop_port_forward "$grafana_pid"
+  stop_port_forward "$alert_pid"
+  kube -n "$OBSERVABILITY_NAMESPACE" delete prometheusrule k4-proof-alert --ignore-not-found >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+wait_workloads
+
+prom_pid="$(port_forward "$OBSERVABILITY_NAMESPACE" service/utcp-monitoring-prometheus "$prom_port" 9090)"
+loki_pid="$(port_forward "$OBSERVABILITY_NAMESPACE" service/loki "$loki_port" 3100)"
+grafana_pid="$(port_forward "$OBSERVABILITY_NAMESPACE" "service/$GRAFANA_SERVICE" "$grafana_port" 80)"
+alert_pid="$(port_forward "$OBSERVABILITY_NAMESPACE" service/utcp-monitoring-alertmanager "$alert_port" 9093)"
+
+curl --fail --silent --show-error "http://127.0.0.1:${prom_port}/-/ready" >/dev/null
+prometheus_query "$prom_port" 'up' | jq -e '.status == "success" and (.data.result | length > 0)' >/dev/null
+prometheus_query "$prom_port" 'kube_deployment_status_replicas_available{namespace="utcp-platform"}' | jq -e '.data.result | length > 0' >/dev/null
+prometheus_query "$prom_port" 'kube_statefulset_status_replicas_ready{namespace="utcp-data"}' | jq -e '.data.result | length > 0' >/dev/null
+
+"$ROOT/scripts/gateway/proof" >/dev/null
+sleep 5
+prometheus_query "$prom_port" 'traefik_service_requests_total' | jq -e '.data.result | length > 0' >/dev/null
+printf 'metrics_proof=passed\n'
+
+headers="$(mktemp)"
+body="$(mktemp)"
+version_ca_cert="$ROOT/.runtime/tls/utcp-local-ca.crt"
+version_leaf_cert="$ROOT/.runtime/tls/utcp-local.crt"
+version_curl_args=(--fail --silent --show-error --resolve "app.utcp.local.test:443:127.0.0.1" -D "$headers" -o "$body")
+if [ -s "$version_ca_cert" ] && openssl verify -CAfile "$version_ca_cert" "$version_leaf_cert" >/dev/null 2>&1; then
+  version_curl_args+=(--cacert "$version_ca_cert")
+fi
+curl "${version_curl_args[@]}" "https://app.utcp.local.test/api/version"
+request_id="$(awk 'tolower($1) == "x-request-id:" {gsub("\r", "", $2); print $2; exit}' "$headers")"
+rm -f "$headers" "$body"
+if ! printf '%s\n' "$request_id" | grep -Eq '^[A-Fa-f0-9]{32}$'; then
+  printf 'missing or invalid X-Request-ID from gateway/API response: %s\n' "$request_id" >&2
+  exit 1
+fi
+
+deadline=$((SECONDS + 120))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  if loki_query "$loki_port" "{namespace=\"utcp-platform\"} |= \"$request_id\"" | jq -e '.data.result | length > 0' >/dev/null; then
+    break
+  fi
+  sleep 5
+done
+loki_query "$loki_port" "{namespace=\"utcp-platform\"} |= \"$request_id\"" | jq -e '.data.result | length > 0' >/dev/null
+if loki_query "$loki_port" "{namespace=\"utcp-platform\"} |= \"$request_id\" |~ \"(?i)(authorization|cookie|password|secret|token|request_body|response_body)\"" | jq -e '.data.result | length > 0' >/dev/null; then
+  printf 'sensitive field appeared in request-correlated logs\n' >&2
+  exit 1
+fi
+for selector in \
+  '{namespace="utcp-platform",container="api"}' \
+  '{namespace="utcp-platform",container="worker"}' \
+  '{namespace="utcp-platform",container="scheduler"}' \
+  '{namespace="utcp-platform",container="gateway"}' \
+  '{namespace="traefik-system",container="traefik"}'; do
+  loki_query "$loki_port" "$selector" | jq -e '.data.result | length > 0' >/dev/null
+done
+if loki_query "$loki_port" "{namespace=\"utcp-platform\"}" | jq -e '.data.result[].stream | has("request_id")' >/dev/null; then
+  printf 'request_id appeared as a Loki label\n' >&2
+  exit 1
+fi
+printf 'log_ingestion_proof=passed request_id=%s\n' "$request_id"
+
+auth="$(grafana_auth)"
+curl --fail --silent --show-error -u "$auth" "http://127.0.0.1:${grafana_port}/api/datasources" | jq -e 'map(.name) | index("Prometheus") and index("Loki") and index("Alertmanager")' >/dev/null
+curl --fail --silent --show-error -u "$auth" "http://127.0.0.1:${grafana_port}/api/search?query=UTCP" | jq -e 'map(.uid) | index("utcp-platform-overview") and index("utcp-workload-logs")' >/dev/null
+printf 'grafana_proof=passed\n'
+
+cat <<'YAML' | kube apply -f - >/dev/null
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: k4-proof-alert
+  namespace: utcp-observability
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: observability-proof
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: utcp.k4.proof
+      rules:
+        - alert: UTCPK4SyntheticProof
+          expr: vector(1)
+          for: 0m
+          labels:
+            severity: warning
+            component: observability-proof
+            namespace: utcp-observability
+          annotations:
+            summary: Temporary K4 synthetic proof alert.
+YAML
+
+deadline=$((SECONDS + 180))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  if curl --silent --show-error "http://127.0.0.1:${alert_port}/api/v2/alerts?active=true&silenced=false&inhibited=false" | jq -e '.[] | select(.labels.alertname == "UTCPK4SyntheticProof")' >/dev/null; then
+    break
+  fi
+  sleep 5
+done
+curl --fail --silent --show-error "http://127.0.0.1:${alert_port}/api/v2/alerts?active=true&silenced=false&inhibited=false" | jq -e '.[] | select(.labels.alertname == "UTCPK4SyntheticProof")' >/dev/null
+kube -n "$OBSERVABILITY_NAMESPACE" delete prometheusrule k4-proof-alert >/dev/null
+deadline=$((SECONDS + 420))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  if ! curl --silent --show-error "http://127.0.0.1:${alert_port}/api/v2/alerts?active=true&silenced=false&inhibited=false" | jq -e '.[] | select(.labels.alertname == "UTCPK4SyntheticProof")' >/dev/null; then
+    break
+  fi
+  sleep 5
+done
+if curl --silent --show-error "http://127.0.0.1:${alert_port}/api/v2/alerts?active=true&silenced=false&inhibited=false" | jq -e '.[] | select(.labels.alertname == "UTCPK4SyntheticProof")' >/dev/null; then
+  printf 'K4 synthetic proof alert remained after cleanup\n' >&2
+  exit 1
+fi
+printf 'synthetic_alert_proof=passed\n'
+
+"$ROOT/scripts/security/proof" >/dev/null
+"$ROOT/scripts/gateway/proof" >/dev/null
+printf 'K4 observability proof passed\n'

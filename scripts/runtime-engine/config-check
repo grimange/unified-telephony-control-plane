@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+fail() {
+  printf 'runtime engine config check failed: %s\n' "$1" >&2
+  exit 1
+}
+
+for file in \
+  apps/api/config/runtime_engine.php \
+  apps/api/database/migrations/2026_07_14_160000_create_runtime_engine_tables.php \
+  apps/api/app/RuntimeEngine/Outbox/OutboxDispatcher.php \
+  apps/api/app/RuntimeEngine/Commands/CommandWorker.php \
+  apps/api/app/RuntimeEngine/Events/EventNormalizerWorker.php \
+  apps/api/app/RuntimeEngine/Projection/ProjectionService.php \
+  apps/api/app/RuntimeEngine/Reconciliation/ReconciliationWorker.php \
+  infrastructure/kubernetes/base/platform/outbox-dispatcher-deployment.yaml \
+  infrastructure/kubernetes/base/platform/telephony-command-worker-deployment.yaml \
+  infrastructure/kubernetes/base/platform/telephony-event-normalizer-deployment.yaml \
+  infrastructure/kubernetes/base/platform/telephony-reconciler-deployment.yaml \
+  scripts/gateway/tls-apply
+do
+  [ -s "$file" ] || fail "missing required C3 file: $file"
+done
+
+find apps/api/app/RuntimeEngine -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
+php -l apps/api/config/runtime_engine.php >/dev/null
+php -l apps/api/routes/console.php >/dev/null
+
+php -r '
+if (! function_exists("env")) {
+  function env($key, $default = null) { return $default; }
+}
+$config = require "apps/api/config/runtime_engine.php";
+foreach (["control-plane-outbox-dispatcher","telephony-command-worker","telephony-event-normalizer","telephony-reconciler"] as $role) {
+  if (! in_array($role, $config["roles"], true)) {
+    fwrite(STDERR, "missing C3 role: {$role}\n");
+    exit(1);
+  }
+}
+foreach (["unobserved","unknown","connecting","ready","degraded","unavailable","stale"] as $state) {
+  if (! in_array($state, $config["observed_states"], true)) {
+    fwrite(STDERR, "missing observed state: {$state}\n");
+    exit(1);
+  }
+}
+'
+
+for role in control-plane-outbox-dispatcher telephony-command-worker telephony-event-normalizer telephony-reconciler; do
+  rg -n -- "runtime-engine:|$role" infrastructure/docker/api/entrypoint infrastructure/compose/compose.yaml infrastructure/kubernetes/base/platform >/dev/null ||
+    fail "process role is not wired: $role"
+done
+
+if rg -n "AriController|EslController|ari-worker|esl-worker|asterisk-ari-events|freeswitch-esl-events|FakeAsterisk|FakeFreeSwitch|NullRuntimeAdapter|NoopRuntimeAdapter" apps/api/app apps/api/routes infrastructure/kubernetes infrastructure/compose >/dev/null; then
+  fail "found forbidden runtime-specific worker, listener, fallback adapter, or no-op simulator"
+fi
+
+if rg -n "api/v1/admin/(ari|esl|asterisk|freeswitch)|runtime-commands/execute|/reconcile|/project" apps/api/routes apps/api/app/Http apps/web/src >/dev/null; then
+  fail "found forbidden public C3 management route"
+fi
+
+if rg -n "Http::|curl_init|stream_socket_client|WebSocket|Ratchet|Ari|ARI|ESL|FreeSwitch|Asterisk" apps/api/app/RuntimeEngine >/dev/null; then
+  fail "runtime engine contains live runtime client or vendor-specific implementation"
+fi
+
+if rg -n "ignoreHTTPSErrors|curl -k|--insecure|mkcert -install|openssl req -x509" scripts/gateway Makefile >/dev/null; then
+  fail "TLS lifecycle contains HTTPS bypass, CA install, or local self-signed fallback"
+fi
+
+if rg -n "tenant_id|runtime_node_id|operation_id|event_id|request_id|user_id" infrastructure/kubernetes/observability/alerts apps/api/config/runtime_engine.php >/dev/null; then
+  fail "C3 observability configuration includes high-cardinality labels"
+fi
+
+kubectl kustomize infrastructure/kubernetes/base >/dev/null
+
+printf 'runtime engine config check passed\n'

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+make install
+make repository-hygiene
+make workflow-check
+make test
+make check
+make build
+make container-check
+make security-audit
+./scripts/ci/compose-ci

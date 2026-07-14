@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PROOF_DIR="/tmp/utcp-c2-browser-proof"
+SPEC="$PROOF_DIR/browser-proof.spec.cjs"
+CONFIG="$PROOF_DIR/playwright.config.cjs"
+PACKAGE_JSON="$PROOF_DIR/package.json"
+CREDS="$ROOT/.runtime/identity/bootstrap.json"
+
+[ -s "$CREDS" ] || { printf 'missing identity bootstrap credentials file: %s\n' "$CREDS" >&2; exit 1; }
+mkdir -p "$PROOF_DIR"
+
+if [ ! -s "$PACKAGE_JSON" ]; then
+  cat > "$PACKAGE_JSON" <<'JSON'
+{
+  "private": true,
+  "devDependencies": {
+    "@playwright/test": "1.61.1"
+  }
+}
+JSON
+fi
+
+if [ ! -x "$PROOF_DIR/node_modules/.bin/playwright" ]; then
+  npm --prefix "$PROOF_DIR" install --no-audit --no-fund --ignore-scripts
+fi
+
+"$PROOF_DIR/node_modules/.bin/playwright" install chromium >/dev/null
+
+cat > "$SPEC" <<'SPEC'
+const { test, expect } = require('@playwright/test');
+const fs = require('node:fs');
+
+const root = process.env.UTCP_ROOT;
+const creds = JSON.parse(fs.readFileSync(`${root}/.runtime/identity/bootstrap.json`, 'utf8'));
+const baseUrl = 'https://app.utcp.local.test';
+
+test.use({ ignoreHTTPSErrors: true });
+
+test('natural runtime registry administration proof', async ({ page, context }) => {
+  const suffix = `${Date.now()}`;
+  const secret = `c2-browser-secret-${suffix}`;
+  await context.clearCookies();
+
+  await page.goto(`${baseUrl}/login`);
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+  await page.getByLabel('Email').fill(creds.email);
+  await page.getByLabel('Password').fill(creds.password);
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByText('UTCP administration')).toBeVisible();
+  await page.getByLabel('Active tenant').selectOption({ index: 1 });
+
+  await page.getByRole('button', { name: 'Runtime nodes' }).click();
+  await expect(page.getByRole('heading', { name: 'Runtime nodes' })).toBeVisible();
+  await page.getByPlaceholder('Runtime display name').fill(`C2 Browser Runtime ${suffix}`);
+  await page.getByPlaceholder('runtime-slug').fill(`c2-browser-runtime-${suffix}`);
+  await page.locator('form').filter({ hasText: 'Create runtime node' }).locator('select').nth(0).selectOption('asterisk');
+  await page.locator('form').filter({ hasText: 'Create runtime node' }).locator('select').nth(1).selectOption('asterisk-ari');
+  await page.getByRole('button', { name: 'Create runtime node' }).click();
+  const nodeRow = page.locator('.runtime-row').filter({ hasText: `c2-browser-runtime-${suffix}` });
+  await expect(nodeRow).toBeVisible();
+  await expect(nodeRow.getByText('observed unobserved')).toBeVisible();
+
+  await nodeRow.getByPlaceholder('runtime.local.test').fill('asterisk-control.local.test');
+  await nodeRow.getByPlaceholder('/optional-path').fill('/ari');
+  await nodeRow.getByRole('button', { name: 'Add endpoint' }).click();
+  await expect(nodeRow.getByText('control https://asterisk-control.local.test:8089/ari')).toBeVisible();
+
+  await nodeRow.getByLabel('event.stream').check();
+  await nodeRow.getByLabel('conference.execution').check();
+  await nodeRow.getByRole('button', { name: 'Set capabilities' }).click();
+  await expect(nodeRow.getByText('conference.execution, event.stream')).toBeVisible();
+
+  await nodeRow.getByPlaceholder('identifier').fill('proof-user');
+  await nodeRow.getByPlaceholder('Write-only secret').fill(secret);
+  await nodeRow.getByRole('button', { name: 'Save credential' }).click();
+  await expect(nodeRow.getByText('control-api v1')).toBeVisible();
+  await expect(page.getByText(secret)).toHaveCount(0);
+
+  await nodeRow.getByPlaceholder('Write-only secret').fill(`${secret}-rotated`);
+  await nodeRow.getByRole('button', { name: 'Rotate' }).click();
+  await expect(nodeRow.getByText('control-api v2')).toBeVisible();
+  await expect(page.getByText(secret)).toHaveCount(0);
+
+  await nodeRow.getByRole('button', { name: 'Activate' }).click();
+  await expect(nodeRow.getByText('desired active')).toBeVisible();
+  await expect(nodeRow.getByText('observed unobserved')).toBeVisible();
+  await nodeRow.getByRole('button', { name: 'Disable' }).click();
+  await expect(nodeRow.getByText('desired disabled')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Users' }).click();
+  const memberEmail = `c2-browser-member-${suffix}@utcp.local.test`;
+  await page.getByPlaceholder('user@example.test').fill(memberEmail);
+  await page.getByPlaceholder('Display name').fill(`C2 Browser Member ${suffix}`);
+  await page.getByRole('button', { name: 'Create user' }).click();
+  const temporaryPassword = await page.locator('.one-time-secret code').textContent();
+  expect(temporaryPassword).toBeTruthy();
+
+  await page.getByRole('button', { name: 'Memberships' }).click();
+  await page.locator('select').nth(1).selectOption({ label: `C2 Browser Member ${suffix}` });
+  await page.locator('select').nth(2).selectOption('tenant-member');
+  await page.getByRole('button', { name: 'Add membership' }).click();
+  await expect(page.getByText(memberEmail)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Log out' }).click();
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+  await page.getByLabel('Email').fill(memberEmail);
+  await page.getByLabel('Password').fill(temporaryPassword.trim());
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByRole('heading', { name: 'Change password' })).toBeVisible();
+  await page.getByLabel('Current password').fill(temporaryPassword.trim());
+  await page.getByLabel('New password').fill(`BrowserRuntime${suffix}!`);
+  await page.getByRole('button', { name: 'Save password' }).click();
+  await page.getByLabel('Active tenant').selectOption({ index: 1 });
+  await expect(page.getByRole('button', { name: 'Runtime nodes' })).toHaveCount(0);
+
+  await page.goto(`${baseUrl}/admin/runtime-nodes`);
+  await expect(page.getByRole('button', { name: 'Runtime nodes' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Log out' }).click();
+  await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+});
+SPEC
+
+cat > "$CONFIG" <<'CONFIG'
+module.exports = {
+  testDir: '/tmp/utcp-c2-browser-proof',
+  testMatch: /browser-proof\.spec\.cjs$/,
+  use: {
+    browserName: 'chromium',
+    launchOptions: {
+      args: ['--host-resolver-rules=MAP app.utcp.local.test 127.0.0.1'],
+    },
+  },
+};
+CONFIG
+
+UTCP_ROOT="$ROOT" "$PROOF_DIR/node_modules/.bin/playwright" test --config "$CONFIG" --reporter=line
+printf 'runtime registry browser proof passed\n'

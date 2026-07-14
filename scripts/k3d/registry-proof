@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/k3d/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+"$SCRIPT_DIR/verify" >/dev/null
+
+proof_image="busybox:1.37.0"
+host_registry_ref="${K3D_REGISTRY_HOST}:${K3D_REGISTRY_HOST_PORT}/utcp/k0-proof:1.37.0"
+cluster_registry_ref="${K3D_REGISTRY_NAME}:5000/utcp/k0-proof:1.37.0"
+job_name="utcp-k0-registry-proof"
+namespace="utcp-platform"
+
+cleanup() {
+  kube -n "$namespace" delete job "$job_name" --ignore-not-found >/dev/null 2>&1 || true
+  docker image rm "$host_registry_ref" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+docker pull "$proof_image" >/dev/null
+docker tag "$proof_image" "$host_registry_ref"
+docker push "$host_registry_ref" >/dev/null
+
+cat <<YAML | kube apply -f - >/dev/null
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: $job_name
+  namespace: $namespace
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: k0-registry-proof
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 60
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: utcp
+        app.kubernetes.io/component: k0-registry-proof
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: proof
+          image: $cluster_registry_ref
+          command: ["sh", "-c", "echo k0-registry-proof"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+YAML
+
+kube -n "$namespace" wait --for=condition=Complete "job/$job_name" --timeout=120s >/dev/null
+
+pod_name="$(kube -n "$namespace" get pod -l job-name="$job_name" -o jsonpath='{.items[0].metadata.name}')"
+pulled_image="$(kube -n "$namespace" get pod "$pod_name" -o jsonpath='{.spec.containers[0].image}')"
+if [ "$pulled_image" != "$cluster_registry_ref" ]; then
+  printf 'proof pod image mismatch: %s\n' "$pulled_image" >&2
+  exit 1
+fi
+
+cleanup
+
+if kube -n "$namespace" get job "$job_name" >/dev/null 2>&1; then
+  printf 'proof job cleanup failed\n' >&2
+  exit 1
+fi
+
+printf 'registry proof passed\n'
+printf 'image_pushed=%s\n' "$host_registry_ref"
+printf 'image_pulled=%s\n' "$cluster_registry_ref"

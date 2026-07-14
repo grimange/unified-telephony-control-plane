@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  cd "$script_dir/../.." && pwd
+}
+
+ROOT="$(repo_root)"
+VERSIONS_FILE="$ROOT/versions.env"
+
+# shellcheck disable=SC1090
+. "$VERSIONS_FILE"
+
+K3D_CONTEXT_NAME="${K3D_CONTEXT_NAME:-k3d-utcp-local}"
+KUBECONFIG_FILE="$ROOT/.runtime/kubeconfig/utcp-local.yaml"
+SECURITY_KUSTOMIZATION="$ROOT/infrastructure/kubernetes/security"
+SECURITY_RUNTIME_DIR="$ROOT/.runtime/kubernetes/security"
+SECURITY_APISERVER_TEMPLATE="$SECURITY_KUSTOMIZATION/traefik/allow-apiserver-egress.template.yaml"
+SECURITY_APISERVER_POLICY="$SECURITY_RUNTIME_DIR/traefik-apiserver-egress.yaml"
+SECURITY_SERVICE_TEMPLATE="$SECURITY_KUSTOMIZATION/service-clusterips/allow-service-clusterip-egress.template.yaml"
+SECURITY_SERVICE_POLICY="$SECURITY_RUNTIME_DIR/service-clusterip-egress.yaml"
+SECURITY_PROOF_IMAGE="${SECURITY_PROOF_IMAGE:-utcp-local-registry:5000/utcp/api:0.1.0-k1-dev}"
+SECURITY_PROOF_LABEL="utcp.io/security-proof=k3"
+
+UTCP_NAMESPACES=(utcp-platform utcp-data utcp-runtime utcp-observability traefik-system)
+DEFAULT_DENY_NAMESPACES=(utcp-platform utcp-data utcp-runtime utcp-observability)
+PSA_KEYS=(
+  pod-security.kubernetes.io/enforce
+  pod-security.kubernetes.io/enforce-version
+  pod-security.kubernetes.io/audit
+  pod-security.kubernetes.io/audit-version
+  pod-security.kubernetes.io/warn
+  pod-security.kubernetes.io/warn-version
+)
+
+required_tools() {
+  local missing=0
+  for tool in kubectl awk grep sed docker; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      printf 'missing required K3 tool: %s\n' "$tool" >&2
+      missing=1
+    fi
+  done
+  if [ "$missing" -ne 0 ]; then
+    exit 1
+  fi
+  if ! kubectl kustomize --help >/dev/null 2>&1; then
+    printf 'missing required K3 capability: kubectl kustomize\n' >&2
+    exit 1
+  fi
+}
+
+kube() {
+  KUBECONFIG="$KUBECONFIG_FILE" kubectl --context "$K3D_CONTEXT_NAME" "$@"
+}
+
+ensure_kubeconfig() {
+  if [ ! -s "$KUBECONFIG_FILE" ]; then
+    printf 'repository kubeconfig is missing: %s\n' "$KUBECONFIG_FILE" >&2
+    exit 1
+  fi
+}
+
+render_security() {
+  kubectl kustomize "$SECURITY_KUSTOMIZATION"
+}
+
+ensure_cluster() {
+  required_tools
+  ensure_kubeconfig
+  "$ROOT/scripts/k3d/verify" >/dev/null
+}
+
+service_cluster_ip() {
+  local namespace="$1"
+  local service="$2"
+  kube -n "$namespace" get service "$service" -o jsonpath='{.spec.clusterIP}'
+}
+
+ensure_service_endpoints() {
+  local namespace="$1"
+  local service="$2"
+  if ! kube -n "$namespace" get endpoints "$service" -o jsonpath='{.subsets[*].addresses[*].ip}' | grep -q .; then
+    printf 'service has no ready endpoints: %s/%s\n' "$namespace" "$service" >&2
+    exit 1
+  fi
+}
+
+service_endpoint_ip() {
+  local namespace="$1"
+  local service="$2"
+  local ip
+  ip="$(kube -n "$namespace" get endpoints "$service" -o jsonpath='{.subsets[0].addresses[0].ip}')"
+  if ! printf '%s\n' "$ip" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+    printf 'service endpoint is not a single IPv4 address: %s/%s -> %s\n' "$namespace" "$service" "$ip" >&2
+    exit 1
+  fi
+  printf '%s\n' "$ip"
+}
+
+service_endpoint_port() {
+  local namespace="$1"
+  local service="$2"
+  local port
+  port="$(kube -n "$namespace" get endpoints "$service" -o jsonpath='{.subsets[0].ports[0].port}')"
+  if ! printf '%s\n' "$port" | grep -Eq '^[0-9]+$'; then
+    printf 'service endpoint port is not numeric: %s/%s -> %s\n' "$namespace" "$service" "$port" >&2
+    exit 1
+  fi
+  printf '%s\n' "$port"
+}
+
+render_apiserver_policy() {
+  mkdir -p "$SECURITY_RUNTIME_DIR"
+  local ip endpoint_ip endpoint_port
+  ip="$(service_cluster_ip default kubernetes)"
+  endpoint_ip="$(service_endpoint_ip default kubernetes)"
+  endpoint_port="$(service_endpoint_port default kubernetes)"
+  if ! printf '%s\n' "$ip" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+    printf 'Kubernetes API Service ClusterIP is not a single IPv4 address: %s\n' "$ip" >&2
+    exit 1
+  fi
+  sed \
+    -e "s#__KUBERNETES_API_CIDR__#${ip}/32#g" \
+    -e "s#__KUBERNETES_API_ENDPOINT_CIDR__#${endpoint_ip}/32#g" \
+    -e "s#__KUBERNETES_API_ENDPOINT_PORT__#${endpoint_port}#g" \
+    "$SECURITY_APISERVER_TEMPLATE" > "$SECURITY_APISERVER_POLICY"
+  printf 'rendered Traefik Kubernetes API egress policy for service=%s/32:443 endpoint=%s/32:%s\n' \
+    "$ip" "$endpoint_ip" "$endpoint_port"
+}
+
+render_service_clusterip_policy() {
+  mkdir -p "$SECURITY_RUNTIME_DIR"
+  local dns_ip gateway_ip web_ip api_ip postgres_ip redis_ip
+  dns_ip="$(service_cluster_ip kube-system kube-dns)"
+  gateway_ip="$(service_cluster_ip utcp-platform gateway)"
+  web_ip="$(service_cluster_ip utcp-platform web)"
+  api_ip="$(service_cluster_ip utcp-platform api)"
+  postgres_ip="$(service_cluster_ip utcp-data postgres)"
+  redis_ip="$(service_cluster_ip utcp-data redis)"
+  for ip in "$dns_ip" "$gateway_ip" "$web_ip" "$api_ip" "$postgres_ip" "$redis_ip"; do
+    if ! printf '%s\n' "$ip" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+      printf 'Service ClusterIP is not a single IPv4 address: %s\n' "$ip" >&2
+      exit 1
+    fi
+  done
+  sed \
+    -e "s#__DNS_SERVICE_CIDR__#${dns_ip}/32#g" \
+    -e "s#__GATEWAY_SERVICE_CIDR__#${gateway_ip}/32#g" \
+    -e "s#__WEB_SERVICE_CIDR__#${web_ip}/32#g" \
+    -e "s#__API_SERVICE_CIDR__#${api_ip}/32#g" \
+    -e "s#__POSTGRES_SERVICE_CIDR__#${postgres_ip}/32#g" \
+    -e "s#__REDIS_SERVICE_CIDR__#${redis_ip}/32#g" \
+    "$SECURITY_SERVICE_TEMPLATE" > "$SECURITY_SERVICE_POLICY"
+  printf 'rendered K1 Service ClusterIP egress policy dns=%s gateway=%s web=%s api=%s postgres=%s redis=%s\n' \
+    "$dns_ip" "$gateway_ip" "$web_ip" "$api_ip" "$postgres_ip" "$redis_ip"
+}
+
+cleanup_proof_pods() {
+  local ns
+  for ns in utcp-platform utcp-data utcp-runtime utcp-observability traefik-system; do
+    kube -n "$ns" delete pod -l "$SECURITY_PROOF_LABEL" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+  done
+}

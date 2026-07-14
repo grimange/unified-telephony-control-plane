@@ -1,0 +1,43 @@
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+auth.json
+
+# Dependency directories
+/vendor/
+node_modules/
+
+# Build and runtime output
+/.runtime/
+/public/build/
+/dist/
+/build/
+/coverage/
+/storage/pail/
+.phpunit.result.cache
+npm-debug.log*
+yarn-error.log*
+
+# Editor and tool state
+.idea/
+.vscode/
+.phpactor.json
+.claude/
+.codex/
+.agents/
+
+# OS and language caches
+.DS_Store
+Thumbs.db
+__pycache__/
+*.py[cod]
+
+# Local VM/dev tooling
+/.vagrant/
+Homestead.yaml
+Homestead.json

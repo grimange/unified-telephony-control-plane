@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+required_docs=(
+  "README.md"
+  "CONTRIBUTING.md"
+  "SECURITY.md"
+  "docs/architecture/overview.md"
+  "docs/architecture/authority-boundaries.md"
+  "docs/roadmap/implementation-roadmap.md"
+  "docs/roadmap/phase-status.md"
+  "infrastructure/kubernetes/README.md"
+  "docs/provenance.md"
+)
+
+required_adrs=(
+  "docs/decisions/ADR-001-modular-monolith.md"
+  "docs/decisions/ADR-002-compose-and-kubernetes.md"
+  "docs/decisions/ADR-003-kustomize-and-helm.md"
+  "docs/decisions/ADR-004-traefik-web-ingress.md"
+  "docs/decisions/ADR-005-simulator-first.md"
+  "docs/decisions/ADR-006-hybrid-deployment-targets.md"
+  "docs/decisions/ADR-007-postgresql-canonical-redis-transient.md"
+  "docs/decisions/ADR-008-container-process-contract.md"
+  "docs/decisions/ADR-009-local-compose-gateway-topology.md"
+)
+
+for path in "${required_docs[@]}" "${required_adrs[@]}"; do
+  if [ ! -s "$path" ]; then
+    printf 'missing required documentation: %s\n' "$path" >&2
+    exit 1
+  fi
+done
+
+declared_phase="$(sed -n 's/^UTCP_PHASE=//p' versions.env | tail -n 1)"
+if [ "$declared_phase" != "C3" ]; then
+  printf 'UTCP_PHASE must match the authoritative completed phase C3, found: %s\n' "$declared_phase" >&2
+  exit 1
+fi
+
+if ! grep -Fq '| C3 Command, event, projection, and reconciliation engine | Complete |' docs/roadmap/phase-status.md; then
+  printf 'phase-status document does not mark C3 complete while UTCP_PHASE=%s\n' "$declared_phase" >&2
+  exit 1
+fi
+
+scripts/local/config-check
+
+while IFS= read -r path; do
+  if [ "$path" = "versions.env" ]; then
+    continue
+  fi
+
+  case "$path" in
+    *.env.example|*/.env.example)
+      continue
+      ;;
+  esac
+
+  case "$path" in
+    *.env|*.env.*|*id_rsa*|*id_dsa*|*id_ecdsa*|*id_ed25519*|*.pem|*.p12|*.pfx|*secret*key*|*private*key*)
+      printf 'likely secret filename is tracked: %s\n' "$path" >&2
+      exit 1
+      ;;
+  esac
+done < <(git ls-files --cached --others --exclude-standard)
+
+printf 'repository hygiene checks passed\n'

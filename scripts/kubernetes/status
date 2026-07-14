@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/kubernetes/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+
+printf 'context=%s\n' "$K3D_CONTEXT_NAME"
+printf 'kubeconfig=%s\n' "$KUBECONFIG_FILE"
+printf '\nData StatefulSets:\n'
+kube -n "$K8S_DATA_NAMESPACE" get statefulsets,pods,services,pvc -o wide
+printf '\nPlatform workloads:\n'
+kube -n "$K8S_PLATFORM_NAMESPACE" get deployments,pods,services,job -o wide
+printf '\nImages:\n'
+kube -n "$K8S_PLATFORM_NAMESPACE" get deployment api worker scheduler web gateway -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].image}{"\t"}{.spec.template.spec.containers[0].args}{"\n"}{end}'
+printf '\nService exposure:\n'
+kube get service -n "$K8S_DATA_NAMESPACE" -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,PORTS:.spec.ports[*].port --no-headers
+kube get service -n "$K8S_PLATFORM_NAMESPACE" -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,PORTS:.spec.ports[*].port --no-headers

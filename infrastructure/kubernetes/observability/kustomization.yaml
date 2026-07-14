@@ -1,0 +1,9 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - alerts/utcp-alerts.yaml
+  - dashboards/platform-overview.yaml
+  - dashboards/workload-logs.yaml
+  - monitors/traefik-servicemonitor.yaml
+  - network-policies/allow-observability-required-traffic.yaml
+  - network-policies/allow-traefik-metrics.yaml

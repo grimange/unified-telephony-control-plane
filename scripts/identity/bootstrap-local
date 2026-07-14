@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+RUNTIME_DIR="$ROOT/.runtime/identity"
+CREDS_FILE="$RUNTIME_DIR/bootstrap.json"
+
+mkdir -p "$RUNTIME_DIR"
+chmod 700 "$RUNTIME_DIR"
+
+if [ ! -s "$CREDS_FILE" ]; then
+  password="utcp-$(openssl rand -hex 18)"
+  php -r '
+  $file = $argv[1];
+  $data = [
+    "email" => "admin@utcp.local.test",
+    "password" => $argv[2],
+    "display_name" => "UTCP Local Administrator",
+    "tenant_slug" => "local",
+    "tenant_name" => "Local Tenant",
+    "created_at" => gmdate("c"),
+  ];
+  file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES).PHP_EOL);
+  chmod($file, 0600);
+  ' "$CREDS_FILE" "$password"
+fi
+
+json_value() {
+  php -r '$d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); echo $d[$argv[2]] ?? "";' "$CREDS_FILE" "$1"
+}
+
+email="$(json_value email)"
+password="$(json_value password)"
+display_name="$(json_value display_name)"
+tenant_slug="$(json_value tenant_slug)"
+tenant_name="$(json_value tenant_name)"
+
+KUBECONFIG_FILE="$ROOT/.runtime/kubeconfig/utcp-local.yaml"
+if [ -s "$KUBECONFIG_FILE" ] && KUBECONFIG="$KUBECONFIG_FILE" kubectl --context k3d-utcp-local -n utcp-platform get deployment/api >/dev/null 2>&1; then
+  KUBECONFIG="$KUBECONFIG_FILE" kubectl --context k3d-utcp-local -n utcp-platform rollout status deployment/api --timeout=180s >/dev/null
+  pod="$(KUBECONFIG="$KUBECONFIG_FILE" kubectl --context k3d-utcp-local -n utcp-platform get pod -l app.kubernetes.io/component=api -o jsonpath='{.items[0].metadata.name}')"
+  KUBECONFIG="$KUBECONFIG_FILE" kubectl --context k3d-utcp-local -n utcp-platform exec "$pod" -- \
+    php artisan identity:bootstrap-local \
+      --email="$email" \
+      --password="$password" \
+      --display-name="$display_name" \
+      --tenant-slug="$tenant_slug" \
+      --tenant-name="$tenant_name" >/dev/null
+fi
+
+printf 'identity bootstrap local passed\n'
+printf 'credentials_file=%s\n' "$CREDS_FILE"

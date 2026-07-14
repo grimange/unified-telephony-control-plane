@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/kubernetes/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+wait_data
+wait_migration
+wait_platform
+
+log_file="$(mktemp)"
+pf_pid=""
+cleanup() {
+  if [ -n "$pf_pid" ] && kill -0 "$pf_pid" >/dev/null 2>&1; then
+    kill "$pf_pid" >/dev/null 2>&1 || true
+    wait "$pf_pid" >/dev/null 2>&1 || true
+  fi
+  rm -f "$log_file"
+}
+trap cleanup EXIT
+
+pf_pid="$(port_forward_gateway "$log_file")"
+
+for _ in $(seq 1 60); do
+  if http_get /healthz >/tmp/utcp-k8s-healthz.out 2>/tmp/utcp-k8s-healthz.err; then
+    break
+  fi
+  sleep 1
+done
+
+healthz="$(http_get /healthz)"
+root="$(http_get /)"
+live="$(http_get /api/health/live)"
+ready="$(http_get /api/health/ready)"
+version="$(http_get /api/version)"
+
+printf '%s\n' "$root" | grep -Fq 'id="app"'
+printf '%s\n' "$root" | grep -Fq '/assets/index-'
+printf '%s\n' "$live" | grep -Fq '"status":"ok"'
+printf '%s\n' "$ready" | grep -Fq '"status":"ready"'
+printf '%s\n' "$ready" | grep -Fq '"postgres":"ok"'
+printf '%s\n' "$ready" | grep -Fq '"redis":"ok"'
+printf '%s\n' "$version" | grep -Fq '"service":"utcp-api"'
+
+if kube -n "$K8S_DATA_NAMESPACE" get service -o jsonpath='{range .items[*]}{.metadata.name}{"="}{.spec.type}{"\n"}{end}' | grep -Ev '=(ClusterIP)$' | grep -q .; then
+  printf 'data service is externally published\n' >&2
+  exit 1
+fi
+
+if kube get ingress -A --ignore-not-found --no-headers 2>/dev/null | grep -q .; then
+  printf 'Ingress resource unexpectedly exists\n' >&2
+  exit 1
+fi
+
+kube -n utcp-runtime get pods,deployments,statefulsets,daemonsets,jobs,cronjobs --ignore-not-found --no-headers 2>/dev/null | grep -q . && {
+  printf 'utcp-runtime contains workload resources\n' >&2
+  exit 1
+}
+
+printf 'K1 port-forward proof passed\n'
+printf 'healthz=%s\n' "$healthz"
+printf 'live=%s\n' "$live"
+printf 'ready=%s\n' "$ready"
+printf 'version=%s\n' "$version"

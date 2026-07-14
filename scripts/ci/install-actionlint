@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+version="${ACTIONLINT_VERSION:-1.7.12}"
+tool_root="${UTCP_TOOL_CACHE:-/tmp/utcp-tools}"
+install_dir="${tool_root}/actionlint-${version}"
+binary="${install_dir}/actionlint"
+archive="actionlint_${version}_linux_amd64.tar.gz"
+expected_sha="8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+base_url="https://github.com/rhysd/actionlint/releases/download/v${version}"
+
+if [ -x "$binary" ]; then
+  printf '%s\n' "$binary"
+  exit 0
+fi
+
+tmp_dir="$(mktemp -d)"
+cleanup() {
+  rm -rf "$tmp_dir"
+}
+trap cleanup EXIT
+
+mkdir -p "$install_dir"
+curl -fsSL "${base_url}/${archive}" -o "${tmp_dir}/${archive}"
+actual_sha="$(sha256sum "${tmp_dir}/${archive}" | awk '{print $1}')"
+if [ "$actual_sha" != "$expected_sha" ]; then
+  printf 'actionlint checksum mismatch: expected %s got %s\n' "$expected_sha" "$actual_sha" >&2
+  exit 1
+fi
+
+tar -xzf "${tmp_dir}/${archive}" -C "$install_dir" actionlint
+chmod 0755 "$binary"
+printf '%s\n' "$binary"

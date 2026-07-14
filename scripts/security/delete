@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/security/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+
+printf 'Removing K3 NetworkPolicies and Pod Security labels reopens namespace networking.\n'
+for ns in utcp-platform utcp-data utcp-runtime utcp-observability traefik-system; do
+  kube -n "$ns" delete networkpolicy -l app.kubernetes.io/managed-by=utcp-k3-security --ignore-not-found
+  for key in "${PSA_KEYS[@]}"; do
+    kube label namespace "$ns" "$key-" --overwrite >/dev/null 2>&1 || true
+  done
+done
+rm -f "$SECURITY_APISERVER_POLICY" "$SECURITY_SERVICE_POLICY"
+printf 'K3 security policies removed; K0, K1, K2, namespaces, PVCs, and registry were preserved\n'

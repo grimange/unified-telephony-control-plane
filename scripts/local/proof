@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/local/lib
+. "$ROOT/scripts/local/lib"
+
+require_no_persistent_compose
+
+"$ROOT/scripts/k3d/verify"
+"$ROOT/scripts/kubernetes/proof"
+"$ROOT/scripts/gateway/proof"
+"$ROOT/scripts/security/proof"
+"$ROOT/scripts/observability/proof"
+"$ROOT/scripts/control-plane/config-check"
+"$ROOT/scripts/identity/api-proof"
+"$ROOT/scripts/runtime-registry/api-proof"
+"$ROOT/scripts/runtime-engine/status"
+
+printf 'local Kubernetes proof corridor passed\n'

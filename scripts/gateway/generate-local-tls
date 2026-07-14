@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+printf 'local self-signed TLS generation is no longer an active UTCP runtime authority; applying prepared certificate instead\n' >&2
+exec "$SCRIPT_DIR/tls-apply"

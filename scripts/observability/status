@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/observability/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+
+printf '== Helm releases ==\n'
+helm_cmd list -n "$OBSERVABILITY_NAMESPACE" --filter 'kube-prometheus-stack|loki|alloy'
+
+printf '\n== Workloads ==\n'
+kube -n "$OBSERVABILITY_NAMESPACE" get deploy,statefulset,pod
+
+printf '\n== PVCs ==\n'
+kube -n "$OBSERVABILITY_NAMESPACE" get pvc
+
+printf '\n== Services ==\n'
+kube -n "$OBSERVABILITY_NAMESPACE" get service
+
+printf '\n== NetworkPolicies ==\n'
+kube -n "$OBSERVABILITY_NAMESPACE" get networkpolicy
+kube -n traefik-system get networkpolicy allow-traefik-metrics-from-prometheus 2>/dev/null || true
+
+printf '\n== RBAC summary ==\n'
+kube -n "$OBSERVABILITY_NAMESPACE" get serviceaccount,role,rolebinding
+kube get clusterrole,clusterrolebinding -o name | grep -E 'prometheus|grafana|alloy|loki|kube-state|utcp-monitoring' || true
+
+printf '\n== Prometheus targets ==\n'
+if kube -n "$OBSERVABILITY_NAMESPACE" get pod -l app.kubernetes.io/name=prometheus >/dev/null 2>&1; then
+  prom_port=19090
+  prom_pid="$(port_forward "$OBSERVABILITY_NAMESPACE" service/utcp-monitoring-prometheus "$prom_port" 9090)"
+  trap 'stop_port_forward "$prom_pid"' EXIT
+  curl --silent --show-error "http://127.0.0.1:${prom_port}/api/v1/targets?state=active" | jq -r '.data.activeTargets[]? | "\(.labels.job // .scrapePool)\t\(.health)"' | sort | head -n 40
+  stop_port_forward "$prom_pid"
+  trap - EXIT
+else
+  printf 'Prometheus not installed\n'
+fi
+
+printf '\n== Grafana dashboards ==\n'
+kube -n "$OBSERVABILITY_NAMESPACE" get configmap -l grafana_dashboard=1
+
+printf '\n== Alert rules ==\n'
+kube -n "$OBSERVABILITY_NAMESPACE" get prometheusrule
+
+printf '\n== Loki and Alloy ==\n'
+kube -n "$OBSERVABILITY_NAMESPACE" get pod -l app.kubernetes.io/name=loki
+kube -n "$OBSERVABILITY_NAMESPACE" get pod -l app.kubernetes.io/name=alloy

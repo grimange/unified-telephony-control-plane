@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if k3d cluster list -o json 2>/dev/null | grep -q '"name":"utcp-local"'; then
+  k3d cluster stop utcp-local
+  printf 'stopped utcp-local\n'
+else
+  printf 'utcp-local is not present\n'
+fi

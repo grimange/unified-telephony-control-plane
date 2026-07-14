@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+image="${1:-utcp-api:dev}"
+
+docker run --rm --entrypoint php "$image" -v
+docker run --rm --entrypoint php "$image" -m | grep -E '^(bcmath|intl|Zend OPcache|pcntl|pdo_pgsql|redis|zip)$' >/tmp/utcp-api-extensions.txt
+for extension in bcmath intl 'Zend OPcache' pcntl pdo_pgsql redis zip; do
+  grep -qx "$extension" /tmp/utcp-api-extensions.txt
+done
+rm -f /tmp/utcp-api-extensions.txt
+
+docker run --rm --entrypoint php "$image" -r 'require "vendor/autoload.php"; echo "autoload-ok\n";'
+docker run --rm "$image" php artisan --version
+docker run --rm "$image" php artisan route:list --path=api/health
+docker run --rm "$image" php artisan route:list --path=api/version
+docker run --rm "$image" php-fpm -t
+
+if docker run --rm "$image" not-a-role; then
+  printf 'unknown role unexpectedly succeeded\n' >&2
+  exit 1
+fi
+
+docker run --rm --entrypoint id "$image" -u | grep -qx '33'
+docker run --rm --entrypoint test "$image" ! -e .git
+docker run --rm --entrypoint test "$image" ! -e .env
+docker run --rm --entrypoint test "$image" -d vendor
+docker run --rm --entrypoint test "$image" ! -d vendor/phpunit
+
+printf 'api image smoke checks passed\n'

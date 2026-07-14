@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: utcp-platform-overview-dashboard
+  namespace: utcp-observability
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: observability
+data:
+  utcp-platform-overview.json: |
+    {
+      "uid": "utcp-platform-overview",
+      "title": "UTCP Platform Overview",
+      "schemaVersion": 41,
+      "version": 1,
+      "refresh": "30s",
+      "tags": ["utcp", "kubernetes"],
+      "time": {"from": "now-1h", "to": "now"},
+      "panels": [
+        {
+          "type": "stat",
+          "title": "K1 Deployments Available",
+          "gridPos": {"x": 0, "y": 0, "w": 8, "h": 5},
+          "targets": [{"datasource": {"type": "prometheus", "uid": "Prometheus"}, "expr": "sum(kube_deployment_status_replicas_available{namespace=\"utcp-platform\",deployment=~\"api|gateway|web|worker|scheduler\"})"}]
+        },
+        {
+          "type": "stat",
+          "title": "Data StatefulSets Ready",
+          "gridPos": {"x": 8, "y": 0, "w": 8, "h": 5},
+          "targets": [{"datasource": {"type": "prometheus", "uid": "Prometheus"}, "expr": "sum(kube_statefulset_status_replicas_ready{namespace=\"utcp-data\",statefulset=~\"postgres|redis\"})"}]
+        },
+        {
+          "type": "stat",
+          "title": "Current Firing Alerts",
+          "gridPos": {"x": 16, "y": 0, "w": 8, "h": 5},
+          "targets": [{"datasource": {"type": "prometheus", "uid": "Prometheus"}, "expr": "sum(ALERTS{alertstate=\"firing\"})"}]
+        },
+        {
+          "type": "timeseries",
+          "title": "Traefik Requests By Status",
+          "gridPos": {"x": 0, "y": 5, "w": 12, "h": 8},
+          "targets": [{"datasource": {"type": "prometheus", "uid": "Prometheus"}, "expr": "sum by (code) (rate(traefik_service_requests_total[5m]))"}]
+        },
+        {
+          "type": "table",
+          "title": "PVC Status",
+          "gridPos": {"x": 12, "y": 5, "w": 12, "h": 8},
+          "targets": [{"datasource": {"type": "prometheus", "uid": "Prometheus"}, "expr": "kube_persistentvolumeclaim_status_phase{namespace=~\"utcp-data|utcp-observability\",phase=\"Bound\"}"}]
+        }
+      ]
+    }

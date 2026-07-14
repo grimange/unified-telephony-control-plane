@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/kubernetes/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+wait_platform
+
+for deployment in api worker scheduler web gateway; do
+  pod="$(kube -n "$K8S_PLATFORM_NAMESPACE" get pod -l "app.kubernetes.io/component=$deployment" -o jsonpath='{.items[0].metadata.name}')"
+  printf 'restarting=%s pod=%s\n' "$deployment" "$pod"
+  kube -n "$K8S_PLATFORM_NAMESPACE" delete pod "$pod" >/dev/null
+  kube -n "$K8S_PLATFORM_NAMESPACE" rollout status "deployment/$deployment" --timeout=180s
+done
+
+wait_platform
+printf 'K1 application restart proof passed\n'

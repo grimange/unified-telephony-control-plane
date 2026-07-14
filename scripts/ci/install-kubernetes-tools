@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck disable=SC1090
+. "$root/versions.env"
+
+bin_dir="${UTCP_CI_BIN_DIR:-/tmp/utcp-tools/kubernetes}"
+mkdir -p "$bin_dir"
+
+kubectl_version="${KUBECTL_VERSION:?KUBECTL_VERSION is required}"
+k3d_version="${K3D_VERSION:?K3D_VERSION is required}"
+helm_version="${HELM_VERSION:-}"
+
+curl -fsSL "https://dl.k8s.io/release/${kubectl_version}/bin/linux/amd64/kubectl" -o "$bin_dir/kubectl"
+curl -fsSL "https://dl.k8s.io/release/${kubectl_version}/bin/linux/amd64/kubectl.sha256" -o "$bin_dir/kubectl.sha256"
+printf '%s  %s\n' "$(cat "$bin_dir/kubectl.sha256")" "$bin_dir/kubectl" | sha256sum -c -
+chmod +x "$bin_dir/kubectl"
+
+k3d_asset="k3d-linux-amd64"
+curl -fsSL "https://github.com/k3d-io/k3d/releases/download/${k3d_version}/${k3d_asset}" -o "$bin_dir/k3d"
+curl -fsSL "https://github.com/k3d-io/k3d/releases/download/${k3d_version}/checksums.txt" -o "$bin_dir/k3d-checksums.txt"
+grep " ${k3d_asset}$" "$bin_dir/k3d-checksums.txt" | sed "s# ${k3d_asset}\$#  $bin_dir/k3d#" | sha256sum -c -
+chmod +x "$bin_dir/k3d"
+
+if [ -n "$helm_version" ]; then
+  helm_archive="helm-${helm_version}-linux-amd64.tar.gz"
+  curl -fsSL "https://get.helm.sh/${helm_archive}" -o "$bin_dir/${helm_archive}"
+  curl -fsSL "https://get.helm.sh/${helm_archive}.sha256sum" -o "$bin_dir/${helm_archive}.sha256sum"
+  sed "s#  ${helm_archive}\$#  $bin_dir/${helm_archive}#" "$bin_dir/${helm_archive}.sha256sum" | sha256sum -c -
+  tar -xzf "$bin_dir/${helm_archive}" -C "$bin_dir"
+  mv "$bin_dir/linux-amd64/helm" "$bin_dir/helm"
+  chmod +x "$bin_dir/helm"
+fi
+
+printf '%s\n' "$bin_dir"

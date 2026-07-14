@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/gateway/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+
+kube delete -k "$GATEWAY_KUSTOMIZATION" --ignore-not-found
+kube -n "$UTCP_GATEWAY_NAMESPACE" delete secret "$UTCP_GATEWAY_TLS_SECRET" --ignore-not-found
+
+if [ "${CONFIRM:-}" = "uninstall-traefik" ]; then
+  helm_cmd -n "$UTCP_GATEWAY_NAMESPACE" uninstall traefik --wait --timeout 3m || true
+  printf 'Traefik Helm release removed\n'
+else
+  printf 'Traefik Helm release retained. Re-run with CONFIRM=uninstall-traefik to remove it.\n'
+fi
+
+printf 'Gateway API CRDs retained\n'

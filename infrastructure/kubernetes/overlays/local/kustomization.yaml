@@ -1,0 +1,38 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: utcp-application-config
+    namespace: utcp-platform
+    envs:
+      - application-config.properties
+secretGenerator:
+  - name: utcp-local-data-credentials
+    namespace: utcp-data
+    envs:
+      - local-data-credentials.properties
+  - name: utcp-local-data-credentials
+    namespace: utcp-platform
+    envs:
+      - local-data-credentials.properties
+resources:
+  - ../../base/data
+  - ../../base/migration
+  - ../../base/platform
+images:
+  - name: postgres
+    newName: postgres
+    newTag: 17.6-alpine
+  - name: redis
+    newName: redis
+    newTag: 8.2.3-alpine
+  - name: utcp-api
+    newName: utcp-local-registry:5000/utcp/api
+    newTag: 0.1.0-k1-dev
+  - name: utcp-web
+    newName: utcp-local-registry:5000/utcp/web
+    newTag: 0.1.0-k1-dev
+  - name: utcp-gateway
+    newName: utcp-local-registry:5000/utcp/gateway
+    newTag: 0.1.0-k1-dev

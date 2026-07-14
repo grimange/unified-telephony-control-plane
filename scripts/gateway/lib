@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  cd "$script_dir/../.." && pwd
+}
+
+ROOT="$(repo_root)"
+VERSIONS_FILE="$ROOT/versions.env"
+
+if [ -d /tmp/utcp-tools/gateway ]; then
+  PATH="/tmp/utcp-tools/gateway:$PATH"
+fi
+
+# shellcheck disable=SC1090
+. "$VERSIONS_FILE"
+
+K3D_CONTEXT_NAME="${K3D_CONTEXT_NAME:-k3d-utcp-local}"
+KUBECONFIG_FILE="$ROOT/.runtime/kubeconfig/utcp-local.yaml"
+GATEWAY_API_VERSION="${GATEWAY_API_VERSION:-v1.5.1}"
+GATEWAY_API_STANDARD_INSTALL_SHA256="${GATEWAY_API_STANDARD_INSTALL_SHA256:-751002b3b91a87f7ae3bd2517c79a47a8d7ed6702901808a1cf9bd97d284f9b8}"
+TRAEFIK_HELM_REPOSITORY="${TRAEFIK_HELM_REPOSITORY:-https://traefik.github.io/charts}"
+TRAEFIK_HELM_CHART_VERSION="${TRAEFIK_HELM_CHART_VERSION:-41.0.2}"
+TRAEFIK_PROXY_IMAGE="${TRAEFIK_PROXY_IMAGE:-docker.io/traefik:v3.7.7}"
+TRAEFIK_PROXY_VERSION="${TRAEFIK_PROXY_VERSION:-v3.7.7}"
+UTCP_EDGE_HTTP_HOST="${UTCP_EDGE_HTTP_HOST:-127.0.0.1}"
+UTCP_EDGE_HTTP_HOST_PORT="${UTCP_EDGE_HTTP_HOST_PORT:-80}"
+UTCP_EDGE_HTTPS_HOST="${UTCP_EDGE_HTTPS_HOST:-127.0.0.1}"
+UTCP_EDGE_HTTPS_HOST_PORT="${UTCP_EDGE_HTTPS_HOST_PORT:-443}"
+UTCP_GATEWAY_CLASS="${UTCP_GATEWAY_CLASS:-utcp-traefik}"
+UTCP_GATEWAY_NAMESPACE="${UTCP_GATEWAY_NAMESPACE:-traefik-system}"
+UTCP_GATEWAY_NAME="${UTCP_GATEWAY_NAME:-utcp-local}"
+UTCP_GATEWAY_TLS_SECRET="${UTCP_GATEWAY_TLS_SECRET:-utcp-local-gateway-tls}"
+UTCP_APP_HOSTNAME="${UTCP_APP_HOSTNAME:-app.utcp.local.test}"
+UTCP_ROOT_HOSTNAME="${UTCP_ROOT_HOSTNAME:-utcp.local.test}"
+UTCP_RESERVED_SIP_HOSTNAME="${UTCP_RESERVED_SIP_HOSTNAME:-sip.utcp.local.test}"
+UTCP_RESERVED_EVENTS_HOSTNAME="${UTCP_RESERVED_EVENTS_HOSTNAME:-events.utcp.local.test}"
+TRAEFIK_VALUES="$ROOT/infrastructure/helm/traefik/values.yaml"
+GATEWAY_KUSTOMIZATION="$ROOT/infrastructure/kubernetes/gateway-api"
+TLS_DIR="$ROOT/.runtime/tls"
+TLS_CA_CERT="$TLS_DIR/utcp-local-ca.crt"
+TLS_KEY="$TLS_DIR/utcp-local.key"
+TLS_CERT="$TLS_DIR/utcp-local.crt"
+CRD_CACHE="$ROOT/.runtime/gateway-api/${GATEWAY_API_VERSION}"
+CRD_MANIFEST="$CRD_CACHE/standard-install.yaml"
+CRD_FILTERED_MANIFEST="$CRD_CACHE/utcp-standard-install.yaml"
+
+export HELM_CONFIG_HOME="${HELM_CONFIG_HOME:-$ROOT/.runtime/helm/config}"
+export HELM_CACHE_HOME="${HELM_CACHE_HOME:-$ROOT/.runtime/helm/cache}"
+export HELM_DATA_HOME="${HELM_DATA_HOME:-$ROOT/.runtime/helm/data}"
+
+required_tools() {
+  local missing=0
+  for tool in kubectl curl awk grep sed openssl helm; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      printf 'missing required K2 tool: %s\n' "$tool" >&2
+      missing=1
+    fi
+  done
+  if [ "$missing" -ne 0 ]; then
+    exit 1
+  fi
+  if ! kubectl kustomize --help >/dev/null 2>&1; then
+    printf 'missing required K2 capability: kubectl kustomize\n' >&2
+    exit 1
+  fi
+}
+
+kube() {
+  KUBECONFIG="$KUBECONFIG_FILE" kubectl --context "$K3D_CONTEXT_NAME" "$@"
+}
+
+ensure_kubeconfig() {
+  if [ ! -s "$KUBECONFIG_FILE" ]; then
+    printf 'repository kubeconfig is missing: %s\n' "$KUBECONFIG_FILE" >&2
+    exit 1
+  fi
+}
+
+helm_cmd() {
+  mkdir -p "$HELM_CONFIG_HOME" "$HELM_CACHE_HOME" "$HELM_DATA_HOME"
+  KUBECONFIG="$KUBECONFIG_FILE" helm "$@"
+}
+
+render_gateway() {
+  kubectl kustomize "$GATEWAY_KUSTOMIZATION"
+}
+
+render_traefik() {
+  helm_cmd template traefik traefik \
+    --repo "$TRAEFIK_HELM_REPOSITORY" \
+    --version "$TRAEFIK_HELM_CHART_VERSION" \
+    --namespace "$UTCP_GATEWAY_NAMESPACE" \
+    --values "$TRAEFIK_VALUES"
+}
+
+download_gateway_crds() {
+  mkdir -p "$CRD_CACHE"
+  if [ ! -s "$CRD_MANIFEST" ]; then
+    curl -fsSL "https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_VERSION}/standard-install.yaml" -o "$CRD_MANIFEST"
+  fi
+  printf '%s  %s\n' "$GATEWAY_API_STANDARD_INSTALL_SHA256" "$CRD_MANIFEST" | sha256sum -c - >/dev/null
+}
+
+prepare_gateway_crds() {
+  download_gateway_crds
+  awk '
+    function allowed(n) {
+      return n == "gatewayclasses.gateway.networking.k8s.io" ||
+        n == "gateways.gateway.networking.k8s.io" ||
+        n == "httproutes.gateway.networking.k8s.io" ||
+        n == "referencegrants.gateway.networking.k8s.io"
+    }
+    function flush_doc() {
+      if (allowed(name)) {
+        if (printed) {
+          print "---"
+        }
+        printf "%s", doc
+        printed = 1
+        found[name] = 1
+      }
+      doc = ""
+      name = ""
+    }
+    /^---[[:space:]]*$/ {
+      flush_doc()
+      next
+    }
+    {
+      doc = doc $0 ORS
+      if (name == "" && $0 ~ /^  name: /) {
+        name = $0
+        sub(/^  name: /, "", name)
+      }
+    }
+    END {
+      flush_doc()
+      required[1] = "gatewayclasses.gateway.networking.k8s.io"
+      required[2] = "gateways.gateway.networking.k8s.io"
+      required[3] = "httproutes.gateway.networking.k8s.io"
+      required[4] = "referencegrants.gateway.networking.k8s.io"
+      for (i = 1; i <= 4; i++) {
+        if (!found[required[i]]) {
+          printf "Gateway API CRD missing from pinned standard artifact: %s\n", required[i] > "/dev/stderr"
+          exit 1
+        }
+      }
+    }
+  ' "$CRD_MANIFEST" > "$CRD_FILTERED_MANIFEST"
+}
+
+check_edge_bindings() {
+  local ports
+  ports="$(docker ps --filter "name=k3d-${K3D_CLUSTER_NAME:-utcp-local}-serverlb" --format '{{.Ports}}')"
+  if ! printf '%s\n' "$ports" | grep -Fq "${UTCP_EDGE_HTTP_HOST}:${UTCP_EDGE_HTTP_HOST_PORT}->80"; then
+    printf 'missing k3d HTTP edge binding: %s:%s->80\n' "$UTCP_EDGE_HTTP_HOST" "$UTCP_EDGE_HTTP_HOST_PORT" >&2
+    exit 1
+  fi
+  if ! printf '%s\n' "$ports" | grep -Fq "${UTCP_EDGE_HTTPS_HOST}:${UTCP_EDGE_HTTPS_HOST_PORT}->443"; then
+    printf 'missing k3d HTTPS edge binding: %s:%s->443\n' "$UTCP_EDGE_HTTPS_HOST" "$UTCP_EDGE_HTTPS_HOST_PORT" >&2
+    exit 1
+  fi
+}
+
+wait_traefik() {
+  kube -n "$UTCP_GATEWAY_NAMESPACE" rollout status deployment/traefik --timeout=240s
+  kube -n "$UTCP_GATEWAY_NAMESPACE" wait --for=condition=Ready pod -l app.kubernetes.io/name=traefik --timeout=180s
+}
+
+wait_gateway() {
+  kube wait --for=condition=Accepted "gatewayclass/$UTCP_GATEWAY_CLASS" --timeout=180s
+  kube -n "$UTCP_GATEWAY_NAMESPACE" wait --for=condition=Accepted "gateway/$UTCP_GATEWAY_NAME" --timeout=180s
+  kube -n "$UTCP_GATEWAY_NAMESPACE" wait --for=condition=Programmed "gateway/$UTCP_GATEWAY_NAME" --timeout=180s
+  for route in app-http-redirect app-https root-http-redirect root-https; do
+    wait_httproute "$route"
+  done
+}
+
+wait_httproute() {
+  local route="$1"
+  local deadline=$((SECONDS + 180))
+  local conditions
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    conditions="$(kube -n utcp-platform get "httproute/$route" -o jsonpath='{range .status.parents[*].conditions[*]}{.type}={.status}:{.reason}{"\n"}{end}' 2>/dev/null || true)"
+    if printf '%s\n' "$conditions" | grep -Fxq 'Accepted=True:Accepted' &&
+      printf '%s\n' "$conditions" | grep -Fxq 'ResolvedRefs=True:ResolvedRefs'; then
+      printf 'httproute.gateway.networking.k8s.io/%s accepted with resolved references\n' "$route"
+      return 0
+    fi
+    sleep 2
+  done
+  printf 'timed out waiting for HTTPRoute readiness: %s\n%s\n' "$route" "$conditions" >&2
+  return 1
+}
+
+cert_summary() {
+  if [ -s "$TLS_CERT" ]; then
+    openssl x509 -in "$TLS_CERT" -noout -dates -ext subjectAltName
+  else
+    printf 'local TLS certificate missing: %s\n' "$TLS_CERT"
+  fi
+}
+
+curl_http_code() {
+  local url="$1"
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 10 "$url"
+}
+
+curl_tls() {
+  local host="$1"
+  local path="$2"
+  local args=(--fail --silent --show-error --max-time 15)
+  if [ -s "$TLS_CA_CERT" ] && openssl verify -CAfile "$TLS_CA_CERT" "$TLS_CERT" >/dev/null 2>&1; then
+    args+=(--cacert "$TLS_CA_CERT")
+  fi
+  curl "${args[@]}" \
+    --resolve "${host}:${UTCP_EDGE_HTTPS_HOST_PORT}:${UTCP_EDGE_HTTPS_HOST}" \
+    "https://${host}${path}"
+}

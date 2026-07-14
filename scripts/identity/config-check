@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+fail() {
+  printf 'identity config check failed: %s\n' "$1" >&2
+  exit 1
+}
+
+for file in \
+  apps/api/config/identity.php \
+  apps/api/app/Models/User.php \
+  apps/api/app/Identity/Authorization/CapabilityCatalog.php \
+  apps/api/app/Identity/Authorization/AuthorizationService.php \
+  apps/api/app/Identity/IdentityProjectionService.php \
+  apps/api/app/Identity/IdentityAdminService.php \
+  apps/api/database/migrations/2026_07_14_110000_create_identity_tenancy_authorization_tables.php
+do
+  [ -s "$file" ] || fail "missing required C1 file: $file"
+done
+
+php -l apps/api/config/identity.php >/dev/null
+php -l apps/api/routes/web.php >/dev/null
+php -l apps/api/routes/console.php >/dev/null
+find apps/api/app/Identity apps/api/app/Http/Controllers/Identity apps/api/app/Http/Middleware apps/api/app/Models -name '*.php' -print0 |
+  xargs -0 -n1 php -l >/dev/null
+
+php -r '
+$catalog = require "apps/api/config/identity.php";
+$required = [
+  "platform.tenants.view", "platform.tenants.manage",
+  "platform.users.view", "platform.users.manage",
+  "tenant.memberships.view", "tenant.memberships.manage",
+  "tenant.roles.view", "tenant.roles.assign",
+];
+foreach ($required as $capability) {
+  if (! isset($catalog["capabilities"][$capability])) {
+    fwrite(STDERR, "missing capability: {$capability}\n");
+    exit(1);
+  }
+}
+foreach ($catalog["capabilities"] as $key => $_) {
+  if (preg_match("/(sip|wss|conference|asterisk|freeswitch|ari|esl|rtp|kamailio|provider-node)/i", $key)) {
+    fwrite(STDERR, "telephony or vendor-specific capability is not allowed in identity catalog: {$key}\n");
+    exit(1);
+  }
+}
+foreach (["platform-admin", "tenant-admin", "tenant-member"] as $role) {
+  if (! isset($catalog["roles"][$role])) {
+    fwrite(STDERR, "missing built-in role: {$role}\n");
+    exit(1);
+  }
+}
+'
+
+if rg -n "localStorage|sessionStorage|Authorization: Bearer|jwt|JWT" apps/web/src --glob '!*.test.ts' apps/api/routes apps/api/app >/dev/null; then
+  fail "found browser token or JWT-style authentication authority"
+fi
+
+if rg -n "register|signup|bootstrap.*Route|identity:.*user|identity:.*tenant" apps/api/routes apps/api/app/Http apps/api/routes/console.php >/dev/null; then
+  if rg -n "Route::.*(register|signup|bootstrap)" apps/api/routes >/dev/null; then
+    fail "found public registration or bootstrap route"
+  fi
+fi
+
+if rg -n "sip|sips|wss|kamailio|rtpengine|asterisk|freeswitch|\\bari\\b|\\besl\\b|conference|telephony-session|provider-node" apps/api/config/identity.php apps/api/routes/web.php apps/api/app/Identity >/dev/null; then
+  fail "found forbidden telephony/vendor vocabulary in identity authority surface"
+fi
+
+cd apps/api
+php artisan route:list --path=api/v1/auth >/dev/null
+php artisan route:list --path=api/v1/admin >/dev/null
+
+printf 'identity config check passed\n'

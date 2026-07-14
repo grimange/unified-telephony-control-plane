@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+api_image="${UTCP_API_IMAGE:-utcp-api:dev}"
+web_image="${UTCP_WEB_IMAGE:-utcp-web:dev}"
+gateway_image="${UTCP_GATEWAY_IMAGE:-}"
+
+images=("$api_image" "$web_image")
+if [ -n "$gateway_image" ]; then
+  images+=("$gateway_image")
+fi
+
+for image in "${images[@]}"; do
+  printf '\n%s\n' "$image"
+  docker image inspect "$image" \
+    --format 'id={{.Id}} user={{.Config.User}} entrypoint={{json .Config.Entrypoint}} cmd={{json .Config.Cmd}} exposed={{json .Config.ExposedPorts}}'
+  docker image inspect "$image" \
+    --format 'labels={{json .Config.Labels}}'
+  docker history --no-trunc "$image" | sed -n '1,12p'
+done

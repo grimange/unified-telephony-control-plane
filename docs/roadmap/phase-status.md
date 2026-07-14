@@ -1,0 +1,28 @@
+# Phase Status
+
+| Phase | Status | Notes |
+| --- | --- | --- |
+| F0 Repository contract and governance | Complete | Repository governance, command convention, ADRs, and hygiene CI are established. |
+| F1 Minimal application skeleton | Complete | Laravel API and Vue administration shell exist with health/version endpoints, tests, build checks, and local run documentation. |
+| F2 Container build foundation | Complete | Production-oriented API and web images build, containerized tests and smoke checks pass, and image metadata/runtime contracts are documented. |
+| F3 Docker Compose core platform | Complete | Compose topology and proofs exist. After the local runtime authority cutoff, Compose is retained for disposable compatibility proof and explicit debug mode; `utcp-local` Kubernetes is canonical integrated local runtime. |
+| F4 CI quality baseline | Complete | GitHub Actions workflows, local CI-equivalent checks, dependency audits, workflow validation, container checks, and isolated Compose proof are established. Hosted GitHub Actions execution has not been observed for the uncommitted working tree. |
+| K0 Local k3d cluster foundation | Complete | Repository-managed k3d/K3s cluster, local registry, kubeconfig isolation, namespaces, registry pull proof, recreate proof, and CI wiring are established. Hosted GitHub Actions execution has not been observed for the uncommitted working tree. |
+| K1 Kubernetes application base | Complete | Kustomize-managed local Kubernetes manifests deploy PostgreSQL, Redis, migration Job, API, worker, scheduler, web, and internal gateway to `utcp-local`; port-forward, persistence, and restart proofs passed. Hosted GitHub Actions execution has not been observed for the uncommitted working tree. |
+| K2 Traefik and Gateway API | Complete | UTCP uses the one-cluster-at-a-time standard local edge on `127.0.0.1:80/443`; Gateway API, Traefik, TLS, route status, reserved-host rejection, and external runtime proof passed after controlled cluster recreation. APNTalk remained intentionally stopped and untouched. Hosted GitHub Actions execution has not been observed for the uncommitted working tree. |
+| K3 Kubernetes security boundaries | Complete | Pod Security Admission is enforced as `restricted` `v1.35` on UTCP namespaces; default-deny NetworkPolicies and explicit allow paths are active; positive and negative connectivity proof, PSA rejection proof, K1/K2 regression proof, and cleanup proof passed locally. Hosted GitHub Actions execution has not been observed for the uncommitted working tree. |
+| K4 Kubernetes observability foundation | Complete | Prometheus Operator, Prometheus, Alertmanager, Grafana, kube-state-metrics, Loki, and Alloy are installed in `utcp-observability` under restricted PSA and K3 NetworkPolicies; metrics, log ingestion, Grafana provisioning, synthetic alert delivery, persistence, gateway regression, and security regression proof passed locally. Hosted GitHub Actions execution has not been observed for the uncommitted working tree. |
+| C0 Control-plane application kernel | Complete | Modular-monolith kernel primitives now exist for runtime-neutral operations, PostgreSQL leases and fencing, transactional outbox, inbox deduplication, idempotency, append-only audit, event envelopes, and architecture-boundary checks. |
+| C1 Identity, tenancy, and authorization | Complete | PostgreSQL-authoritative users, tenants, memberships, built-in roles/capabilities, first-party sessions, active-tenant selection, web-admin management, password lifecycle, suspension behavior, C0 audit integration, API proof, browser proof, and Kubernetes migration proof are established locally. Hosted GitHub Actions execution has not been observed for the uncommitted working tree. |
+| C2 Runtime registry and runtime-node management | Complete | PostgreSQL-authoritative `RuntimeNode` registry, tenant ownership, normalized endpoints, encrypted write-only credentials, declared runtime capabilities, C1 authorization, C0 audit/idempotency/outbox integration, API proof, and repository Playwright browser proof are established locally. Hosted GitHub Actions execution has not been observed for the uncommitted working tree. |
+| C3 Command, event, projection, and reconciliation engine | Complete | Generic C3 engine code, PostgreSQL schema, Kubernetes process-role manifests, config checks, focused tests, proof harnesses, and runtime-engine status are established. The local runtime authority cutoff makes `utcp-local` Kubernetes the sole canonical integrated local runtime before C4 begins. Hosted GitHub Actions execution has not been observed for the uncommitted working tree. |
+| C4 Deterministic simulator adapter | Planned | No production simulator behavior exists yet; simulator implementation is deferred until the registry and command/event contracts exist. |
+| C5 Telephony-session and conference domain | Planned | No telephony-session or conference behavior exists yet. |
+| T0 Asterisk ARI adapter | Planned | No Asterisk integration exists yet. |
+| T1 Kamailio SIP-over-WSS signaling | Planned | No Kamailio integration exists yet. |
+| T2 Asterisk conference execution | Planned | No live conference execution exists yet. |
+| T3 rtpengine browser media | Planned | No rtpengine integration exists yet. |
+| V0 Natural login, SIP registration, and conference admission | Planned | The target vertical slice is natural login -> SIP REGISTER over WSS -> conference admission. |
+| T4 FreeSWITCH ESL parity | Planned | No FreeSWITCH integration exists yet. |
+| T5 Convergence, failover, and recovery | Planned | No multi-runtime workflow exists yet. |
+| R0 Portfolio release | Planned | No release has been prepared. |

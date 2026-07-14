@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 3 ]; then
+  printf 'usage: registry-container-check REGISTRY_NAME REGISTRY_HOST REGISTRY_HOST_PORT\n' >&2
+  exit 2
+fi
+
+expected_name="$1"
+expected_host="$2"
+expected_port="$3"
+expected_binding="${expected_host}:${expected_port}->5000"
+
+while IFS="$(printf '\t')" read -r name status ports; do
+  if [ "$name" != "$expected_name" ]; then
+    continue
+  fi
+
+  case "$status" in
+    Up*)
+      ;;
+    *)
+      printf 'registry container is not running: expected_name=%s expected_binding=%s observed_name=%s observed_status=%s observed_ports=%s\n' "$expected_name" "$expected_binding" "$name" "$status" "$ports" >&2
+      exit 1
+      ;;
+  esac
+
+  if ! printf '%s\n' "$ports" | grep -Fq "$expected_binding"; then
+    printf 'registry container binding mismatch: expected_name=%s expected_binding=%s observed_name=%s observed_status=%s observed_ports=%s\n' "$expected_name" "$expected_binding" "$name" "$status" "$ports" >&2
+    exit 1
+  fi
+
+  printf 'registry container verified: name=%s binding=%s\n' "$expected_name" "$expected_binding"
+  exit 0
+done
+
+printf 'registry container missing: expected_name=%s expected_binding=%s observed_matching=<none>\n' "$expected_name" "$expected_binding" >&2
+exit 1

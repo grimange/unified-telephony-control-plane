@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/k3d/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+
+if ! cluster_exists; then
+  printf 'missing k3d cluster: %s\n' "$K3D_CLUSTER_NAME" >&2
+  exit 1
+fi
+
+repo_context="$(KUBECONFIG="$KUBECONFIG_FILE" kubectl config current-context)"
+if [ "$repo_context" != "$K3D_CONTEXT_NAME" ]; then
+  printf 'repository kubeconfig context mismatch: %s\n' "$repo_context" >&2
+  exit 1
+fi
+
+repo_namespace="$(KUBECONFIG="$KUBECONFIG_FILE" kubectl config view --minify --output 'jsonpath={..namespace}')"
+if [ "$repo_namespace" != "utcp-platform" ]; then
+  printf 'repository kubeconfig default namespace mismatch: %s\n' "$repo_namespace" >&2
+  exit 1
+fi
+
+if git check-ignore -q "$KUBECONFIG_FILE"; then
+  :
+else
+  printf 'repository kubeconfig is not ignored: %s\n' "$KUBECONFIG_FILE" >&2
+  exit 1
+fi
+
+server_count="$(kube get nodes --no-headers | awk '/server/ {count++} END {print count+0}')"
+agent_count="$(kube get nodes --no-headers | awk '/agent/ {count++} END {print count+0}')"
+if [ "$server_count" != "$K3D_SERVER_COUNT" ] || [ "$agent_count" != "$K3D_AGENT_COUNT" ]; then
+  printf 'node count mismatch: servers=%s agents=%s\n' "$server_count" "$agent_count" >&2
+  exit 1
+fi
+
+wait_for_nodes
+wait_for_system_pods
+
+for ns in traefik-system utcp-platform utcp-runtime utcp-data utcp-observability; do
+  kube get namespace "$ns" >/dev/null
+done
+
+if kube -n kube-system get deployment coredns >/dev/null 2>&1; then
+  :
+else
+  printf 'CoreDNS deployment is missing\n' >&2
+  exit 1
+fi
+
+if kube get helmcharts.helm.cattle.io -A --no-headers 2>/dev/null | grep -iq traefik; then
+  printf 'Packaged Traefik HelmChart unexpectedly exists\n' >&2
+  exit 1
+fi
+
+for ns in utcp-runtime utcp-observability; do
+  if kube -n "$ns" get pods,deployments,statefulsets,daemonsets,jobs,cronjobs --ignore-not-found --no-headers 2>/dev/null | grep -q .; then
+    printf 'unexpected workload exists in namespace: %s\n' "$ns" >&2
+    exit 1
+  fi
+done
+
+if kube -A get pods,deployments,statefulsets,daemonsets,jobs,cronjobs --ignore-not-found --no-headers 2>/dev/null | grep -i traefik | grep -v 'traefik-system' | grep -q .; then
+  printf 'Traefik workload exists outside traefik-system\n' >&2
+  exit 1
+fi
+
+if kube -A get pods,deployments,statefulsets,daemonsets,jobs,cronjobs --ignore-not-found 2>/dev/null | grep -Eiq 'asterisk|freeswitch|kamailio|rtpengine|sip|sips|rtp|pbx'; then
+  printf 'telephony-specific workload unexpectedly exists\n' >&2
+  exit 1
+fi
+
+if ! registry_exists; then
+  printf 'missing k3d registry: %s\n' "$K3D_REGISTRY_NAME" >&2
+  exit 1
+fi
+
+docker ps --format '{{.Names}}\t{{.Status}}\t{{.Ports}}' | "$SCRIPT_DIR/registry-container-check" "$K3D_REGISTRY_NAME" "$K3D_REGISTRY_HOST" "$K3D_REGISTRY_HOST_PORT" >/dev/null
+
+if ! docker ps --filter "name=k3d-${K3D_CLUSTER_NAME}-serverlb" --format '{{.Ports}}' | grep -Fq "${K3D_API_HOST}:${K3D_API_HOST_PORT}->6443"; then
+  printf 'Kubernetes API loopback binding not found\n' >&2
+  exit 1
+fi
+
+serverlb_ports="$(docker ps --filter "name=k3d-${K3D_CLUSTER_NAME}-serverlb" --format '{{.Ports}}')"
+if ! printf '%s\n' "$serverlb_ports" | grep -Fq "${UTCP_EDGE_HTTP_HOST}:${UTCP_EDGE_HTTP_HOST_PORT}->80"; then
+  printf 'UTCP HTTP edge loopback binding not found\n' >&2
+  exit 1
+fi
+if ! printf '%s\n' "$serverlb_ports" | grep -Fq "${UTCP_EDGE_HTTPS_HOST}:${UTCP_EDGE_HTTPS_HOST_PORT}->443"; then
+  printf 'UTCP HTTPS edge loopback binding not found\n' >&2
+  exit 1
+fi
+
+printf 'k3d verification passed\n'

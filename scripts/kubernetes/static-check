@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+  printf 'usage: static-check RENDERED_MANIFEST\n' >&2
+  exit 2
+fi
+
+manifest="$1"
+
+if grep -Eq '(^|[[:space:]])image:[[:space:]].*:latest([[:space:]]|$)' "$manifest"; then
+  printf 'Kubernetes manifest uses latest image tag\n' >&2
+  exit 1
+fi
+
+if grep -Eq '^[[:space:]]*type:[[:space:]]*(NodePort|LoadBalancer)[[:space:]]*$' "$manifest"; then
+  printf 'Kubernetes manifest exposes NodePort or LoadBalancer service\n' >&2
+  exit 1
+fi
+
+if grep -Eq '^kind:[[:space:]]*(Ingress|Gateway|HTTPRoute|GRPCRoute|TCPRoute|TLSRoute|UDPRoute)[[:space:]]*$' "$manifest"; then
+  printf 'Kubernetes manifest includes ingress or Gateway API resources\n' >&2
+  exit 1
+fi
+
+if grep -Eiq 'traefik|asterisk|freeswitch|kamailio|rtpengine|(^|[^a-z])(sip|sips|rtp|srtp|pbx)([^a-z]|$)|hostNetwork:[[:space:]]*true|privileged:[[:space:]]*true|hostPath:' "$manifest"; then
+  printf 'Kubernetes manifest includes prohibited ingress, telephony, host, or privileged configuration\n' >&2
+  exit 1
+fi
+
+awk '
+  /^---$/ {check(); reset(); next}
+  /^apiVersion:/ {has_doc=1}
+  /^kind:/ {kind=$2}
+  /^metadata:/ {in_metadata=1; next}
+  in_metadata && /^  namespace:/ {namespace=$2}
+  in_metadata && /^[^ ]/ {in_metadata=0}
+  function reset() {has_doc=0; kind=""; namespace=""; in_metadata=0}
+  function check() {
+    if (!has_doc || kind == "") return
+    if (namespace !~ /^utcp-(platform|data)$/) {
+      printf "resource has missing or invalid explicit namespace: kind=%s namespace=%s\n", kind, namespace > "/dev/stderr"
+      exit 1
+    }
+  }
+  END {check()}
+' "$manifest"
+
+if ! awk '
+  /^---$/ {check(); kind=""; name=""; ns=""; meta=0; next}
+  /^kind:/ {kind=$2}
+  /^metadata:/ {meta=1; next}
+  meta && /^  name:/ {name=$2}
+  meta && /^  namespace:/ {ns=$2}
+  meta && /^[^ ]/ {meta=0}
+  function check() {
+    if (kind=="StatefulSet" && name=="postgres" && ns=="utcp-data") postgres=1
+    if (kind=="StatefulSet" && name=="redis" && ns=="utcp-data") redis=1
+  }
+  END {check(); exit !(postgres && redis)}
+' "$manifest"; then
+  printf 'PostgreSQL and Redis StatefulSets must be confined to utcp-data\n' >&2
+  exit 1
+fi
+
+printf 'K1 static manifest policy check passed\n'

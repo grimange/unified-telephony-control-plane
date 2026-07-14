@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/gateway/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+
+printf 'Helm release:\n'
+helm_cmd -n "$UTCP_GATEWAY_NAMESPACE" status traefik
+printf '\nTraefik workloads:\n'
+kube -n "$UTCP_GATEWAY_NAMESPACE" get deployment,pods,service -l app.kubernetes.io/name=traefik -o wide
+printf '\nGatewayClass:\n'
+kube get gatewayclass "$UTCP_GATEWAY_CLASS" -o wide
+printf '\nGateway:\n'
+kube -n "$UTCP_GATEWAY_NAMESPACE" get gateway "$UTCP_GATEWAY_NAME" -o wide
+printf '\nGateway listeners:\n'
+kube -n "$UTCP_GATEWAY_NAMESPACE" get gateway "$UTCP_GATEWAY_NAME" -o jsonpath='{range .status.listeners[*]}{.name}{"\tattachedRoutes="}{.attachedRoutes}{"\t"}{range .conditions[*]}{.type}{"="}{.status}{" "}{end}{"\n"}{end}' || true
+printf '\nHTTPRoutes:\n'
+kube -n utcp-platform get httproute -o wide
+printf '\nHTTPRoute conditions:\n'
+kube -n utcp-platform get httproute -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{range .status.parents[*].conditions[*]}{.type}{"="}{.status}{" "}{end}{"\n"}{end}' || true
+printf '\nCertificate:\n'
+cert_summary
+printf '\nHost port mappings:\n'
+docker ps --filter "name=k3d-${K3D_CLUSTER_NAME:-utcp-local}-serverlb" --format '{{.Names}}	{{.Ports}}'
+printf '\nReserved hostname route absence:\n'
+if render_gateway | grep -Eiq 'sip\.utcp\.local\.test|events\.utcp\.local\.test'; then
+  printf 'reserved_host_route_absent=false\n'
+  exit 1
+fi
+printf 'reserved_host_route_absent=true\n'

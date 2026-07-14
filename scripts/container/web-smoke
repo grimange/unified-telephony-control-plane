@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+image="${1:-utcp-web:dev}"
+name="utcp-web-smoke-$$"
+root_response="$(mktemp)"
+
+cleanup() {
+  rm -f "$root_response"
+  docker rm -f "$name" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+docker run -d --rm --name "$name" -p 127.0.0.1::8080 "$image" >/dev/null
+
+host_port=""
+for _ in $(seq 1 30); do
+  host_port="$(docker port "$name" 8080/tcp | sed 's/.*://')"
+  if [ -n "$host_port" ] && curl -fsS "http://127.0.0.1:${host_port}/healthz" >/dev/null; then
+    break
+  fi
+  sleep 1
+done
+
+if [ -z "$host_port" ]; then
+  printf 'web smoke container did not publish port 8080\n' >&2
+  exit 1
+fi
+
+curl -fsS "http://127.0.0.1:${host_port}/healthz" | grep -qx 'ok'
+curl -fsS "http://127.0.0.1:${host_port}/" > "$root_response"
+asset_path="$(grep -o '/assets/[^"]*\.js' "$root_response" | head -n 1)"
+if [ -z "$asset_path" ]; then
+  printf 'web smoke root did not reference a built JavaScript asset\n' >&2
+  exit 1
+fi
+curl -fsS "http://127.0.0.1:${host_port}${asset_path}" >/dev/null
+curl -fsS "http://127.0.0.1:${host_port}/assets/" >/dev/null 2>&1 && {
+  printf 'assets directory listing unexpectedly enabled\n' >&2
+  exit 1
+} || true
+
+docker exec "$name" id -u | grep -qx '101'
+docker exec "$name" test -f /usr/share/nginx/html/index.html
+docker exec "$name" sh -c 'find /usr/share/nginx/html/assets -type f | grep -q .'
+docker exec "$name" test ! -d /app/node_modules
+docker exec "$name" test ! -d /app/src
+
+printf 'web image smoke checks passed\n'

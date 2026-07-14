@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/observability/lib
+. "$SCRIPT_DIR/lib"
+
+ensure_cluster
+"$ROOT/scripts/kubernetes/proof" >/dev/null
+"$ROOT/scripts/gateway/proof" >/dev/null
+"$ROOT/scripts/security/status" >/dev/null
+render_apiserver_policy >/dev/null
+kube apply -f "$OBSERVABILITY_APISERVER_POLICY" >/dev/null
+"$SCRIPT_DIR/install"
+kube apply -f "$OBSERVABILITY_APISERVER_POLICY" >/dev/null
+kube apply -k "$OBSERVABILITY_KUSTOMIZATION"
+wait_workloads
+"$SCRIPT_DIR/status"
+printf 'K4 observability foundation applied. Proof command: make observability-proof\n'

@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+KUBECONFIG_FILE="$ROOT/.runtime/kubeconfig/utcp-local.yaml"
+CONTEXT="k3d-utcp-local"
+DB="${UTCP_POSTGRES_DB:-utcp}"
+USER="${UTCP_POSTGRES_USER:-utcp}"
+
+kube() {
+  KUBECONFIG="$KUBECONFIG_FILE" kubectl --context "$CONTEXT" "$@"
+}
+
+kube -n utcp-data exec statefulset/postgres -- psql -U "$USER" -d "$DB" -v ON_ERROR_STOP=1 <<'SQL'
+WITH tables AS (
+  SELECT
+    to_regclass('public.runtime_operations') AS runtime_operations,
+    to_regclass('public.control_plane_outbox_messages') AS outbox,
+    to_regclass('public.control_plane_inbox_messages') AS inbox,
+    to_regclass('public.control_plane_idempotency_records') AS idempotency,
+    to_regclass('public.control_plane_audit_records') AS audit
+)
+SELECT * FROM tables;
+SQL
+
+if kube -n utcp-data exec statefulset/postgres -- psql -U "$USER" -d "$DB" -At -c "SELECT to_regclass('public.runtime_operations') IS NOT NULL" | grep -qx t; then
+  kube -n utcp-data exec statefulset/postgres -- psql -U "$USER" -d "$DB" -v ON_ERROR_STOP=1 <<'SQL'
+SELECT status, count(*) AS operations FROM runtime_operations GROUP BY status ORDER BY status;
+SELECT count(*) AS pending_outbox FROM control_plane_outbox_messages WHERE dispatched_at IS NULL;
+SELECT count(*) AS inbox_messages FROM control_plane_inbox_messages;
+SELECT count(*) AS audit_records FROM control_plane_audit_records;
+SELECT count(*) AS failed_operations FROM runtime_operations WHERE status = 'terminal_failed';
+SQL
+else
+  printf 'control-plane-status: C0 schema is not present in the active Kubernetes database yet\n'
+fi

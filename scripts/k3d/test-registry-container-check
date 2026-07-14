@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CHECK="$SCRIPT_DIR/registry-container-check"
+
+pass_case() {
+  local name="$1"
+  local input="$2"
+
+  if ! printf '%b' "$input" | "$CHECK" utcp-local-registry 127.0.0.1 5001 >/tmp/utcp-k3d-registry-check.out 2>/tmp/utcp-k3d-registry-check.err; then
+    printf 'expected registry check to pass: %s\n' "$name" >&2
+    cat /tmp/utcp-k3d-registry-check.err >&2
+    exit 1
+  fi
+}
+
+fail_case() {
+  local name="$1"
+  local input="$2"
+
+  if printf '%b' "$input" | "$CHECK" utcp-local-registry 127.0.0.1 5001 >/tmp/utcp-k3d-registry-check.out 2>/tmp/utcp-k3d-registry-check.err; then
+    printf 'expected registry check to fail: %s\n' "$name" >&2
+    cat /tmp/utcp-k3d-registry-check.out >&2
+    exit 1
+  fi
+}
+
+trap 'rm -f /tmp/utcp-k3d-registry-check.out /tmp/utcp-k3d-registry-check.err' EXIT
+
+pass_case \
+  "configured unprefixed registry name with loopback binding" \
+  "unrelated-registry\tUp 9 minutes\t127.0.0.1:5002->5000/tcp\nutcp-local-registry\tUp 2 minutes\t127.0.0.1:5001->5000/tcp\n"
+
+fail_case \
+  "similarly named prefixed container must not satisfy exact configured name" \
+  "k3d-utcp-local-registry\tUp 2 minutes\t127.0.0.1:5001->5000/tcp\n"
+
+fail_case \
+  "missing configured registry fails" \
+  "utcp-local-registry-extra\tUp 2 minutes\t127.0.0.1:5001->5000/tcp\n"
+
+fail_case \
+  "incorrect host binding fails" \
+  "utcp-local-registry\tUp 2 minutes\t0.0.0.0:5001->5000/tcp\n"
+
+fail_case \
+  "stopped configured registry fails" \
+  "utcp-local-registry\tExited (0) 1 minute ago\t127.0.0.1:5001->5000/tcp\n"
+
+printf 'registry container check regression tests passed\n'

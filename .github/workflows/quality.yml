@@ -1,0 +1,736 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Read tool versions
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          . ./versions.env
+          printf 'php=%s\n' "$CI_PHP_VERSION" >> "$GITHUB_OUTPUT"
+          printf 'composer=%s\n' "$COMPOSER_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup PHP
+        # release: shivammathur/setup-php 2.37.2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
+        with:
+          php-version: ${{ steps.versions.outputs.php }}
+          tools: composer:${{ steps.versions.outputs.composer }}
+          coverage: none
+
+      - name: Cache Composer downloads
+        # release: actions/cache v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ~/.composer/cache/files
+          key: ${{ runner.os }}-composer-${{ hashFiles('apps/api/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Validate Composer manifest
+        run: cd apps/api && composer validate --strict --no-check-publish
+
+      - name: Install Composer dependencies
+        run: cd apps/api && composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Run Laravel tests
+        run: make api-test
+
+      - name: Run Laravel checks
+        run: make api-check
+
+  frontend-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Read tool versions
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          . ./versions.env
+          printf 'node=%s\n' "$CI_NODE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node.js
+        # release: actions/setup-node v6.4.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: ${{ steps.versions.outputs.node }}
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install npm dependencies
+        run: cd apps/web && npm ci
+
+      - name: Run Vue tests
+        run: make web-test
+
+      - name: Run Vue lint
+        run: make web-lint
+
+      - name: Run TypeScript checks
+        run: make web-typecheck
+
+      - name: Build frontend
+        run: make web-build
+
+      - name: Verify frontend build output
+        run: test -f apps/web/dist/index.html
+
+  container-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Setup Docker Buildx
+        # release: docker/setup-buildx-action v4.2.0
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+
+      - name: Build production images
+        run: make image-build
+
+      - name: Run containerized tests
+        run: make image-test
+
+      - name: Run container smoke checks
+        run: make image-smoke
+
+      - name: Inspect images
+        run: make image-inspect
+
+      - name: Run container quality contract
+        run: make container-check
+
+  compose-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Setup Docker Buildx
+        # release: docker/setup-buildx-action v4.2.0
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+
+      - name: Validate Compose configuration
+        run: UTCP_COMPOSE_PROJECT_NAME=utcp-ci UTCP_GATEWAY_PORT=18088 make compose-config
+
+      - name: Build Compose images
+        run: UTCP_COMPOSE_PROJECT_NAME=utcp-ci UTCP_GATEWAY_PORT=18088 make compose-build
+
+      - name: Prove isolated Compose platform
+        run: UTCP_COMPOSE_PROJECT_NAME=utcp-ci UTCP_GATEWAY_PORT=18088 make compose-proof
+
+      - name: Cleanup isolated Compose platform
+        if: always()
+        run: docker compose --env-file versions.env --env-file infrastructure/compose/env.example -f infrastructure/compose/compose.yaml -p utcp-ci down --volumes --remove-orphans
+
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Read tool versions
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          . ./versions.env
+          printf 'php=%s\n' "$CI_PHP_VERSION" >> "$GITHUB_OUTPUT"
+          printf 'composer=%s\n' "$COMPOSER_VERSION" >> "$GITHUB_OUTPUT"
+          printf 'node=%s\n' "$CI_NODE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup PHP
+        # release: shivammathur/setup-php 2.37.2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
+        with:
+          php-version: ${{ steps.versions.outputs.php }}
+          tools: composer:${{ steps.versions.outputs.composer }}
+          coverage: none
+
+      - name: Setup Node.js
+        # release: actions/setup-node v6.4.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: ${{ steps.versions.outputs.node }}
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Run dependency audits and secret scan
+        run: make security-audit
+
+  k3d-foundation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install pinned Kubernetes tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="$(scripts/ci/install-kubernetes-tools)"
+          printf '%s\n' "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Validate k3d configuration
+        run: make k3d-config-check
+
+      - name: Create K0 cluster
+        run: make k3d-create
+
+      - name: Verify K0 cluster
+        run: make k3d-verify
+
+      - name: Prove local registry pull
+        run: make k3d-registry-proof
+
+      - name: Cleanup K0 cluster
+        if: always()
+        run: |
+          make k3d-delete
+          if k3d cluster list | grep -q '^utcp-local[[:space:]]'; then
+            printf 'utcp-local cluster remains after cleanup\n' >&2
+            exit 1
+          fi
+          if k3d registry list | grep -q '^utcp-local-registry[[:space:]]'; then
+            printf 'utcp-local-registry remains after cleanup\n' >&2
+            exit 1
+          fi
+
+  kubernetes-manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install pinned Kubernetes tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="$(scripts/ci/install-kubernetes-tools)"
+          printf '%s\n' "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Create validation cluster
+        run: make k3d-create
+
+      - name: Validate K1 Kubernetes manifests
+        run: make k8s-config-check
+
+      - name: Cleanup validation cluster
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          make k3d-delete
+          if k3d cluster list | grep -q '^utcp-local[[:space:]]'; then
+            printf 'utcp-local cluster remains after cleanup\n' >&2
+            status=1
+          fi
+          if k3d registry list | grep -q '^utcp-local-registry[[:space:]]'; then
+            printf 'utcp-local-registry remains after cleanup\n' >&2
+            status=1
+          fi
+          exit "$status"
+
+  kubernetes-application:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install pinned Kubernetes tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="$(scripts/ci/install-kubernetes-tools)"
+          printf '%s\n' "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Create K0 cluster
+        run: make k3d-create
+
+      - name: Deploy K1 application base
+        run: make k8s-apply
+
+      - name: Prove K1 application base
+        run: make k8s-proof
+
+      - name: Prove K1 persistence
+        run: make k8s-persistence-proof
+
+      - name: Prove K1 application restart
+        run: make k8s-restart-proof
+
+      - name: Cleanup K1 and K0 resources
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          if [ -s .runtime/kubeconfig/utcp-local.yaml ]; then
+            CONFIRM=delete-k1-pvcs make k8s-delete || status=$?
+          fi
+          make k3d-delete || status=$?
+          if k3d cluster list | grep -q '^utcp-local[[:space:]]'; then
+            printf 'utcp-local cluster remains after cleanup\n' >&2
+            status=1
+          fi
+          if k3d registry list | grep -q '^utcp-local-registry[[:space:]]'; then
+            printf 'utcp-local-registry remains after cleanup\n' >&2
+            status=1
+          fi
+          exit "$status"
+
+  gateway-manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install pinned Kubernetes tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="$(scripts/ci/install-kubernetes-tools)"
+          printf '%s\n' "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Create validation cluster
+        run: make k3d-create
+
+      - name: Install Gateway API CRDs
+        run: make gateway-crds-install
+
+      - name: Validate K2 manifests
+        run: make gateway-config-check
+
+      - name: Server dry-run Gateway resources
+        run: kubectl --kubeconfig .runtime/kubeconfig/utcp-local.yaml --context k3d-utcp-local apply --dry-run=server -k infrastructure/kubernetes/gateway-api
+
+      - name: Cleanup validation cluster
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          make k3d-delete
+          if k3d cluster list | grep -q '^utcp-local[[:space:]]'; then
+            printf 'utcp-local cluster remains after cleanup\n' >&2
+            exit 1
+          fi
+          if k3d registry list | grep -q '^utcp-local-registry[[:space:]]'; then
+            printf 'utcp-local-registry remains after cleanup\n' >&2
+            exit 1
+          fi
+
+  gateway-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install pinned Kubernetes tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="$(scripts/ci/install-kubernetes-tools)"
+          printf '%s\n' "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Create K0 cluster
+        run: make k3d-create
+
+      - name: Deploy K1 application base
+        run: make k8s-apply
+
+      - name: Apply K2 Gateway edge
+        run: make gateway-apply
+
+      - name: Prove K2 Gateway edge
+        run: make gateway-proof
+
+      - name: Cleanup CI-owned resources
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          if [ -s .runtime/kubeconfig/utcp-local.yaml ]; then
+            CONFIRM=uninstall-traefik make gateway-delete || status=$?
+            CONFIRM=delete-k1-pvcs make k8s-delete || status=$?
+          fi
+          make k3d-delete || status=$?
+          if k3d cluster list | grep -q '^utcp-local[[:space:]]'; then
+            printf 'utcp-local cluster remains after cleanup\n' >&2
+            status=1
+          fi
+          if k3d registry list | grep -q '^utcp-local-registry[[:space:]]'; then
+            printf 'utcp-local-registry remains after cleanup\n' >&2
+            status=1
+          fi
+          exit "$status"
+
+  security-manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install pinned Kubernetes tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="$(scripts/ci/install-kubernetes-tools)"
+          printf '%s\n' "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Create validation cluster
+        run: make k3d-create
+
+      - name: Install Gateway API CRDs
+        run: make gateway-crds-install
+
+      - name: Validate K3 manifests
+        run: make security-config-check
+
+      - name: Server dry-run K3 resources
+        run: kubectl --kubeconfig .runtime/kubeconfig/utcp-local.yaml --context k3d-utcp-local apply --dry-run=server -k infrastructure/kubernetes/security
+
+      - name: Cleanup validation cluster
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          make k3d-delete || status=$?
+          if k3d cluster list | grep -q '^utcp-local[[:space:]]'; then
+            printf 'utcp-local cluster remains after cleanup\n' >&2
+            status=1
+          fi
+          if k3d registry list | grep -q '^utcp-local-registry[[:space:]]'; then
+            printf 'utcp-local-registry remains after cleanup\n' >&2
+            status=1
+          fi
+          exit "$status"
+
+  security-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install pinned Kubernetes tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="$(scripts/ci/install-kubernetes-tools)"
+          printf '%s\n' "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Create K0 cluster
+        run: make k3d-create
+
+      - name: Deploy K1 application base
+        run: make k8s-apply
+
+      - name: Apply K2 Gateway edge
+        run: make gateway-apply
+
+      - name: Apply K3 security boundaries
+        run: make security-apply
+
+      - name: Prove K3 security boundaries
+        run: make security-proof
+
+      - name: Prove K2 Gateway edge after K3
+        run: make gateway-proof
+
+      - name: Cleanup CI-owned resources
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          if [ -s .runtime/kubeconfig/utcp-local.yaml ]; then
+            make security-delete || status=$?
+            CONFIRM=uninstall-traefik make gateway-delete || status=$?
+            CONFIRM=delete-k1-pvcs make k8s-delete || status=$?
+          fi
+          make k3d-delete || status=$?
+          if k3d cluster list | grep -q '^utcp-local[[:space:]]'; then
+            printf 'utcp-local cluster remains after cleanup\n' >&2
+            status=1
+          fi
+          if k3d registry list | grep -q '^utcp-local-registry[[:space:]]'; then
+            printf 'utcp-local-registry remains after cleanup\n' >&2
+            status=1
+          fi
+          exit "$status"
+
+  observability-manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install pinned Kubernetes tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="$(scripts/ci/install-kubernetes-tools)"
+          printf '%s\n' "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Validate K4 manifests
+        run: make observability-config-check
+
+  observability-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install pinned Kubernetes tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="$(scripts/ci/install-kubernetes-tools)"
+          printf '%s\n' "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Create K0 cluster
+        run: make k3d-create
+
+      - name: Deploy K1 application base
+        run: make k8s-apply
+
+      - name: Apply K2 Gateway edge
+        run: make gateway-apply
+
+      - name: Apply K3 security boundaries
+        run: make security-apply
+
+      - name: Apply K4 observability foundation
+        run: make observability-apply
+
+      - name: Prove K4 observability foundation
+        run: make observability-proof
+
+      - name: Prove K4 observability persistence
+        run: make observability-persistence-proof
+
+      - name: Prove K3 security boundaries after K4
+        run: make security-proof
+
+      - name: Prove K2 Gateway edge after K4
+        run: make gateway-proof
+
+      - name: Cleanup CI-owned resources
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          if [ -s .runtime/kubeconfig/utcp-local.yaml ]; then
+            make observability-delete || status=$?
+            make security-delete || status=$?
+            CONFIRM=uninstall-traefik make gateway-delete || status=$?
+            CONFIRM=delete-k1-pvcs make k8s-delete || status=$?
+          fi
+          make k3d-delete || status=$?
+          if k3d cluster list | grep -q '^utcp-local[[:space:]]'; then
+            printf 'utcp-local cluster remains after cleanup\n' >&2
+            status=1
+          fi
+          if k3d registry list | grep -q '^utcp-local-registry[[:space:]]'; then
+            printf 'utcp-local-registry remains after cleanup\n' >&2
+            status=1
+          fi
+          exit "$status"
+
+  control-plane-kernel:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Setup Docker Buildx
+        # release: docker/setup-buildx-action v4.2.0
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+
+      - name: Validate C0 kernel boundaries
+        run: make control-plane-config-check
+
+      - name: Prove C0 migrations
+        run: make control-plane-migrate-proof
+
+      - name: Run C0 focused tests
+        run: make control-plane-test
+
+      - name: Run C0 proof harness
+        run: make control-plane-proof
+
+  identity-tenancy-authorization:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Read tool versions
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          . ./versions.env
+          printf 'php=%s\n' "$CI_PHP_VERSION" >> "$GITHUB_OUTPUT"
+          printf 'composer=%s\n' "$COMPOSER_VERSION" >> "$GITHUB_OUTPUT"
+          printf 'node=%s\n' "$CI_NODE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup PHP
+        # release: shivammathur/setup-php 2.37.2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
+        with:
+          php-version: ${{ steps.versions.outputs.php }}
+          tools: composer:${{ steps.versions.outputs.composer }}
+          coverage: none
+
+      - name: Setup Node.js
+        # release: actions/setup-node v6.4.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: ${{ steps.versions.outputs.node }}
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install Composer dependencies
+        run: cd apps/api && composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Install npm dependencies
+        run: cd apps/web && npm ci
+
+      - name: Validate C1 identity boundaries
+        run: make identity-config-check
+
+      - name: Run C1 identity tests
+        run: make identity-test
+
+      - name: Run frontend identity tests
+        run: make web-test
+
+      - name: Run frontend type checks
+        run: make web-typecheck
+
+      - name: Build frontend
+        run: make web-build
+
+
+  runtime-registry:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Read tool versions
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          . ./versions.env
+          printf 'php=%s\n' "$CI_PHP_VERSION" >> "$GITHUB_OUTPUT"
+          printf 'composer=%s\n' "$COMPOSER_VERSION" >> "$GITHUB_OUTPUT"
+          printf 'node=%s\n' "$CI_NODE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup PHP
+        # release: shivammathur/setup-php 2.37.2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
+        with:
+          php-version: ${{ steps.versions.outputs.php }}
+          tools: composer:${{ steps.versions.outputs.composer }}
+          coverage: none
+
+      - name: Setup Node.js
+        # release: actions/setup-node v6.4.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: ${{ steps.versions.outputs.node }}
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - name: Install Composer dependencies
+        run: cd apps/api && composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Install npm dependencies
+        run: cd apps/web && npm ci
+
+      - name: Validate C2 runtime registry boundaries
+        run: make runtime-registry-config-check
+
+      - name: Run C2 runtime registry tests
+        run: make runtime-registry-test
+
+      - name: Run frontend runtime registry tests
+        run: make web-test
+
+      - name: Run frontend type checks
+        run: make web-typecheck
+
+      - name: Build frontend
+        run: make web-build
+
+
+  runtime-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Setup Docker Buildx
+        # release: docker/setup-buildx-action v4.2.0
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+
+      - name: Validate C3 runtime engine boundaries
+        run: make runtime-engine-config-check
+
+      - name: Run C3 runtime engine tests
+        run: make runtime-engine-test
+
+      - name: Run C3 disposable PostgreSQL proof
+        run: make runtime-engine-proof
+
+      - name: Validate C3 process-role manifests
+        run: make k8s-config-check

@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+fail() {
+  printf 'simulator config check failed: %s\n' "$1" >&2
+  exit 1
+}
+
+for file in \
+  apps/api/config/simulator.php \
+  apps/api/database/migrations/2026_07_14_190000_create_deterministic_simulator_tables.php \
+  apps/api/app/Simulator/SimulatorCatalog.php \
+  apps/api/app/Simulator/SimulatorProfileService.php \
+  apps/api/app/Simulator/SimulatorScheduledEventRepository.php \
+  apps/api/app/Simulator/SimulatorEventSourceWorker.php \
+  apps/api/app/Simulator/Commands/SimulatorRuntimeAdapter.php \
+  apps/api/app/Simulator/Commands/SimulatorInspectHandler.php \
+  apps/api/app/Simulator/Commands/SimulatorApplyConfigurationHandler.php \
+  apps/api/app/Simulator/Events/SimulatorEventNormalizer.php \
+  apps/api/app/Simulator/Reconciliation/SimulatorRuntimeNodeReconciler.php \
+  infrastructure/kubernetes/base/platform/simulator-event-source-deployment.yaml
+do
+  [ -s "$file" ] || fail "missing required C4 file: $file"
+done
+
+find apps/api/app/Simulator -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
+php -l apps/api/config/simulator.php >/dev/null
+php -l apps/api/routes/web.php >/dev/null
+php -l apps/api/routes/console.php >/dev/null
+
+php -r '
+if (! function_exists("env")) {
+  function env($key, $default = null) { return $default; }
+}
+$runtime = require "apps/api/config/runtime_registry.php";
+$simulator = require "apps/api/config/simulator.php";
+if (! isset($runtime["runtime_families"]["simulator"])) {
+  fwrite(STDERR, "missing simulator runtime family\n");
+  exit(1);
+}
+if (! isset($runtime["adapter_keys"]["simulator-deterministic"])) {
+  fwrite(STDERR, "missing simulator deterministic adapter key\n");
+  exit(1);
+}
+foreach (["runtime.observation","runtime.configuration","event.stream"] as $capability) {
+  if (! isset($runtime["runtime_capabilities"][$capability])) {
+    fwrite(STDERR, "missing simulator runtime capability {$capability}\n");
+    exit(1);
+  }
+}
+foreach ([
+  "steady-ready",
+  "transient-failure-then-ready",
+  "terminal-failure",
+  "timeout-then-ready",
+  "duplicate-observation",
+  "disconnect-reconnect",
+  "configuration-drift-then-converge",
+] as $scenario) {
+  if (! in_array($scenario, $simulator["scenarios"], true)) {
+    fwrite(STDERR, "missing scenario {$scenario}\n");
+    exit(1);
+  }
+}
+'
+
+for role in simulator-event-source; do
+  rg -n -- "$role|simulator:event-source" infrastructure/docker/api/entrypoint infrastructure/kubernetes/base/platform apps/api/routes/console.php >/dev/null ||
+    fail "simulator process role is not wired: $role"
+done
+
+if rg -n "api/v1/admin/(ari|esl|asterisk|freeswitch)|simulator/(advance|emit|reconcile)|test-connection|refresh-health|mark-ready" apps/api/routes apps/api/app/Http apps/web/src >/dev/null; then
+  fail "found forbidden runtime-specific or manual simulator control route"
+fi
+
+if rg -n "Http::|curl_init|stream_socket_client|WebSocket|Ratchet|Ari|ARI|ESL|FreeSwitch|Asterisk" apps/api/app/Simulator >/dev/null; then
+  fail "simulator contains live runtime client or vendor-specific implementation"
+fi
+
+if rg -n "SimulatorRuntimeAdapter" apps/api/app/RuntimeEngine apps/api/app/ControlPlane >/dev/null; then
+  fail "generic engine contains simulator-specific branch"
+fi
+
+if rg -n "0\\.0\\.0\\.0/0|hostNetwork|hostPID|hostPath|NodePort|LoadBalancer|containerPort: (5060|5061|10000)" infrastructure/kubernetes/base/platform/simulator-event-source-deployment.yaml infrastructure/kubernetes/security >/dev/null; then
+  fail "simulator Kubernetes/network configuration contains forbidden exposure or telephony ports"
+fi
+
+if rg -n "UTCP_PHASE=C4" versions.env >/dev/null; then
+  fail "UTCP_PHASE must remain C3 until C4 runtime proof has passed"
+fi
+
+kubectl kustomize infrastructure/kubernetes/base >/dev/null
+
+printf 'simulator config check passed\n'
