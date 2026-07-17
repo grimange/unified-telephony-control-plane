@@ -41,6 +41,40 @@ The RuntimeNode detail page is the PBX-oriented management surface for Asterisk 
 
 The adapter-configuration API validates bounded timeout and reconnect settings, stores them in PostgreSQL, audits successful changes, advances the node configuration generation, and wakes automatic processing. A missing profile is incomplete configuration and prevents listener eligibility until the explicit profile exists.
 
+## T2 Conference Recovery Telemetry
+
+T2 conference recovery remains adapter-neutral in the C3 and C5 layers. The generic reconcilers decide whether desired and observed conference state requires runtime inspection or a generic conference operation. Asterisk-specific bridge and channel inspection stays inside the Asterisk adapter, which translates runtime state into bounded inspection evidence.
+
+The metrics endpoint exposes low-cardinality recovery telemetry:
+
+- `utcp_conference_runtime_inspections_total`: runtime inspections grouped by adapter, resource type, result, and failure class.
+- `utcp_conference_runtime_inspection_failures_total`: unavailable or failed inspections grouped by adapter, resource type, failure class, and reason.
+- `utcp_conference_recovery_operations_total`: conference recovery operations grouped by operation, result, and failure class.
+- `utcp_conference_recovery_operation_failures_total`: retrying or failed recovery operations grouped by operation, result, and failure class.
+- `utcp_conference_recovery_stale_events_rejected_total`: stale or superseded conference event receipts grouped by result and reason.
+- `utcp_conference_recovery_backlog`: current non-converged conference reconciliation targets grouped by resource type and result.
+- `utcp_conference_recovery_lag_seconds`: oldest current recovery lag grouped by resource type.
+
+These metrics must not label by tenant, user, conference, participant, RuntimeNode, RuntimeBinding, bridge, channel, operation ID, receipt ID, event epoch, owner, fencing token, or request ID.
+
+The Prometheus alert rules cover repeated recovery operation failures, prolonged recovery backlog or lag, and repeated runtime inspection failures. They intentionally do not fire merely because there are zero Conferences or zero participants.
+
+## T2 Recovery Proof Corridors
+
+The repository recovery proof script supports independently invocable live corridors for later Claude Code acceptance:
+
+```sh
+scripts/asterisk-conference/recovery-runtime-proof --corridor listener_restart_recovery
+scripts/asterisk-conference/recovery-runtime-proof --corridor event_gap_recovery
+scripts/asterisk-conference/recovery-runtime-proof --corridor asterisk_restart_recovery
+scripts/asterisk-conference/recovery-runtime-proof --corridor retryable_partial_failure
+scripts/asterisk-conference/recovery-runtime-proof --corridor all
+```
+
+The default invocation remains equivalent to the complete `all` sequence. Each corridor keeps bounded timeouts, uses the canonical authenticated Conference lifecycle, prints only safe result summaries, and preserves cleanup traps. The script is proof tooling only; it is not a runtime management interface.
+
+T2-B source-level repository work keeps `UTCP_PHASE=T1`. Live acceptance of listener restart, event-gap recovery, Asterisk restart reconstruction, retryable partial failure, recovery alert fire/resolve, and final orphan cleanup remains a separate Claude Code corridor.
+
 ## Exclusions
 
 T0 deliberately excludes ConfBridge, C5 conference operation support on Asterisk, channel origination, channel control, dialplan execution, SIP registration, PJSIP configuration, Kamailio, RTP/media, rtpengine, browser WebRTC, trunks, PSTN, and FreeSWITCH ESL. Those remain later roadmap phases.

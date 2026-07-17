@@ -149,6 +149,13 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter, RuntimeConference
 
             $payload = $this->statePayload($state);
             $conferenceState = $payload['conferences'][$conferenceId]['state'] ?? null;
+            $conference = DB::table('conferences')
+                ->where('id', $conferenceId)
+                ->where('tenant_id', $tenantId)
+                ->first();
+            if ($conference === null) {
+                return false;
+            }
             $epoch = $this->openEpoch($node);
             $conferencePayload = [
                 'conference_id' => $conferenceId,
@@ -162,7 +169,7 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter, RuntimeConference
 
                     return true;
                 }
-                if ($conferenceState === 'closed') {
+                if ($conferenceState === 'closed' || ((string) $conference->desired_state === 'closed' && $conferenceState !== 'ready')) {
                     $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('conference_closed'), 1, $this->conferencePayload($node, $profile, $conferencePayload, 'closed', (int) $conferencePayload['configuration_generation']));
 
                     return true;
@@ -172,23 +179,32 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter, RuntimeConference
             }
 
             $participant = $payload['participants'][$participantId] ?? null;
-            if (! is_array($participant)) {
+            $participantRow = DB::table('conference_participants')
+                ->where('id', $participantId)
+                ->where('tenant_id', $tenantId)
+                ->where('conference_id', $conferenceId)
+                ->first();
+            if ($participantRow === null) {
                 return false;
             }
 
+            $participantGeneration = is_array($participant)
+                ? (int) ($participant['configuration_generation'] ?? $node->configuration_version)
+                : (int) $conference->configuration_generation;
             $participantPayload = [
                 'conference_id' => $conferenceId,
                 'participant_id' => $participantId,
-                'telephony_session_id' => (string) ($participant['telephony_session_id'] ?? ''),
+                'telephony_session_id' => is_array($participant) ? (string) ($participant['telephony_session_id'] ?? '') : (string) $participantRow->telephony_session_id,
                 'runtime_node_id' => $node->id,
             ];
-            $generation = (int) ($participant['configuration_generation'] ?? $node->configuration_version);
-            if (($participant['state'] ?? null) === 'joined') {
+            $generation = $participantGeneration;
+            $participantState = is_array($participant) ? ($participant['state'] ?? null) : null;
+            if ($participantState === 'joined') {
                 $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('participant_joined'), 1, $this->participantPayload($node, $profile, $participantPayload, 'joined', $generation));
 
                 return true;
             }
-            if (($participant['state'] ?? null) === 'left') {
+            if ($participantState === 'left' || ((string) $participantRow->desired_state === 'removed' && ! is_array($participant))) {
                 $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('participant_left'), 1, $this->participantPayload($node, $profile, $participantPayload, 'left', $generation));
 
                 return true;

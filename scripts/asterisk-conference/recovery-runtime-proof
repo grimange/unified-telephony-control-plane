@@ -19,13 +19,117 @@ redact_body() {
   ' "$SIM_BODY_FILE"
 }
 
+CORRIDOR="${UTCP_ASTERISK_CONFERENCE_RECOVERY_CORRIDOR:-all}"
+PROOF_DEADLINE_SECONDS="${UTCP_ASTERISK_CONFERENCE_RECOVERY_PROOF_DEADLINE_SECONDS:-3600}"
+PROOF_STARTED_AT="$(date +%s)"
+current_corridor=""
+corridor_names=(
+  listener_restart_recovery
+  event_gap_recovery
+  asterisk_restart_recovery
+  retryable_partial_failure
+)
+declare -A corridor_results=()
+for corridor_name in "${corridor_names[@]}"; do
+  corridor_results["$corridor_name"]="not_run"
+done
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/asterisk-conference/recovery-runtime-proof [--corridor NAME]
+
+NAME may be one of:
+  listener_restart_recovery
+  event_gap_recovery
+  asterisk_restart_recovery
+  retryable_partial_failure
+  all
+
+The default is all. Every invocation keeps the cleanup trap active, uses
+bounded waits, and reports unselected corridors as not_run.
+USAGE
+}
+
+print_corridor_results() {
+  local corridor_name
+  for corridor_name in "${corridor_names[@]}"; do
+    printf 'corridor_result name=%s result=%s\n' "$corridor_name" "${corridor_results[$corridor_name]}"
+  done
+}
+
+mark_current_corridor_failed() {
+  if [ -n "${current_corridor:-}" ] && [ "${corridor_results[$current_corridor]:-not_run}" = "running" ]; then
+    corridor_results["$current_corridor"]="failed"
+  fi
+}
+
 fail() {
+  mark_current_corridor_failed
   printf 'asterisk_conference_recovery_runtime_proof=failed reason=%s\n' "$1" >&2
+  print_corridor_results >&2 || true
   if [ -s "$SIM_BODY_FILE" ]; then
     redact_body >&2 || true
     printf '\n' >&2
   fi
   exit 1
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --corridor)
+      shift
+      [ "$#" -gt 0 ] || fail "missing_corridor"
+      CORRIDOR="$1"
+      ;;
+    --corridor=*)
+      CORRIDOR="${1#--corridor=}"
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "unknown_argument"
+      ;;
+  esac
+  shift
+done
+
+case "$CORRIDOR" in
+  listener_restart_recovery|event_gap_recovery|asterisk_restart_recovery|retryable_partial_failure|all)
+    ;;
+  *)
+    fail "unknown_corridor_${CORRIDOR}"
+    ;;
+esac
+
+check_deadline() {
+  local elapsed
+  elapsed=$(($(date +%s) - PROOF_STARTED_AT))
+  if [ "$elapsed" -gt "$PROOF_DEADLINE_SECONDS" ]; then
+    fail "proof_deadline_exceeded"
+  fi
+}
+
+corridor_selected() {
+  local corridor_name="$1"
+  [ "$CORRIDOR" = "all" ] || [ "$CORRIDOR" = "$corridor_name" ]
+}
+
+run_corridor() {
+  local corridor_name="$1"
+  shift
+  if ! corridor_selected "$corridor_name"; then
+    return 0
+  fi
+
+  check_deadline
+  current_corridor="$corridor_name"
+  corridor_results["$corridor_name"]="running"
+  "$@"
+  corridor_results["$corridor_name"]="passed"
+  current_corridor=""
+  printf '%s=passed\n' "$corridor_name"
 }
 
 hash_ref() {
@@ -42,7 +146,21 @@ sql_value() {
 }
 
 wait_sql() {
-  sim_wait_until "$1" "$2" "$3" "$4" || fail "${1}_timeout"
+  local description="$1" max_seconds="$2" interval="$3" query="$4"
+  local started waited
+  started="$(date +%s)"
+  while :; do
+    check_deadline
+    waited=$(($(date +%s) - started))
+    if [ "$(sql_value "$query")" != "0" ]; then
+      printf 'wait_ok description=%s waited_seconds=%s\n' "$description" "$waited"
+      return 0
+    fi
+    if [ "$waited" -ge "$max_seconds" ]; then
+      fail "${description}_timeout"
+    fi
+    sleep "$interval"
+  done
 }
 
 json_field() {
@@ -71,6 +189,7 @@ restart_deployment_pods() {
 
   started="$(date +%s)"
   while :; do
+    check_deadline
     waited=$(($(date +%s) - started))
     replacement_uid="$(kube_cmd -n "$namespace" get pod -l "$selector" -o jsonpath='{range .items[*]}{.metadata.uid}{" "}{.status.phase}{" "}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\n"}{end}' | awk -v old="$old_uid" '$1 != old && $2 == "Running" && $3 == "True" { print $1; exit }')"
     if [ -n "$replacement_uid" ]; then
@@ -176,6 +295,7 @@ wait_ari_field() {
   local started waited summary value
   started="$(date +%s)"
   while :; do
+    check_deadline
     waited=$(($(date +%s) - started))
     summary="$(ari_summary "$tenant_id" "$runtime_node_id" "$conference_id" "$participant_id" 2>/dev/null || true)"
     value="$(printf '%s' "$summary" | json_field "$field" 2>/dev/null || true)"
@@ -241,7 +361,126 @@ cleanup_proof() {
   fi
 }
 
-printf 'asterisk_conference_recovery_runtime_proof=started\n'
+setup_proof_fixture() {
+  sim_login
+  [ -n "${SIM_TENANT_ID:-}" ] || fail "tenant_context_missing"
+  assert_uuid tenant "$SIM_TENANT_ID"
+
+  wait_sql "asterisk_event_listener_ready" 180 5 "select count(*) from runtime_listener_leases l join runtime_nodes rn on rn.id = l.runtime_node_id join runtime_event_connection_epochs e on e.event_source_id = l.event_source_id and e.runtime_node_id = rn.id where rn.tenant_id='${SIM_TENANT_ID}' and rn.adapter_key='asterisk-ari' and rn.observed_state='ready' and l.listener_kind='asterisk-ari-events' and l.status='claimed' and l.lease_expires_at > now() and e.status='open';"
+
+  conference_payload="$(php -r 'echo json_encode(["slug"=>"t2b-recovery-proof-".$argv[1],"display_name"=>"T2B Recovery Proof ".$argv[1]], JSON_UNESCAPED_SLASHES);' "$suffix")"
+  code="$(sim_api POST /api/v1/admin/conferences "$conference_payload" --header "Idempotency-Key: t2b-conference-${suffix}")"
+  [ "$code" = "201" ] || fail "conference_create_http_${code}"
+  conference_id="$(json_body_get conference.id)"
+  assert_uuid conference "$conference_id"
+
+  code="$(sim_api POST "/api/v1/admin/conferences/$conference_id/desired-state" '{"desired_state":"open"}')"
+  [ "$code" = "200" ] || fail "conference_open_http_${code}"
+
+  wait_sql "asterisk_runtime_binding" 180 5 "select count(*) from conference_runtime_bindings b join runtime_nodes rn on rn.id = b.runtime_node_id where b.conference_id='${conference_id}' and b.tenant_id='${SIM_TENANT_ID}' and b.status='active' and rn.adapter_key='asterisk-ari' and rn.observed_state='ready';"
+  runtime_node_id="$(sql_value "select b.runtime_node_id from conference_runtime_bindings b join runtime_nodes rn on rn.id = b.runtime_node_id where b.conference_id='${conference_id}' and b.tenant_id='${SIM_TENANT_ID}' and b.status='active' and rn.adapter_key='asterisk-ari' limit 1;")"
+  assert_uuid runtime_node "$runtime_node_id"
+  initial_binding_ref="$(hash_ref "$runtime_node_id")"
+  binding_count="$(sql_value "select count(*) from conference_runtime_bindings where conference_id='${conference_id}' and status='active';")"
+  [ "$binding_count" = "1" ] || fail "runtime_binding_count_${binding_count}"
+
+  wait_sql "conference_ensure_succeeded" 300 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference' and aggregate_id='${conference_id}' and operation_type='conference.ensure' and status='succeeded';"
+  wait_sql "conference_projected_ready" 300 5 "select count(*) from conferences where id='${conference_id}' and tenant_id='${SIM_TENANT_ID}' and desired_state='open' and observed_state='ready';"
+  wait_sql "conference_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference' and target_id='${conference_id}' and status='converged';"
+  wait_ari_field "baseline_bridge_exists" bridge_exists true 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "baseline_bridge_timeout"
+}
+
+corridor_listener_restart_recovery() {
+  local summary channel_count lease_owner_before lease_fence_before lease_fence_after
+  listener_participant="$(join_participant listener "$member_cookie_listener")"
+  wait_joined "$listener_participant" listener
+  summary="$(ari_summary "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$listener_participant")"
+  channel_count="$(printf '%s' "$summary" | json_field bridge_channel_count)"
+  [ "$channel_count" = "1" ] || fail "baseline_channel_count_${channel_count}"
+
+  lease_owner_before="$(sql_value "select coalesce(owner,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
+  lease_fence_before="$(sql_value "select coalesce(fencing_token,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
+  restart_deployment_pods utcp-platform 'app.kubernetes.io/component=asterisk-ari-events' asterisk-ari-events
+  wait_sql "listener_restart_epoch_open" 180 5 "select count(*) from runtime_listener_leases l join runtime_event_connection_epochs e on e.event_source_id = l.event_source_id and e.owner = l.owner where l.runtime_node_id='${runtime_node_id}' and l.listener_kind='asterisk-ari-events' and l.status='claimed' and l.lease_expires_at > now() and l.owner <> '${lease_owner_before}' and coalesce(l.fencing_token,'') <> '${lease_fence_before}' and e.status='open';"
+  lease_fence_after="$(sql_value "select coalesce(fencing_token,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
+  [ "$lease_fence_after" != "$lease_fence_before" ] || fail "listener_fencing_token_unchanged"
+  wait_ari_field "listener_restart_bridge_retained" bridge_exists true 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "listener_restart_bridge_missing"
+  wait_ari_field "listener_restart_participant_retained" participant_channel_in_bridge true 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$listener_participant" || fail "listener_restart_participant_missing"
+  summary="$(ari_summary "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$listener_participant")"
+  channel_count="$(printf '%s' "$summary" | json_field bridge_channel_count)"
+  [ "$channel_count" = "1" ] || fail "listener_restart_duplicate_channel_count_${channel_count}"
+  wait_sql "listener_restart_conference_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference' and target_id='${conference_id}' and status='converged';"
+  wait_sql "listener_restart_participant_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference_participant' and target_id='${listener_participant}' and status='converged';"
+}
+
+corridor_event_gap_recovery() {
+  local gap_lease_owner_before gap_lease_fence_before listener_restart_pid
+  gap_participant="$(join_participant gap "$member_cookie_gap")"
+  wait_joined "$gap_participant" gap
+  gap_lease_owner_before="$(sql_value "select coalesce(owner,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
+  gap_lease_fence_before="$(sql_value "select coalesce(fencing_token,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
+  restart_deployment_pods utcp-platform 'app.kubernetes.io/component=asterisk-ari-events' asterisk-ari-events &
+  listener_restart_pid=$!
+  remove_participant "$gap_participant" event_gap
+  wait "$listener_restart_pid"
+  wait_sql "event_gap_listener_epoch_open" 180 5 "select count(*) from runtime_listener_leases l join runtime_event_connection_epochs e on e.event_source_id = l.event_source_id and e.owner = l.owner where l.runtime_node_id='${runtime_node_id}' and l.listener_kind='asterisk-ari-events' and l.status='claimed' and l.lease_expires_at > now() and l.owner <> '${gap_lease_owner_before}' and coalesce(l.fencing_token,'') <> '${gap_lease_fence_before}' and e.status='open';"
+  wait_ari_field "event_gap_bridge_remains" bridge_exists true 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "event_gap_bridge_missing"
+}
+
+corridor_asterisk_restart_recovery() {
+  local post_restart_runtime_node_id
+  restart_participant="$(join_participant restart "$member_cookie_restart")"
+  wait_joined "$restart_participant" restart
+  restart_deployment_pods utcp-runtime 'app.kubernetes.io/component=asterisk-ari' asterisk-ari
+  wait_sql "asterisk_runtime_ready_after_restart" 240 5 "select count(*) from runtime_nodes where id='${runtime_node_id}' and tenant_id='${SIM_TENANT_ID}' and observed_state='ready';"
+  wait_sql "listener_ready_after_asterisk_restart" 240 5 "select count(*) from runtime_listener_leases l join runtime_event_connection_epochs e on e.event_source_id = l.event_source_id where l.runtime_node_id='${runtime_node_id}' and l.listener_kind='asterisk-ari-events' and l.status='claimed' and l.lease_expires_at > now() and e.status='open';"
+  wait_sql "conference_recovery_operation_after_restart" 300 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference' and aggregate_id='${conference_id}' and operation_type='conference.ensure' and status='succeeded';"
+  wait_ari_field "restart_bridge_reconstructed" bridge_exists true 240 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "restart_bridge_reconstruction_timeout"
+  wait_joined "$restart_participant" restart_reconstructed
+  post_restart_runtime_node_id="$(sql_value "select runtime_node_id from conference_runtime_bindings where conference_id='${conference_id}' and tenant_id='${SIM_TENANT_ID}' and status='active' limit 1;")"
+  [ "$(hash_ref "$post_restart_runtime_node_id")" = "$initial_binding_ref" ] || fail "runtime_binding_changed_after_restart"
+}
+
+corridor_retryable_partial_failure() {
+  local false_joined
+  scale_asterisk 0
+  partial_participant="$(join_participant partial "$member_cookie_partial")"
+  wait_sql "partial_failure_operation_queued_or_retrying" 120 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference_participant' and aggregate_id='${partial_participant}' and operation_type='conference.participant.ensure' and status in ('pending','leased','running','retry_scheduled','failed','terminal_failed');"
+  false_joined="$(sql_value "select count(*) from conference_participants where id='${partial_participant}' and tenant_id='${SIM_TENANT_ID}' and observed_state='joined';")"
+  [ "$false_joined" = "0" ] || fail "partial_failure_false_joined_projection"
+  scale_asterisk 1
+  wait_sql "partial_failure_runtime_ready" 240 5 "select count(*) from runtime_nodes where id='${runtime_node_id}' and tenant_id='${SIM_TENANT_ID}' and observed_state='ready';"
+  wait_joined "$partial_participant" partial_recovered
+}
+
+cleanup_and_assert() {
+  local code quoted_ids open_operations non_converged participant
+  for participant in "${participant_ids[@]:-}"; do
+    if [ -n "$participant" ]; then
+      remove_participant "$participant" "cleanup_$(hash_ref "$participant")"
+    fi
+  done
+
+  code="$(sim_api POST "/api/v1/admin/conferences/$conference_id/desired-state" '{"desired_state":"closed"}')"
+  [ "$code" = "200" ] || fail "conference_close_http_${code}"
+  wait_sql "conference_close_succeeded" 300 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference' and aggregate_id='${conference_id}' and operation_type='conference.close' and status='succeeded';"
+  wait_sql "conference_projected_closed" 300 5 "select count(*) from conferences where id='${conference_id}' and tenant_id='${SIM_TENANT_ID}' and desired_state='closed' and observed_state='closed';"
+  wait_sql "conference_close_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference' and target_id='${conference_id}' and status='converged';"
+  wait_ari_field "final_bridge_absent" bridge_exists false 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "final_bridge_cleanup_timeout"
+
+  quoted_ids="'${conference_id}'"
+  for participant in "${participant_ids[@]:-}"; do
+    if [ -n "$participant" ]; then
+      quoted_ids="${quoted_ids}, '${participant}'"
+    fi
+  done
+  open_operations="$(sql_value "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_id in (${quoted_ids}) and status not in ('succeeded', 'cancelled', 'expired');")"
+  [ "$open_operations" = "0" ] || fail "open_operations_${open_operations}"
+  non_converged="$(sql_value "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_id in (${quoted_ids}) and status <> 'converged';")"
+  [ "$non_converged" = "0" ] || fail "non_converged_targets_${non_converged}"
+}
+
+printf 'asterisk_conference_recovery_runtime_proof=started corridor=%s\n' "$CORRIDOR"
 
 suffix="$(date +%s%N)"
 member_cookie_listener="$(mktemp)"
@@ -249,106 +488,19 @@ member_cookie_gap="$(mktemp)"
 member_cookie_restart="$(mktemp)"
 member_cookie_partial="$(mktemp)"
 participant_ids=()
+listener_participant=""
+gap_participant=""
+restart_participant=""
+partial_participant=""
 ASTERISK_SCALED_DOWN=0
 trap 'cleanup_proof; rm -f "$member_cookie_listener" "$member_cookie_gap" "$member_cookie_restart" "$member_cookie_partial"; sim_cleanup' EXIT
 
-sim_login
-[ -n "${SIM_TENANT_ID:-}" ] || fail "tenant_context_missing"
-assert_uuid tenant "$SIM_TENANT_ID"
-
-wait_sql "asterisk_event_listener_ready" 180 5 "select count(*) from runtime_listener_leases l join runtime_nodes rn on rn.id = l.runtime_node_id join runtime_event_connection_epochs e on e.event_source_id = l.event_source_id and e.runtime_node_id = rn.id where rn.tenant_id='${SIM_TENANT_ID}' and rn.adapter_key='asterisk-ari' and rn.observed_state='ready' and l.listener_kind='asterisk-ari-events' and l.status='claimed' and l.lease_expires_at > now() and e.status='open';"
-
-conference_payload="$(php -r 'echo json_encode(["slug"=>"t2b-recovery-proof-".$argv[1],"display_name"=>"T2B Recovery Proof ".$argv[1]], JSON_UNESCAPED_SLASHES);' "$suffix")"
-code="$(sim_api POST /api/v1/admin/conferences "$conference_payload" --header "Idempotency-Key: t2b-conference-${suffix}")"
-[ "$code" = "201" ] || fail "conference_create_http_${code}"
-conference_id="$(json_body_get conference.id)"
-assert_uuid conference "$conference_id"
-
-code="$(sim_api POST "/api/v1/admin/conferences/$conference_id/desired-state" '{"desired_state":"open"}')"
-[ "$code" = "200" ] || fail "conference_open_http_${code}"
-
-wait_sql "asterisk_runtime_binding" 180 5 "select count(*) from conference_runtime_bindings b join runtime_nodes rn on rn.id = b.runtime_node_id where b.conference_id='${conference_id}' and b.tenant_id='${SIM_TENANT_ID}' and b.status='active' and rn.adapter_key='asterisk-ari' and rn.observed_state='ready';"
-runtime_node_id="$(sql_value "select b.runtime_node_id from conference_runtime_bindings b join runtime_nodes rn on rn.id = b.runtime_node_id where b.conference_id='${conference_id}' and b.tenant_id='${SIM_TENANT_ID}' and b.status='active' and rn.adapter_key='asterisk-ari' limit 1;")"
-assert_uuid runtime_node "$runtime_node_id"
-initial_binding_ref="$(hash_ref "$runtime_node_id")"
-binding_count="$(sql_value "select count(*) from conference_runtime_bindings where conference_id='${conference_id}' and status='active';")"
-[ "$binding_count" = "1" ] || fail "runtime_binding_count_${binding_count}"
-
-wait_sql "conference_ensure_succeeded" 300 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference' and aggregate_id='${conference_id}' and operation_type='conference.ensure' and status='succeeded';"
-wait_sql "conference_projected_ready" 300 5 "select count(*) from conferences where id='${conference_id}' and tenant_id='${SIM_TENANT_ID}' and desired_state='open' and observed_state='ready';"
-wait_sql "conference_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference' and target_id='${conference_id}' and status='converged';"
-wait_ari_field "baseline_bridge_exists" bridge_exists true 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "baseline_bridge_timeout"
-
-listener_participant="$(join_participant listener "$member_cookie_listener")"
-wait_joined "$listener_participant" listener
-summary="$(ari_summary "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$listener_participant")"
-channel_count="$(printf '%s' "$summary" | json_field bridge_channel_count)"
-[ "$channel_count" = "1" ] || fail "baseline_channel_count_${channel_count}"
-
-lease_owner_before="$(sql_value "select coalesce(owner,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
-lease_fence_before="$(sql_value "select coalesce(fencing_token,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
-restart_deployment_pods utcp-platform 'app.kubernetes.io/component=asterisk-ari-events' asterisk-ari-events
-wait_sql "listener_restart_epoch_open" 180 5 "select count(*) from runtime_listener_leases l join runtime_event_connection_epochs e on e.event_source_id = l.event_source_id and e.owner = l.owner where l.runtime_node_id='${runtime_node_id}' and l.listener_kind='asterisk-ari-events' and l.status='claimed' and l.lease_expires_at > now() and l.owner <> '${lease_owner_before}' and coalesce(l.fencing_token,'') <> '${lease_fence_before}' and e.status='open';"
-lease_fence_after="$(sql_value "select coalesce(fencing_token,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
-[ "$lease_fence_after" != "$lease_fence_before" ] || fail "listener_fencing_token_unchanged"
-wait_ari_field "listener_restart_bridge_retained" bridge_exists true 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "listener_restart_bridge_missing"
-wait_ari_field "listener_restart_participant_retained" participant_channel_in_bridge true 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$listener_participant" || fail "listener_restart_participant_missing"
-summary="$(ari_summary "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$listener_participant")"
-channel_count="$(printf '%s' "$summary" | json_field bridge_channel_count)"
-[ "$channel_count" = "1" ] || fail "listener_restart_duplicate_channel_count_${channel_count}"
-wait_sql "listener_restart_conference_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference' and target_id='${conference_id}' and status='converged';"
-wait_sql "listener_restart_participant_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference_participant' and target_id='${listener_participant}' and status='converged';"
-printf 'listener_restart_recovery=passed\n'
-
-gap_participant="$(join_participant gap "$member_cookie_gap")"
-wait_joined "$gap_participant" gap
-gap_lease_owner_before="$(sql_value "select coalesce(owner,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
-gap_lease_fence_before="$(sql_value "select coalesce(fencing_token,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
-restart_deployment_pods utcp-platform 'app.kubernetes.io/component=asterisk-ari-events' asterisk-ari-events &
-listener_restart_pid=$!
-remove_participant "$gap_participant" event_gap
-wait "$listener_restart_pid"
-wait_sql "event_gap_listener_epoch_open" 180 5 "select count(*) from runtime_listener_leases l join runtime_event_connection_epochs e on e.event_source_id = l.event_source_id and e.owner = l.owner where l.runtime_node_id='${runtime_node_id}' and l.listener_kind='asterisk-ari-events' and l.status='claimed' and l.lease_expires_at > now() and l.owner <> '${gap_lease_owner_before}' and coalesce(l.fencing_token,'') <> '${gap_lease_fence_before}' and e.status='open';"
-wait_ari_field "event_gap_bridge_remains" bridge_exists true 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "event_gap_bridge_missing"
-printf 'event_gap_recovery=passed\n'
-
-restart_participant="$(join_participant restart "$member_cookie_restart")"
-wait_joined "$restart_participant" restart
-restart_deployment_pods utcp-runtime 'app.kubernetes.io/component=asterisk-ari' asterisk-ari
-wait_sql "asterisk_runtime_ready_after_restart" 240 5 "select count(*) from runtime_nodes where id='${runtime_node_id}' and tenant_id='${SIM_TENANT_ID}' and observed_state='ready';"
-wait_sql "listener_ready_after_asterisk_restart" 240 5 "select count(*) from runtime_listener_leases l join runtime_event_connection_epochs e on e.event_source_id = l.event_source_id where l.runtime_node_id='${runtime_node_id}' and l.listener_kind='asterisk-ari-events' and l.status='claimed' and l.lease_expires_at > now() and e.status='open';"
-wait_sql "conference_recovery_operation_after_restart" 300 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference' and aggregate_id='${conference_id}' and operation_type='conference.ensure' and status='succeeded';"
-wait_ari_field "restart_bridge_reconstructed" bridge_exists true 240 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "restart_bridge_reconstruction_timeout"
-wait_joined "$restart_participant" restart_reconstructed
-post_restart_runtime_node_id="$(sql_value "select runtime_node_id from conference_runtime_bindings where conference_id='${conference_id}' and tenant_id='${SIM_TENANT_ID}' and status='active' limit 1;")"
-[ "$(hash_ref "$post_restart_runtime_node_id")" = "$initial_binding_ref" ] || fail "runtime_binding_changed_after_restart"
-printf 'asterisk_restart_recovery=passed\n'
-
-scale_asterisk 0
-partial_participant="$(join_participant partial "$member_cookie_partial")"
-wait_sql "partial_failure_operation_queued_or_retrying" 120 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference_participant' and aggregate_id='${partial_participant}' and operation_type='conference.participant.ensure' and status in ('pending','leased','running','retry_scheduled','failed','terminal_failed');"
-false_joined="$(sql_value "select count(*) from conference_participants where id='${partial_participant}' and tenant_id='${SIM_TENANT_ID}' and observed_state='joined';")"
-[ "$false_joined" = "0" ] || fail "partial_failure_false_joined_projection"
-scale_asterisk 1
-wait_sql "partial_failure_runtime_ready" 240 5 "select count(*) from runtime_nodes where id='${runtime_node_id}' and tenant_id='${SIM_TENANT_ID}' and observed_state='ready';"
-wait_joined "$partial_participant" partial_recovered
-printf 'retryable_partial_failure=passed\n'
-
-remove_participant "$listener_participant" cleanup_listener
-remove_participant "$restart_participant" cleanup_restart
-remove_participant "$partial_participant" cleanup_partial
-
-code="$(sim_api POST "/api/v1/admin/conferences/$conference_id/desired-state" '{"desired_state":"closed"}')"
-[ "$code" = "200" ] || fail "conference_close_http_${code}"
-wait_sql "conference_close_succeeded" 300 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference' and aggregate_id='${conference_id}' and operation_type='conference.close' and status='succeeded';"
-wait_sql "conference_projected_closed" 300 5 "select count(*) from conferences where id='${conference_id}' and tenant_id='${SIM_TENANT_ID}' and desired_state='closed' and observed_state='closed';"
-wait_sql "conference_close_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference' and target_id='${conference_id}' and status='converged';"
-wait_ari_field "final_bridge_absent" bridge_exists false 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "final_bridge_cleanup_timeout"
-
-open_operations="$(sql_value "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_id in ('${conference_id}', '${listener_participant}', '${gap_participant}', '${restart_participant}', '${partial_participant}') and status not in ('succeeded', 'cancelled', 'expired');")"
-[ "$open_operations" = "0" ] || fail "open_operations_${open_operations}"
-non_converged="$(sql_value "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_id in ('${conference_id}', '${listener_participant}', '${gap_participant}', '${restart_participant}', '${partial_participant}') and status <> 'converged';")"
-[ "$non_converged" = "0" ] || fail "non_converged_targets_${non_converged}"
+setup_proof_fixture
+run_corridor listener_restart_recovery corridor_listener_restart_recovery
+run_corridor event_gap_recovery corridor_event_gap_recovery
+run_corridor asterisk_restart_recovery corridor_asterisk_restart_recovery
+run_corridor retryable_partial_failure corridor_retryable_partial_failure
+cleanup_and_assert
 
 trap 'rm -f "$member_cookie_listener" "$member_cookie_gap" "$member_cookie_restart" "$member_cookie_partial"; sim_cleanup' EXIT
 
@@ -356,8 +508,5 @@ printf 'asterisk_conference_recovery_runtime_proof=passed\n'
 printf 'natural_api_authentication=passed\n'
 printf 'proof_conference_ref=%s\n' "$(hash_ref "$conference_id")"
 printf 'runtime_binding_preserved=passed\n'
-printf 'listener_restart_recovery=passed\n'
-printf 'event_gap_recovery=passed\n'
-printf 'asterisk_restart_recovery=passed\n'
-printf 'retryable_partial_failure=passed\n'
+print_corridor_results
 printf 'orphan_inspection=passed\n'

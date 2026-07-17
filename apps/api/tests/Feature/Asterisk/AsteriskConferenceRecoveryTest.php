@@ -73,6 +73,181 @@ final class AsteriskConferenceRecoveryTest extends TestCase
         $this->assertSame($nodeId, $result->runtimeNodeId);
     }
 
+    public function test_closed_conference_with_runtime_bridge_present_requires_close_operation(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId] = $this->conferenceFixture($tenantId, $nodeId, conferenceDesiredState: 'closed', observedConferenceState: 'ready');
+        $reconciler = new ConferenceReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::observed(true)
+        ));
+
+        $result = $reconciler->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $conferenceId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('operation_required', $result->status);
+        $this->assertSame('conference.close', $result->operationType);
+        $this->assertSame('conference_runtime_drift', $result->reasonCode);
+        $this->assertSame($nodeId, $result->runtimeNodeId);
+    }
+
+    public function test_closed_conference_with_runtime_bridge_absent_records_absence_without_close_operation(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId] = $this->conferenceFixture($tenantId, $nodeId, conferenceDesiredState: 'closed', observedConferenceState: 'ready');
+        $recorded = new class
+        {
+            /** @var list<array{tenant_id:string,runtime_node_id:string,conference_id:string,participant_id:?string}> */
+            public array $items = [];
+        };
+        $reconciler = new ConferenceReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::observed(false),
+            $recorded,
+        ));
+
+        $first = $reconciler->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $conferenceId,
+            'last_operation_id' => null,
+        ]);
+        $second = $reconciler->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $conferenceId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('waiting', $first->status);
+        $this->assertSame('conference_runtime_absence_recorded', $first->reasonCode);
+        $this->assertNull($first->operationType);
+        $this->assertSame('waiting', $second->status);
+        $this->assertNull($second->operationType);
+        $this->assertSame([
+            ['tenant_id' => $tenantId, 'runtime_node_id' => $nodeId, 'conference_id' => $conferenceId, 'participant_id' => null],
+            ['tenant_id' => $tenantId, 'runtime_node_id' => $nodeId, 'conference_id' => $conferenceId, 'participant_id' => null],
+        ], $recorded->items);
+        $this->assertSame('ready', DB::table('conferences')->where('id', $conferenceId)->value('observed_state'));
+    }
+
+    public function test_closed_conference_waits_when_runtime_inspection_unavailable_or_failed(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId] = $this->conferenceFixture($tenantId, $nodeId, conferenceDesiredState: 'closed', observedConferenceState: 'ready');
+        $unavailable = (new ConferenceReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::unavailable(FailureClass::RuntimeUnavailable->value, 'runtime_unavailable')
+        )))->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $conferenceId,
+            'last_operation_id' => null,
+        ]);
+
+        $throwingService = new RuntimeConferenceInspectionService(new RuntimeAdapterRegistry([
+            new AsteriskRuntimeAdapter(new AsteriskCatalog, $this->clientThrowing(FailureClass::RuntimeUnavailable)),
+        ]));
+        $failed = (new ConferenceReconciler($throwingService))->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $conferenceId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('waiting', $unavailable->status);
+        $this->assertSame('conference_runtime_inspection_unavailable', $unavailable->reasonCode);
+        $this->assertNull($unavailable->operationType);
+        $this->assertSame('waiting', $failed->status);
+        $this->assertSame('conference_runtime_inspection_unavailable', $failed->reasonCode);
+        $this->assertNull($failed->operationType);
+        $this->assertSame('ready', DB::table('conferences')->where('id', $conferenceId)->value('observed_state'));
+    }
+
+    public function test_removed_participant_with_runtime_channel_present_requires_remove_operation(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId, $participantId] = $this->conferenceFixture($tenantId, $nodeId, participantDesiredState: 'removed', observedConferenceState: 'ready', observedParticipantState: 'joined');
+        $reconciler = new ConferenceParticipantReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::observed(true, true, true)
+        ));
+
+        $result = $reconciler->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $participantId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('operation_required', $result->status);
+        $this->assertSame('conference.participant.remove', $result->operationType);
+        $this->assertSame('conference_participant_runtime_drift', $result->reasonCode);
+        $this->assertSame($conferenceId, $result->operationPayload['conference_id']);
+        $this->assertSame($nodeId, $result->runtimeNodeId);
+    }
+
+    public function test_removed_participant_already_absent_records_absence_without_remove_operation(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId, $participantId] = $this->conferenceFixture($tenantId, $nodeId, participantDesiredState: 'removed', observedConferenceState: 'ready', observedParticipantState: 'joined');
+        $recorded = new class
+        {
+            /** @var list<array{tenant_id:string,runtime_node_id:string,conference_id:string,participant_id:?string}> */
+            public array $items = [];
+        };
+        $reconciler = new ConferenceParticipantReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::observed(true, false, false),
+            $recorded,
+        ));
+
+        $first = $reconciler->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $participantId,
+            'last_operation_id' => null,
+        ]);
+        $second = $reconciler->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $participantId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('waiting', $first->status);
+        $this->assertSame('conference_participant_runtime_absence_recorded', $first->reasonCode);
+        $this->assertNull($first->operationType);
+        $this->assertSame('waiting', $second->status);
+        $this->assertNull($second->operationType);
+        $this->assertSame([
+            ['tenant_id' => $tenantId, 'runtime_node_id' => $nodeId, 'conference_id' => $conferenceId, 'participant_id' => $participantId],
+            ['tenant_id' => $tenantId, 'runtime_node_id' => $nodeId, 'conference_id' => $conferenceId, 'participant_id' => $participantId],
+        ], $recorded->items);
+        $this->assertSame('joined', DB::table('conference_participants')->where('id', $participantId)->value('observed_state'));
+    }
+
+    public function test_removed_participant_waits_when_runtime_inspection_unavailable_or_failed(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [, $participantId] = $this->conferenceFixture($tenantId, $nodeId, participantDesiredState: 'removed', observedConferenceState: 'ready', observedParticipantState: 'joined');
+        $unavailable = (new ConferenceParticipantReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::unavailable(FailureClass::RuntimeUnavailable->value, 'runtime_unavailable')
+        )))->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $participantId,
+            'last_operation_id' => null,
+        ]);
+
+        $throwingService = new RuntimeConferenceInspectionService(new RuntimeAdapterRegistry([
+            new AsteriskRuntimeAdapter(new AsteriskCatalog, $this->clientThrowing(FailureClass::RuntimeUnavailable)),
+        ]));
+        $failed = (new ConferenceParticipantReconciler($throwingService))->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $participantId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('waiting', $unavailable->status);
+        $this->assertSame('conference_participant_runtime_inspection_unavailable', $unavailable->reasonCode);
+        $this->assertNull($unavailable->operationType);
+        $this->assertSame('waiting', $failed->status);
+        $this->assertSame('conference_participant_runtime_inspection_unavailable', $failed->reasonCode);
+        $this->assertNull($failed->operationType);
+        $this->assertSame('joined', DB::table('conference_participants')->where('id', $participantId)->value('observed_state'));
+    }
+
     public function test_runtime_unavailability_waits_without_projecting_false_absence(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode();

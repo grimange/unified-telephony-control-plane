@@ -63,6 +63,27 @@ final class MetricsController
             '# HELP conference_participant_reconciliation_total Conference participant reconciliation states by result.',
             '# TYPE conference_participant_reconciliation_total counter',
             ...$this->telephonyReconciliationMetrics('conference_participant', 'conference_participant_reconciliation_total'),
+            '# HELP utcp_conference_runtime_inspections_total Conference runtime inspections by adapter, resource type, result, and failure class.',
+            '# TYPE utcp_conference_runtime_inspections_total counter',
+            ...$this->conferenceRecoveryInspectionMetrics(),
+            '# HELP utcp_conference_runtime_inspection_failures_total Conference runtime inspection failures by adapter, resource type, failure class, and reason.',
+            '# TYPE utcp_conference_runtime_inspection_failures_total counter',
+            ...$this->conferenceRecoveryInspectionFailureMetrics(),
+            '# HELP utcp_conference_recovery_operations_total Conference recovery runtime operations by operation, result, and failure class.',
+            '# TYPE utcp_conference_recovery_operations_total counter',
+            ...$this->conferenceRecoveryOperationMetrics(false),
+            '# HELP utcp_conference_recovery_operation_failures_total Conference recovery runtime operation failures by operation, result, and failure class.',
+            '# TYPE utcp_conference_recovery_operation_failures_total counter',
+            ...$this->conferenceRecoveryOperationMetrics(true),
+            '# HELP utcp_conference_recovery_stale_events_rejected_total Conference recovery stale or superseded event receipts rejected by result and reason.',
+            '# TYPE utcp_conference_recovery_stale_events_rejected_total counter',
+            ...$this->conferenceRecoveryStaleEventMetrics(),
+            '# HELP utcp_conference_recovery_backlog Conference recovery reconciliation backlog by resource type and result.',
+            '# TYPE utcp_conference_recovery_backlog gauge',
+            ...$this->conferenceRecoveryBacklogMetrics(),
+            '# HELP utcp_conference_recovery_lag_seconds Oldest non-converged conference recovery reconciliation age by resource type.',
+            '# TYPE utcp_conference_recovery_lag_seconds gauge',
+            ...$this->conferenceRecoveryLagMetrics(),
             '# HELP asterisk_ari_nodes Asterisk ARI runtime nodes by desired and observed state.',
             '# TYPE asterisk_ari_nodes gauge',
             ...$this->asteriskAriNodeMetrics(),
@@ -422,6 +443,188 @@ final class MetricsController
                 'result' => (string) $row->result,
             ], (int) $row->count))
             ->all();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conferenceRecoveryInspectionMetrics(): array
+    {
+        if (! Schema::hasTable('conference_recovery_metric_events')) {
+            return [$this->sample('utcp_conference_runtime_inspections_total', ['adapter_key' => 'none', 'resource_type' => 'none', 'result' => 'none', 'failure_class' => 'none'], 0)];
+        }
+
+        $rows = DB::table('conference_recovery_metric_events')
+            ->selectRaw('adapter_key, resource_type, result, failure_class, count(*) as count')
+            ->groupBy('adapter_key', 'resource_type', 'result', 'failure_class')
+            ->orderBy('adapter_key')
+            ->orderBy('resource_type')
+            ->orderBy('result')
+            ->get();
+
+        if ($rows->isEmpty()) {
+            return [$this->sample('utcp_conference_runtime_inspections_total', ['adapter_key' => 'none', 'resource_type' => 'none', 'result' => 'none', 'failure_class' => 'none'], 0)];
+        }
+
+        return $rows->map(fn (object $row): string => $this->sample('utcp_conference_runtime_inspections_total', [
+            'adapter_key' => (string) $row->adapter_key,
+            'resource_type' => (string) $row->resource_type,
+            'result' => (string) $row->result,
+            'failure_class' => (string) $row->failure_class,
+        ], (int) $row->count))->all();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conferenceRecoveryInspectionFailureMetrics(): array
+    {
+        if (! Schema::hasTable('conference_recovery_metric_events')) {
+            return [$this->sample('utcp_conference_runtime_inspection_failures_total', ['adapter_key' => 'none', 'resource_type' => 'none', 'failure_class' => 'none', 'reason' => 'none'], 0)];
+        }
+
+        $rows = DB::table('conference_recovery_metric_events')
+            ->whereIn('result', ['unavailable', 'failed'])
+            ->selectRaw('adapter_key, resource_type, failure_class, reason, count(*) as count')
+            ->groupBy('adapter_key', 'resource_type', 'failure_class', 'reason')
+            ->orderBy('adapter_key')
+            ->orderBy('resource_type')
+            ->orderBy('failure_class')
+            ->get();
+
+        if ($rows->isEmpty()) {
+            return [$this->sample('utcp_conference_runtime_inspection_failures_total', ['adapter_key' => 'none', 'resource_type' => 'none', 'failure_class' => 'none', 'reason' => 'none'], 0)];
+        }
+
+        return $rows->map(fn (object $row): string => $this->sample('utcp_conference_runtime_inspection_failures_total', [
+            'adapter_key' => (string) $row->adapter_key,
+            'resource_type' => (string) $row->resource_type,
+            'failure_class' => (string) $row->failure_class,
+            'reason' => (string) $row->reason,
+        ], (int) $row->count))->all();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conferenceRecoveryOperationMetrics(bool $failuresOnly): array
+    {
+        $metric = $failuresOnly ? 'utcp_conference_recovery_operation_failures_total' : 'utcp_conference_recovery_operations_total';
+        if (! Schema::hasTable('runtime_operations')) {
+            return [$this->sample($metric, ['operation' => 'none', 'result' => 'none', 'failure_class' => 'none'], 0)];
+        }
+
+        $query = DB::table('runtime_operations')
+            ->whereIn('operation_type', $this->conferenceRecoveryOperationTypes());
+        if ($failuresOnly) {
+            $query->where(function ($failure): void {
+                $failure->whereIn('status', ['retry_scheduled', 'terminal_failed', 'expired'])
+                    ->orWhereNotNull('last_failure_class');
+            });
+        }
+
+        $rows = $query
+            ->selectRaw("operation_type as operation, status as result, coalesce(last_failure_class, 'none') as failure_class, count(*) as count")
+            ->groupBy('operation_type', 'status', 'last_failure_class')
+            ->orderBy('operation')
+            ->orderBy('result')
+            ->get();
+
+        if ($rows->isEmpty()) {
+            return [$this->sample($metric, ['operation' => 'none', 'result' => 'none', 'failure_class' => 'none'], 0)];
+        }
+
+        return $rows->map(fn (object $row): string => $this->sample($metric, [
+            'operation' => (string) $row->operation,
+            'result' => (string) $row->result,
+            'failure_class' => (string) $row->failure_class,
+        ], (int) $row->count))->all();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conferenceRecoveryStaleEventMetrics(): array
+    {
+        if (! Schema::hasTable('runtime_event_receipts')) {
+            return [$this->sample('utcp_conference_recovery_stale_events_rejected_total', ['result' => 'none', 'reason' => 'none'], 0)];
+        }
+
+        $rows = DB::table('runtime_event_receipts')
+            ->whereIn('event_type', $this->conferenceRecoveryEventTypes())
+            ->whereIn('status', ['conflict', 'unsupported'])
+            ->selectRaw("status as result, coalesce(failure_code, 'none') as reason, count(*) as count")
+            ->groupBy('status', 'failure_code')
+            ->orderBy('result')
+            ->orderBy('reason')
+            ->get();
+
+        if ($rows->isEmpty()) {
+            return [$this->sample('utcp_conference_recovery_stale_events_rejected_total', ['result' => 'none', 'reason' => 'none'], 0)];
+        }
+
+        return $rows->map(fn (object $row): string => $this->sample('utcp_conference_recovery_stale_events_rejected_total', [
+            'result' => (string) $row->result,
+            'reason' => (string) $row->reason,
+        ], (int) $row->count))->all();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conferenceRecoveryBacklogMetrics(): array
+    {
+        if (! Schema::hasTable('runtime_reconciliation_states')) {
+            return [$this->sample('utcp_conference_recovery_backlog', ['resource_type' => 'none', 'result' => 'none'], 0)];
+        }
+
+        $rows = DB::table('runtime_reconciliation_states')
+            ->whereIn('target_type', ['conference', 'conference_participant'])
+            ->whereIn('status', ['operation_required', 'retry_scheduled', 'waiting', 'blocked'])
+            ->selectRaw('target_type as resource_type, status as result, count(*) as count')
+            ->groupBy('target_type', 'status')
+            ->orderBy('resource_type')
+            ->orderBy('result')
+            ->get();
+
+        if ($rows->isEmpty()) {
+            return [$this->sample('utcp_conference_recovery_backlog', ['resource_type' => 'none', 'result' => 'none'], 0)];
+        }
+
+        return $rows->map(fn (object $row): string => $this->sample('utcp_conference_recovery_backlog', [
+            'resource_type' => (string) $row->resource_type,
+            'result' => (string) $row->result,
+        ], (int) $row->count))->all();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conferenceRecoveryLagMetrics(): array
+    {
+        if (! Schema::hasTable('runtime_reconciliation_states')) {
+            return [$this->sample('utcp_conference_recovery_lag_seconds', ['resource_type' => 'none'], 0)];
+        }
+
+        $rows = DB::table('runtime_reconciliation_states')
+            ->whereIn('target_type', ['conference', 'conference_participant'])
+            ->whereIn('status', ['operation_required', 'retry_scheduled', 'waiting', 'blocked'])
+            ->selectRaw('target_type as resource_type, min(updated_at) as oldest_updated_at')
+            ->groupBy('target_type')
+            ->orderBy('resource_type')
+            ->get();
+
+        if ($rows->isEmpty()) {
+            return [$this->sample('utcp_conference_recovery_lag_seconds', ['resource_type' => 'none'], 0)];
+        }
+
+        return $rows->map(function (object $row): string {
+            $lag = $row->oldest_updated_at === null ? 0 : max(0, (int) now()->diffInSeconds(Carbon::parse((string) $row->oldest_updated_at), true));
+
+            return $this->sample('utcp_conference_recovery_lag_seconds', [
+                'resource_type' => (string) $row->resource_type,
+            ], $lag);
+        })->all();
     }
 
     /**
@@ -787,6 +990,35 @@ final class MetricsController
             config('asterisk_ari.event_types.authentication_failed', 'asterisk.ari.authentication_failed') => 'authentication_failed',
             default => 'unknown',
         };
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conferenceRecoveryOperationTypes(): array
+    {
+        return [
+            (string) config('telephony_domain.operation_types.conference_ensure', 'conference.ensure'),
+            (string) config('telephony_domain.operation_types.conference_close', 'conference.close'),
+            (string) config('telephony_domain.operation_types.participant_ensure', 'conference.participant.ensure'),
+            (string) config('telephony_domain.operation_types.participant_remove', 'conference.participant.remove'),
+        ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conferenceRecoveryEventTypes(): array
+    {
+        return [
+            (string) config('asterisk_ari.event_types.bridge_created', 'asterisk.ari.bridge.created'),
+            (string) config('asterisk_ari.event_types.bridge_destroyed', 'asterisk.ari.bridge.destroyed'),
+            (string) config('asterisk_ari.event_types.channel_entered_bridge', 'asterisk.ari.channel.entered_bridge'),
+            (string) config('asterisk_ari.event_types.channel_left_bridge', 'asterisk.ari.channel.left_bridge'),
+            (string) config('asterisk_ari.event_types.channel_destroyed', 'asterisk.ari.channel.destroyed'),
+            (string) config('asterisk_ari.event_types.stasis_start', 'asterisk.ari.stasis_start'),
+            (string) config('asterisk_ari.event_types.stasis_end', 'asterisk.ari.stasis_end'),
+        ];
     }
 
     /**

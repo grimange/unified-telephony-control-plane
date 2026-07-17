@@ -142,11 +142,10 @@ final class TelephonyDomainTest extends TestCase
 
         $this->runParticipantRuntime($participant['id']);
         $this->assertSame('left', DB::table('conference_participants')->where('id', $participant['id'])->value('observed_state'));
-        $this->assertDatabaseHas('runtime_operations', [
+        $this->assertDatabaseMissing('runtime_operations', [
             'operation_type' => 'conference.participant.remove',
             'aggregate_type' => 'conference_participant',
             'aggregate_id' => $participant['id'],
-            'status' => 'succeeded',
         ]);
     }
 

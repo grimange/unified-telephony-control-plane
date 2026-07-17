@@ -101,6 +101,33 @@ spec:
             namespace: utcp-platform
           annotations:
             summary: Conference participant runtime operation reached terminal failure.
+        - alert: UTCPTelephonyConferenceRecoveryOperationFailures
+          expr: sum(increase(utcp_conference_recovery_operation_failures_total[10m])) > 3
+          for: 10m
+          labels:
+            severity: warning
+            component: telephony-domain
+            namespace: utcp-platform
+          annotations:
+            summary: Conference recovery operations are failing repeatedly.
+        - alert: UTCPTelephonyConferenceRecoveryBacklogStale
+          expr: sum(utcp_conference_recovery_backlog{result=~"operation_required|retry_scheduled|waiting|blocked"}) > 0 and max(utcp_conference_recovery_lag_seconds) > 300
+          for: 15m
+          labels:
+            severity: warning
+            component: telephony-domain
+            namespace: utcp-platform
+          annotations:
+            summary: Conference recovery reconciliation backlog is older than the bounded recovery window.
+        - alert: UTCPTelephonyConferenceRuntimeInspectionFailures
+          expr: sum(increase(utcp_conference_runtime_inspection_failures_total[10m])) > 3
+          for: 10m
+          labels:
+            severity: warning
+            component: telephony-domain
+            namespace: utcp-platform
+          annotations:
+            summary: Conference runtime inspection is failing repeatedly.
         - alert: UTCPTelephonyExpiredActiveSessions
           expr: telephony_sessions_expired_active{status="active"} > 0
           for: 5m

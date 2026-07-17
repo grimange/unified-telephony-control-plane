@@ -27,11 +27,32 @@ grep -q "scripts/kubernetes/lib" scripts/asterisk-conference/status || fail "con
 grep -q "kube -n.*exec" scripts/asterisk-conference/status || fail "conference status does not execute in the deployed application context"
 grep -q "scripts/kubernetes/lib" scripts/asterisk-conference/recovery-status || fail "conference recovery status does not use Kubernetes status helper"
 grep -q "kube -n.*exec" scripts/asterisk-conference/recovery-status || fail "conference recovery status does not execute in the deployed application context"
+grep -q -- "--corridor" scripts/asterisk-conference/recovery-runtime-proof || fail "conference recovery proof does not expose corridor selection"
+grep -q "listener_restart_recovery" scripts/asterisk-conference/recovery-runtime-proof || fail "missing listener restart recovery corridor"
+grep -q "event_gap_recovery" scripts/asterisk-conference/recovery-runtime-proof || fail "missing event-gap recovery corridor"
+grep -q "asterisk_restart_recovery" scripts/asterisk-conference/recovery-runtime-proof || fail "missing Asterisk restart recovery corridor"
+grep -q "retryable_partial_failure" scripts/asterisk-conference/recovery-runtime-proof || fail "missing retryable partial-failure recovery corridor"
+grep -q "PROOF_DEADLINE_SECONDS" scripts/asterisk-conference/recovery-runtime-proof || fail "conference recovery proof lacks an overall deadline"
+grep -q "trap 'cleanup_proof" scripts/asterisk-conference/recovery-runtime-proof || fail "conference recovery proof cleanup trap is missing"
+grep -q "corridor_result" scripts/asterisk-conference/recovery-runtime-proof || fail "conference recovery proof does not report per-corridor results"
+grep -q "utcp_conference_runtime_inspections_total" apps/api/app/Http/Controllers/Platform/MetricsController.php || fail "missing conference runtime inspection metric"
+grep -q "utcp_conference_runtime_inspection_failures_total" apps/api/app/Http/Controllers/Platform/MetricsController.php || fail "missing conference runtime inspection failure metric"
+grep -q "utcp_conference_recovery_operations_total" apps/api/app/Http/Controllers/Platform/MetricsController.php || fail "missing conference recovery operation metric"
+grep -q "utcp_conference_recovery_operation_failures_total" apps/api/app/Http/Controllers/Platform/MetricsController.php || fail "missing conference recovery operation failure metric"
+grep -q "utcp_conference_recovery_stale_events_rejected_total" apps/api/app/Http/Controllers/Platform/MetricsController.php || fail "missing conference recovery stale-event metric"
+grep -q "utcp_conference_recovery_backlog" apps/api/app/Http/Controllers/Platform/MetricsController.php || fail "missing conference recovery backlog metric"
+grep -q "utcp_conference_recovery_lag_seconds" apps/api/app/Http/Controllers/Platform/MetricsController.php || fail "missing conference recovery lag metric"
+grep -q "UTCPTelephonyConferenceRecoveryOperationFailures" infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml || fail "missing recovery operation failure alert"
+grep -q "UTCPTelephonyConferenceRecoveryBacklogStale" infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml || fail "missing stale recovery backlog alert"
+grep -q "UTCPTelephonyConferenceRuntimeInspectionFailures" infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml || fail "missing runtime inspection failure alert"
 
 find apps/api/app/RuntimeAdapters/Asterisk apps/api/app/TelephonyDomain -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
 php -l apps/api/config/asterisk_ari.php >/dev/null
 php -l apps/api/config/runtime_registry.php >/dev/null
 php -l apps/api/config/telephony_domain.php >/dev/null
+bash -n scripts/asterisk-conference/recovery-runtime-proof >/dev/null
+bash -n scripts/asterisk-conference/status >/dev/null
+bash -n scripts/asterisk-conference/recovery-status >/dev/null
 
 if rg -n "class .*Asterisk.*Controller|Route::.*(ari|asterisk|bridge|channel)" apps/api/app/Http apps/api/routes; then
   fail "direct Asterisk/ARI controller or route exists"
@@ -47,6 +68,14 @@ fi
 
 if rg -n "reconcile now|retry now|mark joined|mark registered|force remove channel|remove contact" apps/web apps/api/app/Http; then
   fail "manual runtime-control vocabulary is present"
+fi
+
+if sed -n '451,630p' apps/api/app/Http/Controllers/Platform/MetricsController.php | rg -n "tenant_id|user_id|conference_id|participant_id|runtime_node_id|runtime_binding_id|bridge_id|channel_id|operation_id|receipt_id|event_epoch_id|fencing_token|owner_id|request_id"; then
+  fail "conference recovery metrics contain forbidden high-cardinality labels or identifiers"
+fi
+
+if rg -n "tenant_id|user_id|conference_id|participant_id|runtime_node_id|runtime_binding_id|bridge_id|channel_id|operation_id|receipt_id|event_epoch_id|fencing_token|owner_id|request_id" infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml; then
+  fail "conference recovery metrics or alerts contain forbidden high-cardinality labels or identifiers"
 fi
 
 printf 'asterisk_conference_config_check=ok\n'

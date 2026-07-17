@@ -2,7 +2,9 @@
 
 namespace App\RuntimeEngine\Commands;
 
+use App\RuntimeEngine\EngineIds;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Throwable;
 
 final class RuntimeConferenceInspectionService
@@ -15,17 +17,29 @@ final class RuntimeConferenceInspectionService
     {
         $node = $this->node($tenantId, $runtimeNodeId);
         if ($node === null) {
-            return RuntimeConferenceInspectionResult::failed('invalid_request', 'runtime_node_not_found');
+            $result = RuntimeConferenceInspectionResult::failed('invalid_request', 'runtime_node_not_found');
+            $this->recordInspectionMetric('unknown', $participantId === null ? 'conference' : 'conference_participant', $result);
+
+            return $result;
         }
         $adapter = $this->adapterForNode($node);
         if ($adapter === null) {
-            return RuntimeConferenceInspectionResult::unsupported();
+            $result = RuntimeConferenceInspectionResult::unsupported();
+            $this->recordInspectionMetric((string) $node->adapter_key, $participantId === null ? 'conference' : 'conference_participant', $result);
+
+            return $result;
         }
 
         try {
-            return $adapter->inspectConferenceRuntime($tenantId, $runtimeNodeId, $conferenceId, $participantId);
+            $result = $adapter->inspectConferenceRuntime($tenantId, $runtimeNodeId, $conferenceId, $participantId);
+            $this->recordInspectionMetric((string) $node->adapter_key, $participantId === null ? 'conference' : 'conference_participant', $result);
+
+            return $result;
         } catch (Throwable) {
-            return RuntimeConferenceInspectionResult::failed('internal_error', 'runtime_conference_inspection_failed');
+            $result = RuntimeConferenceInspectionResult::failed('internal_error', 'runtime_conference_inspection_failed');
+            $this->recordInspectionMetric((string) $node->adapter_key, $participantId === null ? 'conference' : 'conference_participant', $result);
+
+            return $result;
         }
     }
 
@@ -60,5 +74,35 @@ final class RuntimeConferenceInspectionService
         $adapter = $this->adapters->get((string) $node->adapter_key);
 
         return $adapter instanceof RuntimeConferenceInspectionAdapter ? $adapter : null;
+    }
+
+    private function recordInspectionMetric(string $adapterKey, string $resourceType, RuntimeConferenceInspectionResult $result): void
+    {
+        try {
+            if (! Schema::hasTable('conference_recovery_metric_events')) {
+                return;
+            }
+
+            DB::table('conference_recovery_metric_events')->insert([
+                'id' => EngineIds::new(),
+                'adapter_key' => $this->boundedMetricValue($adapterKey, 80),
+                'resource_type' => in_array($resourceType, ['conference', 'conference_participant'], true) ? $resourceType : 'conference',
+                'result' => in_array($result->status, ['observed', 'unavailable', 'unsupported', 'failed'], true) ? $result->status : 'failed',
+                'failure_class' => $this->boundedMetricValue($result->failureClass ?? 'none', 80),
+                'reason' => $this->boundedMetricValue($result->failureCode ?? 'none', 120),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        } catch (Throwable) {
+            // Recovery telemetry is diagnostic evidence; it must not affect reconciliation authority.
+        }
+    }
+
+    private function boundedMetricValue(string $value, int $max): string
+    {
+        $safe = preg_replace('/[^A-Za-z0-9_.:-]/', '_', $value) ?? 'unknown';
+        $safe = trim($safe);
+
+        return substr($safe === '' ? 'none' : $safe, 0, $max);
     }
 }

@@ -80,6 +80,32 @@ final class ConferenceReconciler implements Reconciler
 
             return $remaining === 0 ? ReconciliationResult::converged(300) : ReconciliationResult::waiting('conference_draining_participants_remaining', 120);
         }
+        if ($conference->desired_state === 'closed') {
+            $inspection = $this->inspections->inspect((string) $conference->tenant_id, $runtimeNodeId, (string) $conference->id);
+            if ($inspection->status === 'unavailable' || $inspection->status === 'failed') {
+                return ReconciliationResult::waiting('conference_runtime_inspection_unavailable', 30);
+            }
+            if ($inspection->status === 'unsupported') {
+                return ReconciliationResult::waiting('conference_runtime_inspection_unsupported', 300);
+            }
+            if ($inspection->status === 'observed' && ! $inspection->conferencePresent) {
+                if ($conference->observed_state !== 'closed') {
+                    $this->inspections->recordEvidence((string) $conference->tenant_id, $runtimeNodeId, (string) $conference->id);
+
+                    return ReconciliationResult::waiting('conference_runtime_absence_recorded', 10);
+                }
+
+                return ReconciliationResult::converged(300);
+            }
+            if ($inspection->status === 'observed' && $inspection->conferencePresent) {
+                return ReconciliationResult::operationRequired((string) config('telephony_domain.operation_types.conference_close'), [
+                    'conference_id' => $conference->id,
+                    'runtime_node_id' => $runtimeNodeId,
+                    'configuration_generation' => $generation,
+                    'desired_state' => $conference->desired_state,
+                ], 'conference_runtime_drift', $runtimeNodeId);
+            }
+        }
         $operationType = $conference->desired_state === 'closed'
             ? config('telephony_domain.operation_types.conference_close')
             : config('telephony_domain.operation_types.conference_ensure');

@@ -74,6 +74,34 @@ final class ConferenceParticipantReconciler implements Reconciler
 
             return ReconciliationResult::converged(30);
         }
+        if ($participant->desired_state === 'removed') {
+            $inspection = $this->inspections->inspect((string) $participant->tenant_id, $runtimeNodeId, (string) $conference->id, (string) $participant->id);
+            if ($inspection->status === 'unavailable' || $inspection->status === 'failed') {
+                return ReconciliationResult::waiting('conference_participant_runtime_inspection_unavailable', 30);
+            }
+            if ($inspection->status === 'unsupported') {
+                return ReconciliationResult::waiting('conference_participant_runtime_inspection_unsupported', 300);
+            }
+            if ($inspection->status === 'observed' && ! ((bool) $inspection->participantAttached || (bool) $inspection->participantPresent)) {
+                if ($participant->observed_state !== 'left') {
+                    $this->inspections->recordEvidence((string) $participant->tenant_id, $runtimeNodeId, (string) $conference->id, (string) $participant->id);
+
+                    return ReconciliationResult::waiting('conference_participant_runtime_absence_recorded', 10);
+                }
+
+                return ReconciliationResult::converged(300);
+            }
+            if ($inspection->status === 'observed' && ((bool) $inspection->participantAttached || (bool) $inspection->participantPresent)) {
+                return ReconciliationResult::operationRequired((string) config('telephony_domain.operation_types.participant_remove'), [
+                    'conference_id' => $participant->conference_id,
+                    'participant_id' => $participant->id,
+                    'telephony_session_id' => $participant->telephony_session_id,
+                    'runtime_node_id' => $runtimeNodeId,
+                    'configuration_generation' => (int) $conference->configuration_generation,
+                    'desired_state' => $participant->desired_state,
+                ], 'conference_participant_runtime_drift', $runtimeNodeId);
+            }
+        }
         $operationType = $participant->desired_state === 'removed'
             ? config('telephony_domain.operation_types.participant_remove')
             : config('telephony_domain.operation_types.participant_ensure');

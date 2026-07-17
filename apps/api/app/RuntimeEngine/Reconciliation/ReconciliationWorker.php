@@ -72,8 +72,6 @@ final class ReconciliationWorker
                         runtimeNodeId: $result->runtimeNodeId ?? ($claim->target_type === 'runtime_node' ? (string) $claim->target_id : null),
                     );
                 });
-            } elseif ($result->status === 'operation_required') {
-                $operationId = $claim->last_operation_id;
             }
 
             if (! $this->repository->markResult($claim->id, $claim->lease_token, $result, $operationId)) {
