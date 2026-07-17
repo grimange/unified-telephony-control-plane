@@ -80,6 +80,17 @@ final class AsteriskAriEventListener
             if (microtime(true) >= $conn['next_health_check_at']) {
                 try {
                     $info = $this->client->inspect($conn['tenant_id'], $nodeId);
+                    if (! $this->client->stasisApplicationRegistered($conn['tenant_id'], $nodeId)) {
+                        Log::warning('asterisk ari event subscription lost', [
+                            'component' => 'asterisk-ari-events',
+                            'runtime_family' => $this->catalog->runtimeFamily(),
+                            'adapter_key' => $this->catalog->adapterKey(),
+                            'result' => 'subscription_lost',
+                            'failure_class' => FailureClass::TransientTransport->value,
+                        ]);
+
+                        throw new AsteriskAriException(FailureClass::TransientTransport, 'ari_stasis_subscription_lost', 'ARI Stasis application is no longer registered on the runtime.', true);
+                    }
                     $this->connections[$nodeId]['next_health_check_at'] = microtime(true) + ($conn['heartbeat_interval_ms'] / 1000);
                     $this->ingest($node, $conn['epoch_id'], 'runtime-info:'.(string) $node->configuration_version.':'.$conn['fencing_token'].':'.now()->format('YmdHisu'), $this->catalog->eventType('runtime_info_observed'), [
                         'runtime_node_id' => $nodeId,

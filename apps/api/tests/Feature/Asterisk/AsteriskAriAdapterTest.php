@@ -6,6 +6,7 @@ use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\PayloadSafety;
 use App\Identity\IdentityIds;
 use App\RuntimeAdapters\Asterisk\AsteriskAriClient;
+use App\RuntimeAdapters\Asterisk\AsteriskAriEventListener;
 use App\RuntimeAdapters\Asterisk\AsteriskAriEventNormalizer;
 use App\RuntimeAdapters\Asterisk\AsteriskAriProfileService;
 use App\RuntimeAdapters\Asterisk\AsteriskAriReconnectBackoff;
@@ -15,10 +16,12 @@ use App\RuntimeAdapters\Asterisk\AsteriskRuntimeNodeReconciler;
 use App\RuntimeEngine\Events\RuntimeEventReceiptRepository;
 use App\RuntimeEngine\Listeners\RuntimeListenerLeaseRepository;
 use App\RuntimeEngine\Projection\ProjectionService;
+use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use App\RuntimeEngine\Sources\EventSourceRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
+use ReflectionProperty;
 use Tests\TestCase;
 
 final class AsteriskAriAdapterTest extends TestCase
@@ -587,6 +590,79 @@ final class AsteriskAriAdapterTest extends TestCase
         $backoff->clear('node-1');
         $this->assertTrue($backoff->shouldAttempt('node-1', $now));
         $this->assertNull($backoff->currentDelayMs('node-1'));
+    }
+
+    public function test_listener_tears_down_connection_when_stasis_application_registration_is_lost(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+
+        $catalog = new AsteriskCatalog;
+        $client = new class($catalog, app(AsteriskAriProfileService::class)) extends AsteriskAriClient
+        {
+            public bool $webSocketClosed = false;
+
+            public function inspect(string $tenantId, string $runtimeNodeId): array
+            {
+                return [
+                    'runtime_node_id' => $runtimeNodeId,
+                    'asterisk_version' => '20.20.1',
+                    'system_name' => 'test',
+                    'configuration_generation' => 1,
+                    'auth_generation' => 1,
+                ];
+            }
+
+            public function stasisApplicationRegistered(string $tenantId, string $runtimeNodeId): bool
+            {
+                return false;
+            }
+
+            public function closeWebSocket(mixed $stream): void
+            {
+                $this->webSocketClosed = true;
+            }
+        };
+
+        $leases = new RuntimeListenerLeaseRepository;
+        $receipts = new RuntimeEventReceiptRepository;
+        $lease = $leases->claim($tenantId, $nodeId, $catalog->listenerKind(), 'listener-subscription', 45);
+        $this->assertNotNull($lease);
+        $epochId = $receipts->openEpoch($tenantId, $nodeId, $catalog->adapterKey(), 'listener-subscription');
+
+        $listener = new AsteriskAriEventListener(
+            $catalog,
+            $client,
+            app(AsteriskAriProfileService::class),
+            $leases,
+            $receipts,
+            new ReconciliationRepository,
+        );
+        $connections = new ReflectionProperty($listener, 'connections');
+        $connections->setValue($listener, [
+            $nodeId => [
+                'tenant_id' => $tenantId,
+                'stream' => fopen('php://temp', 'rb'),
+                'lease_id' => (string) $lease->id,
+                'fencing_token' => (string) $lease->fencing_token,
+                'epoch_id' => $epochId,
+                'configuration_version' => 1,
+                'credential_version' => 1,
+                'worker_id' => 'listener-subscription',
+                'heartbeat_interval_ms' => 30000,
+                'next_health_check_at' => microtime(true) - 1,
+            ],
+        ]);
+
+        $listener->workOnce('listener-subscription');
+
+        $this->assertSame([], $connections->getValue($listener), 'a lost Stasis application registration must tear down the connection so it reconnects');
+        $this->assertTrue($client->webSocketClosed, 'the stale WebSocket must be closed');
+        $this->assertSame('released', DB::table('runtime_listener_leases')->where('id', (string) $lease->id)->value('status'));
+        $this->assertSame(1, DB::table('runtime_event_receipts')
+            ->where('runtime_node_id', $nodeId)
+            ->where('external_event_key', 'like', 'failure:%:ari_stasis_subscription_lost')
+            ->count(), 'the subscription loss must be recorded as a failure receipt');
     }
 
     public function test_asterisk_runtime_payloads_do_not_use_sensitive_key_names(): void

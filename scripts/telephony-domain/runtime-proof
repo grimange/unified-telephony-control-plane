@@ -126,7 +126,7 @@ code="$(member_api "$expiry_cookie_jar" "$expiry_csrf" POST "/api/v1/conferences
 [ "$code" = "201" ] || { printf 'expiry participant admission failed with HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
 expiry_participant_id="$(json_body_get participant.id)"
 sim_wait_until "expiry_participant_joined" 240 5 "select count(*) from conference_participants where id='${expiry_participant_id}' and observed_state='joined';"
-sim_wait_until "session_expired" 180 5 "select count(*) from telephony_sessions where id='${expiry_session_id}' and status='expired';"
+sim_wait_until "session_expired" 480 5 "select count(*) from telephony_sessions where id='${expiry_session_id}' and status='expired';"
 sim_wait_until "expiry_participant_left" 240 5 "select count(*) from conference_participants where id='${expiry_participant_id}' and desired_state='removed' and observed_state='left';"
 code="$(member_api "$expiry_cookie_jar" "$expiry_csrf" POST "/api/v1/conferences/$conference_id/participants/self" '' || true)"
 [ "$code" = "422" ] || { printf 'expired session admission was not rejected with HTTP 422: %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }

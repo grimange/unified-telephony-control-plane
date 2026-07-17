@@ -61,6 +61,7 @@ grep -q "asterisk_restart_recovery" scripts/asterisk-conference/recovery-runtime
 grep -q "retryable_partial_failure" scripts/asterisk-conference/recovery-runtime-proof || fail "missing retryable partial-failure recovery corridor"
 grep -q "PROOF_DEADLINE_SECONDS" scripts/asterisk-conference/recovery-runtime-proof || fail "conference recovery proof lacks an overall deadline"
 grep -q "trap 'cleanup_proof" scripts/asterisk-conference/recovery-runtime-proof || fail "conference recovery proof cleanup trap is missing"
+grep -q "session_lifetime_too_short_for_recovery_corridor" scripts/asterisk-conference/recovery-runtime-proof || fail "recovery corridors must guard against proof telephony-session expiry"
 grep -q "corridor_result" scripts/asterisk-conference/recovery-runtime-proof || fail "conference recovery proof does not report per-corridor results"
 grep -q "utcp_conference_runtime_inspections_total" apps/api/app/Http/Controllers/Platform/MetricsController.php || fail "missing conference runtime inspection metric"
 grep -q "utcp_conference_runtime_inspection_failures_total" apps/api/app/Http/Controllers/Platform/MetricsController.php || fail "missing conference runtime inspection failure metric"

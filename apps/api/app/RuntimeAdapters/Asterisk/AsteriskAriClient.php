@@ -319,6 +319,18 @@ class AsteriskAriClient
         }
     }
 
+    public function stasisApplicationRegistered(string $tenantId, string $runtimeNodeId): bool
+    {
+        $this->node($tenantId, $runtimeNodeId);
+        $profile = $this->profiles->requiredProfile($tenantId, $runtimeNodeId);
+
+        return is_array($this->getAriResource(
+            $runtimeNodeId,
+            'applications/'.rawurlencode((string) $profile['application_name']),
+            (int) $profile['request_timeout_ms'],
+        ));
+    }
+
     private function eventWebSocketQuery(string $applicationName): string
     {
         return http_build_query([

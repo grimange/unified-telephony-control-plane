@@ -320,8 +320,13 @@ join_participant() {
   [ "$code" = "201" ] || fail "${label}_participant_create_http_${code}"
   participant="$(json_body_get participant.id)"
   assert_uuid participant "$participant"
-  participant_ids+=("$participant")
   printf '%s' "$participant"
+}
+
+# join_participant runs in a command substitution, so it cannot mutate
+# participant_ids itself; every caller must register the id for cleanup.
+register_participant() {
+  participant_ids+=("$1")
 }
 
 wait_joined() {
@@ -393,6 +398,7 @@ setup_proof_fixture() {
 corridor_listener_restart_recovery() {
   local summary channel_count lease_owner_before lease_fence_before lease_fence_after
   listener_participant="$(join_participant listener "$member_cookie_listener")"
+  register_participant "$listener_participant"
   wait_joined "$listener_participant" listener
   summary="$(ari_summary "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$listener_participant")"
   channel_count="$(printf '%s' "$summary" | json_field bridge_channel_count)"
@@ -416,6 +422,7 @@ corridor_listener_restart_recovery() {
 corridor_event_gap_recovery() {
   local gap_lease_owner_before gap_lease_fence_before listener_restart_pid
   gap_participant="$(join_participant gap "$member_cookie_gap")"
+  register_participant "$gap_participant"
   wait_joined "$gap_participant" gap
   gap_lease_owner_before="$(sql_value "select coalesce(owner,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
   gap_lease_fence_before="$(sql_value "select coalesce(fencing_token,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
@@ -428,8 +435,11 @@ corridor_event_gap_recovery() {
 }
 
 corridor_asterisk_restart_recovery() {
-  local post_restart_runtime_node_id
+  local post_restart_runtime_node_id session_guard
   restart_participant="$(join_participant restart "$member_cookie_restart")"
+  register_participant "$restart_participant"
+  session_guard="$(sql_value "select count(*) from telephony_sessions ts join conference_participants cp on cp.telephony_session_id = ts.id where cp.id='${restart_participant}' and ts.expires_at > now() + interval '3 minutes';")"
+  [ "$session_guard" = "1" ] || fail "restart_session_lifetime_too_short_for_recovery_corridor"
   wait_joined "$restart_participant" restart
   restart_deployment_pods utcp-runtime 'app.kubernetes.io/component=asterisk-ari' asterisk-ari
   wait_sql "asterisk_runtime_ready_after_restart" 240 5 "select count(*) from runtime_nodes where id='${runtime_node_id}' and tenant_id='${SIM_TENANT_ID}' and observed_state='ready';"
@@ -442,10 +452,16 @@ corridor_asterisk_restart_recovery() {
 }
 
 corridor_retryable_partial_failure() {
-  local false_joined
+  local false_joined session_guard premature_operations
   scale_asterisk 0
   partial_participant="$(join_participant partial "$member_cookie_partial")"
-  wait_sql "partial_failure_operation_queued_or_retrying" 120 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference_participant' and aggregate_id='${partial_participant}' and operation_type='conference.participant.ensure' and status in ('pending','leased','running','retry_scheduled','failed','terminal_failed');"
+  register_participant "$partial_participant"
+  session_guard="$(sql_value "select count(*) from telephony_sessions ts join conference_participants cp on cp.telephony_session_id = ts.id where cp.id='${partial_participant}' and ts.expires_at > now() + interval '3 minutes';")"
+  [ "$session_guard" = "1" ] || fail "partial_session_lifetime_too_short_for_recovery_corridor"
+  wait_sql "partial_failure_runtime_observed_unavailable" 120 5 "select count(*) from runtime_nodes where id='${runtime_node_id}' and tenant_id='${SIM_TENANT_ID}' and observed_state='unavailable';"
+  wait_sql "partial_failure_reconciliation_waiting_not_converged" 120 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference_participant' and target_id='${partial_participant}' and status='waiting' and last_operation_id is null;"
+  premature_operations="$(sql_value "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference_participant' and aggregate_id='${partial_participant}' and operation_type='conference.participant.ensure';")"
+  [ "$premature_operations" = "0" ] || fail "partial_failure_operation_dispatched_while_runtime_unavailable"
   false_joined="$(sql_value "select count(*) from conference_participants where id='${partial_participant}' and tenant_id='${SIM_TENANT_ID}' and observed_state='joined';")"
   [ "$false_joined" = "0" ] || fail "partial_failure_false_joined_projection"
   scale_asterisk 1
