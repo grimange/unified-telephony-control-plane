@@ -50,8 +50,9 @@ spec:
               drop:
                 - ALL
           readinessProbe:
-            tcpSocket:
-              port: ari
+            exec:
+              command:
+                - /usr/local/bin/utcp-asterisk-readiness
             initialDelaySeconds: 15
             periodSeconds: 15
             timeoutSeconds: 5

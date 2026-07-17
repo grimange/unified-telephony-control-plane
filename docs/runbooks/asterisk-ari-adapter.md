@@ -75,6 +75,14 @@ The default invocation remains equivalent to the complete `all` sequence. Each c
 
 T2-B source-level repository work keeps `UTCP_PHASE=T1`. Live acceptance of listener restart, event-gap recovery, Asterisk restart reconstruction, retryable partial failure, recovery alert fire/resolve, and final orphan cleanup remains a separate Claude Code corridor.
 
+## Asterisk 20 Local Channel Readiness
+
+The Asterisk 20 image uses the pinned `andrius/asterisk:20` digest already recorded by the repository. Local channel support is core-resident in this supported Asterisk version, so `chan_local.so` must not be configured, compiled, or added as a compatibility fallback. The conference proof fixture continues to prove Local-channel use through the `Local/participant@utcp-conference-proof/n` dial string.
+
+The runtime image includes `/usr/local/bin/utcp-asterisk-readiness`. Kubernetes readiness executes that script instead of a port-only TCP check. The script waits for Asterisk to finish booting, confirms the local ARI HTTP route returns the expected unauthenticated ARI response, derives required loadable modules from `/opt/utcp-asterisk-config/modules.conf`, requires every configured module to report `Running`, and separately verifies that the `Local` channel technology is registered through `core show channeltypes`.
+
+This repository change does not complete live T2-B acceptance. Deployment of the readiness change, Asterisk restart recovery rerun, retryable partial-failure rerun, alert evaluation, and final T2 acceptance remain pending until the separate `utcp-local` stale-node-IP environment fault is isolated or repaired.
+
 ## Exclusions
 
 T0 deliberately excludes ConfBridge, C5 conference operation support on Asterisk, channel origination, channel control, dialplan execution, SIP registration, PJSIP configuration, Kamailio, RTP/media, rtpengine, browser WebRTC, trunks, PSTN, and FreeSWITCH ESL. Those remain later roadmap phases.

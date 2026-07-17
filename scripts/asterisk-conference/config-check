@@ -16,9 +16,36 @@ grep -q "conference_ensure.*conference.ensure" apps/api/config/telephony_domain.
 grep -q "participant_ensure.*conference.participant.ensure" apps/api/config/telephony_domain.php || fail "missing participant ensure operation mapping"
 grep -q "bridge_created" apps/api/config/asterisk_ari.php || fail "missing Asterisk bridge event catalog"
 grep -q "channel_entered_bridge" apps/api/config/asterisk_ari.php || fail "missing Asterisk channel membership event catalog"
-grep -q "chan_local.so" infrastructure/docker/asterisk/config/modules.conf || fail "missing Local channel proof module"
+if rg -in "chan_local" infrastructure/docker/asterisk; then
+  fail "Local channel support is core-resident in supported Asterisk versions; do not configure chan_local as a loadable module"
+fi
 grep -q "\[utcp-conference-proof\]" infrastructure/docker/asterisk/config/extensions.conf || fail "missing internal proof dialplan context"
 grep -q "Local/participant@utcp-conference-proof/n" apps/api/config/asterisk_ari.php || fail "proof Local channel must disable optimization for stable runtime recovery evidence"
+test -x infrastructure/docker/asterisk/readiness || fail "missing executable Asterisk readiness script"
+grep -q "COPY infrastructure/docker/asterisk/readiness /usr/local/bin/utcp-asterisk-readiness" infrastructure/docker/asterisk/Dockerfile || fail "Asterisk readiness script is not copied into the image"
+grep -q "chmod 0755 .*utcp-asterisk-readiness" infrastructure/docker/asterisk/Dockerfile || fail "Asterisk readiness script is not executable in the image"
+grep -q "core waitfullybooted" infrastructure/docker/asterisk/readiness || fail "readiness does not wait for full Asterisk startup"
+grep -q "http://127.0.0.1:8088/ari/asterisk/info" infrastructure/docker/asterisk/readiness || fail "readiness does not check local ARI HTTP route"
+grep -q -- "--connect-timeout 2" infrastructure/docker/asterisk/readiness || fail "readiness lacks bounded ARI connect timeout"
+grep -q -- "--max-time 4" infrastructure/docker/asterisk/readiness || fail "readiness lacks bounded ARI overall timeout"
+grep -q "ASTERISK_BIN=/usr/sbin/asterisk" infrastructure/docker/asterisk/readiness || fail "readiness does not use the stable Asterisk binary path"
+grep -q 'timeout 5 "$ASTERISK_BIN" -C' infrastructure/docker/asterisk/readiness || fail "readiness lacks bounded Asterisk CLI timeout"
+grep -q "/opt/utcp-asterisk-config/modules.conf" infrastructure/docker/asterisk/readiness || fail "readiness does not read shipped modules.conf"
+grep -q "load.*\\.so" infrastructure/docker/asterisk/readiness || fail "readiness does not derive module checks from load directives"
+grep -q "module show like" infrastructure/docker/asterisk/readiness || fail "readiness does not query configured module state"
+grep -q "Running" infrastructure/docker/asterisk/readiness || fail "readiness does not require configured modules to be Running"
+grep -q "core show channeltypes" infrastructure/docker/asterisk/readiness || fail "readiness does not assert Local as a channel type"
+grep -q '\$1 == "Local"' infrastructure/docker/asterisk/readiness || fail "readiness does not assert Local separately from modules"
+grep -q "exec:" infrastructure/kubernetes/base/runtime/asterisk-ari-deployment.yaml || fail "Asterisk readiness probe does not execute readiness script"
+grep -q "/usr/local/bin/utcp-asterisk-readiness" infrastructure/kubernetes/base/runtime/asterisk-ari-deployment.yaml || fail "Asterisk deployment does not use readiness script"
+if sed -n '/readinessProbe:/,/livenessProbe:/p' infrastructure/kubernetes/base/runtime/asterisk-ari-deployment.yaml | grep -q "tcpSocket"; then
+  fail "Asterisk readiness probe still uses TCP-only readiness"
+fi
+sed -n '/livenessProbe:/,$p' infrastructure/kubernetes/base/runtime/asterisk-ari-deployment.yaml | grep -q "tcpSocket:" || fail "Asterisk liveness probe no longer uses TCP socket"
+sed -n '/livenessProbe:/,$p' infrastructure/kubernetes/base/runtime/asterisk-ari-deployment.yaml | grep -q "port: ari" || fail "Asterisk liveness probe port changed"
+if rg -n "ARI_PASSWORD|ARI_USERNAME|Authorization|Basic|UTCP_.*(BYPASS|DISABLE|SKIP|ALLOWLIST|MODULES)" infrastructure/docker/asterisk/readiness; then
+  fail "readiness embeds credentials, bypass controls, or a module allowlist"
+fi
 grep -q "proof_originate_timeout_seconds" apps/api/config/asterisk_ari.php || fail "missing bounded proof originate timeout"
 grep -q "proof_originate_timeout_seconds" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "Asterisk proof channel originate timeout is not configuration-bound"
 grep -q "participant_attach_attempts" apps/api/config/asterisk_ari.php || fail "missing bounded participant attach retry configuration"
@@ -53,6 +80,7 @@ php -l apps/api/config/telephony_domain.php >/dev/null
 bash -n scripts/asterisk-conference/recovery-runtime-proof >/dev/null
 bash -n scripts/asterisk-conference/status >/dev/null
 bash -n scripts/asterisk-conference/recovery-status >/dev/null
+bash -n infrastructure/docker/asterisk/readiness >/dev/null
 
 if rg -n "class .*Asterisk.*Controller|Route::.*(ari|asterisk|bridge|channel)" apps/api/app/Http apps/api/routes; then
   fail "direct Asterisk/ARI controller or route exists"

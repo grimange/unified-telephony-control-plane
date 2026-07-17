@@ -5,8 +5,9 @@ RUN mkdir -p /opt/utcp-asterisk-config
 
 COPY infrastructure/docker/asterisk/config/ /opt/utcp-asterisk-config/
 COPY infrastructure/docker/asterisk/entrypoint /usr/local/bin/utcp-asterisk-entrypoint
+COPY infrastructure/docker/asterisk/readiness /usr/local/bin/utcp-asterisk-readiness
 
-RUN chmod 0755 /usr/local/bin/utcp-asterisk-entrypoint \
+RUN chmod 0755 /usr/local/bin/utcp-asterisk-entrypoint /usr/local/bin/utcp-asterisk-readiness \
     && chown -R asterisk:asterisk /opt/utcp-asterisk-config
 
 USER 1000:1000
