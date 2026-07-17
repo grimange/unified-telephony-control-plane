@@ -156,18 +156,68 @@ Two proof-cleanup defects were found and corrected during this inspection:
   were hung up directly on the runtime as disposable proof artifacts. This is
   recorded transparently below as a remaining platform gap.
 
-## 8. Remaining gaps (not closed by this corridor)
+## 8. close_before_remove_cleanup — passed live (T2-B8, commit 176af2e deployed)
 
-- **Close-before-remove parked-channel live proof:** projected participant
-  `left` is not authoritative proof that the runtime channel is absent. The
-  participant reconciler now verifies runtime absence before converging a
-  removed participant and dispatches the canonical
-  `conference.participant.remove` operation when inspection still finds a
-  parked Local channel. Repository regression coverage exists, and the
-  recovery proof script has a bounded `close_before_remove_cleanup` corridor
-  for the later Claude Code live task. Live rerun remains pending.
+Live acceptance of the reconciliation correction in `176af2e`
+(`fix(t2): verify runtime absence before participant teardown convergence`),
+2026-07-18 on `utcp-local`.
+
+Deployment currency: the running `telephony-reconciler` (and `scheduler`,
+which also runs `runtime-engine:reconciler --once`) were rolled after
+`make k8s-image-build`/`k8s-image-push`/`k8s-apply`; the deployed
+`ConferenceParticipantReconciler.php` is md5-identical to the repository file
+and no longer contains the removed/left convergence early-return. Asterisk,
+Kamailio, Traefik, and unrelated roles were not restarted.
+
+`scripts/asterisk-conference/recovery-runtime-proof --corridor close_before_remove_cleanup`
+passed end to end (`close_before_remove_cleanup=passed`,
+`orphan_inspection=passed`) after a clean T2-A baseline run:
+
+- baseline: one open conference, one admitted participant projected joined,
+  one active RuntimeBinding, one real bridge, one real Local participant
+  channel, both reconciliation targets converged; no client-supplied runtime
+  identifiers;
+- the conference was closed **before** participant removal: `conference.close`
+  dispatched normally, the bridge was destroyed, and the participant projected
+  `left` from bridge-teardown evidence while its desired state was still
+  `admitted`;
+- the parked Local channel remained observable through bound ARI inspection —
+  the exact historical failure condition — and no manual hangup was performed;
+- participant desired state was then set to `removed` through the canonical
+  admin API; the reconciler did **not** converge from removed+left alone:
+  bound runtime inspection ran, detected the parked channel
+  (`inspection:channel-present` receipt recorded for the participant), and a
+  new generic `conference.participant.remove` operation was dispatched
+  automatically (+6 s) and succeeded;
+- all Local channel legs disappeared without any Asterisk CLI or direct ARI
+  cleanup; subsequent inspection recorded absence
+  (`inspection:channel-absent`), absence evidence reached the projector, the
+  participant remained `left`, and reconciliation converged;
+- exactly one `conference.participant.remove` operation existed afterwards —
+  no duplicate-removal loop;
+- final inspection: zero proof bridges, zero proof participant channels, zero
+  open proof operations, zero non-converged proof targets; Asterisk at one
+  ready replica; RuntimeNode `ready`; listener, API, workers, Kamailio,
+  observer, Postgres, and Redis healthy.
+
+Observed quality gap during the corridor (bounded, invariants unaffected):
+while the closed conference still had an admitted participant, the recovery
+wake path dispatched ~60 stale no-op `conference.participant.ensure`
+operations at ~3 s cadence (each completed as a stale no-op without touching
+Asterisk), and the corridor's admitted+left projection predicate took ~180 s
+to settle even though the bridge-teardown `left` observation was recorded
+within seconds of the close. This churn/wake-storm behavior is recorded below
+as a remaining gap.
+
+## 9. Remaining gaps (not closed by these corridors)
 - Listener event drain rate is one frame per poll cycle (~3–5 s per event
   during recovery bursts); tolerable now but worth a bounded improvement.
+- Stale-ensure churn during the close-before-remove window: the recovery wake
+  path repeatedly reopens the participant target for an admitted participant
+  of a closed conference (~60 stale no-op ensure operations at ~3 s cadence in
+  T2-B8) and the admitted+left projection predicate settles slowly (~180 s)
+  during that window. Bounded and side-effect-free, but needs a follow-up
+  churn/wake-storm assessment together with the listener drain-rate item.
 - Prometheus Operator remains in its pre-existing crash loop; recovery metrics
   are live and the alert `PrometheusRule` exists, but live alert evaluation is
   still unproven (separate task).
