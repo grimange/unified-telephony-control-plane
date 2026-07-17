@@ -28,6 +28,7 @@ corridor_names=(
   event_gap_recovery
   asterisk_restart_recovery
   retryable_partial_failure
+  close_before_remove_cleanup
 )
 declare -A corridor_results=()
 for corridor_name in "${corridor_names[@]}"; do
@@ -43,6 +44,7 @@ NAME may be one of:
   event_gap_recovery
   asterisk_restart_recovery
   retryable_partial_failure
+  close_before_remove_cleanup
   all
 
 The default is all. Every invocation keeps the cleanup trap active, uses
@@ -96,7 +98,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$CORRIDOR" in
-  listener_restart_recovery|event_gap_recovery|asterisk_restart_recovery|retryable_partial_failure|all)
+  listener_restart_recovery|event_gap_recovery|asterisk_restart_recovery|retryable_partial_failure|close_before_remove_cleanup|all)
     ;;
   *)
     fail "unknown_corridor_${CORRIDOR}"
@@ -469,6 +471,30 @@ corridor_retryable_partial_failure() {
   wait_joined "$partial_participant" partial_recovered
 }
 
+corridor_close_before_remove_cleanup() {
+  local code before_remove_operations after_remove_operations
+  close_before_remove_participant="$(join_participant close_before_remove "$member_cookie_close_before_remove")"
+  register_participant "$close_before_remove_participant"
+  wait_joined "$close_before_remove_participant" close_before_remove
+
+  code="$(sim_api POST "/api/v1/admin/conferences/$conference_id/desired-state" '{"desired_state":"closed"}')"
+  [ "$code" = "200" ] || fail "close_before_remove_conference_close_http_${code}"
+  wait_sql "close_before_remove_conference_close_succeeded" 300 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference' and aggregate_id='${conference_id}' and operation_type='conference.close' and status='succeeded';"
+  wait_sql "close_before_remove_conference_projected_closed" 300 5 "select count(*) from conferences where id='${conference_id}' and tenant_id='${SIM_TENANT_ID}' and desired_state='closed' and observed_state='closed';"
+  wait_sql "close_before_remove_participant_projected_left_before_remove" 300 5 "select count(*) from conference_participants where id='${close_before_remove_participant}' and tenant_id='${SIM_TENANT_ID}' and desired_state='admitted' and observed_state='left';"
+  wait_ari_field "close_before_remove_parked_channel_present" participant_channel_exists true 120 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$close_before_remove_participant" || fail "close_before_remove_no_parked_channel_to_clean"
+
+  before_remove_operations="$(sql_value "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference_participant' and aggregate_id='${close_before_remove_participant}' and operation_type='conference.participant.remove';")"
+  code="$(sim_api POST "/api/v1/admin/conferences/$conference_id/participants/$close_before_remove_participant/remove")"
+  [ "$code" = "200" ] || fail "close_before_remove_participant_remove_http_${code}"
+  wait_sql "close_before_remove_participant_remove_operation_dispatched" 300 5 "select case when count(*) > ${before_remove_operations} then 1 else 0 end from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference_participant' and aggregate_id='${close_before_remove_participant}' and operation_type='conference.participant.remove';"
+  wait_sql "close_before_remove_participant_remove_succeeded" 300 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference_participant' and aggregate_id='${close_before_remove_participant}' and operation_type='conference.participant.remove' and status='succeeded';"
+  wait_ari_field "close_before_remove_participant_channel_absent" participant_channel_exists false 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$close_before_remove_participant" || fail "close_before_remove_participant_channel_cleanup_timeout"
+  wait_sql "close_before_remove_participant_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference_participant' and target_id='${close_before_remove_participant}' and status='converged';"
+  after_remove_operations="$(sql_value "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference_participant' and aggregate_id='${close_before_remove_participant}' and operation_type='conference.participant.remove';")"
+  [ "$after_remove_operations" -gt "$before_remove_operations" ] || fail "close_before_remove_remove_operation_missing"
+}
+
 cleanup_and_assert() {
   local code quoted_ids open_operations non_converged participant
   for participant in "${participant_ids[@]:-}"; do
@@ -503,22 +529,25 @@ member_cookie_listener="$(mktemp)"
 member_cookie_gap="$(mktemp)"
 member_cookie_restart="$(mktemp)"
 member_cookie_partial="$(mktemp)"
+member_cookie_close_before_remove="$(mktemp)"
 participant_ids=()
 listener_participant=""
 gap_participant=""
 restart_participant=""
 partial_participant=""
+close_before_remove_participant=""
 ASTERISK_SCALED_DOWN=0
-trap 'cleanup_proof; rm -f "$member_cookie_listener" "$member_cookie_gap" "$member_cookie_restart" "$member_cookie_partial"; sim_cleanup' EXIT
+trap 'cleanup_proof; rm -f "$member_cookie_listener" "$member_cookie_gap" "$member_cookie_restart" "$member_cookie_partial" "$member_cookie_close_before_remove"; sim_cleanup' EXIT
 
 setup_proof_fixture
 run_corridor listener_restart_recovery corridor_listener_restart_recovery
 run_corridor event_gap_recovery corridor_event_gap_recovery
 run_corridor asterisk_restart_recovery corridor_asterisk_restart_recovery
 run_corridor retryable_partial_failure corridor_retryable_partial_failure
+run_corridor close_before_remove_cleanup corridor_close_before_remove_cleanup
 cleanup_and_assert
 
-trap 'rm -f "$member_cookie_listener" "$member_cookie_gap" "$member_cookie_restart" "$member_cookie_partial"; sim_cleanup' EXIT
+trap 'rm -f "$member_cookie_listener" "$member_cookie_gap" "$member_cookie_restart" "$member_cookie_partial" "$member_cookie_close_before_remove"; sim_cleanup' EXIT
 
 printf 'asterisk_conference_recovery_runtime_proof=passed\n'
 printf 'natural_api_authentication=passed\n'

@@ -3,6 +3,8 @@
 namespace Tests\Feature\Asterisk;
 
 use App\ControlPlane\RuntimeOperations\FailureClass;
+use App\ControlPlane\RuntimeOperations\RuntimeOperationRepository;
+use App\ControlPlane\Shared\ExecutionContext;
 use App\Identity\IdentityIds;
 use App\RuntimeAdapters\Asterisk\AsteriskAriClient;
 use App\RuntimeAdapters\Asterisk\AsteriskAriEventListener;
@@ -20,7 +22,9 @@ use App\RuntimeEngine\EngineIds;
 use App\RuntimeEngine\Events\RuntimeEventReceiptRepository;
 use App\RuntimeEngine\Listeners\RuntimeListenerLeaseRepository;
 use App\RuntimeEngine\Projection\ProjectionService;
+use App\RuntimeEngine\Reconciliation\ReconcilerRegistry;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
+use App\RuntimeEngine\Reconciliation\ReconciliationWorker;
 use App\TelephonyDomain\Reconciliation\ConferenceParticipantReconciler;
 use App\TelephonyDomain\Reconciliation\ConferenceReconciler;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -93,6 +97,26 @@ final class AsteriskConferenceRecoveryTest extends TestCase
         $this->assertSame($nodeId, $result->runtimeNodeId);
     }
 
+    public function test_closed_conference_with_projected_closed_state_still_inspects_runtime_bridge(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId] = $this->conferenceFixture($tenantId, $nodeId, conferenceDesiredState: 'closed', observedConferenceState: 'closed');
+        $reconciler = new ConferenceReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::observed(true)
+        ));
+
+        $result = $reconciler->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $conferenceId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('operation_required', $result->status);
+        $this->assertSame('conference.close', $result->operationType);
+        $this->assertSame('conference_runtime_drift', $result->reasonCode);
+        $this->assertSame($nodeId, $result->runtimeNodeId);
+    }
+
     public function test_closed_conference_with_runtime_bridge_absent_records_absence_without_close_operation(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode();
@@ -128,6 +152,33 @@ final class AsteriskConferenceRecoveryTest extends TestCase
             ['tenant_id' => $tenantId, 'runtime_node_id' => $nodeId, 'conference_id' => $conferenceId, 'participant_id' => null],
         ], $recorded->items);
         $this->assertSame('ready', DB::table('conferences')->where('id', $conferenceId)->value('observed_state'));
+    }
+
+    public function test_closed_conference_with_projected_closed_state_records_absence_and_converges(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId] = $this->conferenceFixture($tenantId, $nodeId, conferenceDesiredState: 'closed', observedConferenceState: 'closed');
+        $recorded = new class
+        {
+            /** @var list<array{tenant_id:string,runtime_node_id:string,conference_id:string,participant_id:?string}> */
+            public array $items = [];
+        };
+        $reconciler = new ConferenceReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::observed(false),
+            $recorded,
+        ));
+
+        $result = $reconciler->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $conferenceId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('converged', $result->status);
+        $this->assertNull($result->operationType);
+        $this->assertSame([
+            ['tenant_id' => $tenantId, 'runtime_node_id' => $nodeId, 'conference_id' => $conferenceId, 'participant_id' => null],
+        ], $recorded->items);
     }
 
     public function test_closed_conference_waits_when_runtime_inspection_unavailable_or_failed(): void
@@ -181,6 +232,27 @@ final class AsteriskConferenceRecoveryTest extends TestCase
         $this->assertSame($nodeId, $result->runtimeNodeId);
     }
 
+    public function test_removed_participant_with_projected_left_state_still_inspects_runtime_channel(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId, $participantId] = $this->conferenceFixture($tenantId, $nodeId, participantDesiredState: 'removed', observedConferenceState: 'closed', observedParticipantState: 'left');
+        $reconciler = new ConferenceParticipantReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::observed(false, true, false)
+        ));
+
+        $result = $reconciler->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $participantId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('operation_required', $result->status);
+        $this->assertSame('conference.participant.remove', $result->operationType);
+        $this->assertSame('conference_participant_runtime_drift', $result->reasonCode);
+        $this->assertSame($conferenceId, $result->operationPayload['conference_id']);
+        $this->assertSame($nodeId, $result->runtimeNodeId);
+    }
+
     public function test_removed_participant_already_absent_records_absence_without_remove_operation(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode();
@@ -218,6 +290,33 @@ final class AsteriskConferenceRecoveryTest extends TestCase
         $this->assertSame('joined', DB::table('conference_participants')->where('id', $participantId)->value('observed_state'));
     }
 
+    public function test_removed_participant_with_projected_left_state_records_absence_and_converges(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId, $participantId] = $this->conferenceFixture($tenantId, $nodeId, participantDesiredState: 'removed', observedConferenceState: 'closed', observedParticipantState: 'left');
+        $recorded = new class
+        {
+            /** @var list<array{tenant_id:string,runtime_node_id:string,conference_id:string,participant_id:?string}> */
+            public array $items = [];
+        };
+        $reconciler = new ConferenceParticipantReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::observed(false, false, false),
+            $recorded,
+        ));
+
+        $result = $reconciler->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $participantId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('converged', $result->status);
+        $this->assertNull($result->operationType);
+        $this->assertSame([
+            ['tenant_id' => $tenantId, 'runtime_node_id' => $nodeId, 'conference_id' => $conferenceId, 'participant_id' => $participantId],
+        ], $recorded->items);
+    }
+
     public function test_removed_participant_waits_when_runtime_inspection_unavailable_or_failed(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode();
@@ -246,6 +345,128 @@ final class AsteriskConferenceRecoveryTest extends TestCase
         $this->assertSame('conference_participant_runtime_inspection_unavailable', $failed->reasonCode);
         $this->assertNull($failed->operationType);
         $this->assertSame('joined', DB::table('conference_participants')->where('id', $participantId)->value('observed_state'));
+    }
+
+    public function test_removed_participant_with_projected_left_state_waits_when_runtime_inspection_unavailable_or_failed(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [, $participantId] = $this->conferenceFixture($tenantId, $nodeId, participantDesiredState: 'removed', observedConferenceState: 'closed', observedParticipantState: 'left');
+        $unavailable = (new ConferenceParticipantReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::unavailable(FailureClass::RuntimeUnavailable->value, 'runtime_unavailable')
+        )))->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $participantId,
+            'last_operation_id' => null,
+        ]);
+
+        $failed = (new ConferenceParticipantReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::failed(FailureClass::RuntimeUnavailable->value, 'runtime_unavailable')
+        )))->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $participantId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('waiting', $unavailable->status);
+        $this->assertSame('conference_participant_runtime_inspection_unavailable', $unavailable->reasonCode);
+        $this->assertNull($unavailable->operationType);
+        $this->assertSame('waiting', $failed->status);
+        $this->assertSame('conference_participant_runtime_inspection_unavailable', $failed->reasonCode);
+        $this->assertNull($failed->operationType);
+        $this->assertSame('left', DB::table('conference_participants')->where('id', $participantId)->value('observed_state'));
+    }
+
+    public function test_close_before_remove_projected_left_does_not_bypass_participant_runtime_cleanup(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId, $participantId] = $this->conferenceFixture($tenantId, $nodeId, observedConferenceState: 'ready', observedParticipantState: 'joined');
+        DB::table('conferences')->where('id', $conferenceId)->update(['desired_state' => 'closed', 'observed_state' => 'closed', 'updated_at' => now()]);
+        $participant = DB::table('conference_participants')->where('id', $participantId)->first();
+        $this->assertNotNull($participant);
+
+        $catalog = new AsteriskCatalog;
+        $receipts = new RuntimeEventReceiptRepository;
+        $epochId = $receipts->openEpoch($tenantId, $nodeId, $catalog->adapterKey(), 'listener-close-before-remove');
+        $ingested = $receipts->ingest($tenantId, $nodeId, $catalog->adapterKey(), $epochId, 'close-before-remove:left:'.$participantId, $catalog->eventType('channel_left_bridge'), 1, [
+            'runtime_node_id' => $nodeId,
+            'configuration_generation' => 1,
+            'occurred_at' => now()->toISOString(),
+        ]);
+        $receipt = DB::table('runtime_event_receipts')->where('id', $ingested['id'])->first();
+
+        (new ProjectionService)->apply($receipt, [[
+            'tenant_id' => $tenantId,
+            'observation_type' => 'conference_participant.membership',
+            'observation_version' => 1,
+            'subject_type' => 'conference_participant',
+            'subject_id' => $participantId,
+            'observed_state' => 'left',
+            'configuration_version' => 1,
+            'observed_at' => now(),
+            'payload' => [
+                'conference_id' => $conferenceId,
+                'telephony_session_id' => (string) $participant->telephony_session_id,
+            ],
+        ]]);
+        DB::table('conference_participants')->where('id', $participantId)->update(['desired_state' => 'removed', 'updated_at' => now()]);
+
+        $result = (new ConferenceParticipantReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::observed(false, true, false)
+        )))->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $participantId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('left', DB::table('conference_participants')->where('id', $participantId)->value('observed_state'));
+        $this->assertSame('operation_required', $result->status);
+        $this->assertSame('conference.participant.remove', $result->operationType);
+        $this->assertSame('conference_participant_runtime_drift', $result->reasonCode);
+    }
+
+    public function test_pending_participant_remove_operation_prevents_duplicate_cleanup_operations(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId, $participantId] = $this->conferenceFixture($tenantId, $nodeId, participantDesiredState: 'removed', observedConferenceState: 'closed', observedParticipantState: 'left');
+        $repository = new ReconciliationRepository;
+        $operations = new RuntimeOperationRepository;
+        $stateId = $repository->ensureTarget($tenantId, 'conference_participant', $participantId, 3);
+        $operationId = $operations->create(
+            'conference.participant.remove',
+            'conference_participant',
+            $participantId,
+            [
+                'conference_id' => $conferenceId,
+                'participant_id' => $participantId,
+                'telephony_session_id' => (string) DB::table('conference_participants')->where('id', $participantId)->value('telephony_session_id'),
+                'runtime_node_id' => $nodeId,
+                'configuration_generation' => 1,
+            ],
+            ExecutionContext::system(tenantId: $tenantId),
+            runtimeNodeId: $nodeId,
+        );
+        DB::table('runtime_reconciliation_states')->where('id', $stateId)->update([
+            'status' => 'waiting',
+            'last_operation_id' => $operationId,
+            'next_check_at' => now()->subSecond(),
+            'updated_at' => now(),
+        ]);
+
+        $worker = new ReconciliationWorker(
+            $repository,
+            new ReconcilerRegistry([new ConferenceParticipantReconciler($this->inspectionServiceReturning(
+                RuntimeConferenceInspectionResult::observed(false, true, false)
+            ))]),
+            $operations,
+        );
+
+        $this->assertSame(1, $worker->workOnce('reconciler-participant-pending', batchSize: 1));
+        $this->assertDatabaseCount('runtime_operations', 1);
+        $this->assertDatabaseHas('runtime_reconciliation_states', [
+            'id' => $stateId,
+            'status' => 'waiting',
+            'last_operation_id' => $operationId,
+        ]);
     }
 
     public function test_runtime_unavailability_waits_without_projecting_false_absence(): void
@@ -346,7 +567,7 @@ final class AsteriskConferenceRecoveryTest extends TestCase
         $this->assertSame(30, $participant->nextCheckSeconds);
     }
 
-    public function test_reconcilers_converge_when_observed_state_matches_desired_even_after_terminal_operation(): void
+    public function test_reconcilers_converge_when_runtime_absence_is_verified_after_completed_terminal_operation(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode();
         [$conferenceId, $participantId] = $this->conferenceFixture(
@@ -369,14 +590,14 @@ final class AsteriskConferenceRecoveryTest extends TestCase
                 'runtime_node_id' => $nodeId,
                 'payload_version' => 1,
                 'payload' => json_encode(['conference_id' => $conferenceId]),
-                'status' => 'terminal_failed',
+                'status' => 'succeeded',
                 'priority' => 100,
                 'idempotency_key' => 'terminal-conference-close',
                 'correlation_id' => str_repeat('a', 32),
                 'request_id' => str_repeat('b', 32),
                 'available_at' => now()->subMinute(),
-                'last_failure_class' => FailureClass::RuntimeUnavailable->value,
-                'last_failure_code' => 'ari_http_unavailable',
+                'last_failure_class' => null,
+                'last_failure_code' => null,
                 'completed_at' => now()->subSecond(),
                 'created_at' => now()->subMinute(),
                 'updated_at' => now()->subSecond(),
@@ -390,14 +611,14 @@ final class AsteriskConferenceRecoveryTest extends TestCase
                 'runtime_node_id' => $nodeId,
                 'payload_version' => 1,
                 'payload' => json_encode(['conference_id' => $conferenceId, 'participant_id' => $participantId]),
-                'status' => 'terminal_failed',
+                'status' => 'succeeded',
                 'priority' => 100,
                 'idempotency_key' => 'terminal-participant-remove',
                 'correlation_id' => str_repeat('c', 32),
                 'request_id' => str_repeat('d', 32),
                 'available_at' => now()->subMinute(),
-                'last_failure_class' => FailureClass::RuntimeUnavailable->value,
-                'last_failure_code' => 'ari_http_unavailable',
+                'last_failure_class' => null,
+                'last_failure_code' => null,
                 'completed_at' => now()->subSecond(),
                 'created_at' => now()->subMinute(),
                 'updated_at' => now()->subSecond(),
@@ -653,6 +874,15 @@ final class AsteriskConferenceRecoveryTest extends TestCase
                 'configuration_generation' => 1,
             ],
         ]);
+        $participantRemove = $adapter->execute([
+            'operation_type' => 'conference.participant.remove',
+            'runtime_node_id' => $nodeId,
+            'payload' => [
+                'conference_id' => $conferenceId,
+                'participant_id' => $participantId,
+                'configuration_generation' => 0,
+            ],
+        ]);
 
         $this->assertSame('completed', $conference['status']);
         $this->assertSame('runtime_operation.asterisk_conference_stale', $conference['event_type']);
@@ -660,6 +890,9 @@ final class AsteriskConferenceRecoveryTest extends TestCase
         $this->assertSame('completed', $participant['status']);
         $this->assertSame('runtime_operation.asterisk_conference_participant_stale', $participant['event_type']);
         $this->assertTrue($participant['event_payload']['stale_operation']);
+        $this->assertSame('completed', $participantRemove['status']);
+        $this->assertSame('runtime_operation.asterisk_conference_participant_stale', $participantRemove['event_type']);
+        $this->assertTrue($participantRemove['event_payload']['stale_operation']);
     }
 
     /**

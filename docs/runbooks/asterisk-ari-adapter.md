@@ -68,12 +68,15 @@ scripts/asterisk-conference/recovery-runtime-proof --corridor listener_restart_r
 scripts/asterisk-conference/recovery-runtime-proof --corridor event_gap_recovery
 scripts/asterisk-conference/recovery-runtime-proof --corridor asterisk_restart_recovery
 scripts/asterisk-conference/recovery-runtime-proof --corridor retryable_partial_failure
+scripts/asterisk-conference/recovery-runtime-proof --corridor close_before_remove_cleanup
 scripts/asterisk-conference/recovery-runtime-proof --corridor all
 ```
 
 The default invocation remains equivalent to the complete `all` sequence. Each corridor keeps bounded timeouts, uses the canonical authenticated Conference lifecycle, prints only safe result summaries, and preserves cleanup traps. The script is proof tooling only; it is not a runtime management interface.
 
-T2-B source-level repository work keeps `UTCP_PHASE=T1`. Live acceptance of listener restart, event-gap recovery, Asterisk restart reconstruction, retryable partial failure, recovery alert fire/resolve, and final orphan cleanup remains a separate Claude Code corridor.
+Projected participant `left` is runtime evidence, not proof that an Asterisk channel no longer exists. Participant removal remains inspection-driven: when a participant is desired `removed` and the active runtime binding still reports its channel present or attached, reconciliation dispatches `conference.participant.remove`; when inspection proves the channel absent, the adapter records sanitized absence evidence and convergence proceeds through the normal projection/reconciliation path. The close-before-remove parked-channel leak is corrected at reconciliation authority, and live regression proof remains pending for Claude Code.
+
+T2-B source-level repository work keeps `UTCP_PHASE=T1`. Live acceptance of listener restart, event-gap recovery, Asterisk restart reconstruction, retryable partial failure, close-before-remove participant cleanup, recovery alert fire/resolve, and final orphan cleanup remains a separate Claude Code corridor.
 
 ## Asterisk 20 Local Channel Readiness
 

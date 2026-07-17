@@ -158,14 +158,14 @@ Two proof-cleanup defects were found and corrected during this inspection:
 
 ## 8. Remaining gaps (not closed by this corridor)
 
-- **Close-before-remove parked-channel gap:** closing a conference whose
-  participants were never individually removed destroys the bridge, projects
-  the participants `left` from bridge-teardown evidence, and converges
-  reconciliation — while the Local channel pair can remain parked in the
-  Stasis application on the runtime. The `removed`+`left` convergence
-  early-return never re-verifies runtime channel absence, so the parked pair
-  is unowned afterward. Needs a bounded follow-up (e.g., participant-remove
-  dispatch on close, or channel-absence verification before convergence).
+- **Close-before-remove parked-channel live proof:** projected participant
+  `left` is not authoritative proof that the runtime channel is absent. The
+  participant reconciler now verifies runtime absence before converging a
+  removed participant and dispatches the canonical
+  `conference.participant.remove` operation when inspection still finds a
+  parked Local channel. Repository regression coverage exists, and the
+  recovery proof script has a bounded `close_before_remove_cleanup` corridor
+  for the later Claude Code live task. Live rerun remains pending.
 - Listener event drain rate is one frame per poll cycle (~3–5 s per event
   during recovery bursts); tolerable now but worth a bounded improvement.
 - Prometheus Operator remains in its pre-existing crash loop; recovery metrics

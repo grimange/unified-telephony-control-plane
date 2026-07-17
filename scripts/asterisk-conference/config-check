@@ -59,6 +59,7 @@ grep -q "listener_restart_recovery" scripts/asterisk-conference/recovery-runtime
 grep -q "event_gap_recovery" scripts/asterisk-conference/recovery-runtime-proof || fail "missing event-gap recovery corridor"
 grep -q "asterisk_restart_recovery" scripts/asterisk-conference/recovery-runtime-proof || fail "missing Asterisk restart recovery corridor"
 grep -q "retryable_partial_failure" scripts/asterisk-conference/recovery-runtime-proof || fail "missing retryable partial-failure recovery corridor"
+grep -q "close_before_remove_cleanup" scripts/asterisk-conference/recovery-runtime-proof || fail "missing close-before-remove cleanup recovery corridor"
 grep -q "PROOF_DEADLINE_SECONDS" scripts/asterisk-conference/recovery-runtime-proof || fail "conference recovery proof lacks an overall deadline"
 grep -q "trap 'cleanup_proof" scripts/asterisk-conference/recovery-runtime-proof || fail "conference recovery proof cleanup trap is missing"
 grep -q "session_lifetime_too_short_for_recovery_corridor" scripts/asterisk-conference/recovery-runtime-proof || fail "recovery corridors must guard against proof telephony-session expiry"

@@ -37,10 +37,6 @@ final class ConferenceReconciler implements Reconciler
             return ReconciliationResult::blocked('conference_lifecycle_capability_missing');
         }
 
-        if ($conference->desired_state === 'closed' && $conference->observed_state === 'closed') {
-            return ReconciliationResult::converged(300);
-        }
-
         $last = $target->last_operation_id === null ? null : DB::table('runtime_operations')->where('id', $target->last_operation_id)->first();
         if ($last !== null && $last->status === 'terminal_failed') {
             return ReconciliationResult::blocked((string) ($last->last_failure_code ?? 'conference_operation_terminal_failed'));
@@ -89,9 +85,8 @@ final class ConferenceReconciler implements Reconciler
                 return ReconciliationResult::waiting('conference_runtime_inspection_unsupported', 300);
             }
             if ($inspection->status === 'observed' && ! $inspection->conferencePresent) {
+                $this->inspections->recordEvidence((string) $conference->tenant_id, $runtimeNodeId, (string) $conference->id);
                 if ($conference->observed_state !== 'closed') {
-                    $this->inspections->recordEvidence((string) $conference->tenant_id, $runtimeNodeId, (string) $conference->id);
-
                     return ReconciliationResult::waiting('conference_runtime_absence_recorded', 10);
                 }
 
