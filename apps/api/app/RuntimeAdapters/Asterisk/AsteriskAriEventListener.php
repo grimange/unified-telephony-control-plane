@@ -517,6 +517,7 @@ final class AsteriskAriEventListener
         }
 
         $suffix = mb_substr($value, mb_strlen($prefix));
+        $suffix = preg_replace('/;\d+$/', '', $suffix) ?? $suffix;
 
         return $suffix !== '' ? $suffix : null;
     }

@@ -277,6 +277,15 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertSame('joined', $participantObservations[0]['observed_state']);
         $this->assertArrayNotHasKey('authorization', $participantObservations[0]['payload']);
 
+        $localChannelLegObservations = $participantNormalizer->normalize($receipt, [
+            'bridge_id' => $client->conferenceBridgeId($conferenceId),
+            'channel_id' => $client->participantChannelId($participantId).';2',
+            'occurred_at' => now()->toISOString(),
+        ]);
+        $this->assertCount(1, $localChannelLegObservations, 'a Local channel leg suffix must not prevent the participant channel from resolving');
+        $this->assertSame($participantId, $localChannelLegObservations[0]['subject_id']);
+        $this->assertSame('joined', $localChannelLegObservations[0]['observed_state']);
+
         $receipts = new RuntimeEventReceiptRepository;
         $epochId = $receipts->openEpoch($tenantId, $nodeId, $catalog->adapterKey(), 'test-listener');
         $staleJoinedReceipt = $receipts->ingest($tenantId, $nodeId, $catalog->adapterKey(), $epochId, 'stale-joined-after-removal', $catalog->eventType('channel_entered_bridge'), 1, [
