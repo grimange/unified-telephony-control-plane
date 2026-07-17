@@ -15,7 +15,7 @@ COMPOSE_FILE ?= infrastructure/compose/compose.yaml
 COMPOSE_ENV_FILES ?= --env-file versions.env --env-file infrastructure/compose/env.example
 COMPOSE ?= docker compose $(COMPOSE_ENV_FILES) -f $(COMPOSE_FILE) -p $(UTCP_COMPOSE_PROJECT_NAME)
 
-.PHONY: help doctor repository-hygiene workflow-check security-audit secret-scan api-install api-test api-check web-install web-test web-lint web-typecheck web-build install test check build image-build-api image-build-web image-test-api image-test-web image-smoke-api image-smoke-web image-smoke image-inspect container-check local-config-check local-up local-status local-proof local-down compose-config compose-build compose-debug-up compose-up compose-status compose-logs compose-test compose-proof compose-ci compose-down compose-reset k3d-config-check k3d-registry-check-test k3d-create k3d-status k3d-verify k3d-registry-proof k3d-recreate-proof k3d-delete k8s-config-check k8s-image-build k8s-image-push k8s-apply k8s-status k8s-proof k8s-persistence-proof k8s-restart-proof k8s-delete gateway-config-check gateway-crds-install traefik-install gateway-tls gateway-tls-apply gateway-apply gateway-status gateway-proof gateway-delete security-config-check security-apply security-status security-proof security-delete observability-config-check observability-install observability-apply observability-status observability-proof observability-persistence-proof observability-delete control-plane-config-check control-plane-test control-plane-migrate-proof control-plane-proof control-plane-status identity-config-check identity-test identity-bootstrap-local identity-api-proof identity-browser-proof identity-status runtime-registry-config-check runtime-registry-test runtime-registry-api-proof runtime-registry-browser-proof runtime-registry-status runtime-engine-config-check runtime-engine-test runtime-engine-proof runtime-engine-status simulator-config-check simulator-test simulator-api-proof simulator-runtime-proof simulator-status ci ci-check ci-k3d k3d-ci
+.PHONY: help doctor repository-hygiene workflow-check security-audit secret-scan api-install api-test api-check web-install web-test web-lint web-typecheck web-build install test check build image-build-api image-build-web image-test-api image-test-web image-smoke-api image-smoke-web image-smoke image-inspect container-check local-config-check local-up local-status local-proof local-down compose-config compose-build compose-debug-up compose-up compose-status compose-logs compose-test compose-proof compose-ci compose-down compose-reset k3d-config-check k3d-registry-check-test k3d-create k3d-status k3d-verify k3d-registry-proof k3d-recreate-proof k3d-delete k8s-config-check k8s-image-build k8s-image-push k8s-apply k8s-status k8s-proof k8s-persistence-proof k8s-restart-proof k8s-delete gateway-config-check gateway-crds-install traefik-install gateway-tls gateway-tls-apply gateway-apply gateway-status gateway-proof gateway-delete security-config-check security-apply security-status security-proof security-delete observability-config-check observability-install observability-apply observability-status observability-proof observability-persistence-proof observability-delete control-plane-config-check control-plane-test control-plane-migrate-proof control-plane-proof control-plane-status identity-config-check identity-test identity-bootstrap-local identity-api-proof identity-browser-proof identity-status user-access-reset-password runtime-registry-config-check runtime-registry-test runtime-registry-api-proof runtime-registry-browser-proof runtime-registry-status runtime-engine-config-check runtime-engine-test runtime-engine-proof runtime-engine-status simulator-config-check simulator-test simulator-api-proof simulator-runtime-proof simulator-status telephony-domain-config-check telephony-domain-test telephony-domain-api-proof telephony-domain-runtime-proof telephony-domain-status asterisk-ari-config-check asterisk-ari-test asterisk-ari-api-proof asterisk-ari-runtime-proof asterisk-ari-status asterisk-conference-config-check asterisk-conference-test asterisk-conference-api-proof asterisk-conference-runtime-proof asterisk-conference-status asterisk-conference-recovery-test asterisk-conference-recovery-runtime-proof asterisk-conference-recovery-status ci ci-check ci-k3d k3d-ci
 
 help: ## Show available commands.
 	@awk 'BEGIN {FS = ":.*##"; printf "UTCP commands:\n"} /^[a-zA-Z0-9_.-]+:.*##/ {printf "  %-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -146,8 +146,8 @@ local-down: ## Stop only the utcp-local k3d cluster; preserve registry and data.
 	@./scripts/local/down
 
 compose-config: ## Validate the resolved disposable/debug Docker Compose configuration.
-	$(COMPOSE) config --quiet
-	$(COMPOSE) config --format json | scripts/compose/static_check.py
+	$(COMPOSE) --profile signaling config --quiet
+	$(COMPOSE) --profile signaling config --format json | scripts/compose/static_check.py
 
 compose-build: ## Build all images required by disposable/debug Docker Compose.
 	$(COMPOSE) build
@@ -328,6 +328,9 @@ identity-browser-proof: ## Prove C1 natural browser login and web-admin workflow
 identity-status: ## Report non-sensitive C1 identity, tenant, membership, role, and session counts.
 	@./scripts/identity/status
 
+user-access-reset-password: ## Issue a bounded temporary password through the canonical Kubernetes API Pod.
+	@./scripts/identity/user-access-reset-password
+
 runtime-registry-config-check: ## Validate C2 runtime-node registry schema, routes, catalogs, and boundaries.
 	@./scripts/runtime-registry/config-check
 
@@ -369,6 +372,75 @@ simulator-runtime-proof: ## Prove C4 simulator command, event, projection, and r
 
 simulator-status: ## Report non-sensitive C4 simulator counts and process-role state.
 	@./scripts/simulator/status
+
+telephony-domain-config-check: ## Validate C5 telephony session and conference domain boundaries.
+	@./scripts/telephony-domain/config-check
+
+telephony-domain-test: ## Run focused C5 telephony session and conference domain tests.
+	@./scripts/telephony-domain/test
+
+telephony-domain-api-proof: ## Prove C5 authenticated API lifecycle with no direct runtime command route.
+	@./scripts/telephony-domain/api-proof
+
+telephony-domain-runtime-proof: ## Prove C5 conference lifecycle through C3 and the deterministic simulator.
+	@./scripts/telephony-domain/runtime-proof
+
+telephony-domain-status: ## Report safe aggregate C5 telephony-domain status.
+	@./scripts/telephony-domain/status
+
+asterisk-ari-config-check: ## Validate T0 Asterisk ARI adapter, listener, Kubernetes, and boundary configuration.
+	@./scripts/asterisk-ari/config-check
+
+asterisk-ari-test: ## Run focused T0 Asterisk ARI adapter, listener, epoch, and boundary tests.
+	@./scripts/asterisk-ari/test
+
+asterisk-ari-api-proof: ## Prove T0 Asterisk RuntimeNode setup through authenticated C1/C2 APIs.
+	@./scripts/asterisk-ari/api-proof
+
+asterisk-ari-runtime-proof: ## Prove T0 ARI HTTP, WebSocket, epoch, projection, and recovery behavior in Kubernetes.
+	@./scripts/asterisk-ari/runtime-proof
+
+asterisk-ari-status: ## Report safe aggregate T0 Asterisk ARI adapter and listener status.
+	@./scripts/asterisk-ari/status
+
+asterisk-conference-config-check: ## Validate T2-A Asterisk conference execution boundaries.
+	@./scripts/asterisk-conference/config-check
+
+asterisk-conference-test: ## Run focused T2-A Asterisk conference execution tests.
+	@./scripts/asterisk-conference/test
+
+asterisk-conference-api-proof: ## Prove T2-A conference lifecycle API dispatch without direct ARI controllers.
+	@./scripts/asterisk-conference/api-proof
+
+asterisk-conference-runtime-proof: ## Prove T2-A live Asterisk bridge and channel execution in Kubernetes.
+	@./scripts/asterisk-conference/runtime-proof
+
+asterisk-conference-status: ## Report safe aggregate T2-A conference execution status.
+	@./scripts/asterisk-conference/status
+
+asterisk-conference-recovery-test: ## Run focused T2-B Asterisk conference recovery tests.
+	@./scripts/asterisk-conference/recovery-test
+
+asterisk-conference-recovery-runtime-proof: ## Prove T2-B Asterisk conference recovery behavior in Kubernetes.
+	@./scripts/asterisk-conference/recovery-runtime-proof
+
+asterisk-conference-recovery-status: ## Report safe aggregate T2-B conference recovery status.
+	@./scripts/asterisk-conference/recovery-status
+
+kamailio-signaling-config-check: ## Validate current T1 signaling credential authority boundaries.
+	@./scripts/kamailio-signaling/config-check
+
+kamailio-signaling-test: ## Run focused T1 signaling credential authority tests.
+	@./scripts/kamailio-signaling/test
+
+kamailio-signaling-api-proof: ## Prove T1 credential API behavior; live Kamailio REGISTER remains separate.
+	@./scripts/kamailio-signaling/api-proof
+
+kamailio-signaling-runtime-proof: ## Prove live Kamailio WSS REGISTER corridor when implemented.
+	@./scripts/kamailio-signaling/runtime-proof
+
+kamailio-signaling-status: ## Report safe aggregate T1 signaling credential and registration counts.
+	@./scripts/kamailio-signaling/status
 
 ci: ## Run the locally reproducible Phase F4 CI quality baseline.
 	@./scripts/ci/local-ci

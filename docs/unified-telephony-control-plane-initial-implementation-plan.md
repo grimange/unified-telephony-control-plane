@@ -1550,66 +1550,51 @@ ParticipantControlOperation
 
 ---
 
-## Phase T0 — Asterisk Runtime Adapter and Internal Call Execution
+## Phase T0 — Asterisk ARI Adapter
 
 ### Goal
 
-Add the first real telephony execution runtime and implement the normalized C2-C8 contracts against Asterisk without making Asterisk concepts part of the central domain.
+Add the first real runtime adapter transport by proving authenticated Asterisk ARI HTTP inspection, ARI WebSocket event ingestion, listener leasing, connection epochs, runtime-neutral readiness observations, and reconnect behavior without making Asterisk concepts part of the central domain.
 
 ### Initial scope
 
-* containerized local Asterisk
-* PJSIP transport
-* health and readiness
-* ARI connectivity for call and bridge control
-* AMI only where a required observation or operation is not safely available through ARI and the boundary is documented
-* one synthetic internal endpoint
-* one internal synthetic call path
-* runtime capability reporting
-* runtime registration in UTCP
-* desired projection and observed-state support
-* normalized originate, answer, hangup, bridge and conference execution
-* normalized call, call-leg, bridge and registration observations
-* no commercial carrier account
-* no public PSTN requirement
+* internal local Asterisk ARI fixture for Kubernetes and CI proof
+* ARI HTTP authentication and runtime inspection
+* ARI WebSocket connection for runtime-level event evidence
+* dynamic `asterisk-ari-events` listener discovery from C2 RuntimeNodes
+* PostgreSQL listener leases and fencing
+* C3 connection epochs and raw event receipts
+* runtime-neutral readiness and connection observations
+* reconnect after listener or Asterisk restart
+* bounded metrics, logs, alerts and NetworkPolicies
+* unsupported C5 conference operations on Asterisk until T2
+* no SIP, PJSIP endpoint, RTP, media, ConfBridge, channel control, trunks, PSTN or browser calling
 
 ### Adapter contract
 
-The Asterisk adapter should expose normalized operations such as:
+The Asterisk adapter supports only generic runtime observation during T0:
 
 ```text
-probe
-discoverCapabilities
-readObservedState
-applyDesiredProjection
-issueRegistrationCredential
-originate
-answer
-hangup
-hold
-resume
-bridge
-unbridge
-transfer
-joinConference
-controlParticipant
+runtime.node.inspect
 ```
 
-Unsupported operations must be reported through capability results.
+Unsupported operations, including C5 conference operations, must fail observably as unsupported capability or unsupported operation. They must not fall back to the simulator or report fake success.
 
-Vendor-specific details such as channel technology, ARI channel identifiers, bridge types, PJSIP endpoint sections and dialplan contexts must remain inside the adapter and projection layer.
+Vendor-specific details such as ARI connection state, HTTP status, WebSocket handshake behavior and native event names remain inside the adapter and normalizer boundary. ConfBridge, channel identifiers, PJSIP endpoint sections and dialplan contexts are not T0 authority.
 
 ### Exit criteria
 
-* Asterisk becomes healthy
-* UTCP detects and records its capabilities
-* one internal synthetic call progresses through normalized call and call-leg states
-* supported call-control operations execute through the generic adapter contract
-* conference admission and membership observations work through C8 contracts
-* container restart and event-stream interruption are detected
-* reconciliation restores supported configuration
+* Asterisk ARI fixture is internal only and exposes no SIP or media endpoint
+* authenticated ARI HTTP inspection succeeds through `AsteriskAriClient`
+* `asterisk-ari-events` discovers active Asterisk nodes automatically
+* one listener lease and C3 connection epoch are created per active connection
+* raw connection evidence enters C3 receipts and normalizes to runtime observations
+* RuntimeNode readiness is projected only from documented ARI evidence
+* listener restart and Asterisk restart recover without manual processing
+* authentication failure is normalized and sanitized
+* unsupported conference operation proof fails safely
 * controllers and application workflows contain no Asterisk-specific branching
-* no real carrier identity is required
+* no real carrier identity, SIP endpoint, media path, or browser call is required
 
 ---
 

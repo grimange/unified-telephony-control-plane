@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+KUBECONFIG_FILE="${KUBECONFIG:-$ROOT/.runtime/kubeconfig/utcp-local.yaml}"
+KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-utcp-local}"
+
+if [ -f "$KUBECONFIG_FILE" ] && kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" -n utcp-platform get deploy/api >/dev/null 2>&1; then
+  if kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" -n utcp-platform exec deploy/api -- php artisan list --raw 2>/dev/null | awk '{print $1}' | grep -qx 'telephony-domain:status'; then
+    kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" -n utcp-platform exec deploy/api -- php artisan telephony-domain:status
+    exit 0
+  fi
+  printf 'telephony_domain_status=unavailable_in_deployed_image\n'
+  exit 0
+fi
+
+if [ -f apps/api/artisan ] && cd "$ROOT/apps/api" && php artisan list --raw 2>/dev/null | grep -qx 'telephony-domain:status'; then
+  php artisan telephony-domain:status
+else
+  printf 'telephony_domain_status=unavailable\n'
+fi

@@ -6,7 +6,7 @@ C3 provides UTCP's runtime-neutral command, event, projection, and reconciliatio
 
 ## Authority
 
-PostgreSQL is authoritative for runtime operations, outbox dispatch state, raw runtime-event receipts, connection epochs, observations, projection checkpoints, reconciliation state, leases, and fencing.
+PostgreSQL is authoritative for runtime operations, outbox dispatch state, canonical event-source identity, raw runtime-event receipts, source epochs, observations, projection checkpoints, reconciliation state, leases, and fencing.
 
 Redis is transient queue delivery only. A queue message wakes processing, but workers reload and mutate authoritative state through PostgreSQL.
 
@@ -31,9 +31,15 @@ The dispatcher claims pending or retryable outbox rows in stable order, writes a
 
 The command worker reloads a runtime operation from PostgreSQL, claims it through the C0 operation lease, resolves a `RuntimeOperationHandler`, and resolves a `RuntimeAdapter` only when required. Unsupported handlers or adapters fail observably. There is no production no-op or simulator fallback.
 
+## Event Sources
+
+C3 event sources are identified by one canonical `event_sources` row. A source may be backed by a canonical `RuntimeNode` (`source_kind=runtime-node`) or by shared platform infrastructure without a RuntimeNode (`source_kind=kamailio-registration`, `source_key=local-shared-registrar`). The source row owns listener leases, fencing, source epochs, receipts, and checkpoints.
+
+RuntimeNode-backed sources retain the RuntimeNode relationship as attribution for T0 Asterisk status, projections, and reconciliation. Platform sources deliberately have no RuntimeNode relationship; Kamailio registration must not be modeled as a fake RuntimeNode and must not use parallel platform lease, epoch, receipt, or checkpoint tables.
+
 ## Event Normalization
 
-Future runtime-specific listeners will call internal services to record raw runtime-event receipts. The normalizer claims receipts, resolves a normalizer by adapter key and event type/version, applies normalized observations, advances projection checkpoints atomically, and records unsupported events without mutating projections.
+Runtime-specific listeners call internal services to record raw runtime-event receipts against a canonical event source and source epoch. The normalizer claims receipts, resolves a normalizer by adapter key and event type/version, applies normalized observations, advances projection checkpoints atomically, and records unsupported events without mutating projections.
 
 ## Reconciliation
 
@@ -56,6 +62,8 @@ make runtime-engine-status
 
 - No public command execution API.
 - No public raw-event ingestion API.
+- No parallel platform event-source tables.
+- No fake RuntimeNode for shared platform infrastructure.
 - No manual projection or reconciliation route.
 - No manual mark-ready route.
 - No live runtime endpoint egress.

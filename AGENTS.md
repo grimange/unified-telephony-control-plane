@@ -51,6 +51,23 @@ No implementation may silently transfer one authority to another component.
 - Keep generated files and local secrets untracked.
 - Before editing, inspect `git status --short` and account for pre-existing changes.
 
+### End-of-prompt commit convention
+
+When a bounded prompt explicitly requests a commit at its conclusion:
+
+1. Run the required focused verification.
+2. Review `git status` and the staged diff.
+3. Exclude generated runtime files, secrets, logs, and unrelated changes.
+4. Create one scoped commit for the completed task.
+5. Report the commit hash and message.
+6. Do not push unless explicitly requested.
+
+For incomplete runs:
+
+- Do not commit broken or unsafe work.
+- A safe, coherent partial checkpoint may be committed only with an explicit checkpoint/WIP message.
+- The report must state exactly what remains incomplete.
+
 ## Subagent coordination
 
 - Use parallel subagents primarily for read-heavy exploration, review, or verification planning.

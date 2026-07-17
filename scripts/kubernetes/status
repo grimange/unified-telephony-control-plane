@@ -14,8 +14,12 @@ printf '\nData StatefulSets:\n'
 kube -n "$K8S_DATA_NAMESPACE" get statefulsets,pods,services,pvc -o wide
 printf '\nPlatform workloads:\n'
 kube -n "$K8S_PLATFORM_NAMESPACE" get deployments,pods,services,job -o wide
+printf '\nRuntime workloads:\n'
+kube -n "$K8S_RUNTIME_NAMESPACE" get deployments,pods,services -o wide
 printf '\nImages:\n'
-kube -n "$K8S_PLATFORM_NAMESPACE" get deployment api worker scheduler web gateway -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].image}{"\t"}{.spec.template.spec.containers[0].args}{"\n"}{end}'
+kube -n "$K8S_PLATFORM_NAMESPACE" get deployment api worker scheduler web gateway telephony-command-worker telephony-event-normalizer telephony-reconciler simulator-event-source asterisk-ari-events kamailio -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].image}{"\t"}{.spec.template.spec.containers[0].args}{"\n"}{end}'
+kube -n "$K8S_RUNTIME_NAMESPACE" get deployment asterisk-ari -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.template.spec.containers[0].image}{"\n"}{end}'
 printf '\nService exposure:\n'
 kube get service -n "$K8S_DATA_NAMESPACE" -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,PORTS:.spec.ports[*].port --no-headers
 kube get service -n "$K8S_PLATFORM_NAMESPACE" -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,PORTS:.spec.ports[*].port --no-headers
+kube get service -n "$K8S_RUNTIME_NAMESPACE" -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,PORTS:.spec.ports[*].port --no-headers

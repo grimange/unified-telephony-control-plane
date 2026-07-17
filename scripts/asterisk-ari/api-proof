@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/gateway/lib
+. "$ROOT/scripts/gateway/lib"
+# shellcheck source=scripts/kubernetes/lib
+. "$ROOT/scripts/kubernetes/lib"
+
+CREDS_FILE="$ROOT/.runtime/identity/bootstrap.json"
+[ -s "$CREDS_FILE" ] || { printf 'missing identity bootstrap credentials file: %s\n' "$CREDS_FILE" >&2; exit 1; }
+ensure_local_asterisk_credentials
+
+json_value() {
+  php -r '$d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); echo $d[$argv[2]] ?? "";' "$CREDS_FILE" "$1"
+}
+
+json_get() {
+  php -r '$d=json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR); foreach (explode(".", $argv[1]) as $p) { $d = $d[$p] ?? null; } if (is_array($d)) { echo json_encode($d, JSON_UNESCAPED_SLASHES); } else { echo $d; }' "$1"
+}
+
+json_find_node_id_by_slug() {
+  php -r '$d=json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR); foreach (($d["runtime_nodes"] ?? []) as $n) { if (($n["slug"] ?? null) === $argv[1]) { echo $n["id"]; exit; }}' "$1"
+}
+
+json_find_endpoint_id_by_purpose() {
+  php -r '$d=json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR); foreach (($d["runtime_node"]["endpoints"] ?? []) as $e) { if (($e["purpose"] ?? null) === $argv[1]) { echo $e["id"]; exit; }}' "$1"
+}
+
+email="$(json_value email)"
+password="$(json_value password)"
+tenant_slug="$(json_value tenant_slug)"
+ari_user="$(awk -F= '$1=="ARI_USERNAME"{print $2}' "$K8S_ASTERISK_CREDENTIALS_FILE")"
+ari_password="$(awk -F= '$1=="ARI_PASSWORD"{print $2}' "$K8S_ASTERISK_CREDENTIALS_FILE")"
+[ -n "$ari_user" ] && [ -n "$ari_password" ] || { printf 'missing generated local ARI credentials\n' >&2; exit 1; }
+
+cookie_jar="$(mktemp)"
+body_file="$(mktemp)"
+trap 'rm -f "$cookie_jar" "$body_file"' EXIT
+
+base="https://${UTCP_APP_HOSTNAME}"
+curl_base=(curl --silent --show-error --max-time 20 --resolve "${UTCP_APP_HOSTNAME}:${UTCP_EDGE_HTTPS_HOST_PORT}:${UTCP_EDGE_HTTPS_HOST}")
+if [ -s "$TLS_CA_CERT" ] && openssl verify -CAfile "$TLS_CA_CERT" "$TLS_CERT" >/dev/null 2>&1; then
+  curl_base+=(--cacert "$TLS_CA_CERT")
+fi
+
+csrf_json="$("${curl_base[@]}" --cookie-jar "$cookie_jar" "$base/api/v1/auth/csrf")"
+csrf="$(printf '%s' "$csrf_json" | json_get csrf_token)"
+[ -n "$csrf" ] || { printf 'missing CSRF token\n' >&2; exit 1; }
+
+login_payload="$(php -r 'echo json_encode(["email"=>$argv[1],"password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$email" "$password")"
+login_code="$("${curl_base[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$login_payload" --output "$body_file" --write-out '%{http_code}' "$base/api/v1/auth/login")"
+[ "$login_code" = "200" ] || { printf 'login failed with HTTP %s\n' "$login_code" >&2; cat "$body_file" >&2; exit 1; }
+
+csrf_json="$("${curl_base[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" "$base/api/v1/auth/csrf")"
+csrf="$(printf '%s' "$csrf_json" | json_get csrf_token)"
+session_json="$("${curl_base[@]}" --cookie "$cookie_jar" "$base/api/v1/auth/session")"
+tenant_id="$(printf '%s' "$session_json" | php -r '$d=json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR); foreach ($d["memberships"] as $m) { if ($m["slug"] === $argv[1]) { echo $m["tenant_id"]; exit; }}' "$tenant_slug")"
+[ -n "$tenant_id" ] || { printf 'bootstrap tenant not available\n' >&2; exit 1; }
+tenant_payload="$(php -r 'echo json_encode(["tenant_id"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$tenant_id")"
+tenant_code="$("${curl_base[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$tenant_payload" --output "$body_file" --write-out '%{http_code}' "$base/api/v1/auth/tenant-context")"
+[ "$tenant_code" = "200" ] || { printf 'tenant selection failed with HTTP %s\n' "$tenant_code" >&2; cat "$body_file" >&2; exit 1; }
+grep -Fq 'runtime.nodes.manage' "$body_file" || { printf 'runtime management capability missing\n' >&2; exit 1; }
+
+suffix="t0"
+node_payload='{"name":"Local Asterisk ARI","slug":"local-asterisk-ari","runtime_family":"asterisk","adapter_key":"asterisk-ari","placement_region":"local","placement_zone":"dev","placement_priority":100,"capacity_weight":10,"labels":{"purpose":"t0-proof"}}'
+node_code="$("${curl_base[@]}" --cookie "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --header "Idempotency-Key: t0-node-${suffix}" --data "$node_payload" --output "$body_file" --write-out '%{http_code}' "$base/api/v1/admin/runtime-nodes")"
+if [ "$node_code" = "201" ] || [ "$node_code" = "200" ]; then
+  node_id="$(cat "$body_file" | json_get runtime_node.id)"
+else
+  list_body="$(mktemp)"
+  list_code="$("${curl_base[@]}" --cookie "$cookie_jar" --output "$list_body" --write-out '%{http_code}' "$base/api/v1/admin/runtime-nodes")"
+  if [ "$list_code" != "200" ]; then
+    printf 'runtime node create/reuse failed with HTTP %s and list failed with HTTP %s\n' "$node_code" "$list_code" >&2
+    cat "$body_file" >&2
+    rm -f "$list_body"
+    exit 1
+  fi
+  node_id="$(cat "$list_body" | json_find_node_id_by_slug local-asterisk-ari)"
+  rm -f "$list_body"
+fi
+
+if [ -z "${node_id:-}" ]; then
+  printf 'runtime node create/reuse failed with HTTP %s\n' "$node_code" >&2
+  cat "$body_file" >&2
+  exit 1
+fi
+
+for endpoint in control events health; do
+  case "$endpoint" in
+    control|health) payload='{"purpose":"'$endpoint'","transport":"http","host":"asterisk-ari.utcp-runtime.svc.cluster.local","port":8088,"path":"/ari","tls_mode":"disabled"}' ;;
+    events) payload='{"purpose":"events","transport":"ws","host":"asterisk-ari.utcp-runtime.svc.cluster.local","port":8088,"path":"/ari/events","tls_mode":"disabled"}' ;;
+  esac
+  node_show="$("${curl_base[@]}" --cookie "$cookie_jar" "$base/api/v1/admin/runtime-nodes/$node_id")"
+  endpoint_id="$(printf '%s' "$node_show" | json_find_endpoint_id_by_purpose "$endpoint")"
+  if [ -n "$endpoint_id" ]; then
+    code="$("${curl_base[@]}" --cookie "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --request PATCH --data "$payload" --output "$body_file" --write-out '%{http_code}' "$base/api/v1/admin/runtime-nodes/$node_id/endpoints/$endpoint_id")"
+  else
+    code="$("${curl_base[@]}" --cookie "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$payload" --output "$body_file" --write-out '%{http_code}' "$base/api/v1/admin/runtime-nodes/$node_id/endpoints")"
+  fi
+  [ "$code" = "201" ] || [ "$code" = "200" ] || { printf '%s endpoint upsert failed with HTTP %s\n' "$endpoint" "$code" >&2; cat "$body_file" >&2; exit 1; }
+done
+
+capability_payload='{"capabilities":["runtime.observation","event.stream"]}'
+capability_code="$("${curl_base[@]}" --cookie "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$capability_payload" --request PUT --output "$body_file" --write-out '%{http_code}' "$base/api/v1/admin/runtime-nodes/$node_id/capabilities")"
+[ "$capability_code" = "200" ] || { printf 'capability update failed with HTTP %s\n' "$capability_code" >&2; cat "$body_file" >&2; exit 1; }
+if grep -Eq 'conference.lifecycle|conference.participation|conference.execution' "$body_file"; then
+  printf 'Asterisk T0 node was granted conference capability\n' >&2
+  exit 1
+fi
+
+credential_payload="$(php -r 'echo json_encode(["credential_type"=>"ari-basic","identifier"=>$argv[1],"secret"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$ari_user" "$ari_password")"
+credential_suffix="$(printf '%s' "$ari_password" | sha256sum | awk '{print substr($1,1,16)}')"
+credential_code="$("${curl_base[@]}" --cookie "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --header "Idempotency-Key: t0-ari-credential-${credential_suffix}" --data "$credential_payload" --output "$body_file" --write-out '%{http_code}' "$base/api/v1/admin/runtime-nodes/$node_id/credentials")"
+[ "$credential_code" = "201" ] || [ "$credential_code" = "200" ] || { printf 'credential create failed with HTTP %s\n' "$credential_code" >&2; cat "$body_file" >&2; exit 1; }
+if grep -Fq "$ari_password" "$body_file" || grep -E 'encrypted_secret|ciphertext|secret_fingerprint' "$body_file" >/dev/null; then
+  printf 'credential secret or storage internals were returned by API\n' >&2
+  exit 1
+fi
+
+state_payload='{"desired_state":"active"}'
+state_code="$("${curl_base[@]}" --cookie "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$state_payload" --output "$body_file" --write-out '%{http_code}' "$base/api/v1/admin/runtime-nodes/$node_id/desired-state")"
+[ "$state_code" = "200" ] || { printf 'desired-state change failed with HTTP %s\n' "$state_code" >&2; cat "$body_file" >&2; exit 1; }
+
+printf 'asterisk_ari_api_proof=ok\n'

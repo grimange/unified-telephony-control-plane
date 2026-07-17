@@ -4,10 +4,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-if [ -f .runtime/kubeconfig ] && kubectl --kubeconfig .runtime/kubeconfig -n utcp-platform get deploy/api >/dev/null 2>&1; then
-  kubectl --kubeconfig .runtime/kubeconfig -n utcp-platform exec deploy/api -- php artisan simulator:status
+KUBECONFIG_FILE="${KUBECONFIG:-$ROOT/.runtime/kubeconfig/utcp-local.yaml}"
+KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-utcp-local}"
+
+if [ -f "$KUBECONFIG_FILE" ] && kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" -n utcp-platform get deploy/api >/dev/null 2>&1; then
+  kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" -n utcp-platform exec deploy/api -- php artisan simulator:status
   printf 'simulator_event_source_deployments='
-  kubectl --kubeconfig .runtime/kubeconfig -n utcp-platform get deploy simulator-event-source -o jsonpath='{.status.readyReplicas}/{.spec.replicas}' 2>/dev/null || printf 'missing'
+  kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" -n utcp-platform get deploy simulator-event-source -o jsonpath='{.status.readyReplicas}/{.spec.replicas}' 2>/dev/null || printf 'missing'
   printf '\n'
   exit 0
 fi

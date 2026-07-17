@@ -6,6 +6,9 @@ use App\Http\Controllers\Identity\AdminTenantController;
 use App\Http\Controllers\Identity\AdminUserController;
 use App\Http\Controllers\Identity\AuthController;
 use App\Http\Controllers\RuntimeRegistry\AdminRuntimeNodeController;
+use App\Http\Controllers\TelephonyDomain\AdminConferenceController;
+use App\Http\Controllers\TelephonyDomain\ConferenceController;
+use App\Http\Controllers\TelephonyDomain\TelephonySessionController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -34,9 +37,12 @@ Route::prefix('api/v1/admin')->middleware(['identity.session'])->group(function 
 
     Route::get('/users', [AdminUserController::class, 'index']);
     Route::post('/users', [AdminUserController::class, 'store']);
+    Route::get('/users/{userId}', [AdminUserController::class, 'show']);
     Route::patch('/users/{userId}', [AdminUserController::class, 'update']);
     Route::post('/users/{userId}/password-reset', [AdminUserController::class, 'resetPassword']);
     Route::post('/users/{userId}/platform-roles', [AdminUserController::class, 'assignPlatformRole']);
+    Route::post('/users/{userId}/telephony-sessions/{telephonySession}/end', [AdminUserController::class, 'endTelephonySession']);
+    Route::post('/users/{userId}/telephony-sessions/{telephonySession}/signaling-credential', [AdminUserController::class, 'issueSignalingCredential']);
 
     Route::get('/memberships', [AdminMembershipController::class, 'index']);
     Route::post('/memberships', [AdminMembershipController::class, 'store']);
@@ -44,6 +50,7 @@ Route::prefix('api/v1/admin')->middleware(['identity.session'])->group(function 
 
     Route::get('/roles', [AdminRoleController::class, 'index']);
 
+    Route::get('/runtime-node-catalog', [AdminRuntimeNodeController::class, 'catalog']);
     Route::get('/runtime-nodes', [AdminRuntimeNodeController::class, 'index']);
     Route::post('/runtime-nodes', [AdminRuntimeNodeController::class, 'store']);
     Route::get('/runtime-nodes/{runtimeNode}', [AdminRuntimeNodeController::class, 'show']);
@@ -55,7 +62,30 @@ Route::prefix('api/v1/admin')->middleware(['identity.session'])->group(function 
     Route::put('/runtime-nodes/{runtimeNode}/capabilities', [AdminRuntimeNodeController::class, 'setCapabilities']);
     Route::get('/runtime-nodes/{runtimeNode}/adapter-configuration', [AdminRuntimeNodeController::class, 'adapterConfiguration']);
     Route::put('/runtime-nodes/{runtimeNode}/adapter-configuration', [AdminRuntimeNodeController::class, 'putAdapterConfiguration']);
+    Route::get('/runtime-nodes/{runtimeNode}/runtime-evidence', [AdminRuntimeNodeController::class, 'runtimeEvidence']);
+    Route::get('/runtime-nodes/{runtimeNode}/history', [AdminRuntimeNodeController::class, 'history']);
     Route::post('/runtime-nodes/{runtimeNode}/credentials', [AdminRuntimeNodeController::class, 'createCredential']);
     Route::post('/runtime-nodes/{runtimeNode}/credentials/{credential}/rotate', [AdminRuntimeNodeController::class, 'rotateCredential']);
     Route::post('/runtime-nodes/{runtimeNode}/credentials/{credential}/retire', [AdminRuntimeNodeController::class, 'retireCredential']);
+
+    Route::get('/conferences', [AdminConferenceController::class, 'index']);
+    Route::post('/conferences', [AdminConferenceController::class, 'store']);
+    Route::get('/conferences/{conference}', [AdminConferenceController::class, 'show']);
+    Route::post('/conferences/{conference}/desired-state', [AdminConferenceController::class, 'desiredState']);
+    Route::post('/conferences/{conference}/runtime-binding', [AdminConferenceController::class, 'runtimeBinding']);
+    Route::get('/conferences/{conference}/participants', [AdminConferenceController::class, 'participants']);
+    Route::post('/conferences/{conference}/participants/{participant}/remove', [AdminConferenceController::class, 'removeParticipant']);
+});
+
+Route::prefix('api/v1')->middleware(['identity.session'])->group(function (): void {
+    Route::post('/telephony/sessions', [TelephonySessionController::class, 'store']);
+    Route::get('/telephony/sessions/current', [TelephonySessionController::class, 'current']);
+    Route::post('/telephony/sessions/{telephonySession}/end', [TelephonySessionController::class, 'end']);
+    Route::post('/telephony/sessions/{telephonySession}/signaling-credential', [TelephonySessionController::class, 'issueSignalingCredential']);
+    Route::get('/telephony/sessions/{telephonySession}/signaling-credential', [TelephonySessionController::class, 'signalingCredential']);
+
+    Route::get('/conferences', [ConferenceController::class, 'index']);
+    Route::get('/conferences/{conference}', [ConferenceController::class, 'show']);
+    Route::post('/conferences/{conference}/participants/self', [ConferenceController::class, 'joinSelf']);
+    Route::delete('/conferences/{conference}/participants/self', [ConferenceController::class, 'removeSelf']);
 });

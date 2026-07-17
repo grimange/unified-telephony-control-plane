@@ -33,7 +33,7 @@ final class ReconciliationWorker
                 continue;
             }
 
-            $operationId = null;
+            $operationId = $claim->last_operation_id;
             $result = $reconciler->evaluate($claim);
 
             $lastOperationTerminal = false;
@@ -50,13 +50,17 @@ final class ReconciliationWorker
                         origin: 'telephony-reconciler',
                     );
                     $payload = PayloadSafety::assertSafe($result->operationPayload);
-                    $idempotencyKey = new IdempotencyKey(hash('sha256', implode(':', [
+                    $idempotencyParts = [
                         'reconcile',
                         $claim->target_type,
                         $claim->target_id,
                         (string) $claim->desired_generation,
                         (string) $result->operationType,
-                    ])));
+                    ];
+                    if ($claim->last_operation_id !== null) {
+                        $idempotencyParts[] = (string) $claim->last_operation_id;
+                    }
+                    $idempotencyKey = new IdempotencyKey(hash('sha256', implode(':', $idempotencyParts)));
 
                     return $this->operations->create(
                         (string) $result->operationType,
@@ -65,7 +69,7 @@ final class ReconciliationWorker
                         $payload,
                         $context,
                         $idempotencyKey,
-                        runtimeNodeId: $claim->target_type === 'runtime_node' ? (string) $claim->target_id : null,
+                        runtimeNodeId: $result->runtimeNodeId ?? ($claim->target_type === 'runtime_node' ? (string) $claim->target_id : null),
                     );
                 });
             } elseif ($result->status === 'operation_required') {

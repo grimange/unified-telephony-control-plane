@@ -8,10 +8,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 required_tools
 ensure_kubeconfig
 
-prom_port=19090
-loki_port=19100
-grafana_port=19300
-alert_port=19093
+prom_port="${UTCP_OBSERVABILITY_PROOF_PROM_PORT:-19090}"
+loki_port="${UTCP_OBSERVABILITY_PROOF_LOKI_PORT:-19100}"
+grafana_port="${UTCP_OBSERVABILITY_PROOF_GRAFANA_PORT:-19300}"
+alert_port="${UTCP_OBSERVABILITY_PROOF_ALERT_PORT:-19093}"
 prom_pid=""
 loki_pid=""
 grafana_pid=""

@@ -5,3 +5,4 @@ resources:
   - gateway.yaml
   - httproute-app.yaml
   - httproute-root.yaml
+  - httproute-sip.yaml

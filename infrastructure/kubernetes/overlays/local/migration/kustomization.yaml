@@ -12,6 +12,10 @@ secretGenerator:
     namespace: utcp-platform
     envs:
       - local-data-credentials.properties
+  - name: utcp-local-kamailio-db-credentials
+    namespace: utcp-platform
+    envs:
+      - local-kamailio-db-credentials.properties
 resources:
   - ../../../base/migration
 images:

@@ -27,8 +27,16 @@ cert_summary
 printf '\nHost port mappings:\n'
 docker ps --filter "name=k3d-${K3D_CLUSTER_NAME:-utcp-local}-serverlb" --format '{{.Names}}	{{.Ports}}'
 printf '\nReserved hostname route absence:\n'
-if render_gateway | grep -Eiq 'sip\.utcp\.local\.test|events\.utcp\.local\.test'; then
+rendered_gateway="$(render_gateway)"
+if printf '%s\n' "$rendered_gateway" | grep -Eiq 'events\.utcp\.local\.test'; then
   printf 'reserved_host_route_absent=false\n'
   exit 1
+fi
+if printf '%s\n' "$rendered_gateway" | grep -Fq 'sip.utcp.local.test'; then
+  printf '%s\n' "$rendered_gateway" | grep -Fq 'name: sip-wss'
+  printf '%s\n' "$rendered_gateway" | grep -Fq 'value: /ws'
+  printf 'reserved_host_route_absent=events_only\n'
+  printf 'sip_wss_route=present\n'
+  exit 0
 fi
 printf 'reserved_host_route_absent=true\n'

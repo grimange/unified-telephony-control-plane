@@ -15,10 +15,18 @@ final class ReconciliationRepository
             ->first();
 
         if ($existing !== null) {
+            $generationAdvanced = $desiredGeneration > (int) $existing->desired_generation;
+
             DB::table('runtime_reconciliation_states')->where('id', $existing->id)->update([
                 'tenant_id' => $tenantId,
                 'desired_generation' => max((int) $existing->desired_generation, $desiredGeneration),
+                'status' => $generationAdvanced ? 'waiting' : $existing->status,
+                'last_operation_id' => $generationAdvanced ? null : $existing->last_operation_id,
+                'blocked_reason' => $generationAdvanced ? null : $existing->blocked_reason,
                 'next_check_at' => now()->addSeconds($nextCheckSeconds),
+                'lease_owner' => null,
+                'lease_token' => null,
+                'lease_expires_at' => null,
                 'updated_at' => now(),
             ]);
 
@@ -42,24 +50,52 @@ final class ReconciliationRepository
         return $id;
     }
 
+    public function wakeTarget(string $tenantId, string $targetType, string $targetId, int $desiredGeneration, int $nextCheckSeconds = 0): string
+    {
+        $id = $this->ensureTarget($tenantId, $targetType, $targetId, $desiredGeneration, $nextCheckSeconds);
+        $currentGeneration = (int) DB::table('runtime_reconciliation_states')->where('id', $id)->value('desired_generation');
+
+        DB::table('runtime_reconciliation_states')->where('id', $id)->update([
+            'tenant_id' => $tenantId,
+            'desired_generation' => max($currentGeneration, $desiredGeneration),
+            'status' => 'waiting',
+            'last_operation_id' => null,
+            'blocked_reason' => null,
+            'next_check_at' => now()->addSeconds($nextCheckSeconds),
+            'lease_owner' => null,
+            'lease_token' => null,
+            'lease_expires_at' => null,
+            'updated_at' => now(),
+        ]);
+
+        return $id;
+    }
+
     /**
      * @return list<object>
      */
     public function claimDue(string $leaseOwner, int $batchSize = 10, int $leaseSeconds = 60): array
     {
         return DB::transaction(function () use ($leaseOwner, $batchSize, $leaseSeconds): array {
-            $rows = DB::table('runtime_reconciliation_states')
+            $query = DB::table('runtime_reconciliation_states')
                 ->where('next_check_at', '<=', now())
                 ->where(function ($query): void {
                     $query->whereNull('lease_expires_at')
                         ->orWhere('lease_expires_at', '<=', now());
                 })
-                ->whereNotIn('status', ['converged'])
+                ->orderByRaw("CASE status WHEN 'waiting' THEN 0 WHEN 'operation_required' THEN 1 WHEN 'blocked' THEN 2 WHEN 'converged' THEN 3 ELSE 2 END")
+                ->orderByDesc('updated_at')
                 ->orderBy('next_check_at')
                 ->orderBy('created_at')
-                ->limit($batchSize)
-                ->lockForUpdate()
-                ->get();
+                ->limit($batchSize);
+
+            if (DB::getDriverName() === 'pgsql') {
+                $query->lock('for update skip locked');
+            } else {
+                $query->lockForUpdate();
+            }
+
+            $rows = $query->get();
 
             foreach ($rows as $row) {
                 $row->lease_token = EngineIds::token();

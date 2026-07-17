@@ -6,6 +6,65 @@ use InvalidArgumentException;
 
 final class RuntimeRegistryCatalog
 {
+    /**
+     * @return array<string, mixed>
+     */
+    public function managementCatalog(): array
+    {
+        $capabilities = [];
+        foreach (config('runtime_registry.runtime_capabilities', []) as $key => $label) {
+            $capabilities[$key] = [
+                'key' => $key,
+                'display_name' => (string) $label,
+                'label' => (string) $label,
+                'description' => (string) $label,
+            ];
+        }
+
+        $families = [];
+        foreach (config('runtime_registry.runtime_families', []) as $key => $family) {
+            if (! is_array($family)) {
+                continue;
+            }
+            $adapterKeys = array_values(array_filter($family['adapter_keys'] ?? [], 'is_string'));
+            $families[$key] = [
+                'key' => $key,
+                'display_name' => (string) ($family['display_name'] ?? $key),
+                'adapter_keys' => $adapterKeys,
+                'adapters' => $adapterKeys,
+            ];
+        }
+
+        $adapters = [];
+        foreach (config('runtime_registry.adapter_keys', []) as $key => $adapter) {
+            if (! is_array($adapter)) {
+                continue;
+            }
+            $adapters[$key] = [
+                'key' => $key,
+                'runtime_family' => (string) ($adapter['runtime_family'] ?? ''),
+                'display_name' => (string) ($adapter['display_name'] ?? $key),
+                'description' => (string) ($adapter['description'] ?? ''),
+                'supported_capabilities' => $this->stringList($adapter['supported_capabilities'] ?? []),
+                'required_capabilities' => $this->stringList($adapter['required_capabilities'] ?? []),
+                'endpoint_requirements' => array_values(array_filter($adapter['endpoint_requirements'] ?? [], 'is_array')),
+                'credentials_required' => (bool) ($adapter['credentials_required'] ?? false),
+                'adapter_configuration_available' => (bool) ($adapter['adapter_configuration_available'] ?? false),
+            ];
+        }
+
+        return [
+            'catalog_version' => (string) config('runtime_registry.catalog_version', 'unknown'),
+            'runtime_families' => $families,
+            'adapter_keys' => $adapters,
+            'runtime_capabilities' => $capabilities,
+            'desired_states' => $this->stringList(config('runtime_registry.desired_states', [])),
+            'endpoint_purposes' => $this->stringList(config('runtime_registry.endpoint_purposes', [])),
+            'endpoint_transports' => $this->stringList(config('runtime_registry.endpoint_transports', [])),
+            'endpoint_tls_modes' => $this->stringList(config('runtime_registry.endpoint_tls_modes', [])),
+        ];
+    }
+
     public function assertAdapterForFamily(string $runtimeFamily, string $adapterKey): void
     {
         $family = config("runtime_registry.runtime_families.$runtimeFamily");
@@ -76,5 +135,35 @@ final class RuntimeRegistryCatalog
                 throw new InvalidArgumentException('Unknown runtime capability.');
             }
         }
+    }
+
+    /**
+     * @param  list<string>  $capabilities
+     */
+    public function assertCapabilitiesForAdapter(string $adapterKey, array $capabilities): void
+    {
+        $this->assertRuntimeCapabilities($capabilities);
+        $adapter = config("runtime_registry.adapter_keys.$adapterKey");
+        if (! is_array($adapter)) {
+            throw new InvalidArgumentException('Invalid runtime adapter.');
+        }
+        $supported = $this->stringList($adapter['supported_capabilities'] ?? []);
+        foreach ($capabilities as $capability) {
+            if (! in_array($capability, $supported, true)) {
+                throw new InvalidArgumentException('Unsupported capability for runtime adapter.');
+            }
+        }
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function stringList(mixed $values): array
+    {
+        if (! is_array($values)) {
+            return [];
+        }
+
+        return array_values(array_filter($values, 'is_string'));
     }
 }

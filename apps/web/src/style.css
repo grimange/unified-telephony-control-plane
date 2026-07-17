@@ -157,6 +157,7 @@ button:disabled {
 }
 
 .data-row {
+  flex-wrap: wrap;
   min-height: 58px;
   padding: 12px;
   border: 1px solid #e2e7ef;
@@ -172,6 +173,49 @@ button:disabled {
 .data-row small,
 .meta {
   color: #647084;
+}
+
+.subgrid,
+.detail-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.subgrid {
+  flex-basis: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.detail-section {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e2e7ef;
+  border-radius: 6px;
+  background: #fbfcfe;
+}
+
+.detail-section.nested {
+  margin-top: 14px;
+  background: #fff;
+}
+
+.definition-grid {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.35fr) 1fr;
+  gap: 8px 14px;
+  margin: 0;
+}
+
+.definition-grid dt {
+  color: #647084;
+  font-weight: 700;
+}
+
+.definition-grid dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .form-error,
@@ -336,6 +380,11 @@ h1 {
   }
 
   .inline-form {
+    grid-template-columns: 1fr;
+  }
+
+  .subgrid,
+  .definition-grid {
     grid-template-columns: 1fr;
   }
 }

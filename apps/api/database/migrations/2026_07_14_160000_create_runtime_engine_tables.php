@@ -27,8 +27,8 @@ return new class extends Migration
 
         Schema::create('runtime_event_connection_epochs', function (Blueprint $table): void {
             $table->char('id', 32)->primary();
-            $table->uuid('tenant_id');
-            $table->uuid('runtime_node_id');
+            $table->uuid('tenant_id')->nullable();
+            $table->uuid('runtime_node_id')->nullable();
             $table->string('adapter_key', 80);
             $table->string('status', 40)->default('open');
             $table->string('owner')->nullable();
@@ -44,8 +44,8 @@ return new class extends Migration
 
         Schema::create('runtime_event_receipts', function (Blueprint $table): void {
             $table->char('id', 32)->primary();
-            $table->uuid('tenant_id');
-            $table->uuid('runtime_node_id');
+            $table->uuid('tenant_id')->nullable();
+            $table->uuid('runtime_node_id')->nullable();
             $table->string('adapter_key', 80);
             $table->char('connection_epoch_id', 32);
             $table->string('external_event_key', 200);
@@ -76,7 +76,7 @@ return new class extends Migration
         Schema::create('runtime_observations', function (Blueprint $table): void {
             $table->char('id', 32)->primary();
             $table->uuid('tenant_id');
-            $table->uuid('runtime_node_id');
+            $table->uuid('runtime_node_id')->nullable();
             $table->string('observation_type', 160);
             $table->unsignedSmallInteger('observation_version');
             $table->string('subject_type', 160);
@@ -101,7 +101,7 @@ return new class extends Migration
             $table->char('id', 32)->primary();
             $table->string('projector', 160);
             $table->string('partition_key', 200);
-            $table->uuid('runtime_node_id');
+            $table->uuid('runtime_node_id')->nullable();
             $table->char('last_source_event_id', 32)->nullable();
             $table->timestampTz('last_observed_at')->nullable();
             $table->unsignedBigInteger('sequence')->default(0);

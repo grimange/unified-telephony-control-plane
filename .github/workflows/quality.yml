@@ -734,3 +734,254 @@ jobs:
 
       - name: Validate C3 process-role manifests
         run: make k8s-config-check
+
+  deterministic-simulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Read tool versions
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          . ./versions.env
+          printf 'php=%s\n' "$CI_PHP_VERSION" >> "$GITHUB_OUTPUT"
+          printf 'composer=%s\n' "$COMPOSER_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup PHP
+        # release: shivammathur/setup-php 2.37.2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
+        with:
+          php-version: ${{ steps.versions.outputs.php }}
+          tools: composer:${{ steps.versions.outputs.composer }}
+          coverage: none
+
+      - name: Install Composer dependencies
+        run: cd apps/api && composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Install pinned Kubernetes tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="$(scripts/ci/install-kubernetes-tools)"
+          printf '%s\n' "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Setup Docker Buildx
+        # release: docker/setup-buildx-action v4.2.0
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+
+      - name: Validate C4 simulator configuration and manifests
+        run: make simulator-config-check
+
+      - name: Run C4 focused deterministic simulator tests
+        run: make simulator-test
+
+      - name: Build current Kubernetes images
+        run: make k8s-image-build
+
+      - name: Create CI-owned k3d cluster
+        run: make k3d-create
+
+      - name: Push current images to CI local registry
+        run: make k8s-image-push
+
+      - name: Deploy K0-K1 application and C0-C4 process roles
+        run: make k8s-apply
+
+      - name: Apply K2 Gateway edge
+        run: make gateway-apply
+
+      - name: Apply K3 security boundaries
+        run: make security-apply
+
+      - name: Apply K4 observability
+        run: make observability-apply
+
+      - name: Bootstrap the local platform administrator
+        run: make identity-bootstrap-local
+
+      - name: Prove C4 simulator authenticated API lifecycle
+        run: make simulator-api-proof
+
+      - name: Prove C4 simulator live runtime path
+        run: make simulator-runtime-proof
+
+      - name: Verify simulator status
+        run: make simulator-status
+
+      - name: Prove K3 security boundaries after simulator rollout
+        run: make security-proof
+
+      - name: Cleanup CI-owned resources
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          if [ -s .runtime/kubeconfig/utcp-local.yaml ]; then
+            make observability-delete || status=$?
+            make security-delete || status=$?
+            CONFIRM=uninstall-traefik make gateway-delete || status=$?
+            CONFIRM=delete-k1-pvcs make k8s-delete || status=$?
+          fi
+          make k3d-delete || status=$?
+          if k3d cluster list | grep -q '^utcp-local[[:space:]]'; then
+            printf 'utcp-local cluster remains after cleanup\n' >&2
+            status=1
+          fi
+          if k3d registry list | grep -q '^utcp-local-registry[[:space:]]'; then
+            printf 'utcp-local-registry remains after cleanup\n' >&2
+            status=1
+          fi
+          exit "$status"
+
+  telephony-session-conference-domain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Read tool versions
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          . ./versions.env
+          printf 'php=%s\n' "$CI_PHP_VERSION" >> "$GITHUB_OUTPUT"
+          printf 'composer=%s\n' "$COMPOSER_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup PHP
+        # release: shivammathur/setup-php 2.37.2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
+        with:
+          php-version: ${{ steps.versions.outputs.php }}
+          tools: composer:${{ steps.versions.outputs.composer }}
+          coverage: none
+
+      - name: Install Composer dependencies
+        run: cd apps/api && composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Validate C5 telephony-domain boundaries
+        run: make telephony-domain-config-check
+
+      - name: Run C5 telephony-domain tests
+        run: make telephony-domain-test
+
+      - name: Prove C5 authenticated API corridor
+        run: make telephony-domain-api-proof
+
+      - name: Prove C5 focused runtime corridor
+        run: make telephony-domain-runtime-proof
+
+      - name: Build backend application
+        run: make api-check
+
+  asterisk-ari-adapter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Read tool versions
+        id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          . ./versions.env
+          printf 'php=%s\n' "$CI_PHP_VERSION" >> "$GITHUB_OUTPUT"
+          printf 'composer=%s\n' "$COMPOSER_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup PHP
+        # release: shivammathur/setup-php 2.37.2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
+        with:
+          php-version: ${{ steps.versions.outputs.php }}
+          tools: composer:${{ steps.versions.outputs.composer }}
+          coverage: none
+
+      - name: Install Composer dependencies
+        run: cd apps/api && composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Install pinned Kubernetes tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="$(scripts/ci/install-kubernetes-tools)"
+          printf '%s\n' "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Setup Docker Buildx
+        # release: docker/setup-buildx-action v4.2.0
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+
+      - name: Validate T0 Asterisk ARI boundaries
+        run: make asterisk-ari-config-check
+
+      - name: Run T0 focused Asterisk ARI tests
+        run: make asterisk-ari-test
+
+      - name: Validate Kubernetes manifests
+        run: make k8s-config-check
+
+      - name: Build current Kubernetes images
+        run: make k8s-image-build
+
+      - name: Create CI-owned k3d cluster
+        run: make k3d-create
+
+      - name: Push current images to CI local registry
+        run: make k8s-image-push
+
+      - name: Deploy K0-K1 application and T0 process roles
+        run: make k8s-apply
+
+      - name: Apply K2 Gateway edge
+        run: make gateway-apply
+
+      - name: Apply K3 security boundaries
+        run: make security-apply
+
+      - name: Apply K4 observability
+        run: make observability-apply
+
+      - name: Bootstrap the local platform administrator
+        run: make identity-bootstrap-local
+
+      - name: Prove T0 authenticated Asterisk RuntimeNode lifecycle
+        run: make asterisk-ari-api-proof
+
+      - name: Prove T0 live ARI runtime path
+        run: make asterisk-ari-runtime-proof
+
+      - name: Verify T0 status
+        run: make asterisk-ari-status
+
+      - name: Cleanup CI-owned resources
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          if [ -s .runtime/kubeconfig/utcp-local.yaml ]; then
+            make observability-delete || status=$?
+            make security-delete || status=$?
+            CONFIRM=uninstall-traefik make gateway-delete || status=$?
+            CONFIRM=delete-k1-pvcs make k8s-delete || status=$?
+          fi
+          make k3d-delete || status=$?
+          if k3d cluster list | grep -q '^utcp-local[[:space:]]'; then
+            printf 'utcp-local cluster remains after cleanup\n' >&2
+            status=1
+          fi
+          if k3d registry list | grep -q '^utcp-local-registry[[:space:]]'; then
+            printf 'utcp-local-registry remains after cleanup\n' >&2
+            status=1
+          fi
+          exit "$status"

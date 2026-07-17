@@ -5,5 +5,7 @@ resources:
   - dashboards/platform-overview.yaml
   - dashboards/workload-logs.yaml
   - monitors/traefik-servicemonitor.yaml
+  - monitors/utcp-application-servicemonitor.yaml
+  - network-policies/allow-application-metrics.yaml
   - network-policies/allow-observability-required-traffic.yaml
   - network-policies/allow-traefik-metrics.yaml

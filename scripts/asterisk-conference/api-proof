@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+php apps/api/artisan route:list | rg "conference|participant|runtime-binding" >/dev/null
+if rg -n "Route::.*(ari|asterisk|bridge|channel)" apps/api/routes apps/api/app/Http/Controllers; then
+  printf 'asterisk_conference_api_proof=failed_direct_ari_route\n' >&2
+  exit 1
+fi
+
+printf 'asterisk_conference_api_proof=static_only\n'
+printf 'live_authenticated_api_lifecycle=not_observed\n'

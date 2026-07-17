@@ -33,13 +33,13 @@ for path in "${required_docs[@]}" "${required_adrs[@]}"; do
 done
 
 declared_phase="$(sed -n 's/^UTCP_PHASE=//p' versions.env | tail -n 1)"
-if [ "$declared_phase" != "C3" ]; then
-  printf 'UTCP_PHASE must match the authoritative completed phase C3, found: %s\n' "$declared_phase" >&2
+if [ "$declared_phase" != "T1" ]; then
+  printf 'UTCP_PHASE must match the authoritative completed phase T1, found: %s\n' "$declared_phase" >&2
   exit 1
 fi
 
-if ! grep -Fq '| C3 Command, event, projection, and reconciliation engine | Complete |' docs/roadmap/phase-status.md; then
-  printf 'phase-status document does not mark C3 complete while UTCP_PHASE=%s\n' "$declared_phase" >&2
+if ! grep -Fq '| T1 Kamailio SIP-over-WSS signaling | Complete |' docs/roadmap/phase-status.md; then
+  printf 'phase-status document does not mark T1 complete while UTCP_PHASE=%s\n' "$declared_phase" >&2
   exit 1
 fi
 

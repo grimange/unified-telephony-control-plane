@@ -5,10 +5,15 @@ namespace App\Http\Controllers\RuntimeRegistry;
 use App\ControlPlane\Shared\IdempotencyKey;
 use App\Http\Controllers\Controller;
 use App\Identity\Authorization\AuthorizationService;
+use App\Identity\IdentityContext;
+use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationRegistry;
+use App\RuntimeRegistry\RuntimeEvidenceService;
+use App\RuntimeRegistry\RuntimeNodeHistoryService;
+use App\RuntimeRegistry\RuntimeRegistryCatalog;
 use App\RuntimeRegistry\RuntimeRegistryService;
-use App\Simulator\SimulatorProfileService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 
@@ -20,6 +25,14 @@ final class AdminRuntimeNodeController extends Controller
         $authorization->requireTenant($request->user()->id, $tenantId, 'runtime.nodes.view');
 
         return response()->json(['runtime_nodes' => $registry->listNodes($tenantId)]);
+    }
+
+    public function catalog(Request $request, AuthorizationService $authorization, RuntimeRegistryCatalog $catalog): JsonResponse
+    {
+        $tenantId = $this->tenantId($request);
+        $authorization->requireTenant($request->user()->id, $tenantId, 'runtime.nodes.view');
+
+        return response()->json(['catalog' => $catalog->managementCatalog()]);
     }
 
     public function show(Request $request, string $runtimeNode, AuthorizationService $authorization, RuntimeRegistryService $registry): JsonResponse
@@ -157,34 +170,69 @@ final class AdminRuntimeNodeController extends Controller
         $tenantId = $this->tenantId($request);
         $authorization->requireTenant($request->user()->id, $tenantId, 'runtime.credentials.rotate');
 
-        return response()->json($registry->retireCredential($request, $tenantId, $runtimeNode, $credential));
-    }
-
-    public function adapterConfiguration(Request $request, string $runtimeNode, AuthorizationService $authorization, SimulatorProfileService $simulator): JsonResponse
-    {
-        $tenantId = $this->tenantId($request);
-        $authorization->requireTenant($request->user()->id, $tenantId, 'runtime.nodes.view');
-
         try {
-            return response()->json(['adapter_configuration' => $simulator->show($tenantId, $runtimeNode)]);
+            return response()->json($registry->retireCredential($request, $tenantId, $runtimeNode, $credential));
         } catch (InvalidArgumentException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
         }
     }
 
-    public function putAdapterConfiguration(Request $request, string $runtimeNode, AuthorizationService $authorization, SimulatorProfileService $simulator): JsonResponse
+    public function adapterConfiguration(Request $request, string $runtimeNode, AuthorizationService $authorization, AdapterConfigurationRegistry $adapters): JsonResponse
+    {
+        $tenantId = $this->tenantId($request);
+        $authorization->requireTenant($request->user()->id, $tenantId, 'runtime.nodes.view');
+
+        try {
+            $node = $this->runtimeNode($tenantId, $runtimeNode);
+            $context = IdentityContext::fromRequest($request, $tenantId);
+            $handler = $adapters->forNode($node);
+
+            return response()->json(['adapter_configuration' => $handler->read($node, $context)]);
+        } catch (InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+    }
+
+    public function putAdapterConfiguration(Request $request, string $runtimeNode, AuthorizationService $authorization, AdapterConfigurationRegistry $adapters): JsonResponse
     {
         $tenantId = $this->tenantId($request);
         $authorization->requireTenant($request->user()->id, $tenantId, 'runtime.nodes.manage');
+
+        try {
+            $node = $this->runtimeNode($tenantId, $runtimeNode);
+            $context = IdentityContext::fromRequest($request, $tenantId);
+            $handler = $adapters->forNode($node);
+            $validated = $handler->validate($node, $request->all(), $context);
+
+            return response()->json(['adapter_configuration' => $handler->update($node, $validated, $context)]);
+        } catch (InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+    }
+
+    public function runtimeEvidence(Request $request, string $runtimeNode, AuthorizationService $authorization, RuntimeEvidenceService $evidence): JsonResponse
+    {
+        $tenantId = $this->tenantId($request);
+        $authorization->requireTenant($request->user()->id, $tenantId, 'runtime.nodes.view');
+
+        try {
+            return response()->json(['runtime_evidence' => $evidence->show($tenantId, $runtimeNode)]);
+        } catch (InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+    }
+
+    public function history(Request $request, string $runtimeNode, AuthorizationService $authorization, RuntimeNodeHistoryService $history): JsonResponse
+    {
+        $tenantId = $this->tenantId($request);
+        $authorization->requireTenant($request->user()->id, $tenantId, 'runtime.nodes.view');
         $data = $request->validate([
-            'scenario_key' => ['required', 'string', 'max:80'],
-            'scenario_version' => ['sometimes', 'integer', 'min:1', 'max:100'],
-            'seed' => ['required', 'string', 'max:120'],
-            'parameters' => ['sometimes', 'array'],
+            'limit' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            'before' => ['sometimes', 'date'],
         ]);
 
         try {
-            return response()->json(['adapter_configuration' => $simulator->put($request, $tenantId, $runtimeNode, $data)]);
+            return response()->json($history->list($tenantId, $runtimeNode, (int) ($data['limit'] ?? 25), $data['before'] ?? null));
         } catch (InvalidArgumentException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
         }
@@ -196,6 +244,18 @@ final class AdminRuntimeNodeController extends Controller
         abort_unless(is_string($tenantId), 409, 'Active tenant context is required.');
 
         return $tenantId;
+    }
+
+    private function runtimeNode(string $tenantId, string $runtimeNodeId): object
+    {
+        $node = DB::table('runtime_nodes')
+            ->where('id', $runtimeNodeId)
+            ->where('tenant_id', $tenantId)
+            ->first();
+
+        abort_unless($node !== null, 404, 'Runtime node not found.');
+
+        return $node;
     }
 
     /**

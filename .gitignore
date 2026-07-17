@@ -14,6 +14,10 @@ node_modules/
 
 # Build and runtime output
 /.runtime/
+/infrastructure/kubernetes/overlays/local/runtime/local-asterisk-ari-credentials.properties
+/infrastructure/kubernetes/overlays/local/local-asterisk-ari-credentials.properties
+/infrastructure/kubernetes/overlays/local/platform/local-kamailio-db-credentials.properties
+/infrastructure/kubernetes/overlays/local/migration/local-kamailio-db-credentials.properties
 /public/build/
 /dist/
 /build/
@@ -41,3 +45,4 @@ __pycache__/
 /.vagrant/
 Homestead.yaml
 Homestead.json
+.playwright-mcp

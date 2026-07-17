@@ -3,6 +3,9 @@
 use App\ControlPlane\Audit\AuditRepository;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\Identity\IdentityIds;
+use App\Identity\UserAccess\ResetUserPasswordService;
+use App\RuntimeAdapters\Asterisk\AsteriskAriEventListener;
+use App\RuntimeAdapters\Asterisk\AsteriskCatalog;
 use App\RuntimeEngine\Commands\CommandWorker;
 use App\RuntimeEngine\Events\EventNormalizerWorker;
 use App\RuntimeEngine\Outbox\OutboxDispatcher;
@@ -10,10 +13,14 @@ use App\RuntimeEngine\Projection\ProjectionService;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use App\RuntimeEngine\Reconciliation\ReconciliationWorker;
 use App\Simulator\SimulatorEventSourceWorker;
+use App\TelephonyDomain\Signaling\KamailioRegistrationObserver;
+use App\TelephonyDomain\Signaling\KamailioRegistrationPollHealthRepository;
+use App\TelephonyDomain\TelephonyDomainService;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
@@ -122,6 +129,60 @@ Artisan::command('identity:bootstrap-local
 
     return 0;
 })->purpose('Create the first local platform administrator when none exists.');
+
+Artisan::command('utcp:user-access:reset-password
+    {--user= : Exact user email address or UUID}
+    {--reason= : Operator reason for audit evidence}
+    {--expires-in=30 : Temporary password expiration in minutes}
+    {--show-password : Print the generated temporary password once}', function (ResetUserPasswordService $reset): int {
+    $selector = trim((string) $this->option('user'));
+    $reason = trim((string) $this->option('reason'));
+    $expiresIn = filter_var($this->option('expires-in'), FILTER_VALIDATE_INT);
+
+    if ($selector === '') {
+        $this->error('The --user option is required.');
+
+        return 2;
+    }
+    if ($reason === '') {
+        $this->error('The --reason option is required.');
+
+        return 2;
+    }
+    if ($expiresIn === false) {
+        $this->error('The --expires-in option must be an integer number of minutes.');
+
+        return 2;
+    }
+
+    try {
+        $result = $reset->resetFromConsole($selector, $reason, (int) $expiresIn);
+    } catch (Throwable $exception) {
+        $this->error($exception->getMessage());
+
+        return 1;
+    }
+
+    $expires = $result->expiresAt
+        ->setTimezone(config('app.timezone'))
+        ->format('Y-m-d H:i:s e');
+
+    $this->line('Temporary login credential issued.');
+    $this->newLine();
+    $this->line('User: '.$result->userDisplay);
+    $this->line('Expires: '.$expires);
+    $this->line('Password change required: yes');
+    $this->line('Existing sessions revoked: '.($result->sessionsRevoked ? 'yes' : 'no'));
+
+    if ((bool) $this->option('show-password')) {
+        $this->newLine();
+        $this->line('Temporary password: '.$result->temporaryPassword);
+    } else {
+        $this->line('Temporary password displayed: no');
+    }
+
+    return 0;
+});
 
 Artisan::command('identity:status', function (): int {
     $tables = ['users', 'tenants', 'tenant_memberships', 'roles', 'capabilities', 'sessions'];
@@ -280,6 +341,34 @@ Artisan::command('runtime-engine:reconciler {--once : Process one batch and exit
     return 0;
 })->purpose('Run the generic reconciliation worker.');
 
+Artisan::command('kamailio-registration:observer {--once : Collect one snapshot and exit} {--sleep=5 : Seconds between snapshots}', function (KamailioRegistrationObserver $observer, KamailioRegistrationPollHealthRepository $pollHealth): int {
+    $owner = gethostname().':kamailio-registration-observer:'.getmypid();
+    $sleep = max(1, (int) $this->option('sleep'));
+    do {
+        try {
+            $result = $observer->pollOnce($owner);
+            $this->line('kamailio_registration_observer_status='.$result['status']);
+            $this->line('kamailio_registration_observer_receipts='.$result['receipts']);
+            $this->line('kamailio_registration_observer_checkpoint_advanced='.($result['checkpoint_advanced'] ? '1' : '0'));
+            $pollHealth->recordSuccess();
+        } catch (Throwable $exception) {
+            $pollHealth->recordFailure();
+            Log::warning('kamailio registration observer poll failed', [
+                'component' => 'kamailio-registration-observer',
+                'result' => 'poll_failed',
+            ]);
+            if ($this->option('once')) {
+                throw $exception;
+            }
+        }
+        if (! $this->option('once')) {
+            sleep($sleep);
+        }
+    } while (! $this->option('once'));
+
+    return 0;
+})->purpose('Collect fenced Kamailio usrloc snapshots into canonical C3 receipts.');
+
 Artisan::command('runtime-engine:derive-stale-observations', function (ProjectionService $projection): int {
     $count = $projection->markStale((int) config('runtime_engine.stale_observation_seconds', 300));
     $this->line('stale_observations_marked='.$count);
@@ -378,6 +467,98 @@ Artisan::command('simulator:event-source {--once : Publish one batch and exit}',
     return 0;
 })->purpose('Run the deterministic simulator scheduled-event source.');
 
+Artisan::command('asterisk-ari:ensure-targets', function (ReconciliationRepository $repository, AsteriskCatalog $catalog): int {
+    $count = 0;
+    DB::table('runtime_nodes')
+        ->where('adapter_key', $catalog->adapterKey())
+        ->whereIn('desired_state', ['active', 'draining'])
+        ->orderBy('id')
+        ->get()
+        ->each(function (object $node) use ($repository, &$count): void {
+            $repository->ensureTarget((string) $node->tenant_id, 'runtime_node', (string) $node->id, (int) $node->configuration_version);
+            $count++;
+        });
+    $this->line('asterisk_ari_reconciliation_targets_ensured='.$count);
+
+    return 0;
+})->purpose('Automatically ensure reconciliation targets for active Asterisk ARI runtime nodes.');
+
+Artisan::command('asterisk-ari:events {--once : Claim active nodes and process one listener cycle}', function (AsteriskAriEventListener $listener): int {
+    $workerId = gethostname().':asterisk-ari-events:'.getmypid();
+    do {
+        $listener->workOnce($workerId, (int) config('asterisk_ari.batch_size', 5));
+        if (! $this->option('once')) {
+            sleep((int) config('asterisk_ari.poll_seconds', 5));
+        }
+    } while (! $this->option('once'));
+
+    return 0;
+})->purpose('Run the Asterisk ARI event listener with dynamic RuntimeNode discovery.');
+
+Artisan::command('asterisk-ari:status', function (AsteriskCatalog $catalog): int {
+    if (! Schema::hasTable('runtime_nodes')) {
+        $this->line('asterisk_nodes=missing');
+
+        return 0;
+    }
+
+    $nodeIds = DB::table('runtime_nodes')
+        ->where('adapter_key', $catalog->adapterKey())
+        ->pluck('id')
+        ->map(fn (mixed $id): string => (string) $id)
+        ->all();
+
+    $this->line('asterisk_nodes='.count($nodeIds));
+    DB::table('runtime_nodes')
+        ->where('adapter_key', $catalog->adapterKey())
+        ->select('desired_state', DB::raw('count(*) as count'))
+        ->groupBy('desired_state')
+        ->orderBy('desired_state')
+        ->get()
+        ->each(fn (object $row) => $this->line('asterisk_desired_'.$row->desired_state.'='.$row->count));
+    DB::table('runtime_nodes')
+        ->where('adapter_key', $catalog->adapterKey())
+        ->select('observed_state', DB::raw('count(*) as count'))
+        ->groupBy('observed_state')
+        ->orderBy('observed_state')
+        ->get()
+        ->each(fn (object $row) => $this->line('asterisk_observed_'.$row->observed_state.'='.$row->count));
+
+    if (Schema::hasTable('runtime_listener_leases')) {
+        $this->line('asterisk_listener_claimed='.DB::table('runtime_listener_leases')->where('listener_kind', $catalog->listenerKind())->where('status', 'claimed')->where('lease_expires_at', '>', now())->count());
+    }
+    if (Schema::hasTable('runtime_event_connection_epochs')) {
+        $this->line('asterisk_open_epochs='.DB::table('runtime_event_connection_epochs')->where('adapter_key', $catalog->adapterKey())->where('status', 'open')->count());
+    }
+    if (Schema::hasTable('runtime_operations') && $nodeIds !== []) {
+        DB::table('runtime_operations')
+            ->whereIn('runtime_node_id', $nodeIds)
+            ->select('status', DB::raw('count(*) as count'))
+            ->groupBy('status')
+            ->orderBy('status')
+            ->get()
+            ->each(fn (object $row) => $this->line('asterisk_operations_'.$row->status.'='.$row->count));
+        $oldestPending = DB::table('runtime_operations')
+            ->whereIn('runtime_node_id', $nodeIds)
+            ->whereIn('status', ['pending', 'retry_scheduled', 'leased', 'running'])
+            ->min('created_at');
+        $this->line('asterisk_oldest_pending_operation_age_seconds='.(is_string($oldestPending) ? (int) now()->diffInSeconds($oldestPending, true) : 0));
+    }
+    if (Schema::hasTable('runtime_event_receipts') && $nodeIds !== []) {
+        DB::table('runtime_event_receipts')
+            ->whereIn('runtime_node_id', $nodeIds)
+            ->select('status', DB::raw('count(*) as count'))
+            ->groupBy('status')
+            ->orderBy('status')
+            ->get()
+            ->each(fn (object $row) => $this->line('asterisk_receipts_'.$row->status.'='.$row->count));
+        $this->line('asterisk_authentication_failures_recent='.DB::table('runtime_event_receipts')->whereIn('runtime_node_id', $nodeIds)->where('event_type', $catalog->eventType('authentication_failed'))->where('received_at', '>=', now()->subHour())->count());
+    }
+    $this->line('catalog_version='.config('asterisk_ari.catalog_version'));
+
+    return 0;
+})->purpose('Report safe aggregate Asterisk ARI adapter status.');
+
 Artisan::command('simulator:status', function (): int {
     foreach (['simulator_profiles', 'simulator_states', 'simulator_scheduled_events'] as $table) {
         if (! Schema::hasTable($table)) {
@@ -413,11 +594,194 @@ Artisan::command('simulator:status', function (): int {
             ->orderBy('status')
             ->get()
             ->each(fn (object $row) => $this->line('simulator_events_status_'.$row->status.'='.$row->count));
+
+        DB::table('simulator_scheduled_events')
+            ->select('status', DB::raw('count(*) as count'))
+            ->where('due_at', '<=', now())
+            ->groupBy('status')
+            ->orderBy('status')
+            ->get()
+            ->each(fn (object $row) => $this->line('simulator_due_events_status_'.$row->status.'='.$row->count));
+
+        $oldestDueAt = DB::table('simulator_scheduled_events')
+            ->whereIn('status', ['pending', 'retry_scheduled'])
+            ->where('due_at', '<=', now())
+            ->min('due_at');
+        $age = is_string($oldestDueAt) ? max(0, now()->diffInSeconds($oldestDueAt, true)) : 0;
+        $this->line('simulator_oldest_due_event_age_seconds='.(int) $age);
+    }
+
+    if (Schema::hasTable('simulator_profiles')) {
+        DB::table('simulator_profiles')
+            ->select('scenario_key', DB::raw('count(*) as count'))
+            ->groupBy('scenario_key')
+            ->orderBy('scenario_key')
+            ->get()
+            ->each(fn (object $row) => $this->line('simulator_scenario_'.$row->scenario_key.'='.$row->count));
+    }
+
+    if (Schema::hasTable('runtime_reconciliation_states') && Schema::hasTable('runtime_nodes')) {
+        $simulatorNodeIds = DB::table('runtime_nodes')
+            ->where('adapter_key', config('simulator.adapter_key', 'simulator-deterministic'))
+            ->pluck('id')
+            ->map(fn (mixed $id): string => (string) $id)
+            ->all();
+
+        DB::table('runtime_reconciliation_states')
+            ->where('runtime_reconciliation_states.target_type', 'runtime_node')
+            ->whereIn('runtime_reconciliation_states.target_id', $simulatorNodeIds)
+            ->select('runtime_reconciliation_states.status', DB::raw('count(*) as count'))
+            ->groupBy('runtime_reconciliation_states.status')
+            ->orderBy('runtime_reconciliation_states.status')
+            ->get()
+            ->each(fn (object $row) => $this->line('simulator_reconciliation_'.$row->status.'='.$row->count));
+    }
+
+    if (Schema::hasTable('runtime_operations') && Schema::hasTable('runtime_nodes')) {
+        $simulatorNodeIds = DB::table('runtime_nodes')
+            ->where('adapter_key', config('simulator.adapter_key', 'simulator-deterministic'))
+            ->pluck('id')
+            ->map(fn (mixed $id): string => (string) $id)
+            ->all();
+
+        DB::table('runtime_operations')
+            ->whereIn('runtime_operations.runtime_node_id', $simulatorNodeIds)
+            ->select('runtime_operations.status', DB::raw('count(*) as count'))
+            ->groupBy('runtime_operations.status')
+            ->orderBy('runtime_operations.status')
+            ->get()
+            ->each(fn (object $row) => $this->line('simulator_operations_'.$row->status.'='.$row->count));
+
+        DB::table('runtime_operations')
+            ->whereIn('runtime_operations.runtime_node_id', $simulatorNodeIds)
+            ->where('runtime_operations.status', 'terminal_failed')
+            ->select(DB::raw("coalesce(runtime_operations.last_failure_class, 'none') as failure_class"), DB::raw('count(*) as count'))
+            ->groupBy('runtime_operations.last_failure_class')
+            ->orderBy('failure_class')
+            ->get()
+            ->each(fn (object $row) => $this->line('simulator_terminal_failure_'.$row->failure_class.'='.$row->count));
     }
     $this->line('catalog_version='.config('simulator.catalog_version'));
 
     return 0;
 })->purpose('Report non-sensitive deterministic simulator status.');
+
+Artisan::command('telephony-domain:expire-sessions', function (TelephonyDomainService $domain): int {
+    $this->line('telephony_sessions_expired='.$domain->expireDueSessions());
+
+    return 0;
+})->purpose('Expire due control-plane telephony sessions and request participant reconciliation.');
+
+Artisan::command('telephony-domain:ensure-targets', function (ReconciliationRepository $repository): int {
+    $count = 0;
+    if (Schema::hasTable('conferences')) {
+        DB::table('conferences')
+            ->whereIn('desired_state', ['open', 'draining', 'closed'])
+            ->orderBy('id')
+            ->get()
+            ->each(function (object $conference) use ($repository, &$count): void {
+                $repository->ensureTarget((string) $conference->tenant_id, 'conference', (string) $conference->id, (int) $conference->configuration_generation);
+                $count++;
+            });
+    }
+    if (Schema::hasTable('conference_participants')) {
+        DB::table('conference_participants')
+            ->orderBy('id')
+            ->get()
+            ->each(function (object $participant) use ($repository, &$count): void {
+                $conference = DB::table('conferences')->where('id', $participant->conference_id)->first();
+                $conferenceGeneration = max(1, (int) ($conference->configuration_generation ?? 1));
+                $participantGeneration = ($conferenceGeneration * 2) + ($participant->desired_state === 'removed' ? 1 : 0);
+                $repository->ensureTarget((string) $participant->tenant_id, 'conference_participant', (string) $participant->id, $participantGeneration);
+                $count++;
+            });
+    }
+    $this->line('telephony_domain_reconciliation_targets_ensured='.$count);
+
+    return 0;
+})->purpose('Ensure conference and participant reconciliation targets without manual execution authority.');
+
+Artisan::command('telephony-domain:status', function (): int {
+    foreach (['telephony_sessions', 'conferences', 'conference_participants'] as $table) {
+        if (! Schema::hasTable($table)) {
+            $this->line($table.'=missing');
+
+            continue;
+        }
+        $this->line($table.'_count='.DB::table($table)->count());
+    }
+    if (Schema::hasTable('telephony_sessions')) {
+        DB::table('telephony_sessions')
+            ->select('status', DB::raw('count(*) as count'))
+            ->groupBy('status')
+            ->orderBy('status')
+            ->get()
+            ->each(fn (object $row) => $this->line('sessions_status_'.$row->status.'='.$row->count));
+        $this->line('sessions_expired_active='.DB::table('telephony_sessions')->where('status', 'active')->where('expires_at', '<=', now())->count());
+    }
+    if (Schema::hasTable('conferences')) {
+        DB::table('conferences')
+            ->select('desired_state', DB::raw('count(*) as count'))
+            ->groupBy('desired_state')
+            ->orderBy('desired_state')
+            ->get()
+            ->each(fn (object $row) => $this->line('conferences_desired_'.$row->desired_state.'='.$row->count));
+        DB::table('conferences')
+            ->select('observed_state', DB::raw('count(*) as count'))
+            ->groupBy('observed_state')
+            ->orderBy('observed_state')
+            ->get()
+            ->each(fn (object $row) => $this->line('conferences_observed_'.$row->observed_state.'='.$row->count));
+    }
+    if (Schema::hasTable('conference_participants')) {
+        DB::table('conference_participants')
+            ->select('desired_state', DB::raw('count(*) as count'))
+            ->groupBy('desired_state')
+            ->orderBy('desired_state')
+            ->get()
+            ->each(fn (object $row) => $this->line('participants_desired_'.$row->desired_state.'='.$row->count));
+        DB::table('conference_participants')
+            ->select('observed_state', DB::raw('count(*) as count'))
+            ->groupBy('observed_state')
+            ->orderBy('observed_state')
+            ->get()
+            ->each(fn (object $row) => $this->line('participants_observed_'.$row->observed_state.'='.$row->count));
+    }
+    if (Schema::hasTable('runtime_operations')) {
+        $operationTypes = [
+            config('telephony_domain.operation_types.conference_ensure'),
+            config('telephony_domain.operation_types.conference_close'),
+            config('telephony_domain.operation_types.participant_ensure'),
+            config('telephony_domain.operation_types.participant_remove'),
+        ];
+        $oldestPending = DB::table('runtime_operations')
+            ->whereIn('operation_type', $operationTypes)
+            ->whereIn('status', ['pending', 'retry_scheduled', 'leased', 'running'])
+            ->min('created_at');
+        $this->line('telephony_domain_oldest_pending_operation_age_seconds='.(is_string($oldestPending) ? (int) now()->diffInSeconds($oldestPending, true) : 0));
+
+        DB::table('runtime_operations')
+            ->whereIn('operation_type', $operationTypes)
+            ->where('status', 'terminal_failed')
+            ->select(DB::raw("coalesce(last_failure_class, 'none') as failure_class"), DB::raw('count(*) as count'))
+            ->groupBy('last_failure_class')
+            ->orderBy('failure_class')
+            ->get()
+            ->each(fn (object $row) => $this->line('telephony_domain_terminal_failure_'.$row->failure_class.'='.$row->count));
+    }
+    if (Schema::hasTable('runtime_reconciliation_states')) {
+        DB::table('runtime_reconciliation_states')
+            ->whereIn('target_type', ['conference', 'conference_participant'])
+            ->select('status', DB::raw('count(*) as count'))
+            ->groupBy('status')
+            ->orderBy('status')
+            ->get()
+            ->each(fn (object $row) => $this->line('telephony_domain_reconciliation_'.$row->status.'='.$row->count));
+    }
+    $this->line('catalog_version='.config('telephony_domain.catalog_version'));
+
+    return 0;
+})->purpose('Report safe aggregate telephony session and conference-domain status.');
 
 Schedule::command('runtime-engine:outbox-dispatcher --once')->everyMinute()->withoutOverlapping();
 Schedule::command('runtime-engine:command-worker --once')->everyMinute()->withoutOverlapping();
@@ -426,3 +790,6 @@ Schedule::command('runtime-engine:reconciler --once')->everyMinute()->withoutOve
 Schedule::command('runtime-engine:derive-stale-observations')->everyFiveMinutes()->withoutOverlapping();
 Schedule::command('simulator:ensure-targets')->everyMinute()->withoutOverlapping();
 Schedule::command('simulator:event-source --once')->everyMinute()->withoutOverlapping();
+Schedule::command('asterisk-ari:ensure-targets')->everyMinute()->withoutOverlapping();
+Schedule::command('telephony-domain:expire-sessions')->everyMinute()->withoutOverlapping();
+Schedule::command('telephony-domain:ensure-targets')->everyMinute()->withoutOverlapping();

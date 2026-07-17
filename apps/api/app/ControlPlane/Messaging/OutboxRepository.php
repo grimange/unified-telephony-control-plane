@@ -39,7 +39,7 @@ final class OutboxRepository
     public function claimAvailable(string $leaseOwner, int $batchSize = 10, int $leaseSeconds = 60): array
     {
         return DB::transaction(function () use ($leaseOwner, $batchSize, $leaseSeconds): array {
-            $rows = DB::table('control_plane_outbox_messages')
+            $query = DB::table('control_plane_outbox_messages')
                 ->whereNull('dispatched_at')
                 ->whereIn('dispatch_status', ['pending', 'retry_scheduled', 'leased'])
                 ->where('available_at', '<=', now())
@@ -50,9 +50,15 @@ final class OutboxRepository
                 })
                 ->orderBy('available_at')
                 ->orderBy('created_at')
-                ->limit($batchSize)
-                ->lockForUpdate()
-                ->get();
+                ->limit($batchSize);
+
+            if (DB::getDriverName() === 'pgsql') {
+                $query->lock('for update skip locked');
+            } else {
+                $query->lockForUpdate();
+            }
+
+            $rows = $query->get();
 
             $claims = [];
             foreach ($rows as $row) {

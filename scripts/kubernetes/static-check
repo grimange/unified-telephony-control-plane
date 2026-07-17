@@ -23,9 +23,25 @@ if grep -Eq '^kind:[[:space:]]*(Ingress|Gateway|HTTPRoute|GRPCRoute|TCPRoute|TLS
   exit 1
 fi
 
-if grep -Eiq 'traefik|asterisk|freeswitch|kamailio|rtpengine|(^|[^a-z])(sip|sips|rtp|srtp|pbx)([^a-z]|$)|hostNetwork:[[:space:]]*true|privileged:[[:space:]]*true|hostPath:' "$manifest"; then
+if grep -Eiq 'freeswitch|rtpengine|confbridge|(^|[^a-z])(sips|rtp|srtp|pbx|pjsip)([^a-z]|$)|hostNetwork:[[:space:]]*true|hostPID:[[:space:]]*true|hostPort:|privileged:[[:space:]]*true|hostPath:' "$manifest"; then
   printf 'Kubernetes manifest includes prohibited ingress, telephony, host, or privileged configuration\n' >&2
   exit 1
+fi
+
+if grep -Eq 'port:[[:space:]]*(5060|5061|10000|20000)|containerPort:[[:space:]]*(5060|5061|10000|20000)|name:[[:space:]]*(sip|sips|rtp)' "$manifest"; then
+  printf 'Kubernetes manifest includes public SIP or RTP port vocabulary\n' >&2
+  exit 1
+fi
+
+if grep -Fq 'kamailio' "$manifest"; then
+  grep -Fq 'app.kubernetes.io/component: kamailio' "$manifest" || {
+    printf 'Kamailio material must be confined to the exact T1 registrar component\n' >&2
+    exit 1
+  }
+  grep -Fq 'name: ws' "$manifest" || {
+    printf 'Kamailio registrar must expose only the internal WebSocket service port\n' >&2
+    exit 1
+  }
 fi
 
 awk '
@@ -38,7 +54,8 @@ awk '
   function reset() {has_doc=0; kind=""; namespace=""; in_metadata=0}
   function check() {
     if (!has_doc || kind == "") return
-    if (namespace !~ /^utcp-(platform|data)$/) {
+    if (kind == "Namespace") return
+    if (namespace !~ /^utcp-(platform|data|runtime)$/) {
       printf "resource has missing or invalid explicit namespace: kind=%s namespace=%s\n", kind, namespace > "/dev/stderr"
       exit 1
     }

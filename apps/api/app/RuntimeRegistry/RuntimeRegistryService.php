@@ -236,10 +236,10 @@ final class RuntimeRegistryService
     public function setCapabilities(Request $request, string $tenantId, string $nodeId, array $capabilities): array
     {
         return DB::transaction(function () use ($request, $tenantId, $nodeId, $capabilities): array {
-            $this->nodeForUpdate($nodeId, $tenantId);
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
             $capabilities = array_values(array_unique($capabilities));
             sort($capabilities);
-            $this->catalog->assertRuntimeCapabilities($capabilities);
+            $this->catalog->assertCapabilitiesForAdapter((string) $node->adapter_key, $capabilities);
             DB::table('runtime_node_capabilities')->where('runtime_node_id', $nodeId)->delete();
             foreach ($capabilities as $capability) {
                 DB::table('runtime_node_capabilities')->insert([
@@ -282,10 +282,18 @@ final class RuntimeRegistryService
     {
         return DB::transaction(function () use ($request, $tenantId, $nodeId, $credentialId): array {
             $this->nodeForUpdate($nodeId, $tenantId);
+            $credential = DB::table('runtime_node_credentials')->where('id', $credentialId)->where('runtime_node_id', $nodeId)->lockForUpdate()->first();
+            abort_unless($credential !== null, 404, 'Credential not found.');
+            if ($credential->status === 'active') {
+                $activeCount = DB::table('runtime_node_credentials')->where('runtime_node_id', $nodeId)->where('credential_type', $credential->credential_type)->where('status', 'active')->count();
+                if ($activeCount <= 1) {
+                    throw new InvalidArgumentException('Cannot retire the last active credential of this type.');
+                }
+            }
             $updated = DB::table('runtime_node_credentials')->where('id', $credentialId)->where('runtime_node_id', $nodeId)->update(['status' => 'retired', 'updated_at' => now()]);
             abort_unless($updated === 1, 404, 'Credential not found.');
             $this->bumpNode($request, $nodeId, $tenantId);
-            $this->emit($request, $tenantId, $nodeId, 'runtime_node.credential_rotated', ['change' => 'retired', 'registry_item_id' => $credentialId]);
+            $this->emit($request, $tenantId, $nodeId, 'runtime_node.credential_retired', ['change' => 'retired', 'registry_item_id' => $credentialId, 'type' => $credential->credential_type]);
 
             return ['runtime_node' => $this->node($nodeId, $tenantId)];
         });

@@ -58,7 +58,7 @@ if kube get helmcharts.helm.cattle.io -A --no-headers 2>/dev/null | grep -iq tra
   exit 1
 fi
 
-for ns in utcp-runtime utcp-observability; do
+for ns in utcp-observability; do
   if kube -n "$ns" get pods,deployments,statefulsets,daemonsets,jobs,cronjobs --ignore-not-found --no-headers 2>/dev/null | grep -q .; then
     printf 'unexpected workload exists in namespace: %s\n' "$ns" >&2
     exit 1
@@ -70,7 +70,7 @@ if kube -A get pods,deployments,statefulsets,daemonsets,jobs,cronjobs --ignore-n
   exit 1
 fi
 
-if kube -A get pods,deployments,statefulsets,daemonsets,jobs,cronjobs --ignore-not-found 2>/dev/null | grep -Eiq 'asterisk|freeswitch|kamailio|rtpengine|sip|sips|rtp|pbx'; then
+if kube -A get pods,deployments,statefulsets,daemonsets,jobs,cronjobs --ignore-not-found 2>/dev/null | grep -Eiq 'freeswitch|kamailio|rtpengine|confbridge|(^|[^a-z])(sip|sips|rtp|srtp|pbx|pjsip)([^a-z]|$)'; then
   printf 'telephony-specific workload unexpectedly exists\n' >&2
   exit 1
 fi

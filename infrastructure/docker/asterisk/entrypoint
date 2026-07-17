@@ -1,0 +1,26 @@
+#!/usr/bin/env sh
+set -eu
+
+: "${ARI_USERNAME:?ARI_USERNAME is required}"
+: "${ARI_PASSWORD:?ARI_PASSWORD is required}"
+
+CONFIG_DIR=/tmp/utcp-asterisk
+RUN_DIR=/tmp/utcp-asterisk-run
+mkdir -p "$CONFIG_DIR"
+mkdir -p "$RUN_DIR"
+cp /opt/utcp-asterisk-config/*.conf "$CONFIG_DIR"/
+
+cat >"$CONFIG_DIR/ari.conf" <<EOF
+[general]
+enabled = yes
+pretty = no
+allowed_origins =
+
+[$ARI_USERNAME]
+type = user
+read_only = no
+password = $ARI_PASSWORD
+password_format = plain
+EOF
+
+exec asterisk -f -C "$CONFIG_DIR/asterisk.conf" -U asterisk -G asterisk

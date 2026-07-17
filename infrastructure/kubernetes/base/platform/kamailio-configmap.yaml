@@ -1,0 +1,148 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kamailio-config
+  namespace: utcp-platform
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: kamailio
+data:
+  kamailio.cfg: |
+    #!KAMAILIO
+
+    debug=2
+    log_stderror=yes
+    log_facility=LOG_LOCAL0
+    memdbg=5
+    memlog=5
+    children=2
+    auto_aliases=no
+    tcp_accept_no_cl=yes
+    tcp_connection_lifetime=130
+    tcp_max_connections=512
+    max_while_loops=100
+    listen=tcp:0.0.0.0:8080
+    alias=sip.utcp.local.test
+
+    loadmodule "tm.so"
+    loadmodule "sl.so"
+    loadmodule "pv.so"
+    loadmodule "xlog.so"
+    loadmodule "textops.so"
+    loadmodule "maxfwd.so"
+    loadmodule "sanity.so"
+    loadmodule "xhttp.so"
+    loadmodule "websocket.so"
+    loadmodule "auth.so"
+    loadmodule "auth_db.so"
+    loadmodule "usrloc.so"
+    loadmodule "registrar.so"
+    loadmodule "db_postgres.so"
+    loadmodule "nathelper.so"
+    loadmodule "pike.so"
+
+    modparam("auth_db", "db_url", "postgres://__KAMAILIO_AUTH_DB_USER__:__KAMAILIO_AUTH_DB_PASSWORD__@postgres.utcp-data.svc.cluster.local:5432/utcp")
+    modparam("auth_db", "user_column", "username")
+    modparam("auth_db", "domain_column", "domain")
+    modparam("auth_db", "password_column", "ha1")
+    modparam("auth_db", "password_column_2", "ha1")
+    modparam("auth_db", "calculate_ha1", 0)
+    modparam("auth_db", "use_domain", 1)
+    modparam("auth_db", "load_credentials", "")
+
+    modparam("usrloc", "db_url", "postgres://__KAMAILIO_USRLOC_DB_USER__:__KAMAILIO_USRLOC_DB_PASSWORD__@postgres.utcp-data.svc.cluster.local:5432/utcp")
+    modparam("usrloc", "db_mode", 1)
+    modparam("usrloc", "use_domain", 1)
+    modparam("usrloc", "timer_interval", 20)
+
+    modparam("registrar", "default_expires", 120)
+    modparam("registrar", "min_expires", 10)
+    modparam("registrar", "max_expires", 120)
+    modparam("registrar", "max_contacts", 1)
+    modparam("registrar", "method_filtering", 1)
+
+    request_route {
+        if (!mf_process_maxfwd_header("10")) {
+            sl_send_reply("483", "Too Many Hops");
+            exit;
+        }
+
+        if (!sanity_check("17895", "7")) {
+            xlog("L_WARN", "kamailio_registration_rejected result=sanity\n");
+            sl_send_reply("400", "Bad Request");
+            exit;
+        }
+
+        if ($rd != "sip.utcp.local.test") {
+            xlog("L_WARN", "kamailio_registration_rejected result=foreign_domain\n");
+            sl_send_reply("403", "Forbidden");
+            exit;
+        }
+
+        if ($rm == "OPTIONS") {
+            sl_send_reply("200", "Keepalive");
+            exit;
+        }
+
+        if ($rm != "REGISTER") {
+            xlog("L_WARN", "kamailio_registration_rejected result=unsupported_method method=$rm\n");
+            sl_send_reply("405", "Method Not Allowed");
+            exit;
+        }
+
+        if (!www_authorize("$fd", "kamailio_signaling_auth_view")) {
+            xlog("L_INFO", "kamailio_registration_challenge result=challenge\n");
+            www_challenge("$fd", "0");
+            exit;
+        }
+
+        if ($au != $fU) {
+            xlog("L_WARN", "kamailio_registration_rejected result=auth_identity_mismatch\n");
+            sl_send_reply("403", "Forbidden");
+            exit;
+        }
+
+        if (!save("location", "0x04")) {
+            xlog("L_WARN", "kamailio_registration_rejected result=save_failed\n");
+            sl_reply_error();
+            exit;
+        }
+
+        xlog("L_INFO", "kamailio_registration_accepted result=ok\n");
+        exit;
+    }
+
+    event_route[xhttp:request] {
+        if ($hu == "/healthz") {
+            xhttp_reply("200", "OK", "text/plain", "ok\n");
+            exit;
+        }
+
+        if ($hu != "/ws") {
+            xhttp_reply("404", "Not Found", "text/plain", "not found\n");
+            exit;
+        }
+
+        if ($hdr(Upgrade) != "websocket") {
+            xhttp_reply("426", "Upgrade Required", "text/plain", "websocket required\n");
+            exit;
+        }
+
+        if (!($hdr(Sec-WebSocket-Protocol) =~ "sip")) {
+            xhttp_reply("400", "Bad Request", "text/plain", "sip subprotocol required\n");
+            exit;
+        }
+
+        if ($hdr(Origin) != "https://app.utcp.local.test" && $hdr(Origin) != "https://sip.utcp.local.test") {
+            xlog("L_WARN", "kamailio_websocket_rejected result=origin\n");
+            xhttp_reply("403", "Forbidden", "text/plain", "forbidden\n");
+            exit;
+        }
+
+        if (ws_handle_handshake()) {
+            xlog("L_INFO", "kamailio_websocket_accepted result=ok\n");
+            exit;
+        }
+
+        xhttp_reply("500", "Internal Server Error", "text/plain", "handshake failed\n");
+    }

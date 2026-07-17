@@ -22,6 +22,8 @@ final class User extends Authenticatable
         'password',
         'status',
         'password_change_required',
+        'temporary_password_issued_at',
+        'temporary_password_expires_at',
         'session_version',
         'last_login_at',
         'password_changed_at',
@@ -36,6 +38,8 @@ final class User extends Authenticatable
     {
         return [
             'password_change_required' => 'boolean',
+            'temporary_password_issued_at' => 'immutable_datetime',
+            'temporary_password_expires_at' => 'immutable_datetime',
             'session_version' => 'integer',
             'last_login_at' => 'immutable_datetime',
             'password_changed_at' => 'immutable_datetime',

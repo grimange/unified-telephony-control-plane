@@ -8,6 +8,7 @@ return [
         'telephony-command-worker',
         'telephony-event-normalizer',
         'telephony-reconciler',
+        'asterisk-ari-events',
     ],
 
     'observed_states' => [

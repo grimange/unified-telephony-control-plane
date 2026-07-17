@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/../.."
+
+if ! command -v kubectl >/dev/null 2>&1; then
+    printf 'kubectl=missing\n'
+    exit 2
+fi
+
+KUBECONFIG_PATH="${KUBECONFIG:-.runtime/kubeconfig/utcp-local.yaml}"
+CONTEXT="${UTCP_KUBE_CONTEXT:-k3d-utcp-local}"
+NAMESPACE="${UTCP_PLATFORM_NAMESPACE:-utcp-platform}"
+
+if [ ! -f "$KUBECONFIG_PATH" ]; then
+    printf 'kubeconfig=missing\n'
+    exit 2
+fi
+
+pod="$(
+    KUBECONFIG="$KUBECONFIG_PATH" kubectl --context "$CONTEXT" -n "$NAMESPACE" get pods \
+        -l app.kubernetes.io/component=api \
+        --field-selector=status.phase=Running \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true
+)"
+
+if [ -z "$pod" ]; then
+    printf 'api_pod=unavailable\n'
+    exit 2
+fi
+
+KUBECONFIG="$KUBECONFIG_PATH" kubectl --context "$CONTEXT" -n "$NAMESPACE" exec "$pod" -- env HOME=/tmp XDG_CONFIG_HOME=/tmp php artisan tinker --execute='
+use Illuminate\Support\Facades\DB;
+$credentialTable = DB::getSchemaBuilder()->hasTable("telephony_signaling_credentials");
+$registrationTable = DB::getSchemaBuilder()->hasTable("signaling_registration_observations");
+$locationTable = DB::getSchemaBuilder()->hasTable("location");
+echo "active_signaling_credentials=".($credentialTable ? DB::table("telephony_signaling_credentials")->whereNull("revoked_at")->count() : 0).PHP_EOL;
+echo "revoked_signaling_credentials=".($credentialTable ? DB::table("telephony_signaling_credentials")->whereNotNull("revoked_at")->count() : 0).PHP_EOL;
+echo "desired_registration_states=".($registrationTable ? json_encode(DB::table("signaling_registration_observations")->select("desired_state", DB::raw("count(*) as count"))->groupBy("desired_state")->orderBy("desired_state")->pluck("count", "desired_state")->all(), JSON_THROW_ON_ERROR) : "{}").PHP_EOL;
+echo "observed_registration_states=".($registrationTable ? json_encode(DB::table("signaling_registration_observations")->select("observed_state", DB::raw("count(*) as count"))->groupBy("observed_state")->orderBy("observed_state")->pluck("count", "observed_state")->all(), JSON_THROW_ON_ERROR) : "{}").PHP_EOL;
+echo "current_contact_count=".($locationTable ? DB::table("location")->where("expires", ">", DB::raw("now()"))->count() : "not_implemented").PHP_EOL;
+$sourceTable = DB::getSchemaBuilder()->hasTable("event_sources");
+$leaseTable = DB::getSchemaBuilder()->hasTable("runtime_listener_leases");
+$epochTable = DB::getSchemaBuilder()->hasTable("runtime_event_connection_epochs");
+$checkpointTable = DB::getSchemaBuilder()->hasTable("runtime_projection_checkpoints");
+$reconciliationTable = DB::getSchemaBuilder()->hasTable("runtime_reconciliation_states");
+$sourceIds = $sourceTable ? DB::table("event_sources")->where("source_kind", "kamailio-registration")->where("source_key", "local-shared-registrar")->pluck("id")->all() : [];
+echo "canonical_observer_source_count=".count($sourceIds).PHP_EOL;
+echo "observer_lease_count=".(($leaseTable && count($sourceIds) > 0) ? DB::table("runtime_listener_leases")->whereIn("event_source_id", $sourceIds)->where("listener_kind", "kamailio-registration-observer")->where("status", "claimed")->where("lease_expires_at", ">", DB::raw("now()"))->count() : 0).PHP_EOL;
+echo "active_source_epoch_count=".(($epochTable && count($sourceIds) > 0) ? DB::table("runtime_event_connection_epochs")->whereIn("event_source_id", $sourceIds)->where("adapter_key", "kamailio-registration")->where("status", "open")->count() : 0).PHP_EOL;
+$checkpoint = ($checkpointTable && count($sourceIds) > 0) ? DB::table("runtime_projection_checkpoints")->whereIn("event_source_id", $sourceIds)->where("projector", "kamailio-registration-observer")->orderByDesc("last_observed_at")->first() : null;
+echo "snapshot_lag_seconds=".($checkpoint && $checkpoint->last_observed_at ? max(0, now()->diffInSeconds(\Illuminate\Support\Carbon::parse((string) $checkpoint->last_observed_at), true)) : "not_observed").PHP_EOL;
+echo "reconciliation_status_aggregates=".($reconciliationTable ? json_encode(DB::table("runtime_reconciliation_states")->select("status", DB::raw("count(*) as count"))->where("target_type", "signaling_registration")->groupBy("status")->orderBy("status")->pluck("count", "status")->all(), JSON_THROW_ON_ERROR) : "{}").PHP_EOL;
+echo "recent_authentication_failure_count=not_implemented".PHP_EOL;
+'
+
+kamailio_ready="$(
+    KUBECONFIG="$KUBECONFIG_PATH" kubectl --context "$CONTEXT" -n "$NAMESPACE" get deployment kamailio \
+        -o jsonpath="{.status.readyReplicas}" 2>/dev/null || true
+)"
+printf 'kamailio_ready=%s\n' "${kamailio_ready:-0}"

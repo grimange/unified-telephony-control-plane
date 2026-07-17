@@ -21,7 +21,11 @@ for file in \
   apps/api/app/Simulator/Commands/SimulatorApplyConfigurationHandler.php \
   apps/api/app/Simulator/Events/SimulatorEventNormalizer.php \
   apps/api/app/Simulator/Reconciliation/SimulatorRuntimeNodeReconciler.php \
-  infrastructure/kubernetes/base/platform/simulator-event-source-deployment.yaml
+  apps/api/app/Http/Controllers/Platform/MetricsController.php \
+  infrastructure/kubernetes/base/platform/simulator-event-source-deployment.yaml \
+  infrastructure/kubernetes/observability/monitors/utcp-application-servicemonitor.yaml \
+  infrastructure/kubernetes/observability/network-policies/allow-application-metrics.yaml \
+  infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml
 do
   [ -s "$file" ] || fail "missing required C4 file: $file"
 done
@@ -88,10 +92,41 @@ if rg -n "0\\.0\\.0\\.0/0|hostNetwork|hostPID|hostPath|NodePort|LoadBalancer|con
   fail "simulator Kubernetes/network configuration contains forbidden exposure or telephony ports"
 fi
 
-if rg -n "UTCP_PHASE=C4" versions.env >/dev/null; then
-  fail "UTCP_PHASE must remain C3 until C4 runtime proof has passed"
-fi
+for metric in \
+  simulator_operations_total \
+  simulator_scheduled_events \
+  simulator_event_publish_total \
+  simulator_scenario_transitions_total \
+  simulator_connection_epochs_total \
+  simulator_reconciliation_total
+do
+  rg -n -- "$metric" apps/api/app/Http/Controllers/Platform/MetricsController.php infrastructure/kubernetes/observability >/dev/null ||
+    fail "missing simulator metric or observability reference: $metric"
+done
+
+for forbidden_label in tenant runtime_node operation_id event_id request_id seed configuration_generation; do
+  if rg -n -- "${forbidden_label}=\"" apps/api/app/Http/Controllers/Platform/MetricsController.php infrastructure/kubernetes/observability >/dev/null; then
+    fail "found forbidden high-cardinality simulator metric label: $forbidden_label"
+  fi
+done
+
+for alert in \
+  UTCPSimulatorEventSourceUnavailable \
+  UTCPSimulatorScheduledEventBacklogGrowing \
+  UTCPSimulatorTerminalFailures \
+  UTCPSimulatorReconciliationStuck
+do
+  rg -n -- "$alert" infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml >/dev/null ||
+    fail "missing simulator alert: $alert"
+done
+
+rg -n "kind: ServiceMonitor" infrastructure/kubernetes/observability/monitors/utcp-application-servicemonitor.yaml >/dev/null ||
+  fail "missing application ServiceMonitor"
+
+rg -n "simulator-event-source" infrastructure/kubernetes/base/platform/simulator-event-source-deployment.yaml >/dev/null ||
+  fail "missing simulator event-source deployment"
 
 kubectl kustomize infrastructure/kubernetes/base >/dev/null
+kubectl kustomize infrastructure/kubernetes/observability >/dev/null
 
 printf 'simulator config check passed\n'

@@ -54,7 +54,15 @@ for role in control-plane-outbox-dispatcher telephony-command-worker telephony-e
     fail "process role is not wired: $role"
 done
 
-if rg -n "AriController|EslController|ari-worker|esl-worker|asterisk-ari-events|freeswitch-esl-events|FakeAsterisk|FakeFreeSwitch|NullRuntimeAdapter|NoopRuntimeAdapter" apps/api/app apps/api/routes infrastructure/kubernetes infrastructure/compose >/dev/null; then
+if ! printf '%s\n' 'ari-worker' 'public AriController' 'NullRuntimeAdapter' | rg -n "AriController|EslController|(^|[^[:alnum:]-])ari-worker([^[:alnum:]-]|$)|(^|[^[:alnum:]-])esl-worker([^[:alnum:]-]|$)|freeswitch-esl-events|FakeAsterisk|FakeFreeSwitch|NullRuntimeAdapter|NoopRuntimeAdapter" >/dev/null; then
+  fail "legacy runtime vocabulary regression fixture did not match prohibited names"
+fi
+
+if printf '%s\n' 'asterisk-ari-events' | rg -n "AriController|EslController|(^|[^[:alnum:]-])ari-worker([^[:alnum:]-]|$)|(^|[^[:alnum:]-])esl-worker([^[:alnum:]-]|$)|freeswitch-esl-events|FakeAsterisk|FakeFreeSwitch|NullRuntimeAdapter|NoopRuntimeAdapter" >/dev/null; then
+  fail "canonical asterisk-ari-events listener role matched prohibited legacy vocabulary"
+fi
+
+if rg -n "AriController|EslController|(^|[^[:alnum:]-])ari-worker([^[:alnum:]-]|$)|(^|[^[:alnum:]-])esl-worker([^[:alnum:]-]|$)|freeswitch-esl-events|FakeAsterisk|FakeFreeSwitch|NullRuntimeAdapter|NoopRuntimeAdapter" apps/api/app apps/api/routes infrastructure/kubernetes infrastructure/compose >/dev/null; then
   fail "found forbidden runtime-specific worker, listener, fallback adapter, or no-op simulator"
 fi
 

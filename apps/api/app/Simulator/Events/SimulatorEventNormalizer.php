@@ -33,6 +33,52 @@ final class SimulatorEventNormalizer implements EventNormalizer
         $generation = isset($payload['configuration_generation']) ? (int) $payload['configuration_generation'] : null;
         $observedAt = is_string($payload['occurred_at'] ?? null) ? $payload['occurred_at'] : now();
 
+        if (in_array($this->eventType, [
+            $this->catalog->eventType('conference_ready'),
+            $this->catalog->eventType('conference_closed'),
+            $this->catalog->eventType('conference_degraded'),
+        ], true)) {
+            return [[
+                'observation_type' => 'conference.lifecycle.observed',
+                'observation_version' => 1,
+                'subject_type' => 'conference',
+                'subject_id' => (string) ($payload['conference_id'] ?? ''),
+                'observed_state' => $state,
+                'configuration_version' => $generation,
+                'observed_at' => $observedAt,
+                'payload' => [
+                    'adapter_key' => $this->adapterKey(),
+                    'runtime_node_id' => (string) $receipt->runtime_node_id,
+                    'event_type' => $this->eventType,
+                    'scenario_key' => is_string($payload['scenario_key'] ?? null) ? $payload['scenario_key'] : null,
+                ],
+            ]];
+        }
+
+        if (in_array($this->eventType, [
+            $this->catalog->eventType('participant_joined'),
+            $this->catalog->eventType('participant_left'),
+            $this->catalog->eventType('participant_failed'),
+        ], true)) {
+            return [[
+                'observation_type' => 'conference.participant.observed',
+                'observation_version' => 1,
+                'subject_type' => 'conference_participant',
+                'subject_id' => (string) ($payload['participant_id'] ?? ''),
+                'observed_state' => $state,
+                'configuration_version' => $generation,
+                'observed_at' => $observedAt,
+                'payload' => [
+                    'adapter_key' => $this->adapterKey(),
+                    'conference_id' => (string) ($payload['conference_id'] ?? ''),
+                    'telephony_session_id' => (string) ($payload['telephony_session_id'] ?? ''),
+                    'runtime_node_id' => (string) $receipt->runtime_node_id,
+                    'event_type' => $this->eventType,
+                    'scenario_key' => is_string($payload['scenario_key'] ?? null) ? $payload['scenario_key'] : null,
+                ],
+            ]];
+        }
+
         $observationType = match ($this->eventType) {
             $this->catalog->eventType('connection_opened'),
             $this->catalog->eventType('connection_closed') => 'runtime.connection.observed',

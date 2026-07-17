@@ -47,6 +47,24 @@ data:
           "title": "PVC Status",
           "gridPos": {"x": 12, "y": 5, "w": 12, "h": 8},
           "targets": [{"datasource": {"type": "prometheus", "uid": "Prometheus"}, "expr": "kube_persistentvolumeclaim_status_phase{namespace=~\"utcp-data|utcp-observability\",phase=\"Bound\"}"}]
+        },
+        {
+          "type": "stat",
+          "title": "Simulator Event Source Available",
+          "gridPos": {"x": 0, "y": 13, "w": 8, "h": 5},
+          "targets": [{"datasource": {"type": "prometheus", "uid": "Prometheus"}, "expr": "sum(kube_deployment_status_replicas_available{namespace=\"utcp-platform\",deployment=\"simulator-event-source\"})"}]
+        },
+        {
+          "type": "stat",
+          "title": "Simulator Due Backlog",
+          "gridPos": {"x": 8, "y": 13, "w": 8, "h": 5},
+          "targets": [{"datasource": {"type": "prometheus", "uid": "Prometheus"}, "expr": "sum(simulator_scheduled_events{result=~\"pending|retry_scheduled\",due=\"due\"})"}]
+        },
+        {
+          "type": "stat",
+          "title": "Simulator Reconciliation States",
+          "gridPos": {"x": 16, "y": 13, "w": 8, "h": 5},
+          "targets": [{"datasource": {"type": "prometheus", "uid": "Prometheus"}, "expr": "sum(simulator_reconciliation_total)"}]
         }
       ]
     }

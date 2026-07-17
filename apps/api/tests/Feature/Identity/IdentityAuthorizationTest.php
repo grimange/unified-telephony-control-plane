@@ -4,6 +4,7 @@ namespace Tests\Feature\Identity;
 
 use App\Identity\IdentityIds;
 use App\Models\User;
+use App\TelephonyDomain\TelephonyDomainIds;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -155,9 +156,191 @@ final class IdentityAuthorizationTest extends TestCase
             ->assertOk()
             ->json();
 
-        $this->assertArrayHasKey('temporary_password', $reset);
+        $this->assertArrayNotHasKey('temporary_password', $reset);
+        $this->assertArrayHasKey('expires_at', $reset);
+        $this->assertFalse($reset['temporary_password_displayed']);
         $this->assertDatabaseHas('users', ['id' => $user->id, 'password_change_required' => true]);
-        $this->assertStringNotContainsString($reset['temporary_password'], json_encode(DB::table('control_plane_audit_records')->get()->all()));
+    }
+
+    public function test_admin_user_detail_exposes_safe_telephony_signaling_lifecycle(): void
+    {
+        [$admin, $tenantId] = $this->createPlatformAdminWithTenant();
+        $target = $this->createUser('detail-target@utcp.local.test', 'Detail Target');
+        $membershipId = IdentityIds::new();
+        $sessionId = TelephonyDomainIds::new();
+        $observationId = TelephonyDomainIds::new();
+        $now = now();
+        $signalingIdentity = 'ts-'.strtolower(str_replace('-', '', $sessionId));
+
+        DB::table('tenant_memberships')->insert([
+            'id' => $membershipId,
+            'user_id' => $target->id,
+            'tenant_id' => $tenantId,
+            'status' => 'active',
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::table('tenant_role_assignments')->insert([
+            'id' => IdentityIds::new(),
+            'membership_id' => $membershipId,
+            'role_key' => 'tenant-member',
+            'assigned_by_user_id' => null,
+            'created_at' => $now,
+        ]);
+        DB::table('telephony_sessions')->insert([
+            'id' => $sessionId,
+            'tenant_id' => $tenantId,
+            'user_id' => $target->id,
+            'status' => 'active',
+            'issued_at' => $now,
+            'expires_at' => $now->copy()->addHour(),
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        DB::table('signaling_registration_observations')->insert([
+            'id' => $observationId,
+            'tenant_id' => $tenantId,
+            'telephony_session_id' => $sessionId,
+            'signaling_identity' => $signalingIdentity,
+            'desired_state' => 'eligible',
+            'desired_generation' => 1,
+            'observed_state' => 'registered',
+            'observed_at' => $now,
+            'observed_expires_at' => $now->copy()->addSeconds(90),
+            'last_event_type' => 'registration.accepted',
+            'failure_class' => null,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $this->actingAs($admin)
+            ->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->getJson("/api/v1/admin/users/{$target->id}")
+            ->assertOk()
+            ->assertJsonPath('user.email', 'detail-target@utcp.local.test')
+            ->assertJsonPath('active_telephony_session.id', $sessionId)
+            ->assertJsonPath('signaling.signaling_identity', $signalingIdentity)
+            ->assertJsonPath('signaling.registration.observed_state', 'registered')
+            ->assertJsonMissingPath('signaling.credential.sip_secret')
+            ->assertJsonMissingPath('signaling.credential.ha1')
+            ->assertJsonMissingPath('signaling.registration.ruid');
+
+        $issued = $this->actingAs($admin)
+            ->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/users/{$target->id}/telephony-sessions/{$sessionId}/signaling-credential")
+            ->assertOk()
+            ->assertJsonPath('credential.username', $signalingIdentity)
+            ->assertJsonPath('credential.realm', 'sip.utcp.local.test')
+            ->assertJsonMissingPath('credential.ha1')
+            ->json('credential');
+
+        $this->assertArrayHasKey('sip_secret', $issued);
+        $this->assertDatabaseMissing('control_plane_audit_records', [
+            'metadata' => $issued['sip_secret'],
+        ]);
+
+        $this->actingAs($admin)
+            ->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->getJson("/api/v1/admin/users/{$target->id}")
+            ->assertOk()
+            ->assertJsonPath('signaling.credential.username', $signalingIdentity)
+            ->assertJsonMissingPath('signaling.credential.sip_secret')
+            ->assertJsonMissingPath('signaling.credential.ha1');
+
+        $this->actingAs($admin)
+            ->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/users/{$target->id}/telephony-sessions/{$sessionId}/end")
+            ->assertOk()
+            ->assertJsonPath('telephony_session.status', 'ended');
+
+        $this->assertDatabaseHas('signaling_registration_observations', [
+            'telephony_session_id' => $sessionId,
+            'desired_state' => 'removed',
+        ]);
+        $this->assertSame(0, DB::table('telephony_signaling_credentials')
+            ->where('telephony_session_id', $sessionId)
+            ->whereNull('revoked_at')
+            ->count());
+
+        $this->actingAs($admin)
+            ->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->getJson("/api/v1/admin/users/{$target->id}")
+            ->assertOk()
+            ->assertJsonPath('active_telephony_session.id', $sessionId)
+            ->assertJsonPath('active_telephony_session.status', 'ended')
+            ->assertJsonPath('signaling.registration.pending_removal', true)
+            ->assertJsonPath('signaling.credential', null);
+    }
+
+    public function test_view_own_telephony_session_capability_does_not_expose_other_members_sessions(): void
+    {
+        $tenantId = IdentityIds::new();
+        DB::table('tenants')->insert([
+            'id' => $tenantId,
+            'slug' => 'view-own-scope',
+            'display_name' => 'View Own Scope Tenant',
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $viewer = $this->createUser('viewer@utcp.local.test', 'Viewer Member');
+        $target = $this->createUser('target@utcp.local.test', 'Target Member');
+        foreach ([$viewer, $target] as $member) {
+            $membershipId = IdentityIds::new();
+            DB::table('tenant_memberships')->insert([
+                'id' => $membershipId,
+                'user_id' => $member->id,
+                'tenant_id' => $tenantId,
+                'status' => 'active',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            DB::table('tenant_role_assignments')->insert([
+                'id' => IdentityIds::new(),
+                'membership_id' => $membershipId,
+                'role_key' => 'tenant-member',
+                'assigned_by_user_id' => null,
+                'created_at' => now(),
+            ]);
+        }
+
+        $targetSessionId = TelephonyDomainIds::new();
+        DB::table('telephony_sessions')->insert([
+            'id' => $targetSessionId,
+            'tenant_id' => $tenantId,
+            'user_id' => $target->id,
+            'status' => 'active',
+            'issued_at' => now(),
+            'expires_at' => now()->addHour(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($viewer)
+            ->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->getJson("/api/v1/admin/users/{$target->id}")
+            ->assertOk()
+            ->assertJsonPath('active_telephony_session', null)
+            ->assertJsonPath('signaling', null);
+
+        $viewerSessionId = TelephonyDomainIds::new();
+        DB::table('telephony_sessions')->insert([
+            'id' => $viewerSessionId,
+            'tenant_id' => $tenantId,
+            'user_id' => $viewer->id,
+            'status' => 'active',
+            'issued_at' => now(),
+            'expires_at' => now()->addHour(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($viewer)
+            ->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->getJson("/api/v1/admin/users/{$viewer->id}")
+            ->assertOk()
+            ->assertJsonPath('active_telephony_session.id', $viewerSessionId);
     }
 
     public function test_safe_create_operations_use_c0_idempotency(): void

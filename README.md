@@ -6,9 +6,17 @@ UTCP owns desired state, tenant and operator policy, normalized runtime contract
 
 ## Current Status
 
-This repository has implemented the Phase C3 application engine in code: command, event, projection, and reconciliation primitives now sit on top of the completed F0-F4, K0-K4, C0, C1, and C2 foundations. It contains a Laravel API process, a Vue administration shell, deterministic local container images, disposable Docker Compose compatibility proof, GitHub Actions workflows for the established contracts, a repository-managed local k3d/K3s cluster foundation, Kustomize-managed local Kubernetes application manifests, a Helm-managed Traefik edge exposed through Kubernetes Gateway API, repository-managed Pod Security plus NetworkPolicy boundaries, a restricted local observability stack, PostgreSQL-backed application-kernel primitives, first-party session identity/tenancy/authorization, a PostgreSQL-authoritative tenant-scoped runtime-node registry, and PostgreSQL-backed runtime-engine tables for event receipts, observations, projection checkpoints, and reconciliation state.
+This repository has completed the F0-F4, K0-K4, C0-C5, and T0 foundations, proving a PostgreSQL-backed application kernel, identity/tenancy/authorization, a runtime-node registry, a command/event/projection/reconciliation engine, a deterministic simulator adapter, a telephony-session/conference domain, and a live Asterisk ARI adapter boundary end to end. T1 Kamailio SIP-over-WSS signaling is in progress (see below). It contains a Laravel API process, a Vue administration shell, deterministic local container images, disposable Docker Compose compatibility proof, GitHub Actions workflows for the established contracts, a repository-managed local k3d/K3s cluster foundation, Kustomize-managed local Kubernetes application manifests, a Helm-managed Traefik edge exposed through Kubernetes Gateway API, repository-managed Pod Security plus NetworkPolicy boundaries, a restricted local observability stack, PostgreSQL-backed application-kernel primitives, first-party session identity/tenancy/authorization, a PostgreSQL-authoritative tenant-scoped runtime-node registry, PostgreSQL-backed runtime-engine tables for event receipts, observations, projection checkpoints, and reconciliation state, and a deterministic, runtime-neutral simulator adapter selected explicitly through the same authenticated runtime-registry API as every other adapter family.
 
-The K4 Kubernetes platform deploys the existing UTCP application, PostgreSQL, Redis, migration Job, API, worker, scheduler, web runtime, internal application gateway, Traefik, GatewayClass, Gateway, HTTPS listener, HTTP redirect listener, HTTPRoutes for `app.utcp.local.test` and `utcp.local.test`, Pod Security Admission labels, default-deny NetworkPolicies with explicit application/data/observability allow paths, Prometheus, Alertmanager, Grafana, kube-state-metrics, Loki, and Alloy. C0 adds modular-monolith kernel code for runtime-neutral operations, leases, fencing, transactional outbox, inbox deduplication, idempotency, append-only audit, execution context, and event envelopes. C1 adds PostgreSQL-authoritative users, tenants, memberships, code-owned built-in roles/capabilities, first-party web sessions, active-tenant selection, server-computed capability projection, web-admin management, password lifecycle, suspension behavior, and C0 audit integration. C2 adds `RuntimeNode` as the only canonical telephony execution-node registry entity, with tenant ownership, desired lifecycle state, normalized endpoints, encrypted write-only credentials, runtime-neutral capability declarations, C1 authorization, and C0 audit/idempotency/outbox integration. C3 adds automatic outbox dispatch, generic command worker contracts, raw runtime-event receipts, normalizer contracts, observations, projection checkpoints, stale-observation derivation, and reconciliation state with leases and fencing. It does not deploy tracing, SIP, RTP, PBX runtimes, simulator behavior, telephony sessions, conference behavior, live runtime adapters, Asterisk, FreeSWITCH, Kamailio, or rtpengine.
+The K4 Kubernetes platform deploys the existing UTCP application, PostgreSQL, Redis, migration Job, API, worker, scheduler, web runtime, internal application gateway, Traefik, GatewayClass, Gateway, HTTPS listener, HTTP redirect listener, HTTPRoutes for `app.utcp.local.test` and `utcp.local.test`, Pod Security Admission labels, default-deny NetworkPolicies with explicit application/data/observability allow paths, Prometheus, Alertmanager, Grafana, kube-state-metrics, Loki, and Alloy. C0 adds modular-monolith kernel code for runtime-neutral operations, leases, fencing, transactional outbox, inbox deduplication, idempotency, append-only audit, execution context, and event envelopes. C1 adds PostgreSQL-authoritative users, tenants, memberships, code-owned built-in roles/capabilities, first-party web sessions, active-tenant selection, server-computed capability projection, web-admin management, password lifecycle, suspension behavior, and C0 audit integration. C2 adds `RuntimeNode` as the only canonical telephony execution-node registry entity, with tenant ownership, desired lifecycle state, normalized endpoints, encrypted write-only credentials, runtime-neutral capability declarations, C1 authorization, and C0 audit/idempotency/outbox integration. C3 adds automatic outbox dispatch, generic command worker contracts, raw runtime-event receipts, normalizer contracts, observations, projection checkpoints, stale-observation derivation, and reconciliation state with leases and fencing. It does not deploy tracing, SIP, RTP, PBX runtimes, telephony sessions, conference behavior, live runtime adapters, Asterisk, FreeSWITCH, Kamailio, or rtpengine.
+
+C4 adds a deterministic, runtime-neutral simulator adapter (`runtime_family: simulator`, `adapter_key: simulator-deterministic`) selected only through the existing authenticated runtime-registry API, a `simulator-event-source` Kubernetes process role with no public exposure, and a deterministic scenario catalog (steady-ready, transient-failure-then-ready, terminal-failure, timeout-then-ready, duplicate-observation, disconnect-reconnect, configuration-drift-then-converge) proven live against the deployed C3 workers. It does not deploy telephony sessions, conference behavior, SIP registration, or any live Asterisk, FreeSWITCH, Kamailio, or rtpengine adapter.
+
+C5 is complete locally. PostgreSQL is authoritative for telephony sessions, conferences, runtime bindings, and conference participants; C3 observations remain runtime evidence only. The deployed canonical `utcp-local` Kubernetes runtime has proven authenticated session creation, simulator-bound conference open-to-ready, participant admit-to-joined, participant remove-to-left, draining admission rejection, conference close-to-closed, scheduler-driven session expiry, worker restart recovery, bounded metrics, alerts, security, and disposable Compose compatibility. A C5 `TelephonySession` is only an authenticated user's tenant-scoped control-plane telephony authorization session; it is not SIP registration, media connectivity, a call, microphone access, or a runtime channel.
+
+T0 introduces the first real runtime-adapter boundary for Asterisk ARI. It adds an `asterisk-ari` adapter, internal `AsteriskAriClient`, dynamic `asterisk-ari-events` listener role, internal local Asterisk ARI Kubernetes fixture, node-scoped listener leases, C3 connection epochs, raw ARI evidence receipts, runtime-neutral readiness observations, bounded metrics, and alerts. RuntimeNode remains the canonical PBX-node management authority: the web-admin UI renders backend-provided runtime families, adapter keys, capability metadata, per-node adapter-configuration support, runtime evidence, and scoped audit history from the authenticated RuntimeNode APIs. Asterisk ARI adapter settings are explicit per-node PostgreSQL records; environment values provide only bounded defaults for creating those records. T0 is limited to ARI transport, authentication, inspection, WebSocket connectivity, event ingestion, and runtime-node readiness. It does not implement ConfBridge, conference execution, channel control, SIP, RTP, media, PJSIP endpoints, browser calling, or Asterisk support for C5 conference operations. Final natural browser acceptance and remaining T0 restart, authentication-failure, and recovery proofs are still pending.
+
+T1 implementation has started but is not complete. The backend now issues TelephonySession-scoped short-lived SIP registration credentials through the authenticated telephony API, stores only MD5 HA1 verifier material, exposes metadata-only readback, and revokes active signaling credentials when the TelephonySession ends or expires. C3 event-source identity is generalized so RuntimeNode-backed listeners and shared platform observers use the same PostgreSQL lease, fencing, epoch, receipt, and checkpoint authority. The T1-B registrar foundation adds a pinned Kamailio runtime, least-privilege PostgreSQL authentication and usrloc roles, a trusted `sip.utcp.local.test` WSS route, REGISTER-only policy, native usrloc persistence, live digest REGISTER, refresh, replacement, explicit deregistration, session-end revocation, bounded runtime expiration, wrong-password and unsupported-algorithm rejection, Kamailio restart recovery, NetworkPolicy proof, and safe status/metrics foundation. The T1-C repository implementation adds the fenced registration observer, C3 registration receipts/projection, and registration reconciliation. The T1-D repository implementation adds canonical User & Access Management list/detail surfaces and places signaling metadata plus one-time credential issuance beneath the user's active TelephonySession. The T1-F repository implementation extends disposable Compose compatibility proof to start an isolated Kamailio registrar, disposable WSS edge, PostgreSQL role initialization, registration observer, SIP proof, projection proof, session-end expiry proof, safe status, and automatic cleanup using the same application and C3 authorities. It does not add browser SIP registration, permanent SIP accounts, provider-node binding, manual registrar/observer/projection/reconciliation controls, natural browser acceptance, or full T1 promotion. `UTCP_PHASE` remains `T0`.
 
 ## Architecture Direction
 
@@ -17,9 +25,10 @@ The K4 Kubernetes platform deploys the existing UTCP application, PostgreSQL, Re
 - Transient coordination, queues, locks, caching, and projections: Redis.
 - Identity, tenants, memberships, roles, capabilities, and authorization-relevant audit records: PostgreSQL.
 - Runtime nodes, endpoint configuration, encrypted credential metadata, declared runtime capabilities, and desired lifecycle state: PostgreSQL.
+- Runtime-node management catalogs, adapter-configuration visibility, runtime evidence, and scoped audit history: authenticated backend RuntimeNode APIs backed by PostgreSQL and code-owned registry configuration.
 - Browser authentication: first-party Laravel sessions over the existing same-origin HTTPS edge.
 - HTTP, HTTPS, and application WebSocket ingress: Traefik.
-- Live SIP signaling execution: Kamailio, in a later phase.
+- Live SIP signaling execution: Kamailio, in T1; the current implementation includes the registrar runtime foundation, observer/projection repository corridor, and management UI surface, but natural browser acceptance and full T1 promotion remain pending.
 - RTP/SRTP media relay: rtpengine, in a later phase.
 - Call execution runtimes: Asterisk and FreeSWITCH behind adapter contracts.
 - Control-plane kernel first; runtime-node registry second; command/event/reconciliation third; deterministic simulator and real runtime adapters are later phases.
@@ -124,6 +133,7 @@ make identity-test
 make identity-bootstrap-local
 make identity-api-proof
 make identity-status
+make user-access-reset-password
 make runtime-registry-config-check
 make runtime-registry-test
 make runtime-registry-api-proof
@@ -133,6 +143,21 @@ make runtime-engine-config-check
 make runtime-engine-test
 make runtime-engine-proof
 make runtime-engine-status
+make simulator-config-check
+make simulator-test
+make simulator-api-proof
+make simulator-runtime-proof
+make simulator-status
+make telephony-domain-config-check
+make telephony-domain-test
+make telephony-domain-api-proof
+make telephony-domain-runtime-proof
+make telephony-domain-status
+make asterisk-ari-config-check
+make asterisk-ari-test
+make asterisk-ari-api-proof
+make asterisk-ari-runtime-proof
+make asterisk-ari-status
 ```
 
 `make doctor` inspects local tools without installing or modifying host software. It distinguishes tools required now, tools required in later infrastructure phases, and optional tools.
@@ -214,6 +239,28 @@ make identity-bootstrap-local
 
 The local bootstrap target writes proof credentials under ignored `.runtime/identity/` and does not print passwords during normal invocation. Normal user, tenant, membership, and role-assignment management is performed through the web-admin/API authority. C1 does not implement public self-registration, OAuth/OIDC, MFA, telephony credentials, SIP registration, runtime nodes, conferences, or simulator behavior.
 
+Existing-user break-glass password recovery is available as a bounded operational command. It resolves one existing user, generates the temporary password inside the application, expires it, revokes existing sessions, requires password change through the normal web flow, and preserves account status, roles, memberships, tenants, and capabilities:
+
+```sh
+make user-access-reset-password \
+  USER='operator@example.com' \
+  REASON='Natural browser acceptance' \
+  EXPIRES_IN=30 \
+  SHOW_PASSWORD=1
+```
+
+The direct Artisan form is:
+
+```sh
+php artisan utcp:user-access:reset-password \
+  --user='operator@example.com' \
+  --reason='Natural browser acceptance' \
+  --expires-in=30 \
+  --show-password
+```
+
+This command is recovery tooling only. It is not normal user creation, role management, tenant management, permission management, account activation, or an authentication bypass. Terminal output containing a temporary password must not be copied into evidence or committed files.
+
 ## Runtime Registry
 
 C2 provides tenant-scoped runtime-node administration through the same session-authenticated web/API surface:
@@ -257,7 +304,24 @@ make runtime-engine-config-check
 make runtime-engine-test
 make runtime-engine-proof
 make runtime-engine-status
+make simulator-config-check
+make simulator-test
+make simulator-api-proof
+make simulator-runtime-proof
+make simulator-status
 ```
+
+## Deterministic Simulator
+
+C4 adds a deterministic, runtime-neutral simulator adapter that proves the C0-C3 contracts end to end without any real telephony runtime:
+
+- `RuntimeNode` is selected into the simulator explicitly through the existing authenticated runtime-registry API: `runtime_family: simulator`, `adapter_key: simulator-deterministic`. There is no hidden environment gate or implicit fallback.
+- The adapter, its `inspect`/`apply_configuration` operation handlers, and its event normalizer are registered under the `simulator-deterministic` adapter key; the generic C3 engine never branches on the simulator.
+- The `simulator-event-source` Kubernetes process role publishes scheduled simulator events automatically; it has no public Service, Gateway route, or external egress beyond DNS, PostgreSQL, and Redis.
+- The scenario catalog is deterministic given a seed: `steady-ready`, `transient-failure-then-ready`, `terminal-failure`, `timeout-then-ready`, `duplicate-observation`, `disconnect-reconnect`, `configuration-drift-then-converge`.
+- `simulator_operations_total`, `simulator_scheduled_events`, `simulator_event_publish_total`, `simulator_scenario_transitions_total`, `simulator_connection_epochs_total`, and `simulator_reconciliation_total` are exposed through `/api/metrics` with bounded, non-high-cardinality labels; four alerts cover event-source unavailability, scheduled-event backlog, repeated terminal failure, and stuck reconciliation.
+
+See [`docs/runbooks/deterministic-simulator.md`](docs/runbooks/deterministic-simulator.md) for the full configuration and verification runbook.
 
 ## Container Images
 
@@ -337,7 +401,7 @@ Docker Compose
 
 ## Docker Compose Proof And Debug
 
-Phase F3 introduced the Compose topology, but after the local runtime authority cutoff it is no longer the normal integrated local runtime. `make compose-proof` starts an isolated disposable Compose project, validates PostgreSQL, Redis, API, worker, scheduler, web, gateway, and C3 process roles, then removes its containers, networks, and disposable volumes.
+Phase F3 introduced the Compose topology, but after the local runtime authority cutoff it is no longer the normal integrated local runtime. `make compose-proof` starts an isolated disposable Compose project, validates PostgreSQL, Redis, API, worker, scheduler, web, gateway, C3 process roles, and the T1 Kamailio signaling compatibility corridor, then removes its containers, networks, generated secrets, and disposable volumes.
 
 Build and validate the Compose configuration:
 

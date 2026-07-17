@@ -76,7 +76,7 @@ for endpoint in control events; do
   [ "$code" = "201" ] || { printf '%s endpoint create failed with HTTP %s\n' "$endpoint" "$code" >&2; cat "$body_file" >&2; exit 1; }
 done
 
-capability_payload='{"capabilities":["conference.execution","event.stream"]}'
+capability_payload='{"capabilities":["event.stream","runtime.observation"]}'
 capability_code="$("${curl_base[@]}" --cookie "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$capability_payload" --request PUT --output "$body_file" --write-out '%{http_code}' "$base/api/v1/admin/runtime-nodes/$node_id/capabilities")"
 [ "$capability_code" = "200" ] || { printf 'capability update failed with HTTP %s\n' "$capability_code" >&2; cat "$body_file" >&2; exit 1; }
 

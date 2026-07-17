@@ -36,7 +36,7 @@ final class AuthController extends Controller
         }
 
         $user = User::query()->where('normalized_email', Str::lower($data['email']))->first();
-        if (! $user || $user->status !== 'active' || ! Hash::check($data['password'], $user->password)) {
+        if (! $user || $user->status !== 'active' || ! Hash::check($data['password'], $user->password) || $this->temporaryPasswordExpired($user)) {
             RateLimiter::hit($key, 60);
             $audit->append(IdentityContext::fromRequest($request), 'identity.login.failed', 'authentication_attempt', hash('sha256', Str::lower($data['email'])), [
                 'result' => 'failed',
@@ -106,19 +106,38 @@ final class AuthController extends Controller
             throw ValidationException::withMessages(['current_password' => 'Invalid password.']);
         }
 
-        DB::transaction(function () use ($request, $audit, $user, $data): void {
+        $nextSessionVersion = DB::transaction(function () use ($request, $audit, $user, $data): int {
             DB::table('users')->where('id', $user->id)->update([
                 'password' => Hash::make($data['new_password']),
                 'password_change_required' => false,
+                'temporary_password_issued_at' => null,
+                'temporary_password_expires_at' => null,
                 'password_changed_at' => now(),
+                'remember_token' => Str::random(60),
                 'session_version' => DB::raw('session_version + 1'),
                 'updated_at' => now(),
             ]);
-            $audit->append(IdentityContext::fromRequest($request, $request->session()->get('active_tenant_id')), 'identity.password.changed', 'user', $user->id, []);
+            $audit->append(IdentityContext::fromRequest($request, $request->session()->get('active_tenant_id')), 'identity.user_password_changed', 'user', $user->id, [
+                'password_change_required_cleared' => true,
+                'temporary_password_cleared' => true,
+            ]);
+
+            return (int) DB::table('users')->where('id', $user->id)->value('session_version');
         });
 
-        $request->session()->put('user_session_version', (int) $user->session_version + 1);
+        Auth::guard('web')->login(User::query()->findOrFail($user->id));
+        $request->session()->regenerate();
+        $request->session()->put('user_session_version', $nextSessionVersion);
 
         return response()->json(['message' => 'password_changed']);
+    }
+
+    private function temporaryPasswordExpired(User $user): bool
+    {
+        if (! $user->password_change_required || $user->temporary_password_expires_at === null) {
+            return false;
+        }
+
+        return $user->temporary_password_expires_at->isPast();
     }
 }

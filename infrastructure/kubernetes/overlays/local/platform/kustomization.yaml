@@ -12,6 +12,10 @@ secretGenerator:
     namespace: utcp-platform
     envs:
       - local-data-credentials.properties
+  - name: utcp-local-kamailio-db-credentials
+    namespace: utcp-platform
+    envs:
+      - local-kamailio-db-credentials.properties
 resources:
   - ../../../base/platform
 images:
@@ -24,3 +28,6 @@ images:
   - name: utcp-gateway
     newName: utcp-local-registry:5000/utcp/gateway
     newTag: 0.1.0-k1-dev
+  - name: utcp-kamailio
+    newName: ghcr.io/kamailio/kamailio
+    newTag: 5.8.6-bookworm

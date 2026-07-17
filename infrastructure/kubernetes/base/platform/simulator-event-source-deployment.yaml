@@ -17,7 +17,7 @@ spec:
       labels:
         app.kubernetes.io/part-of: utcp
         app.kubernetes.io/component: simulator-event-source
-        utcp.io/network-role: worker
+        utcp.io/network-role: simulator-event-source
     spec:
       serviceAccountName: utcp-platform-app
       automountServiceAccountToken: false

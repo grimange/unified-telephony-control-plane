@@ -1,0 +1,210 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/simulator/lib
+. "$ROOT/scripts/simulator/lib"
+
+json_body_get() {
+  cat "$SIM_BODY_FILE" | sim_json_get "$1"
+}
+
+login_member() {
+  local email="$1" password="$2" tenant_id="$3" new_password="$4" cookie_jar="$5"
+  local csrf_json csrf login_payload login_code change_payload change_code tenant_payload tenant_code
+
+  csrf_json="$("${sim_curl[@]}" --cookie-jar "$cookie_jar" "$SIM_BASE/api/v1/auth/csrf")"
+  csrf="$(printf '%s' "$csrf_json" | sim_json_get csrf_token)"
+  login_payload="$(php -r 'echo json_encode(["email"=>$argv[1],"password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$email" "$password")"
+  login_code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$login_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/login")"
+  [ "$login_code" = "200" ] || { printf 'member login failed with HTTP %s\n' "$login_code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+  csrf_json="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" "$SIM_BASE/api/v1/auth/csrf")"
+  csrf="$(printf '%s' "$csrf_json" | sim_json_get csrf_token)"
+  change_payload="$(php -r 'echo json_encode(["current_password"=>$argv[1],"new_password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$password" "$new_password")"
+  change_code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$change_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/change-password")"
+  [ "$change_code" = "200" ] || { printf 'member password change failed with HTTP %s\n' "$change_code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+  csrf_json="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" "$SIM_BASE/api/v1/auth/csrf")"
+  csrf="$(printf '%s' "$csrf_json" | sim_json_get csrf_token)"
+  tenant_payload="$(php -r 'echo json_encode(["tenant_id"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$tenant_id")"
+  tenant_code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$tenant_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/tenant-context")"
+  [ "$tenant_code" = "200" ] || { printf 'member tenant selection failed with HTTP %s\n' "$tenant_code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+  printf '%s' "$csrf"
+}
+
+member_api() {
+  local cookie_jar="$1" csrf="$2" method="$3" path="$4" payload="${5:-}"
+  shift 5 2>/dev/null || shift $#
+  if [ -n "$payload" ]; then
+    "${sim_curl[@]}" --cookie "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --request "$method" --data "$payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$@" "$SIM_BASE$path"
+  else
+    "${sim_curl[@]}" --cookie "$cookie_jar" --header "X-CSRF-TOKEN: $csrf" --request "$method" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$@" "$SIM_BASE$path"
+  fi
+}
+
+sip_action() {
+  local secret="$1" action="$2" username="$3" realm="$4" contact_token="$5" expect="${6:-}"
+  local args=(
+    --host=sip.utcp.local.test
+    --connect-host=127.0.0.1
+    --port=443
+    --path=/ws
+    --origin=https://app.utcp.local.test
+    --username="$username"
+    --realm="$realm"
+    --secret-stdin
+    --action="$action"
+    --contact-token="$contact_token"
+  )
+  if [ -n "$expect" ]; then
+    args+=(--expect="$expect")
+  fi
+  printf '%s' "$secret" | "$ROOT/scripts/kamailio-signaling/sip-wss-client.php" "${args[@]}"
+}
+
+location_active_count() {
+  local username="$1" realm="$2"
+  sim_psql "select count(*) from location where username = '${username}' and domain = '${realm}' and expires > now();" | tr -d '[:space:]'
+}
+
+location_summary() {
+  local username="$1" realm="$2"
+  sim_psql "select count(*), count(distinct ruid), coalesce(max(extract(epoch from (expires - now()))::int), 0) from location where username = '${username}' and domain = '${realm}' and expires > now();"
+}
+
+create_member_session_and_credential() {
+  local suffix="$1" cookie_jar="$2"
+  local user_payload code member_id member_email member_password membership_payload member_csrf session_id username realm secret
+
+  user_payload="$(php -r 'echo json_encode(["email"=>"t1b-member-".$argv[1]."@utcp.local.test","display_name"=>"T1B Proof Member ".$argv[1]], JSON_UNESCAPED_SLASHES);' "$suffix")"
+  code="$(sim_api POST /api/v1/admin/users "$user_payload")"
+  [ "$code" = "201" ] || { printf 'member user create failed HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+  member_id="$(json_body_get user.id)"
+  member_email="$(json_body_get user.email)"
+  member_password="$(json_body_get temporary_password)"
+
+  membership_payload="$(php -r 'echo json_encode(["user_id"=>$argv[1],"role_key"=>"tenant-member"], JSON_UNESCAPED_SLASHES);' "$member_id")"
+  code="$(sim_api POST /api/v1/admin/memberships "$membership_payload" --header "Idempotency-Key: t1b-membership-${suffix}")"
+  [ "$code" = "201" ] || { printf 'member membership failed HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+  member_csrf="$(login_member "$member_email" "$member_password" "$SIM_TENANT_ID" "T1BProof${suffix}!" "$cookie_jar")"
+  code="$(member_api "$cookie_jar" "$member_csrf" POST /api/v1/telephony/sessions '' --header "Idempotency-Key: t1b-session-${suffix}")"
+  [ "$code" = "201" ] || { printf 'telephony session create failed HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+  session_id="$(json_body_get telephony_session.id)"
+
+  code="$(member_api "$cookie_jar" "$member_csrf" POST "/api/v1/telephony/sessions/$session_id/signaling-credential")"
+  [ "$code" = "201" ] || { printf 'credential issue failed HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+  username="$(json_body_get credential.username)"
+  realm="$(json_body_get credential.realm)"
+  secret="$(json_body_get credential.sip_secret)"
+
+  MEMBER_CSRF="$member_csrf"
+  PROOF_SESSION_ID="$session_id"
+  PROOF_USERNAME="$username"
+  PROOF_REALM="$realm"
+  PROOF_SECRET="$secret"
+}
+
+wait_for_no_contact() {
+  local username="$1" realm="$2"
+  local waited=0 count
+  while :; do
+    count="$(location_active_count "$username" "$realm")"
+    if [ "$count" = "0" ]; then
+      printf 'bounded_contact_expiration=observed waited_seconds=%s\n' "$waited"
+      return 0
+    fi
+    if [ "$waited" -ge 130 ]; then
+      printf 'bounded_contact_expiration=timeout active_count=%s\n' "$count" >&2
+      return 1
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+}
+
+member_cookie_jar="$(mktemp)"
+restart_cookie_jar="$(mktemp)"
+trap 'rm -f "$member_cookie_jar" "$restart_cookie_jar"; sim_cleanup' EXIT
+
+sim_login
+
+suffix="t1b$(date +%s)"
+create_member_session_and_credential "$suffix" "$member_cookie_jar"
+username="$PROOF_USERNAME"
+realm="$PROOF_REALM"
+secret="$PROOF_SECRET"
+session_id="$PROOF_SESSION_ID"
+member_csrf="$MEMBER_CSRF"
+
+printf 'credential_issue_http=201\n'
+printf 'proof_session_hash=%s\n' "$(printf '%s' "$session_id" | sha256sum | cut -d' ' -f1)"
+printf 'proof_username_hash=%s\n' "$(printf '%s' "$username" | sha256sum | cut -d' ' -f1)"
+
+sip_action "$secret" register "$username" "$realm" "$suffix"
+printf 'register_location_summary=%s\n' "$(location_summary "$username" "$realm")"
+
+before_refresh="$(sim_psql "select ruid || '|' || extract(epoch from last_modified)::bigint from location where username = '${username}' and domain = '${realm}' and expires > now() order by last_modified desc limit 1;")"
+sleep 2
+sip_action "$secret" refresh "$username" "$realm" "$suffix"
+after_refresh="$(sim_psql "select ruid || '|' || extract(epoch from last_modified)::bigint from location where username = '${username}' and domain = '${realm}' and expires > now() order by last_modified desc limit 1;")"
+php -r '
+[$br, $bt] = explode("|", trim($argv[1]));
+[$ar, $at] = explode("|", trim($argv[2]));
+if ($br !== $ar || (int) $at <= (int) $bt) {
+    fwrite(STDERR, "refresh did not preserve ruid and advance last_modified\n");
+    exit(1);
+}
+' "$before_refresh" "$after_refresh"
+printf 'refresh_same_ruid_last_modified_advanced=true\n'
+printf 'refresh_location_summary=%s\n' "$(location_summary "$username" "$realm")"
+
+sip_action "$secret" replace "$username" "$realm" "${suffix}replacement"
+replacement_count="$(location_active_count "$username" "$realm")"
+[ "$replacement_count" = "1" ] || { printf 'replacement did not retain one active contact: %s\n' "$replacement_count" >&2; exit 1; }
+printf 'replacement_single_contact=true\n'
+
+sip_action "$secret" deregister "$username" "$realm" "${suffix}replacement"
+deregister_count="$(location_active_count "$username" "$realm")"
+[ "$deregister_count" = "0" ] || { printf 'deregistration left active contacts: %s\n' "$deregister_count" >&2; exit 1; }
+printf 'deregistration_removed_contact=true\n'
+
+sip_action "$secret" wrong-password "$username" "$realm" "${suffix}wrong"
+[ "$(location_active_count "$username" "$realm")" = "0" ] || { printf 'wrong password created a contact\n' >&2; exit 1; }
+printf 'wrong_password_rejected_without_contact=true\n'
+
+sip_action "$secret" sha256 "$username" "$realm" "${suffix}sha"
+[ "$(location_active_count "$username" "$realm")" = "0" ] || { printf 'sha256 attempt created a contact\n' >&2; exit 1; }
+printf 'sha256_rejected_without_contact=true\n'
+
+restart_suffix="${suffix}restart"
+create_member_session_and_credential "$restart_suffix" "$restart_cookie_jar"
+restart_username="$PROOF_USERNAME"
+restart_realm="$PROOF_REALM"
+restart_secret="$PROOF_SECRET"
+restart_session_id="$PROOF_SESSION_ID"
+restart_member_csrf="$MEMBER_CSRF"
+
+sip_action "$restart_secret" register "$restart_username" "$restart_realm" "$restart_suffix"
+[ "$(location_active_count "$restart_username" "$restart_realm")" = "1" ] || { printf 'restart proof registration missing before pod delete\n' >&2; exit 1; }
+restart_pod="$(kube -n utcp-platform get pod -l app.kubernetes.io/component=kamailio -o jsonpath='{.items[0].metadata.name}')"
+kube -n utcp-platform delete pod "$restart_pod" --wait=true >/dev/null
+kube -n utcp-platform rollout status deployment/kamailio --timeout=180s >/dev/null
+[ "$(location_active_count "$restart_username" "$restart_realm")" = "1" ] || { printf 'persisted contact missing after Kamailio restart\n' >&2; exit 1; }
+sip_action "$restart_secret" refresh "$restart_username" "$restart_realm" "$restart_suffix"
+[ "$(location_active_count "$restart_username" "$restart_realm")" = "1" ] || { printf 'refresh after restart did not retain one contact\n' >&2; exit 1; }
+printf 'kamailio_restart_recovered_persisted_contact=true\n'
+
+code="$(member_api "$restart_cookie_jar" "$restart_member_csrf" POST "/api/v1/telephony/sessions/$restart_session_id/end")"
+[ "$code" = "200" ] || { printf 'telephony session end failed HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+auth_rows="$(sim_psql "select count(*) from kamailio_signaling_auth_view where username = '${restart_username}' and domain = '${restart_realm}';" | tr -d '[:space:]')"
+[ "$auth_rows" = "0" ] || { printf 'revoked credential still visible in auth view\n' >&2; exit 1; }
+printf 'session_end_removed_auth_view_row=true\n'
+sip_action "$restart_secret" refresh "$restart_username" "$restart_realm" "$restart_suffix" rejected
+printf 'session_end_blocks_refresh=true\n'
+wait_for_no_contact "$restart_username" "$restart_realm"
+
+printf 'no_asterisk_sip_scope=true\n'
+printf 'kamailio_signaling_runtime_proof=passed\n'

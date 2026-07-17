@@ -61,7 +61,7 @@ final class SimulatorScheduledEventRepository
     public function claimDue(string $leaseOwner, int $batchSize = 10, int $leaseSeconds = 60): array
     {
         return DB::transaction(function () use ($leaseOwner, $batchSize, $leaseSeconds): array {
-            $rows = DB::table('simulator_scheduled_events')
+            $query = DB::table('simulator_scheduled_events')
                 ->whereIn('status', ['pending', 'retry_scheduled', 'leased'])
                 ->where('due_at', '<=', now())
                 ->where(function ($query): void {
@@ -71,9 +71,15 @@ final class SimulatorScheduledEventRepository
                 })
                 ->orderBy('runtime_node_id')
                 ->orderBy('event_sequence')
-                ->limit($batchSize)
-                ->lockForUpdate()
-                ->get();
+                ->limit($batchSize);
+
+            if (DB::getDriverName() === 'pgsql') {
+                $query->lock('for update skip locked');
+            } else {
+                $query->lockForUpdate();
+            }
+
+            $rows = $query->get();
 
             foreach ($rows as $row) {
                 $row->lease_token = EngineIds::token();
@@ -113,7 +119,7 @@ final class SimulatorScheduledEventRepository
             ->where('id', $id)
             ->where('lease_token', $leaseToken)
             ->update([
-                'status' => $retryable ? 'retry_scheduled' : 'failed',
+                'status' => $retryable ? 'retry_scheduled' : 'terminal_failed',
                 'due_at' => $retryable ? now()->addSeconds(15) : now(),
                 'lease_owner' => null,
                 'lease_token' => null,

@@ -1,0 +1,50 @@
+# T0 Evidence: Asterisk ARI Adapter
+
+Date: 2026-07-15
+
+## Current Verdict
+
+`PHASE_T0_COMPLETE`
+
+## Implemented in This Corridor
+
+- `asterisk-ari` runtime adapter registration and `AsteriskRuntimeAdapter`.
+- Internal `AsteriskAriClient` for authenticated ARI HTTP inspection and ARI WebSocket connection using Basic Authorization headers.
+- Dynamic `asterisk-ari-events` process role using the existing application image, rewritten to hold one persistent, fenced WebSocket connection per claimed RuntimeNode across polling cycles (`AsteriskAriEventListener`) instead of closing and reopening it every cycle.
+- Periodic HTTP liveness re-inspection on each held connection (`AsteriskCatalog`-configured `heartbeat_interval_ms`) that emits a fresh `runtime_info_observed` receipt on success, keeping runtime evidence from going falsely stale while the connection is healthy, and detecting a dead Asterisk backend even when the TCP socket never errors.
+- Stale-epoch cleanup on lease takeover (`RuntimeEventReceiptRepository::closeStaleEpochs`) so a Pod that dies without running its own shutdown path never leaves a duplicate open epoch behind.
+- Bounded exponential reconnect backoff per node (`AsteriskAriReconnectBackoff`), reusing the existing per-node `reconnect_min_delay_ms`/`reconnect_max_delay_ms` adapter configuration, resetting immediately on a credential or configuration-generation change.
+- Generic PostgreSQL `runtime_listener_leases` authority keyed by RuntimeNode and listener kind.
+- C3 connection-epoch and raw-receipt ingestion for Asterisk connection evidence.
+- Runtime-neutral Asterisk event normalization for runtime readiness observations.
+- Runtime-node reconciliation for Asterisk observation only.
+- Internal local Kubernetes Asterisk ARI fixture and NetworkPolicy surface.
+- Bounded low-cardinality Asterisk ARI metrics and alerts.
+- `make asterisk-ari-config-check`, `make asterisk-ari-test`, `make asterisk-ari-api-proof`, `make asterisk-ari-runtime-proof`, and `make asterisk-ari-status`.
+
+## Boundary Notes
+
+T0 does not implement ConfBridge, C5 conference operation support, channel control, SIP, PJSIP, RTP, media, trunks, PSTN, Kamailio, rtpengine, WebRTC, browser calling, or FreeSWITCH ESL. A C5 conference operation targeted at an Asterisk node fails as unsupported capability; live-proven by attempting to create a conference bound to `local-asterisk-ari` (422 `Runtime node lacks required conference capability`, zero conferences created) and by the existing focused adapter test.
+
+## Defects Found and Fixed During Live Corridor Proof
+
+1. **Listener closed a healthy WebSocket every ~20 seconds.** `workOnce()` opened a connection, held it for `heartbeat_interval_ms`, then unconditionally closed the epoch/stream/lease and reopened on the next poll cycle. Confirmed live against the real Asterisk fixture (`Creating Stasis app` / `Destroying Stasis app` repeating every ~10s in the Asterisk container logs). Fixed by holding connection state (`$connections`) across `workOnce()` calls and only tearing down on disablement, configuration/credential-generation change, lease loss, or transport failure. Live-verified: lease `claimed_at` and epoch `opened_at` stayed fixed while `heartbeat_at` advanced every cycle for 100+ seconds with zero reconnects.
+2. **Killed listener Pod left a duplicate open epoch.** A Pod that dies (SIGKILL after grace period) never runs its own cleanup, so the old epoch stayed `status=open` after a new Pod took over the lease. Confirmed live (`open_epoch_count=2` after a listener Pod delete). Fixed by closing any epoch left open by a superseded owner (`closeStaleEpochs`) at the moment a new owner's connection is confirmed. Live-verified: `open_epoch_count=1` after takeover, both stale epochs marked `expired`.
+3. **Node went falsely `stale` on a perfectly healthy connection.** The periodic health check verified liveness but emitted no receipt on success, so `observed_at` never advanced once the initial connection-open receipts were processed; `runtime-engine:derive-stale-observations` then marked the node `stale` after 5 minutes despite a live, continuously-renewed connection. Confirmed live (`observed_state=stale`, `observed_at` frozen ~7 minutes in the past, lease/epoch still healthy). Fixed by ingesting a fresh `runtime_info_observed` receipt on each successful health check. Live-verified: node stayed `ready` with `observed_at` refreshing every ~15s continuously past the 5-minute staleness threshold.
+4. **No detection of a silently dead Asterisk backend.** Deleting the Asterisk Pod did not trip the listener at all before fix #3's health check existed, since a non-blocking `readEvent()` on a half-open socket just returns `null` forever rather than erroring. The added periodic HTTP liveness check now closes the connection on failure. Live-verified: deleting the Asterisk Pod produced `observed_state=unavailable` within ~3-9 seconds and automatic recovery to `ready` with a new epoch within ~12 seconds of the replacement Pod becoming healthy.
+5. **Stale rendered NetworkPolicy blocked Traefik's Kubernetes API egress.** `allow-traefik-kubernetes-api` still referenced a since-replaced apiserver Pod IP (`172.24.0.5` vs the live `172.24.0.2`), causing `security-proof`'s `traefik-apiserver` connectivity check to fail with connection refused. This was an environment-drift issue (the apiserver Pod had been recreated since the policy was last rendered), not a code defect. Fixed by re-running the existing canonical `make security-apply`, which re-renders `allow-apiserver-egress.template.yaml` against the live apiserver endpoint IP and re-applies it. Live-verified: `security-proof` and `local-proof` both pass afterward.
+6. **Generic C2 runtime-registry proof used an invalid capability.** `scripts/runtime-registry/api-proof` set `["conference.execution","event.stream"]` on an `asterisk-ari`-adapter node, but `conference.execution` is not a `supported_capabilities` entry for any adapter in the current catalog (asterisk-ari, freeswitch-esl, or simulator-deterministic) — a stale assumption from an earlier, more permissive phase of the capability model, unrelated to T0's own boundary. Fixed by changing the proof's capability payload to `["event.stream","runtime.observation"]`, which both adapter and catalog accept.
+
+All six were captured with exact evidence, root-caused, corrected with the smallest change, covered by a regression test where the defect was reachable outside live infrastructure (`AsteriskAriAdapterTest`: stale-epoch cleanup, bounded-backoff doubling/reset/clear, unknown-event safety), and the affected live proof was rerun and passed.
+
+## Verification Log
+
+- Corridor A (listener steady-state ownership): one lease, one epoch, persisting continuously across polling cycles with zero reconnects; live-verified against the real Asterisk fixture.
+- Corridor B (listener Pod restart/takeover): killed Pod's lease expired naturally; new Pod claimed with a new fencing token; stale epoch closed automatically (`expired`); exactly one open epoch; receipts resumed; `observed_state=ready`; no manual action.
+- Corridor C (Asterisk Pod restart/recovery): `observed_state` transitioned `ready → unavailable → ready` automatically within ~12 seconds of Pod replacement; new epoch and fencing token; `reconciliation_status=converged`; no duplicate epoch.
+- Corridor D (authentication-failure/credential recovery): invalid credential via canonical rotate API produced sanitized `authentication_failed` receipts (9, zero credential leakage anywhere); reconciliation `blocked` (`asterisk_ari_authentication_failed`, `next_check_at` 15 minutes out); listener-side backoff decelerating (observed ~4s → ~28s+ between attempts); restoring the correct credential (matching original fingerprint) triggered automatic recovery to `ready` within 24 seconds; retired credentials structurally unusable (`status=active` filter).
+- Corridor E (unsupported conference capability): declared capabilities exactly `event.stream, runtime.observation`; live attempt to bind a conference to the node rejected 422 before any DB write; zero conferences created; adapter-level unit test still passes.
+- Corridor F (unknown native ARI event handling): zero natural unknown events occurred (bare fixture, no telephony activity) — documented per the corridor's own justified-hybrid-proof fallback; added a focused test proving an unrecognized event normalizes to a `runtime_node`-scoped `degraded` observation, never touches `desired_state` or any conference/participant table, and that supported receipt processing continues afterward.
+- Corridor G (metrics/alerts/redaction): all `asterisk_ari_*` metrics present with low-cardinality labels; `UTCPAsteriskAriAuthenticationFailures` and `UTCPAsteriskAriReconnectLoop` both fired and resolved to `inactive`; all Asterisk alert rules `health=ok`; zero credential/Authorization/ciphertext leakage across listener and API pod logs; trusted HTTPS used throughout (no `curl -k`).
+- Full regression: `repository-hygiene`, `workflow-check`, `secret-scan`, `local-status`, `control-plane-*`, `identity-*` (including `identity-api-proof` after resyncing the local bootstrap credential file, itself rotated during Corridors D/E via the canonical reset-password + change-password flow), `runtime-registry-*` (after the capability-payload fix), `runtime-engine-*`, `simulator-*` (all seven live scenarios), `telephony-domain-*`, `asterisk-ari-*`, `k8s-*`, `gateway-proof`, `security-proof` (after the NetworkPolicy re-render), `observability-proof` (including the ~10-minute synthetic-alert fire-and-resolve window), `local-proof`, `compose-proof` (disposable, cleaned up with no leftover containers), `test`, `check`, `build`, `container-check`, `git diff --check`, shell/Python/PHP syntax checks, and Laravel (Pint) formatting all passed.
+- Final environment preservation: dirty working tree preserved (no commits), APNTalk Compose untouched and running, global kubectl context remained `k3d-apntalk-local` throughout every corrective action, no persistent UTCP Compose project.

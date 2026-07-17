@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/../.."
+
+test -f apps/api/config/telephony_domain.php
+test -f apps/api/database/migrations/2026_07_15_090000_create_telephony_session_conference_domain_tables.php
+
+grep -Eq '^UTCP_PHASE=C[45]$|^UTCP_PHASE=T[01]$' versions.env
+grep -q "'conference.lifecycle'" apps/api/config/runtime_registry.php
+grep -q "'conference.participation'" apps/api/config/runtime_registry.php
+grep -q "telephony.sessions.create_own" apps/api/config/identity.php
+grep -q "conference.ensure" apps/api/config/telephony_domain.php
+grep -q "conference.participant.ensure" apps/api/config/telephony_domain.php
+grep -q "telephony_sessions_total" apps/api/app/Http/Controllers/Platform/MetricsController.php
+grep -q "conference_participant_reconciliation_total" apps/api/app/Http/Controllers/Platform/MetricsController.php
+grep -q "UTCPTelephonyConferenceReconciliationStuck" infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml
+grep -q "UTCPTelephonyExpiredActiveSessions" infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml
+
+php -l apps/api/app/TelephonyDomain/TelephonyDomainService.php >/dev/null
+php -l apps/api/app/TelephonyDomain/Reconciliation/ConferenceReconciler.php >/dev/null
+php -l apps/api/app/TelephonyDomain/Reconciliation/ConferenceParticipantReconciler.php >/dev/null
+php -l apps/api/app/TelephonyDomain/Runtime/ConferenceOperationHandler.php >/dev/null
+php -l apps/api/database/migrations/2026_07_15_090000_create_telephony_session_conference_domain_tables.php >/dev/null
+
+if rg -n "sip|webrtc|ari|esl|kamailio|rtpengine|asterisk|freeswitch|media" apps/api/app/TelephonyDomain apps/api/routes/web.php -g '!apps/api/app/TelephonyDomain/Signaling/**'; then
+  printf 'C5 domain or route surface contains forbidden vendor/media vocabulary.\n' >&2
+  exit 1
+fi
+
+if rg -n "adapter->execute|runtime_operations.*insert" apps/api/app/Http/Controllers/TelephonyDomain apps/api/app/TelephonyDomain/TelephonyDomainService.php; then
+  printf 'C5 controller/service boundary contains direct runtime execution or operation insertion.\n' >&2
+  exit 1
+fi
+
+if rg -n "update\\([^\\n]*observed_state|->update\\(\\[[^]]*observed_state" apps/api/app/Http/Controllers/TelephonyDomain apps/api/app/TelephonyDomain/TelephonyDomainService.php; then
+  printf 'C5 controller/service boundary contains direct observed-state mutation.\n' >&2
+  exit 1
+fi
+
+if rg -n "'(tenant_id|user_id|session_id|conference_id|participant_id|runtime_node_id|operation_id|event_id|request_id)'[[:space:]]*=>" apps/api/app/Http/Controllers/Platform/MetricsController.php; then
+  printf 'C5 metrics contain high-cardinality exported labels.\n' >&2
+  exit 1
+fi
+
+if rg -n "tenant_id|user_id|session_id|conference_id|participant_id|runtime_node_id|operation_id|event_id|request_id" infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml; then
+  printf 'C5 metrics or alerts contain high-cardinality identity labels.\n' >&2
+  exit 1
+fi
+
+cd apps/api
+php artisan route:list --path=api/v1/conferences >/tmp/utcp-c5-routes.txt
+php artisan route:list --path=api/v1/telephony/sessions >>/tmp/utcp-c5-routes.txt
+if grep -E "reconcile|project|runtime.*execute|sip|media|ari|esl" /tmp/utcp-c5-routes.txt; then
+  printf 'C5 route surface exposes forbidden manual/vendor/media route.\n' >&2
+  exit 1
+fi
+
+printf 'telephony_domain_config_check=ok\n'

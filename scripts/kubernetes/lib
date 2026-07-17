@@ -23,8 +23,13 @@ K8S_OVERLAY="$ROOT/infrastructure/kubernetes/overlays/local"
 K8S_DATA_OVERLAY="$K8S_OVERLAY/data"
 K8S_MIGRATION_OVERLAY="$K8S_OVERLAY/migration"
 K8S_PLATFORM_OVERLAY="$K8S_OVERLAY/platform"
+K8S_RUNTIME_OVERLAY="$K8S_OVERLAY/runtime"
+K8S_ASTERISK_CREDENTIALS_FILE="$K8S_RUNTIME_OVERLAY/local-asterisk-ari-credentials.properties"
+K8S_KAMAILIO_PLATFORM_CREDENTIALS_FILE="$K8S_PLATFORM_OVERLAY/local-kamailio-db-credentials.properties"
+K8S_KAMAILIO_MIGRATION_CREDENTIALS_FILE="$K8S_MIGRATION_OVERLAY/local-kamailio-db-credentials.properties"
 K8S_PLATFORM_NAMESPACE="utcp-platform"
 K8S_DATA_NAMESPACE="utcp-data"
+K8S_RUNTIME_NAMESPACE="utcp-runtime"
 K8S_PROOF_PORT="${K8S_PROOF_PORT:-18089}"
 K1_IMAGE_TAG="${K1_IMAGE_TAG:-0.1.0-k1-dev}"
 HOST_REGISTRY="${K3D_REGISTRY_HOST}:${K3D_REGISTRY_HOST_PORT}"
@@ -32,9 +37,11 @@ CLUSTER_REGISTRY="${K3D_REGISTRY_NAME}:5000"
 API_LOCAL_IMAGE="${UTCP_API_IMAGE:-utcp-api:dev}"
 WEB_LOCAL_IMAGE="${UTCP_WEB_IMAGE:-utcp-web:dev}"
 GATEWAY_LOCAL_IMAGE="${UTCP_GATEWAY_IMAGE:-utcp-gateway:dev}"
+ASTERISK_LOCAL_IMAGE="${UTCP_ASTERISK_IMAGE:-utcp-asterisk-ari:dev}"
 API_HOST_IMAGE="$HOST_REGISTRY/utcp/api:$K1_IMAGE_TAG"
 WEB_HOST_IMAGE="$HOST_REGISTRY/utcp/web:$K1_IMAGE_TAG"
 GATEWAY_HOST_IMAGE="$HOST_REGISTRY/utcp/gateway:$K1_IMAGE_TAG"
+ASTERISK_HOST_IMAGE="$HOST_REGISTRY/utcp/asterisk-ari:$K1_IMAGE_TAG"
 
 required_tools() {
   local missing=0
@@ -87,7 +94,52 @@ check_k1_tag() {
 }
 
 render_overlay() {
+  ensure_local_asterisk_credentials
+  ensure_local_kamailio_credentials
   kubectl kustomize "$K8S_OVERLAY"
+}
+
+ensure_local_asterisk_credentials() {
+  if [ -s "$K8S_ASTERISK_CREDENTIALS_FILE" ]; then
+    return
+  fi
+
+  mkdir -p "$(dirname "$K8S_ASTERISK_CREDENTIALS_FILE")"
+  umask 077
+  {
+    printf 'ARI_USERNAME=utcp_ari\n'
+    printf 'ARI_PASSWORD='
+    od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
+    printf '\n'
+  } >"$K8S_ASTERISK_CREDENTIALS_FILE"
+}
+
+ensure_local_kamailio_credentials() {
+  if [ -s "$K8S_KAMAILIO_PLATFORM_CREDENTIALS_FILE" ] && [ -s "$K8S_KAMAILIO_MIGRATION_CREDENTIALS_FILE" ]; then
+    return
+  fi
+
+  mkdir -p "$(dirname "$K8S_KAMAILIO_PLATFORM_CREDENTIALS_FILE")" "$(dirname "$K8S_KAMAILIO_MIGRATION_CREDENTIALS_FILE")"
+  local tmp_file
+  tmp_file="$(mktemp)"
+  umask 077
+  {
+    printf 'KAMAILIO_AUTH_DB_USER=utcp_kamailio_auth_reader\n'
+    printf 'KAMAILIO_AUTH_DB_PASSWORD='
+    od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
+    printf '\n'
+    printf 'KAMAILIO_USRLOC_DB_USER=utcp_kamailio_usrloc_writer\n'
+    printf 'KAMAILIO_USRLOC_DB_PASSWORD='
+    od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
+    printf '\n'
+    printf 'KAMAILIO_OBSERVER_DB_USER=utcp_kamailio_observer_reader\n'
+    printf 'KAMAILIO_OBSERVER_DB_PASSWORD='
+    od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
+    printf '\n'
+  } >"$tmp_file"
+  cp "$tmp_file" "$K8S_KAMAILIO_PLATFORM_CREDENTIALS_FILE"
+  cp "$tmp_file" "$K8S_KAMAILIO_MIGRATION_CREDENTIALS_FILE"
+  rm -f "$tmp_file"
 }
 
 wait_data() {
@@ -99,6 +151,7 @@ wait_data() {
 
 delete_migration_job() {
   kube -n "$K8S_PLATFORM_NAMESPACE" delete job utcp-migrate --ignore-not-found >/dev/null
+  kube -n "$K8S_PLATFORM_NAMESPACE" wait --for=delete job/utcp-migrate --timeout=60s >/dev/null 2>&1 || true
 }
 
 wait_migration() {
@@ -109,9 +162,14 @@ wait_migration() {
 }
 
 wait_platform() {
-  for deployment in api worker scheduler web gateway; do
+  for deployment in api worker scheduler web gateway telephony-command-worker telephony-event-normalizer telephony-reconciler simulator-event-source asterisk-ari-events kamailio; do
     kube -n "$K8S_PLATFORM_NAMESPACE" rollout status "deployment/$deployment" --timeout=240s
   done
+}
+
+wait_runtime() {
+  kube -n "$K8S_RUNTIME_NAMESPACE" rollout status deployment/asterisk-ari --timeout=240s
+  kube -n "$K8S_RUNTIME_NAMESPACE" wait --for=condition=Ready pod -l app.kubernetes.io/component=asterisk-ari --timeout=180s
 }
 
 http_get() {

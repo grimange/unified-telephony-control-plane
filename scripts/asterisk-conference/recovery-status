@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/kubernetes/lib
+. "$ROOT/scripts/kubernetes/lib"
+
+ensure_kubeconfig
+
+pod="$(kube -n "$K8S_PLATFORM_NAMESPACE" get pod -l app.kubernetes.io/component=api -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' | awk '{print $1}')"
+if [ -z "$pod" ]; then
+  printf 'asterisk_conference_recovery_status=unavailable reason=api_pod_unavailable\n' >&2
+  exit 1
+fi
+
+kube -n "$K8S_PLATFORM_NAMESPACE" exec "$pod" -- env HOME=/tmp XDG_CONFIG_HOME=/tmp php artisan tinker --execute='
+use Illuminate\Support\Facades\DB;
+
+$conferenceStates = DB::table("conferences")
+    ->selectRaw("desired_state, observed_state, count(*) as count")
+    ->groupBy("desired_state", "observed_state")
+    ->orderBy("desired_state")
+    ->orderBy("observed_state")
+    ->get();
+
+$participantStates = DB::table("conference_participants")
+    ->selectRaw("desired_state, observed_state, count(*) as count")
+    ->groupBy("desired_state", "observed_state")
+    ->orderBy("desired_state")
+    ->orderBy("observed_state")
+    ->get();
+
+$recoveryOperations = DB::table("runtime_operations")
+    ->whereIn("operation_type", [
+        "conference.ensure",
+        "conference.close",
+        "conference.participant.ensure",
+        "conference.participant.remove",
+    ])
+    ->selectRaw("operation_type, status, count(*) as count")
+    ->groupBy("operation_type", "status")
+    ->orderBy("operation_type")
+    ->orderBy("status")
+    ->get();
+
+$reconciliation = DB::table("runtime_reconciliation_states")
+    ->whereIn("target_type", ["conference", "conference_participant"])
+    ->selectRaw("target_type, status, count(*) as count")
+    ->groupBy("target_type", "status")
+    ->orderBy("target_type")
+    ->orderBy("status")
+    ->get();
+
+echo "asterisk_conference_recovery_status".PHP_EOL;
+echo "conference_state_counts=".json_encode($conferenceStates, JSON_THROW_ON_ERROR).PHP_EOL;
+echo "participant_state_counts=".json_encode($participantStates, JSON_THROW_ON_ERROR).PHP_EOL;
+echo "recovery_operation_state_counts=".json_encode($recoveryOperations, JSON_THROW_ON_ERROR).PHP_EOL;
+echo "reconciliation_state_counts=".json_encode($reconciliation, JSON_THROW_ON_ERROR).PHP_EOL;
+'

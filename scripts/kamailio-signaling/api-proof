@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/simulator/lib
+. "$ROOT/scripts/simulator/lib"
+
+json_body_get() {
+  cat "$SIM_BODY_FILE" | sim_json_get "$1"
+}
+
+login_member() {
+  local email="$1" password="$2" tenant_id="$3" new_password="$4" cookie_jar="$5"
+  local csrf_json csrf login_payload login_code change_payload change_code tenant_payload tenant_code
+
+  csrf_json="$("${sim_curl[@]}" --cookie-jar "$cookie_jar" "$SIM_BASE/api/v1/auth/csrf")"
+  csrf="$(printf '%s' "$csrf_json" | sim_json_get csrf_token)"
+  login_payload="$(php -r 'echo json_encode(["email"=>$argv[1],"password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$email" "$password")"
+  login_code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$login_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/login")"
+  [ "$login_code" = "200" ] || { printf 'member login failed with HTTP %s\n' "$login_code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+  csrf_json="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" "$SIM_BASE/api/v1/auth/csrf")"
+  csrf="$(printf '%s' "$csrf_json" | sim_json_get csrf_token)"
+  change_payload="$(php -r 'echo json_encode(["current_password"=>$argv[1],"new_password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$password" "$new_password")"
+  change_code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$change_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/change-password")"
+  [ "$change_code" = "200" ] || { printf 'member password change failed with HTTP %s\n' "$change_code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+  csrf_json="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" "$SIM_BASE/api/v1/auth/csrf")"
+  csrf="$(printf '%s' "$csrf_json" | sim_json_get csrf_token)"
+  tenant_payload="$(php -r 'echo json_encode(["tenant_id"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$tenant_id")"
+  tenant_code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$tenant_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/tenant-context")"
+  [ "$tenant_code" = "200" ] || { printf 'member tenant selection failed with HTTP %s\n' "$tenant_code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+  printf '%s' "$csrf"
+}
+
+member_api() {
+  local cookie_jar="$1" csrf="$2" method="$3" path="$4" payload="${5:-}"
+  shift 5 2>/dev/null || shift $#
+  if [ -n "$payload" ]; then
+    "${sim_curl[@]}" --cookie "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --request "$method" --data "$payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$@" "$SIM_BASE$path"
+  else
+    "${sim_curl[@]}" --cookie "$cookie_jar" --header "X-CSRF-TOKEN: $csrf" --request "$method" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$@" "$SIM_BASE$path"
+  fi
+}
+
+member_cookie_jar="$(mktemp)"
+trap 'rm -f "$member_cookie_jar"; sim_cleanup' EXIT
+
+suffix="t1bapi$(date +%s)"
+sim_login
+
+user_payload="$(php -r 'echo json_encode(["email"=>"t1b-api-member-".$argv[1]."@utcp.local.test","display_name"=>"T1B API Proof Member ".$argv[1]], JSON_UNESCAPED_SLASHES);' "$suffix")"
+code="$(sim_api POST /api/v1/admin/users "$user_payload")"
+[ "$code" = "201" ] || { printf 'member user create failed HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+member_id="$(json_body_get user.id)"
+member_email="$(json_body_get user.email)"
+member_password="$(json_body_get temporary_password)"
+
+membership_payload="$(php -r 'echo json_encode(["user_id"=>$argv[1],"role_key"=>"tenant-member"], JSON_UNESCAPED_SLASHES);' "$member_id")"
+code="$(sim_api POST /api/v1/admin/memberships "$membership_payload" --header "Idempotency-Key: t1b-api-membership-${suffix}")"
+[ "$code" = "201" ] || { printf 'member membership failed HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+member_csrf="$(login_member "$member_email" "$member_password" "$SIM_TENANT_ID" "T1BApiProof${suffix}!" "$member_cookie_jar")"
+code="$(member_api "$member_cookie_jar" "$member_csrf" POST /api/v1/telephony/sessions '' --header "Idempotency-Key: t1b-api-session-${suffix}")"
+[ "$code" = "201" ] || { printf 'telephony session create failed HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+session_id="$(json_body_get telephony_session.id)"
+
+code="$(member_api "$member_cookie_jar" "$member_csrf" POST "/api/v1/telephony/sessions/$session_id/signaling-credential")"
+[ "$code" = "201" ] || { printf 'credential issue failed HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+username="$(json_body_get credential.username)"
+realm="$(json_body_get credential.realm)"
+secret="$(json_body_get credential.sip_secret)"
+[ -n "$secret" ] || { printf 'one-time SIP secret was not issued\n' >&2; exit 1; }
+
+auth_rows="$(sim_psql "select count(*) from kamailio_signaling_auth_view where username = '${username}' and domain = '${realm}';" | tr -d '[:space:]')"
+[ "$auth_rows" = "1" ] || { printf 'issued credential not visible to auth view\n' >&2; exit 1; }
+
+code="$(member_api "$member_cookie_jar" "$member_csrf" GET "/api/v1/telephony/sessions/$session_id/signaling-credential")"
+[ "$code" = "200" ] || { printf 'credential metadata failed HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+if grep -Eq 'sip_secret|ha1' "$SIM_BODY_FILE"; then
+  printf 'metadata disclosed credential material\n' >&2
+  exit 1
+fi
+
+code="$(member_api "$member_cookie_jar" "$member_csrf" POST "/api/v1/telephony/sessions/$session_id/end")"
+[ "$code" = "200" ] || { printf 'telephony session end failed HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+auth_rows="$(sim_psql "select count(*) from kamailio_signaling_auth_view where username = '${username}' and domain = '${realm}';" | tr -d '[:space:]')"
+[ "$auth_rows" = "0" ] || { printf 'revoked credential still visible in auth view\n' >&2; exit 1; }
+
+printf 'kamailio_signaling_api_proof=passed\n'
+printf 'credential_issue_http=201\n'
+printf 'metadata_secret_disclosure=false\n'
+printf 'session_end_auth_view_revocation=true\n'

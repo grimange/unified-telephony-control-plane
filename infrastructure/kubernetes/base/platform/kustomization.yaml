@@ -11,6 +11,11 @@ resources:
   - telephony-event-normalizer-deployment.yaml
   - telephony-reconciler-deployment.yaml
   - simulator-event-source-deployment.yaml
+  - asterisk-ari-events-deployment.yaml
+  - kamailio-registration-observer-deployment.yaml
+  - kamailio-configmap.yaml
+  - kamailio-deployment.yaml
+  - kamailio-service.yaml
   - web-deployment.yaml
   - web-service.yaml
   - gateway-deployment.yaml

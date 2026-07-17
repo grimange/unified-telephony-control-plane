@@ -55,10 +55,13 @@ if kube get ingress -A --ignore-not-found --no-headers 2>/dev/null | grep -q .; 
   exit 1
 fi
 
-kube -n utcp-runtime get pods,deployments,statefulsets,daemonsets,jobs,cronjobs --ignore-not-found --no-headers 2>/dev/null | grep -q . && {
-  printf 'utcp-runtime contains workload resources\n' >&2
+runtime_workloads="$(kube -n utcp-runtime get pods,deployments,statefulsets,daemonsets,jobs,cronjobs --ignore-not-found --no-headers 2>/dev/null || true)"
+unexpected_runtime_workloads="$(printf '%s\n' "$runtime_workloads" | awk 'NF > 0 && $1 !~ /^(pod|deployment\.apps)\/asterisk-ari(-|$)/ { print }')"
+if [ -n "$unexpected_runtime_workloads" ]; then
+  printf 'utcp-runtime contains unexpected workload resources\n' >&2
+  printf '%s\n' "$unexpected_runtime_workloads" >&2
   exit 1
-}
+fi
 
 printf 'K1 port-forward proof passed\n'
 printf 'healthz=%s\n' "$healthz"

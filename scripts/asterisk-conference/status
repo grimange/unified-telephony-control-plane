@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# shellcheck source=scripts/kubernetes/lib
+. "$ROOT/scripts/kubernetes/lib"
+
+ensure_kubeconfig
+
+pod="$(kube -n "$K8S_PLATFORM_NAMESPACE" get pod -l app.kubernetes.io/component=api -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}' | awk "{print \$1}")"
+if [ -z "$pod" ]; then
+  printf 'asterisk_conference_status=unavailable reason=api_pod_unavailable\n' >&2
+  exit 1
+fi
+
+kube -n "$K8S_PLATFORM_NAMESPACE" exec "$pod" -- env HOME=/tmp XDG_CONFIG_HOME=/tmp php artisan tinker --execute='
+use Illuminate\Support\Facades\DB;
+$conferences = DB::table("conferences")->selectRaw("desired_state, observed_state, count(*) as count")->groupBy("desired_state", "observed_state")->orderBy("desired_state")->orderBy("observed_state")->get();
+$participants = DB::table("conference_participants")->selectRaw("desired_state, observed_state, count(*) as count")->groupBy("desired_state", "observed_state")->orderBy("desired_state")->orderBy("observed_state")->get();
+$operations = DB::table("runtime_operations")->whereIn("operation_type", ["conference.ensure", "conference.close", "conference.participant.ensure", "conference.participant.remove"])->selectRaw("operation_type, status, count(*) as count")->groupBy("operation_type", "status")->orderBy("operation_type")->orderBy("status")->get();
+echo "asterisk_conference_status\n";
+echo "conference_state_counts=".json_encode($conferences).PHP_EOL;
+echo "participant_state_counts=".json_encode($participants).PHP_EOL;
+echo "operation_state_counts=".json_encode($operations).PHP_EOL;
+'

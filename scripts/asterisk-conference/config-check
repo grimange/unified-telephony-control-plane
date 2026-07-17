@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+fail() {
+  printf 'asterisk conference config check failed: %s\n' "$1" >&2
+  exit 1
+}
+
+grep -q '^UTCP_PHASE=T1$' versions.env || fail "T2-A corridor must keep UTCP_PHASE=T1"
+grep -q "'conference.lifecycle'" apps/api/config/runtime_registry.php || fail "missing conference.lifecycle runtime capability"
+grep -q "'conference.participation'" apps/api/config/runtime_registry.php || fail "missing conference.participation runtime capability"
+grep -q "conference_ensure.*conference.ensure" apps/api/config/telephony_domain.php || fail "missing conference.ensure operation mapping"
+grep -q "participant_ensure.*conference.participant.ensure" apps/api/config/telephony_domain.php || fail "missing participant ensure operation mapping"
+grep -q "bridge_created" apps/api/config/asterisk_ari.php || fail "missing Asterisk bridge event catalog"
+grep -q "channel_entered_bridge" apps/api/config/asterisk_ari.php || fail "missing Asterisk channel membership event catalog"
+grep -q "chan_local.so" infrastructure/docker/asterisk/config/modules.conf || fail "missing Local channel proof module"
+grep -q "\[utcp-conference-proof\]" infrastructure/docker/asterisk/config/extensions.conf || fail "missing internal proof dialplan context"
+grep -q "Local/participant@utcp-conference-proof/n" apps/api/config/asterisk_ari.php || fail "proof Local channel must disable optimization for stable runtime recovery evidence"
+grep -q "proof_originate_timeout_seconds" apps/api/config/asterisk_ari.php || fail "missing bounded proof originate timeout"
+grep -q "proof_originate_timeout_seconds" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "Asterisk proof channel originate timeout is not configuration-bound"
+grep -q "participant_attach_attempts" apps/api/config/asterisk_ari.php || fail "missing bounded participant attach retry configuration"
+grep -q "participantAttachedToBridge" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "participant ensure must verify bridge membership before success"
+grep -q "scripts/kubernetes/lib" scripts/asterisk-conference/status || fail "conference status does not use Kubernetes status helper"
+grep -q "kube -n.*exec" scripts/asterisk-conference/status || fail "conference status does not execute in the deployed application context"
+grep -q "scripts/kubernetes/lib" scripts/asterisk-conference/recovery-status || fail "conference recovery status does not use Kubernetes status helper"
+grep -q "kube -n.*exec" scripts/asterisk-conference/recovery-status || fail "conference recovery status does not execute in the deployed application context"
+
+find apps/api/app/RuntimeAdapters/Asterisk apps/api/app/TelephonyDomain -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
+php -l apps/api/config/asterisk_ari.php >/dev/null
+php -l apps/api/config/runtime_registry.php >/dev/null
+php -l apps/api/config/telephony_domain.php >/dev/null
+
+if rg -n "class .*Asterisk.*Controller|Route::.*(ari|asterisk|bridge|channel)" apps/api/app/Http apps/api/routes; then
+  fail "direct Asterisk/ARI controller or route exists"
+fi
+
+if rg -n "ConfBridge|PJSIP|pjsip|chan_pjsip|rtpengine|WebRTC|trunk|PSTN|microphone|media" apps/api/app/RuntimeAdapters/Asterisk infrastructure/docker/asterisk infrastructure/kubernetes/base/runtime; then
+  fail "forbidden media, SIP endpoint, trunk, or future-scope vocabulary exists"
+fi
+
+if rg -n "'observed_state'\s*=>\s*'(ready|joined|left|closed)'" apps/api/app/Http/Controllers apps/api/app/TelephonyDomain | rg -v "ProjectionService|Reconciliation"; then
+  fail "controller or domain service appears to write observed conference state directly"
+fi
+
+if rg -n "reconcile now|retry now|mark joined|mark registered|force remove channel|remove contact" apps/web apps/api/app/Http; then
+  fail "manual runtime-control vocabulary is present"
+fi
+
+printf 'asterisk_conference_config_check=ok\n'

@@ -28,12 +28,19 @@ x-api-environment: &api-environment
   CACHE_STORE: redis
   QUEUE_CONNECTION: redis
   SESSION_DRIVER: redis
-  SESSION_SECURE_COOKIE: "true"
+  SESSION_SECURE_COOKIE: ${UTCP_SESSION_SECURE_COOKIE:-true}
   SESSION_HTTP_ONLY: "true"
   SESSION_SAME_SITE: lax
   BROADCAST_CONNECTION: log
   FILESYSTEM_DISK: local
   MAIL_MAILER: log
+  TELEPHONY_SIGNALING_WSS_URI: ${TELEPHONY_SIGNALING_WSS_URI:-wss://sip.utcp.local.test/ws}
+  KAMAILIO_AUTH_DB_USER: ${KAMAILIO_AUTH_DB_USER:-utcp_kamailio_auth_reader}
+  KAMAILIO_AUTH_DB_PASSWORD: ${KAMAILIO_AUTH_DB_PASSWORD:-}
+  KAMAILIO_USRLOC_DB_USER: ${KAMAILIO_USRLOC_DB_USER:-utcp_kamailio_usrloc_writer}
+  KAMAILIO_USRLOC_DB_PASSWORD: ${KAMAILIO_USRLOC_DB_PASSWORD:-}
+  KAMAILIO_OBSERVER_DB_USER: ${KAMAILIO_OBSERVER_DB_USER:-utcp_kamailio_observer_reader}
+  KAMAILIO_OBSERVER_DB_PASSWORD: ${KAMAILIO_OBSERVER_DB_PASSWORD:-}
 
 services:
   postgres:
@@ -207,6 +214,71 @@ services:
         condition: service_completed_successfully
     networks:
       - data
+
+  kamailio-registration-observer:
+    profiles: ["signaling"]
+    image: ${UTCP_API_IMAGE:-utcp-api:dev}
+    command: ["kamailio-registration-observer"]
+    environment:
+      <<: *api-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - data
+
+  kamailio:
+    profiles: ["signaling"]
+    image: ${KAMAILIO_IMAGE:-ghcr.io/kamailio/kamailio:5.8.6-bookworm}
+    labels:
+      utcp.compose.signaling.policy: "auth_db usrloc registrar calculate_ha1 max_expires"
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - |
+        sed \
+          -e "s#__KAMAILIO_AUTH_DB_USER__#$${KAMAILIO_AUTH_DB_USER}#g" \
+          -e "s#__KAMAILIO_AUTH_DB_PASSWORD__#$${KAMAILIO_AUTH_DB_PASSWORD}#g" \
+          -e "s#__KAMAILIO_USRLOC_DB_USER__#$${KAMAILIO_USRLOC_DB_USER}#g" \
+          -e "s#__KAMAILIO_USRLOC_DB_PASSWORD__#$${KAMAILIO_USRLOC_DB_PASSWORD}#g" \
+          -e "s#postgres.utcp-data.svc.cluster.local#postgres#g" \
+          /etc/kamailio/kamailio.cfg > /tmp/kamailio.cfg
+        exec kamailio -DD -E -f /tmp/kamailio.cfg
+    environment:
+      KAMAILIO_AUTH_DB_USER: ${KAMAILIO_AUTH_DB_USER:-utcp_kamailio_auth_reader}
+      KAMAILIO_AUTH_DB_PASSWORD: ${KAMAILIO_AUTH_DB_PASSWORD:-}
+      KAMAILIO_USRLOC_DB_USER: ${KAMAILIO_USRLOC_DB_USER:-utcp_kamailio_usrloc_writer}
+      KAMAILIO_USRLOC_DB_PASSWORD: ${KAMAILIO_USRLOC_DB_PASSWORD:-}
+    volumes:
+      - ../kubernetes/base/platform/kamailio-configmap.yaml:/etc/kamailio/kamailio-configmap.yaml:ro
+      - ${UTCP_COMPOSE_RUNTIME_DIR:-.runtime/compose/default}/kamailio.cfg:/etc/kamailio/kamailio.cfg:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - platform
+      - data
+
+  sip-gateway:
+    profiles: ["signaling"]
+    image: ${GATEWAY_RUNTIME_IMAGE:-nginxinc/nginx-unprivileged:1.29.4-alpine}
+    ports:
+      - "127.0.0.1:${UTCP_WSS_PORT:-19088}:8443"
+    volumes:
+      - ${UTCP_COMPOSE_RUNTIME_DIR:-.runtime/compose/default}/sip-gateway.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${UTCP_COMPOSE_RUNTIME_DIR:-.runtime/compose/default}/tls:/etc/nginx/tls:ro
+    depends_on:
+      - kamailio
+    networks:
+      - edge
+      - platform
 
   web:
     image: ${UTCP_WEB_IMAGE:-utcp-web:dev}

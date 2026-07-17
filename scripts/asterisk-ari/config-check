@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+fail() {
+  printf 'asterisk ari config check failed: %s\n' "$1" >&2
+  exit 1
+}
+
+check_kustomize_forbidden() {
+  local path="$1"
+  local pattern="$2"
+  local message="$3"
+  local rendered
+  rendered="$(mktemp)"
+  if ! kubectl kustomize "$path" >"$rendered"; then
+    rm -f "$rendered"
+    fail "could not render Kubernetes manifests: $path"
+  fi
+  if rg -n "$pattern" "$rendered"; then
+    rm -f "$rendered"
+    fail "$message"
+  fi
+  rm -f "$rendered"
+}
+
+for file in \
+  apps/api/config/asterisk_ari.php \
+  apps/api/database/migrations/2026_07_15_150000_create_runtime_listener_leases.php \
+  apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php \
+  apps/api/app/RuntimeAdapters/Asterisk/AsteriskRuntimeAdapter.php \
+  apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriEventListener.php \
+  apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriEventNormalizer.php \
+  apps/api/app/RuntimeAdapters/Asterisk/AsteriskRuntimeNodeReconciler.php \
+  apps/api/app/RuntimeEngine/Commands/GenericRuntimeNodeInspectHandler.php \
+  apps/api/app/RuntimeEngine/Listeners/RuntimeListenerLeaseRepository.php \
+  infrastructure/docker/asterisk/Dockerfile \
+  infrastructure/kubernetes/base/platform/asterisk-ari-events-deployment.yaml \
+  infrastructure/kubernetes/base/runtime/asterisk-ari-deployment.yaml \
+  infrastructure/kubernetes/base/runtime/asterisk-ari-service.yaml \
+  infrastructure/kubernetes/security/platform/allow-asterisk-ari-events.yaml \
+  infrastructure/kubernetes/security/platform/allow-asterisk-ari-egress.yaml \
+  infrastructure/kubernetes/security/runtime/allow-asterisk-ari-ingress.yaml \
+  infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml
+do
+  [ -s "$file" ] || fail "missing required T0 file: $file"
+done
+
+find apps/api/app/RuntimeAdapters/Asterisk -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
+php -l apps/api/app/RuntimeEngine/Commands/GenericRuntimeNodeInspectHandler.php >/dev/null
+php -l apps/api/app/RuntimeEngine/Listeners/RuntimeListenerLeaseRepository.php >/dev/null
+php -l apps/api/config/asterisk_ari.php >/dev/null
+php -l apps/api/routes/console.php >/dev/null
+
+grep -Eq '^UTCP_PHASE=C5$|^UTCP_PHASE=T[01]$' versions.env || fail "unexpected phase marker for T0 corridor"
+grep -q "adapter_key.*asterisk-ari" apps/api/config/runtime_registry.php || fail "missing asterisk-ari registry metadata"
+grep -q "runtime_family.*asterisk" apps/api/config/runtime_registry.php || fail "missing asterisk runtime family metadata"
+grep -q "'event.stream'" apps/api/config/runtime_registry.php || fail "missing event.stream runtime capability"
+grep -q "asterisk-ari-events" apps/api/config/runtime_engine.php infrastructure/docker/api/entrypoint infrastructure/kubernetes/base/platform/asterisk-ari-events-deployment.yaml || fail "missing asterisk listener process role"
+
+if rg -n "class AriController|class AsteriskController|Route::.*(ari|asterisk)" apps/api/app/Http apps/api/routes; then
+  fail "public ARI controller or route is present"
+fi
+
+architecture_scan_paths=()
+for path in apps/api/app/RuntimeEngine/Workers apps/api/app/TelephonyDomain apps/api/app/Http/Controllers/TelephonyDomain; do
+  [ -e "$path" ] && architecture_scan_paths+=("$path")
+done
+if [ "${#architecture_scan_paths[@]}" -gt 0 ] && rg -n "Asterisk|Ari|ARI" "${architecture_scan_paths[@]}"; then
+  fail "generic C3 worker or C5 domain contains Asterisk-specific branch"
+fi
+
+if rg -n "SimulatorRuntimeAdapter|simulator-deterministic" apps/api/app/RuntimeAdapters/Asterisk apps/api/app/RuntimeEngine/Commands/GenericRuntimeNodeInspectHandler.php; then
+  fail "Asterisk path contains simulator fallback"
+fi
+
+if rg -n "ConfBridge|PJSIP|pjsip|chan_pjsip|rtp|rtpengine|SIP|WebRTC|trunk|PSTN" apps/api/app/RuntimeAdapters/Asterisk infrastructure/kubernetes/base/runtime infrastructure/docker/asterisk; then
+  fail "Asterisk ARI corridor contains forbidden SIP/media/trunk execution surface"
+fi
+
+if rg -n "api_key=|username=.*password|password=.*@" apps/api/app/RuntimeAdapters/Asterisk infrastructure/kubernetes; then
+  fail "credential appears in URL-oriented configuration"
+fi
+
+if rg -n "'(tenant|tenant_id|runtime_node_id|operation_id|epoch_id|request_id|hostname|username|application_name)'[[:space:]]*=>" apps/api/app/Http/Controllers/Platform/MetricsController.php; then
+  fail "T0 metrics include forbidden high-cardinality/sensitive labels"
+fi
+
+if rg -n "by[[:space:]]*\\([^)]*(tenant|tenant_id|runtime_node_id|operation_id|epoch_id|request_id|hostname|username|application_name)" infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml; then
+  fail "T0 alerts aggregate by forbidden high-cardinality/sensitive labels"
+fi
+
+for metric in \
+  asterisk_ari_http_requests_total \
+  asterisk_ari_websocket_connections \
+  asterisk_ari_events_received_total \
+  asterisk_ari_reconnects_total \
+  asterisk_ari_authentication_failures_total \
+  asterisk_ari_listener_claims_total \
+  asterisk_ari_listener_nodes
+do
+  rg -n -- "$metric" apps/api/app/Http/Controllers/Platform/MetricsController.php infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml >/dev/null ||
+    fail "missing T0 metric or alert reference: $metric"
+done
+
+for alert in \
+  UTCPAsteriskAriEventsUnavailable \
+  UTCPAsteriskAriNodeWithoutListenerEvidence \
+  UTCPAsteriskAriAuthenticationFailures \
+  UTCPAsteriskAriReconnectLoop \
+  UTCPAsteriskAriReceiptBacklog \
+  UTCPAsteriskRuntimeObservationStale
+do
+  rg -n -- "$alert" infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml >/dev/null ||
+    fail "missing T0 alert: $alert"
+done
+
+check_kustomize_forbidden infrastructure/kubernetes/base/platform "NodePort|LoadBalancer|hostPort|hostNetwork|hostPID|5060|5061|10000|20000" "T0 platform manifests expose forbidden network surface"
+check_kustomize_forbidden infrastructure/kubernetes/base/runtime "NodePort|LoadBalancer|hostPort|hostNetwork|hostPID|5060|5061|10000|20000" "T0 runtime manifests expose forbidden network surface"
+check_kustomize_forbidden infrastructure/kubernetes/security "0\\.0\\.0\\.0/0|::/0|5060|5061|10000|20000" "T0 NetworkPolicy contains broad egress or SIP/RTP ports"
+
+printf 'asterisk_ari_config_check=ok\n'

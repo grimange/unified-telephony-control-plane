@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/gateway/lib
+. "$ROOT/scripts/gateway/lib"
+
+KUBECONFIG_FILE="${KUBECONFIG:-$ROOT/.runtime/kubeconfig/utcp-local.yaml}"
+KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-utcp-local}"
+CREDS_FILE="$ROOT/.runtime/identity/bootstrap.json"
+
+SIM_COOKIE_JAR="$(mktemp)"
+SIM_BODY_FILE="$(mktemp)"
+sim_cleanup() { rm -f "$SIM_COOKIE_JAR" "$SIM_BODY_FILE"; }
+trap sim_cleanup EXIT
+
+SIM_BASE="https://${UTCP_APP_HOSTNAME}"
+sim_curl=(curl --silent --show-error --max-time 20 --resolve "${UTCP_APP_HOSTNAME}:${UTCP_EDGE_HTTPS_HOST_PORT}:${UTCP_EDGE_HTTPS_HOST}")
+if [ -s "$TLS_CA_CERT" ] && openssl verify -CAfile "$TLS_CA_CERT" "$TLS_CERT" >/dev/null 2>&1; then
+  sim_curl+=(--cacert "$TLS_CA_CERT")
+fi
+
+sim_json_value() {
+  php -r '$d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); echo $d[$argv[2]] ?? "";' "$CREDS_FILE" "$1"
+}
+
+sim_json_get() {
+  php -r '$d=json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR); foreach (explode(".", $argv[1]) as $p) { $d = is_array($d) ? ($d[$p] ?? null) : null; } if (is_array($d)) { echo json_encode($d, JSON_UNESCAPED_SLASHES); } else { echo $d; }' "$1"
+}
+
+sim_csrf() {
+  local csrf_json
+  csrf_json="$("${sim_curl[@]}" --cookie "$SIM_COOKIE_JAR" --cookie-jar "$SIM_COOKIE_JAR" "$SIM_BASE/api/v1/auth/csrf")"
+  printf '%s' "$csrf_json" | sim_json_get csrf_token
+}
+
+# Logs in as the local bootstrap platform administrator and selects the bootstrap tenant.
+# Populates SIM_CSRF with a valid post-login token.
+sim_login() {
+  [ -s "$CREDS_FILE" ] || { printf 'missing identity bootstrap credentials file: %s\n' "$CREDS_FILE" >&2; exit 1; }
+  local email password tenant_slug csrf login_code session_json tenant_id tenant_code
+  email="$(sim_json_value email)"
+  password="$(sim_json_value password)"
+  tenant_slug="$(sim_json_value tenant_slug)"
+
+  csrf="$(sim_csrf)"
+  [ -n "$csrf" ] || { printf 'missing CSRF token\n' >&2; exit 1; }
+  local login_payload
+  login_payload="$(php -r 'echo json_encode(["email"=>$argv[1],"password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$email" "$password")"
+  login_code="$("${sim_curl[@]}" --cookie "$SIM_COOKIE_JAR" --cookie-jar "$SIM_COOKIE_JAR" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$login_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/login")"
+  [ "$login_code" = "200" ] || { printf 'login failed with HTTP %s\n' "$login_code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+  csrf="$(sim_csrf)"
+  session_json="$("${sim_curl[@]}" --cookie "$SIM_COOKIE_JAR" "$SIM_BASE/api/v1/auth/session")"
+  tenant_id="$(printf '%s' "$session_json" | php -r '$d=json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR); foreach ($d["memberships"] as $m) { if ($m["slug"] === $argv[1]) { echo $m["tenant_id"]; exit; }}' "$tenant_slug")"
+  [ -n "$tenant_id" ] || { printf 'bootstrap tenant not available\n' >&2; exit 1; }
+  local tenant_payload
+  tenant_payload="$(php -r 'echo json_encode(["tenant_id"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$tenant_id")"
+  tenant_code="$("${sim_curl[@]}" --cookie "$SIM_COOKIE_JAR" --cookie-jar "$SIM_COOKIE_JAR" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$tenant_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/tenant-context")"
+  [ "$tenant_code" = "200" ] || { printf 'tenant selection failed with HTTP %s\n' "$tenant_code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+  csrf="$(sim_csrf)"
+  SIM_CSRF="$csrf"
+  SIM_TENANT_ID="$tenant_id"
+}
+
+# sim_api METHOD PATH [JSON_PAYLOAD] [EXTRA_CURL_ARGS...]
+# Writes the response body to SIM_BODY_FILE and echoes the HTTP status code.
+sim_api() {
+  local method="$1" path="$2" payload="${3:-}"
+  shift 3 2>/dev/null || shift $#
+  if [ -n "$payload" ]; then
+    "${sim_curl[@]}" --cookie "$SIM_COOKIE_JAR" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $SIM_CSRF" --request "$method" --data "$payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$@" "$SIM_BASE$path"
+  else
+    "${sim_curl[@]}" --cookie "$SIM_COOKIE_JAR" --header "X-CSRF-TOKEN: $SIM_CSRF" --request "$method" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$@" "$SIM_BASE$path"
+  fi
+}
+
+# Creates the runtime node identified by slug if absent, otherwise reuses the existing id.
+# Echoes the runtime_node id.
+sim_create_or_reuse_node() {
+  local slug="$1" name="$2"
+  local list_code list_id
+  list_code="$(sim_api GET /api/v1/admin/runtime-nodes)"
+  [ "$list_code" = "200" ] || { printf 'runtime node listing failed with HTTP %s\n' "$list_code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+  list_id="$(php -r '
+    $d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR);
+    foreach ($d["runtime_nodes"] as $node) { if ($node["slug"] === $argv[2]) { echo $node["id"]; exit; } }
+  ' "$SIM_BODY_FILE" "$slug")"
+  if [ -n "$list_id" ]; then
+    printf '%s' "$list_id"
+    return 0
+  fi
+
+  local payload code node_id
+  payload="$(php -r 'echo json_encode([
+    "name"=>$argv[1],
+    "slug"=>$argv[2],
+    "runtime_family"=>"simulator",
+    "adapter_key"=>"simulator-deterministic",
+    "placement_region"=>"local",
+    "placement_zone"=>"dev",
+    "placement_priority"=>100,
+    "capacity_weight"=>1,
+    "labels"=>["purpose"=>"c4-live-proof"]
+  ], JSON_UNESCAPED_SLASHES);' "$name" "$slug")"
+  code="$(sim_api POST /api/v1/admin/runtime-nodes "$payload" --header "Idempotency-Key: c4-create-${slug}")"
+  [ "$code" = "201" ] || { printf 'runtime node create failed with HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+  node_id="$(cat "$SIM_BODY_FILE" | sim_json_get runtime_node.id)"
+  printf '%s' "$node_id"
+}
+
+sim_set_capabilities() {
+  local node_id="$1" code
+  code="$(sim_api PUT "/api/v1/admin/runtime-nodes/$node_id/capabilities" '{"capabilities":["event.stream","runtime.configuration","runtime.observation","conference.lifecycle","conference.participation"]}')"
+  [ "$code" = "200" ] || { printf 'capability update failed with HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+}
+
+# sim_configure NODE_ID SCENARIO_KEY SEED [PARAMETERS_JSON]
+sim_configure() {
+  local node_id="$1" scenario="$2" seed="$3" parameters="${4:-}"
+  if [ -z "$parameters" ]; then
+    parameters='{}'
+  fi
+  local payload code
+  payload="$(php -r 'echo json_encode(["scenario_key"=>$argv[1],"scenario_version"=>1,"seed"=>$argv[2],"parameters"=>json_decode($argv[3], true)], JSON_UNESCAPED_SLASHES);' "$scenario" "$seed" "$parameters")"
+  code="$(sim_api PUT "/api/v1/admin/runtime-nodes/$node_id/adapter-configuration" "$payload")"
+  [ "$code" = "200" ] || { printf 'adapter configuration failed with HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+}
+
+sim_activate() {
+  local node_id="$1" code
+  code="$(sim_api POST "/api/v1/admin/runtime-nodes/$node_id/desired-state" '{"desired_state":"active"}')"
+  [ "$code" = "200" ] || { printf 'desired-state activation failed with HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+}
+
+# Executes a read-only SQL statement against the live PostgreSQL StatefulSet and prints
+# the tuples-only, unaligned result. Evidence gathering only; never used to mutate state.
+sim_psql() {
+  local sql="$1"
+  kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" -n utcp-data exec statefulset/postgres -- \
+    sh -c 'psql -X -q -t -A -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "'"${sql//\"/\\\"}"'"'
+}
+
+# sim_wait_until DESCRIPTION MAX_SECONDS INTERVAL_SECONDS SQL_CHECK
+# SQL_CHECK must be a SQL statement returning a single row/column that is either empty
+# or non-empty; the wait succeeds once it returns a non-empty, non-zero value.
+sim_wait_until() {
+  local description="$1" max_seconds="$2" interval="$3" sql="$4"
+  local waited=0 value
+  while :; do
+    value="$(sim_psql "$sql" || true)"
+    value="$(printf '%s' "$value" | tr -d '[:space:]')"
+    if [ -n "$value" ] && [ "$value" != "0" ] && [ "$value" != "f" ]; then
+      printf 'wait_ok description=%s waited_seconds=%s value=%s\n' "$description" "$waited" "$value"
+      return 0
+    fi
+    if [ "$waited" -ge "$max_seconds" ]; then
+      printf 'wait_timeout description=%s waited_seconds=%s last_value=%s\n' "$description" "$waited" "$value" >&2
+      return 1
+    fi
+    sleep "$interval"
+    waited=$((waited + interval))
+  done
+}

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/kubernetes/lib
+. "$ROOT/scripts/kubernetes/lib"
+
+ensure_kubeconfig
+
+if kube -n "$K8S_PLATFORM_NAMESPACE" get deployment/api >/dev/null 2>&1; then
+  pod="$(kube -n "$K8S_PLATFORM_NAMESPACE" get pod -l app.kubernetes.io/component=api -o jsonpath='{.items[0].metadata.name}')"
+  kube -n "$K8S_PLATFORM_NAMESPACE" exec "$pod" -- php artisan asterisk-ari:status
+  exit 0
+fi
+
+cd "$ROOT/apps/api"
+php artisan asterisk-ari:status

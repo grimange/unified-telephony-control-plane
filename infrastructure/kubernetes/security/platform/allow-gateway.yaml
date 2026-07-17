@@ -51,3 +51,10 @@ spec:
       ports:
         - protocol: TCP
           port: 9000
+    - to:
+        - podSelector:
+            matchLabels:
+              utcp.io/network-role: kamailio-signaling
+      ports:
+        - protocol: TCP
+          port: 8080

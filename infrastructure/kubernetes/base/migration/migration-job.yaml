@@ -35,6 +35,8 @@ spec:
                 name: utcp-application-config
             - secretRef:
                 name: utcp-local-data-credentials
+            - secretRef:
+                name: utcp-local-kamailio-db-credentials
           resources:
             requests:
               cpu: 100m

@@ -146,25 +146,6 @@ final class IdentityAdminService
         });
     }
 
-    /**
-     * @return array{temporary_password: string}
-     */
-    public function resetPassword(Request $request, string $userId): array
-    {
-        return DB::transaction(function () use ($request, $userId): array {
-            $temporaryPassword = $this->temporaryPassword();
-            DB::table('users')->where('id', $userId)->update([
-                'password' => Hash::make($temporaryPassword),
-                'password_change_required' => true,
-                'session_version' => DB::raw('session_version + 1'),
-                'updated_at' => now(),
-            ]);
-            $this->audit->append(IdentityContext::fromRequest($request), 'identity.user.password_reset', 'user', $userId, []);
-
-            return ['temporary_password' => $temporaryPassword];
-        });
-    }
-
     public function assignPlatformRole(Request $request, string $userId, string $roleKey): void
     {
         DB::transaction(function () use ($request, $userId, $roleKey): void {

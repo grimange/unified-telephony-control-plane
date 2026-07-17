@@ -16,6 +16,13 @@ final class SimulatorRuntimeNodeReconciler implements Reconciler
         return 'runtime_node';
     }
 
+    public function supports(object $target): bool
+    {
+        $node = DB::table('runtime_nodes')->where('id', $target->target_id)->first();
+
+        return $node !== null && $node->adapter_key === $this->catalog->adapterKey();
+    }
+
     public function evaluate(object $target): ReconciliationResult
     {
         $node = DB::table('runtime_nodes')->where('id', $target->target_id)->first();

@@ -20,7 +20,7 @@ chmod +x "$bin_dir/kubectl"
 k3d_asset="k3d-linux-amd64"
 curl -fsSL "https://github.com/k3d-io/k3d/releases/download/${k3d_version}/${k3d_asset}" -o "$bin_dir/k3d"
 curl -fsSL "https://github.com/k3d-io/k3d/releases/download/${k3d_version}/checksums.txt" -o "$bin_dir/k3d-checksums.txt"
-grep " ${k3d_asset}$" "$bin_dir/k3d-checksums.txt" | sed "s# ${k3d_asset}\$#  $bin_dir/k3d#" | sha256sum -c -
+grep -E "[[:space:]](\./|_dist/)?${k3d_asset}\$" "$bin_dir/k3d-checksums.txt" | sed -E "s#[[:space:]]+(\./|_dist/)?${k3d_asset}\$#  $bin_dir/k3d#" | sha256sum -c -
 chmod +x "$bin_dir/k3d"
 
 if [ -n "$helm_version" ]; then

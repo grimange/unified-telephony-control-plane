@@ -228,5 +228,4 @@ final class SimulatorRuntimeProofTest extends TestCase
             app(EventNormalizerWorker::class)->workOnce('c4-proof-normalizer', 20);
         }
     }
-
 }

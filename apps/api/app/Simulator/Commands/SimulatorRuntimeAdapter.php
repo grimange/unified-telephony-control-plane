@@ -4,12 +4,14 @@ namespace App\Simulator\Commands;
 
 use App\ControlPlane\RuntimeOperations\FailureClass;
 use App\RuntimeEngine\Commands\RuntimeAdapter;
+use App\RuntimeEngine\Commands\RuntimeConferenceInspectionAdapter;
+use App\RuntimeEngine\Commands\RuntimeConferenceInspectionResult;
 use App\RuntimeEngine\Events\RuntimeEventReceiptRepository;
 use App\Simulator\SimulatorCatalog;
 use App\Simulator\SimulatorScheduledEventRepository;
 use Illuminate\Support\Facades\DB;
 
-final class SimulatorRuntimeAdapter implements RuntimeAdapter
+final class SimulatorRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceInspectionAdapter
 {
     public function __construct(
         private readonly SimulatorCatalog $catalog,
@@ -61,6 +63,25 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter
             $payload = is_array($operation['payload'] ?? null) ? $operation['payload'] : [];
             $targetGeneration = (int) ($payload['configuration_generation'] ?? $node->configuration_version);
 
+            if ($this->isConferenceOperation($operationType)) {
+                $this->executeConferenceOperation($node, $profile, $state, $operationType, $payload, $targetGeneration);
+                DB::table('simulator_states')->where('runtime_node_id', $node->id)->update([
+                    'current_phase' => 'conference_events_scheduled',
+                    'updated_at' => now(),
+                ]);
+
+                return [
+                    'status' => 'completed',
+                    'event_type' => 'runtime_operation.simulator_completed',
+                    'event_payload' => [
+                        'adapter_key' => $this->adapterKey(),
+                        'operation_type' => $operationType,
+                        'scenario_key' => $scenario,
+                        'configuration_generation' => $targetGeneration,
+                    ],
+                ];
+            }
+
             match ($scenario) {
                 'duplicate-observation' => $this->scheduleDuplicateReady($node, $profile, $targetGeneration),
                 'disconnect-reconnect' => $this->scheduleDisconnectReconnect($node, $profile, $targetGeneration),
@@ -84,6 +105,156 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter
                 ],
             ];
         });
+    }
+
+    public function inspectConferenceRuntime(string $tenantId, string $runtimeNodeId, string $conferenceId, ?string $participantId = null): RuntimeConferenceInspectionResult
+    {
+        $state = DB::table('simulator_states')
+            ->join('runtime_nodes', 'runtime_nodes.id', '=', 'simulator_states.runtime_node_id')
+            ->where('simulator_states.runtime_node_id', $runtimeNodeId)
+            ->where('runtime_nodes.tenant_id', $tenantId)
+            ->select('simulator_states.state_payload')
+            ->first();
+        if ($state === null) {
+            return RuntimeConferenceInspectionResult::failed('invalid_request', 'simulator_state_missing');
+        }
+
+        $payload = $this->statePayload($state);
+        $conferenceState = $payload['conferences'][$conferenceId]['state'] ?? null;
+        $conferencePresent = $conferenceState === 'ready';
+        if ($participantId === null) {
+            return RuntimeConferenceInspectionResult::observed($conferencePresent);
+        }
+
+        $participant = $payload['participants'][$participantId] ?? null;
+        $participantPresent = is_array($participant) && ($participant['state'] ?? null) === 'joined';
+        $participantAttached = $participantPresent && ($participant['conference_id'] ?? null) === $conferenceId && $conferencePresent;
+
+        return RuntimeConferenceInspectionResult::observed($conferencePresent, $participantPresent, $participantAttached);
+    }
+
+    public function recordConferenceRuntimeInspectionEvidence(string $tenantId, string $runtimeNodeId, string $conferenceId, ?string $participantId = null): bool
+    {
+        return DB::transaction(function () use ($tenantId, $runtimeNodeId, $conferenceId, $participantId): bool {
+            $node = DB::table('runtime_nodes')->where('id', $runtimeNodeId)->where('tenant_id', $tenantId)->lockForUpdate()->first();
+            if ($node === null || $node->adapter_key !== $this->adapterKey()) {
+                return false;
+            }
+
+            $profile = DB::table('simulator_profiles')->where('runtime_node_id', $node->id)->lockForUpdate()->first();
+            $state = DB::table('simulator_states')->where('runtime_node_id', $node->id)->lockForUpdate()->first();
+            if ($profile === null || $state === null) {
+                return false;
+            }
+
+            $payload = $this->statePayload($state);
+            $conferenceState = $payload['conferences'][$conferenceId]['state'] ?? null;
+            $epoch = $this->openEpoch($node);
+            $conferencePayload = [
+                'conference_id' => $conferenceId,
+                'runtime_node_id' => $node->id,
+                'configuration_generation' => (int) ($payload['conferences'][$conferenceId]['configuration_generation'] ?? $node->configuration_version),
+            ];
+
+            if ($participantId === null) {
+                if ($conferenceState === 'ready') {
+                    $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('conference_ready'), 1, $this->conferencePayload($node, $profile, $conferencePayload, 'ready', (int) $conferencePayload['configuration_generation']));
+
+                    return true;
+                }
+                if ($conferenceState === 'closed') {
+                    $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('conference_closed'), 1, $this->conferencePayload($node, $profile, $conferencePayload, 'closed', (int) $conferencePayload['configuration_generation']));
+
+                    return true;
+                }
+
+                return false;
+            }
+
+            $participant = $payload['participants'][$participantId] ?? null;
+            if (! is_array($participant)) {
+                return false;
+            }
+
+            $participantPayload = [
+                'conference_id' => $conferenceId,
+                'participant_id' => $participantId,
+                'telephony_session_id' => (string) ($participant['telephony_session_id'] ?? ''),
+                'runtime_node_id' => $node->id,
+            ];
+            $generation = (int) ($participant['configuration_generation'] ?? $node->configuration_version);
+            if (($participant['state'] ?? null) === 'joined') {
+                $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('participant_joined'), 1, $this->participantPayload($node, $profile, $participantPayload, 'joined', $generation));
+
+                return true;
+            }
+            if (($participant['state'] ?? null) === 'left') {
+                $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('participant_left'), 1, $this->participantPayload($node, $profile, $participantPayload, 'left', $generation));
+
+                return true;
+            }
+
+            return false;
+        });
+    }
+
+    private function isConferenceOperation(string $operationType): bool
+    {
+        return in_array($operationType, [
+            (string) config('telephony_domain.operation_types.conference_ensure'),
+            (string) config('telephony_domain.operation_types.conference_close'),
+            (string) config('telephony_domain.operation_types.participant_ensure'),
+            (string) config('telephony_domain.operation_types.participant_remove'),
+        ], true);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function executeConferenceOperation(object $node, object $profile, object $state, string $operationType, array $payload, int $configurationGeneration): void
+    {
+        $statePayload = $this->statePayload($state);
+        $statePayload['conferences'] ??= [];
+        $statePayload['participants'] ??= [];
+
+        $conferenceId = (string) ($payload['conference_id'] ?? '');
+        $participantId = isset($payload['participant_id']) ? (string) $payload['participant_id'] : null;
+
+        $epoch = $this->openEpoch($node);
+        if ($operationType === (string) config('telephony_domain.operation_types.conference_close')) {
+            $statePayload['conferences'][$conferenceId] = [
+                'state' => 'closed',
+                'configuration_generation' => $configurationGeneration,
+            ];
+            $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('conference_closed'), 1, $this->conferencePayload($node, $profile, $payload, 'closed', $configurationGeneration));
+        } elseif ($operationType === (string) config('telephony_domain.operation_types.conference_ensure')) {
+            $statePayload['conferences'][$conferenceId] = [
+                'state' => 'ready',
+                'configuration_generation' => $configurationGeneration,
+            ];
+            $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('conference_ready'), 1, $this->conferencePayload($node, $profile, $payload, 'ready', $configurationGeneration));
+        } elseif ($operationType === (string) config('telephony_domain.operation_types.participant_remove')) {
+            $statePayload['participants'][$participantId] = [
+                'state' => 'left',
+                'conference_id' => $conferenceId,
+                'telephony_session_id' => (string) ($payload['telephony_session_id'] ?? ''),
+                'configuration_generation' => $configurationGeneration,
+            ];
+            $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('participant_left'), 1, $this->participantPayload($node, $profile, $payload, 'left', $configurationGeneration));
+        } else {
+            $statePayload['participants'][$participantId] = [
+                'state' => 'joined',
+                'conference_id' => $conferenceId,
+                'telephony_session_id' => (string) ($payload['telephony_session_id'] ?? ''),
+                'configuration_generation' => $configurationGeneration,
+            ];
+            $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('participant_joined'), 1, $this->participantPayload($node, $profile, $payload, 'joined', $configurationGeneration));
+        }
+
+        DB::table('simulator_states')->where('runtime_node_id', $node->id)->update([
+            'state_payload' => json_encode($statePayload, JSON_THROW_ON_ERROR),
+            'updated_at' => now(),
+        ]);
     }
 
     private function scheduleReady(object $node, object $profile, int $configurationGeneration): void
@@ -158,6 +329,32 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter
         ], $extra);
     }
 
+    /**
+     * @param  array<string, mixed>  $operationPayload
+     * @return array<string, mixed>
+     */
+    private function conferencePayload(object $node, object $profile, array $operationPayload, string $observedState, int $configurationGeneration): array
+    {
+        return $this->payload($node, $profile, $observedState, $configurationGeneration, [
+            'conference_id' => (string) ($operationPayload['conference_id'] ?? ''),
+            'runtime_node_id' => $node->id,
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $operationPayload
+     * @return array<string, mixed>
+     */
+    private function participantPayload(object $node, object $profile, array $operationPayload, string $observedState, int $configurationGeneration): array
+    {
+        return $this->payload($node, $profile, $observedState, $configurationGeneration, [
+            'conference_id' => (string) ($operationPayload['conference_id'] ?? ''),
+            'participant_id' => (string) ($operationPayload['participant_id'] ?? ''),
+            'telephony_session_id' => (string) ($operationPayload['telephony_session_id'] ?? ''),
+            'runtime_node_id' => $node->id,
+        ]);
+    }
+
     private function parameter(object $profile, string $key, int $default): int
     {
         $parameters = json_decode((string) $profile->parameters, true, 512, JSON_THROW_ON_ERROR);
@@ -176,5 +373,15 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter
             'failure_code' => $code,
             'failure_message' => $message,
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function statePayload(object $state): array
+    {
+        $payload = json_decode((string) $state->state_payload, true, 512, JSON_THROW_ON_ERROR);
+
+        return is_array($payload) ? $payload : [];
     }
 }

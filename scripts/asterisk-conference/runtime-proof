@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/simulator/lib
+. "$ROOT/scripts/simulator/lib"
+
+json_body_get() {
+  cat "$SIM_BODY_FILE" | sim_json_get "$1"
+}
+
+redact_body() {
+  php -r '
+    $s = file_get_contents($argv[1]);
+    $s = preg_replace("/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/", "<uuid>", $s);
+    $s = preg_replace("/\"temporary_password\"\\s*:\\s*\"[^\"]+\"/", "\"temporary_password\":\"<redacted>\"", $s);
+    $s = preg_replace("/\"password\"\\s*:\\s*\"[^\"]+\"/", "\"password\":\"<redacted>\"", $s);
+    echo $s;
+  ' "$SIM_BODY_FILE"
+}
+
+fail() {
+  printf 'asterisk_conference_runtime_proof=failed reason=%s\n' "$1" >&2
+  if [ -s "$SIM_BODY_FILE" ]; then
+    redact_body >&2 || true
+    printf '\n' >&2
+  fi
+  exit 1
+}
+
+hash_ref() {
+  printf '%s' "$1" | sha256sum | awk '{print substr($1,1,16)}'
+}
+
+assert_uuid() {
+  local name="$1" value="$2"
+  [[ "$value" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || fail "invalid_${name}"
+}
+
+sql_value() {
+  sim_psql "$1" | tr -d '[:space:]'
+}
+
+wait_sql() {
+  sim_wait_until "$1" "$2" "$3" "$4" || fail "${1}_timeout"
+}
+
+json_field() {
+  php -r '
+    $d = json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR);
+    foreach (explode(".", $argv[1]) as $p) { $d = is_array($d) ? ($d[$p] ?? null) : null; }
+    if (is_bool($d)) { echo $d ? "true" : "false"; }
+    elseif ($d === null) { echo ""; }
+    else { echo $d; }
+  ' "$1"
+}
+
+login_member() {
+  local email="$1" password="$2" tenant_id="$3" new_password="$4" cookie_jar="$5"
+  local csrf_json csrf login_payload login_code change_payload change_code tenant_payload tenant_code
+
+  csrf_json="$("${sim_curl[@]}" --cookie-jar "$cookie_jar" "$SIM_BASE/api/v1/auth/csrf")"
+  csrf="$(printf '%s' "$csrf_json" | sim_json_get csrf_token)"
+  login_payload="$(php -r 'echo json_encode(["email"=>$argv[1],"password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$email" "$password")"
+  login_code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$login_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/login")"
+  [ "$login_code" = "200" ] || fail "member_login_http_${login_code}"
+
+  csrf_json="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" "$SIM_BASE/api/v1/auth/csrf")"
+  csrf="$(printf '%s' "$csrf_json" | sim_json_get csrf_token)"
+  change_payload="$(php -r 'echo json_encode(["current_password"=>$argv[1],"new_password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$password" "$new_password")"
+  change_code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$change_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/change-password")"
+  [ "$change_code" = "200" ] || fail "member_password_change_http_${change_code}"
+
+  csrf_json="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" "$SIM_BASE/api/v1/auth/csrf")"
+  csrf="$(printf '%s' "$csrf_json" | sim_json_get csrf_token)"
+  tenant_payload="$(php -r 'echo json_encode(["tenant_id"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$tenant_id")"
+  tenant_code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$tenant_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/tenant-context")"
+  [ "$tenant_code" = "200" ] || fail "member_tenant_selection_http_${tenant_code}"
+
+  printf '%s' "$csrf"
+}
+
+member_api() {
+  local cookie_jar="$1" csrf="$2" method="$3" path="$4" payload="${5:-}"
+  shift 5 2>/dev/null || shift $#
+  if [ -n "$payload" ]; then
+    "${sim_curl[@]}" --cookie "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --request "$method" --data "$payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$@" "$SIM_BASE$path"
+  else
+    "${sim_curl[@]}" --cookie "$cookie_jar" --header "X-CSRF-TOKEN: $csrf" --request "$method" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$@" "$SIM_BASE$path"
+  fi
+}
+
+create_member_session() {
+  local suffix="$1" cookie_jar="$2"
+  local user_payload code member_id member_email member_password membership_payload member_csrf session_id
+
+  user_payload="$(php -r 'echo json_encode(["email"=>"t2a2-member-".$argv[1]."@utcp.local.test","display_name"=>"T2A2 Proof Member ".$argv[1]], JSON_UNESCAPED_SLASHES);' "$suffix")"
+  code="$(sim_api POST /api/v1/admin/users "$user_payload")"
+  [ "$code" = "201" ] || fail "member_user_create_http_${code}"
+  member_id="$(json_body_get user.id)"
+  member_email="$(json_body_get user.email)"
+  member_password="$(json_body_get temporary_password)"
+  assert_uuid member "$member_id"
+
+  membership_payload="$(php -r 'echo json_encode(["user_id"=>$argv[1],"role_key"=>"tenant-member"], JSON_UNESCAPED_SLASHES);' "$member_id")"
+  code="$(sim_api POST /api/v1/admin/memberships "$membership_payload" --header "Idempotency-Key: t2a2-membership-${suffix}")"
+  [ "$code" = "201" ] || fail "member_membership_http_${code}"
+
+  member_csrf="$(login_member "$member_email" "$member_password" "$SIM_TENANT_ID" "T2A2Proof${suffix}!" "$cookie_jar")"
+  code="$(member_api "$cookie_jar" "$member_csrf" POST /api/v1/telephony/sessions '' --header "Idempotency-Key: t2a2-session-${suffix}")"
+  [ "$code" = "201" ] || fail "telephony_session_create_http_${code}"
+  session_id="$(json_body_get telephony_session.id)"
+  assert_uuid telephony_session "$session_id"
+
+  printf '%s:%s' "$member_csrf" "$session_id"
+}
+
+ari_summary() {
+  local tenant_id="$1" runtime_node_id="$2" conference_id="$3" participant_id="${4:-}"
+  assert_uuid tenant "$tenant_id"
+  assert_uuid runtime_node "$runtime_node_id"
+  assert_uuid conference "$conference_id"
+  if [ -n "$participant_id" ]; then
+    assert_uuid participant "$participant_id"
+  fi
+
+  local php_code
+  php_code="$(php -r 'echo "echo json_encode(app(\"App\\\\RuntimeAdapters\\\\Asterisk\\\\AsteriskAriClient\")->conferenceRuntimeSummary(\"".$argv[1]."\", \"".$argv[2]."\", \"".$argv[3]."\", ".($argv[4] === "" ? "null" : "\"".$argv[4]."\"")."), JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);";' "$tenant_id" "$runtime_node_id" "$conference_id" "$participant_id")"
+  timeout 30s kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" -n utcp-platform exec deployment/telephony-command-worker -- env XDG_CONFIG_HOME=/tmp/psysh HOME=/tmp php artisan tinker --execute="$php_code"
+}
+
+wait_ari_field() {
+  local description="$1" field="$2" expected="$3" max_seconds="$4" interval="$5" tenant_id="$6" runtime_node_id="$7" conference_id="$8" participant_id="${9:-}"
+  local started waited summary value
+  started="$(date +%s)"
+  while :; do
+    waited=$(($(date +%s) - started))
+    summary="$(ari_summary "$tenant_id" "$runtime_node_id" "$conference_id" "$participant_id" 2>/dev/null || true)"
+    value="$(printf '%s' "$summary" | json_field "$field" 2>/dev/null || true)"
+    if [ "$value" = "$expected" ]; then
+      printf 'wait_ok description=%s waited_seconds=%s value=%s\n' "$description" "$waited" "$value"
+      return 0
+    fi
+    if [ "$waited" -ge "$max_seconds" ]; then
+      printf 'wait_timeout description=%s waited_seconds=%s last_value=%s\n' "$description" "$waited" "$value" >&2
+      return 1
+    fi
+    sleep "$interval"
+  done
+}
+
+cleanup_proof() {
+  set +e
+  if [ -n "${participant_id:-}" ] && [ -n "${conference_id:-}" ]; then
+    sim_api POST "/api/v1/admin/conferences/$conference_id/participants/$participant_id/remove" >/dev/null 2>&1
+  fi
+  if [ -n "${conference_id:-}" ]; then
+    sim_api POST "/api/v1/admin/conferences/$conference_id/desired-state" '{"desired_state":"closed"}' >/dev/null 2>&1
+  fi
+}
+
+suffix="$(date +%s%N)"
+member_cookie_jar="$(mktemp)"
+trap 'cleanup_proof; rm -f "$member_cookie_jar"; sim_cleanup' EXIT
+
+sim_login
+[ -n "${SIM_TENANT_ID:-}" ] || fail "tenant_context_missing"
+assert_uuid tenant "$SIM_TENANT_ID"
+
+wait_sql "asterisk_event_listener_ready" 180 5 "select count(*) from runtime_listener_leases l join runtime_nodes rn on rn.id = l.runtime_node_id join runtime_event_connection_epochs e on e.event_source_id = l.event_source_id and e.runtime_node_id = rn.id where rn.tenant_id='${SIM_TENANT_ID}' and rn.adapter_key='asterisk-ari' and rn.observed_state='ready' and l.listener_kind='asterisk-ari-events' and l.status='claimed' and l.lease_expires_at > now() and e.status='open';"
+
+conference_payload="$(php -r 'echo json_encode(["slug"=>"t2a2-asterisk-proof-".$argv[1],"display_name"=>"T2A2 Asterisk Proof ".$argv[1]], JSON_UNESCAPED_SLASHES);' "$suffix")"
+code="$(sim_api POST /api/v1/admin/conferences "$conference_payload" --header "Idempotency-Key: t2a2-conference-${suffix}")"
+[ "$code" = "201" ] || fail "conference_create_http_${code}"
+conference_id="$(json_body_get conference.id)"
+assert_uuid conference "$conference_id"
+
+code="$(sim_api POST "/api/v1/admin/conferences/$conference_id/desired-state" '{"desired_state":"open"}')"
+[ "$code" = "200" ] || fail "conference_open_http_${code}"
+
+wait_sql "asterisk_runtime_binding" 180 5 "select count(*) from conference_runtime_bindings b join runtime_nodes rn on rn.id = b.runtime_node_id where b.conference_id='${conference_id}' and b.tenant_id='${SIM_TENANT_ID}' and b.status='active' and rn.adapter_key='asterisk-ari' and rn.observed_state='ready';"
+runtime_node_id="$(sql_value "select b.runtime_node_id from conference_runtime_bindings b join runtime_nodes rn on rn.id = b.runtime_node_id where b.conference_id='${conference_id}' and b.tenant_id='${SIM_TENANT_ID}' and b.status='active' and rn.adapter_key='asterisk-ari' limit 1;")"
+assert_uuid runtime_node "$runtime_node_id"
+binding_count="$(sql_value "select count(*) from conference_runtime_bindings where conference_id='${conference_id}' and status='active';")"
+[ "$binding_count" = "1" ] || fail "runtime_binding_count_${binding_count}"
+
+wait_sql "conference_ensure_operation_succeeded" 240 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference' and aggregate_id='${conference_id}' and operation_type='conference.ensure' and status='succeeded';"
+wait_sql "conference_projected_ready" 240 5 "select count(*) from conferences where id='${conference_id}' and tenant_id='${SIM_TENANT_ID}' and desired_state='open' and observed_state='ready';"
+wait_sql "conference_reconciliation_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference' and target_id='${conference_id}' and status='converged';"
+wait_ari_field "asterisk_bridge_exists" bridge_exists true 120 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "asterisk_bridge_timeout"
+
+member_pair="$(create_member_session "$suffix" "$member_cookie_jar")"
+member_csrf="${member_pair%%:*}"
+telephony_session_id="${member_pair##*:}"
+code="$(member_api "$member_cookie_jar" "$member_csrf" POST "/api/v1/conferences/$conference_id/participants/self" '' --header "Idempotency-Key: t2a2-join-${suffix}")"
+[ "$code" = "201" ] || fail "participant_create_http_${code}"
+participant_id="$(json_body_get participant.id)"
+assert_uuid participant "$participant_id"
+
+wait_sql "participant_ensure_operation_succeeded" 240 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference_participant' and aggregate_id='${participant_id}' and operation_type='conference.participant.ensure' and status='succeeded';"
+wait_ari_field "participant_channel_exists" participant_channel_exists true 120 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$participant_id" || fail "participant_channel_timeout"
+wait_ari_field "participant_channel_in_bridge" participant_channel_in_bridge true 120 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$participant_id" || fail "participant_membership_timeout"
+
+summary="$(ari_summary "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$participant_id")"
+channel_count="$(printf '%s' "$summary" | json_field bridge_channel_count)"
+[ "$channel_count" = "1" ] || fail "participant_channel_count_${channel_count}"
+
+code="$(member_api "$member_cookie_jar" "$member_csrf" POST "/api/v1/conferences/$conference_id/participants/self" '' --header "Idempotency-Key: t2a2-join-${suffix}")"
+[ "$code" = "201" ] || fail "participant_duplicate_join_http_${code}"
+duplicate_participants="$(sql_value "select count(*) from conference_participants where conference_id='${conference_id}' and telephony_session_id='${telephony_session_id}' and desired_state='admitted';")"
+[ "$duplicate_participants" = "1" ] || fail "duplicate_participant_rows_${duplicate_participants}"
+summary="$(ari_summary "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$participant_id")"
+channel_count="$(printf '%s' "$summary" | json_field bridge_channel_count)"
+[ "$channel_count" = "1" ] || fail "duplicate_channel_count_${channel_count}"
+
+wait_sql "participant_projected_joined" 240 5 "select count(*) from conference_participants where id='${participant_id}' and tenant_id='${SIM_TENANT_ID}' and desired_state='admitted' and observed_state='joined';"
+wait_sql "participant_reconciliation_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference_participant' and target_id='${participant_id}' and status='converged';"
+
+code="$(sim_api POST "/api/v1/admin/conferences/$conference_id/participants/$participant_id/remove")"
+[ "$code" = "200" ] || fail "participant_leave_http_${code}"
+wait_sql "participant_remove_operation_succeeded" 240 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference_participant' and aggregate_id='${participant_id}' and operation_type='conference.participant.remove' and status='succeeded';"
+wait_sql "participant_projected_left" 240 5 "select count(*) from conference_participants where id='${participant_id}' and tenant_id='${SIM_TENANT_ID}' and desired_state='removed' and observed_state='left';"
+wait_sql "participant_leave_reconciliation_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference_participant' and target_id='${participant_id}' and status='converged';"
+wait_ari_field "participant_channel_absent" participant_channel_exists false 120 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$participant_id" || fail "participant_channel_cleanup_timeout"
+
+code="$(sim_api POST "/api/v1/admin/conferences/$conference_id/desired-state" '{"desired_state":"closed"}')"
+[ "$code" = "200" ] || fail "conference_close_http_${code}"
+wait_sql "conference_close_operation_succeeded" 240 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference' and aggregate_id='${conference_id}' and operation_type='conference.close' and status='succeeded';"
+wait_sql "conference_projected_closed" 240 5 "select count(*) from conferences where id='${conference_id}' and tenant_id='${SIM_TENANT_ID}' and desired_state='closed' and observed_state='closed';"
+wait_sql "conference_close_reconciliation_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference' and target_id='${conference_id}' and status='converged';"
+wait_ari_field "asterisk_bridge_absent" bridge_exists false 120 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "bridge_cleanup_timeout"
+
+open_operations="$(sql_value "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_id in ('${conference_id}', '${participant_id}') and status not in ('succeeded', 'cancelled', 'expired', 'terminal_failed');")"
+[ "$open_operations" = "0" ] || fail "open_operations_${open_operations}"
+non_converged="$(sql_value "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_id in ('${conference_id}', '${participant_id}') and status <> 'converged';")"
+[ "$non_converged" = "0" ] || fail "non_converged_targets_${non_converged}"
+
+printf 'asterisk_conference_runtime_proof=passed\n'
+printf 'natural_api_authentication=passed\n'
+printf 'tenant_capability_context=passed\n'
+printf 'proof_conference_ref=%s\n' "$(hash_ref "$conference_id")"
+printf 'proof_participant_ref=%s\n' "$(hash_ref "$participant_id")"
+printf 'proof_session_ref=%s\n' "$(hash_ref "$telephony_session_id")"
+printf 'runtime_binding_count=1\n'
+printf 'conference_ensure_operations=%s\n' "$(sql_value "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_id='${conference_id}' and operation_type='conference.ensure' and status='succeeded';")"
+printf 'participant_ensure_operations=%s\n' "$(sql_value "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_id='${participant_id}' and operation_type='conference.participant.ensure' and status='succeeded';")"
+printf 'participant_remove_operations=%s\n' "$(sql_value "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_id='${participant_id}' and operation_type='conference.participant.remove' and status='succeeded';")"
+printf 'conference_close_operations=%s\n' "$(sql_value "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_id='${conference_id}' and operation_type='conference.close' and status='succeeded';")"
+printf 'orphan_inspection=passed\n'

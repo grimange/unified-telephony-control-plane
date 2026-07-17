@@ -1,0 +1,363 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/simulator/lib
+. "$ROOT/scripts/simulator/lib"
+
+json_body_get() {
+  cat "$SIM_BODY_FILE" | sim_json_get "$1"
+}
+
+redact_body() {
+  php -r '
+    $s = file_get_contents($argv[1]);
+    $s = preg_replace("/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/", "<uuid>", $s);
+    $s = preg_replace("/\"temporary_password\"\\s*:\\s*\"[^\"]+\"/", "\"temporary_password\":\"<redacted>\"", $s);
+    $s = preg_replace("/\"password\"\\s*:\\s*\"[^\"]+\"/", "\"password\":\"<redacted>\"", $s);
+    echo $s;
+  ' "$SIM_BODY_FILE"
+}
+
+fail() {
+  printf 'asterisk_conference_recovery_runtime_proof=failed reason=%s\n' "$1" >&2
+  if [ -s "$SIM_BODY_FILE" ]; then
+    redact_body >&2 || true
+    printf '\n' >&2
+  fi
+  exit 1
+}
+
+hash_ref() {
+  printf '%s' "$1" | sha256sum | awk '{print substr($1,1,16)}'
+}
+
+assert_uuid() {
+  local name="$1" value="$2"
+  [[ "$value" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] || fail "invalid_${name}"
+}
+
+sql_value() {
+  sim_psql "$1" | tr -d '[:space:]'
+}
+
+wait_sql() {
+  sim_wait_until "$1" "$2" "$3" "$4" || fail "${1}_timeout"
+}
+
+json_field() {
+  php -r '
+    $d = json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR);
+    foreach (explode(".", $argv[1]) as $p) { $d = is_array($d) ? ($d[$p] ?? null) : null; }
+    if (is_bool($d)) { echo $d ? "true" : "false"; }
+    elseif ($d === null) { echo ""; }
+    else { echo $d; }
+  ' "$1"
+}
+
+kube_cmd() {
+  kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" "$@"
+}
+
+restart_deployment_pods() {
+  local namespace="$1" selector="$2" deployment="$3"
+  local pod old_uid started waited replacement_uid
+  pod="$(kube_cmd -n "$namespace" get pod -l "$selector" -o jsonpath='{.items[0].metadata.name}')"
+  old_uid="$(kube_cmd -n "$namespace" get pod "$pod" -o jsonpath='{.metadata.uid}')"
+  [ -n "$pod" ] && [ -n "$old_uid" ] || fail "${deployment}_pod_not_found"
+
+  timeout 30s kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" \
+    -n "$namespace" delete pod "$pod" --wait=false >/dev/null
+
+  started="$(date +%s)"
+  while :; do
+    waited=$(($(date +%s) - started))
+    replacement_uid="$(kube_cmd -n "$namespace" get pod -l "$selector" -o jsonpath='{range .items[*]}{.metadata.uid}{" "}{.status.phase}{" "}{range .status.conditions[?(@.type=="Ready")]}{.status}{end}{"\n"}{end}' | awk -v old="$old_uid" '$1 != old && $2 == "Running" && $3 == "True" { print $1; exit }')"
+    if [ -n "$replacement_uid" ]; then
+      printf 'pod_replaced deployment=%s waited_seconds=%s\n' "$deployment" "$waited"
+      return 0
+    fi
+    if [ "$waited" -ge 180 ]; then
+      fail "${deployment}_replacement_timeout"
+    fi
+    sleep 5
+  done
+}
+
+scale_asterisk() {
+  local replicas="$1"
+  kube_cmd -n utcp-runtime scale deployment/asterisk-ari "--replicas=${replicas}" >/dev/null
+  if [ "$replicas" = "0" ]; then
+    ASTERISK_SCALED_DOWN=1
+  else
+    kube_cmd -n utcp-runtime rollout status deployment/asterisk-ari --timeout=180s >/dev/null
+    ASTERISK_SCALED_DOWN=0
+  fi
+}
+
+login_member() {
+  local email="$1" password="$2" tenant_id="$3" new_password="$4" cookie_jar="$5"
+  local csrf_json csrf login_payload login_code change_payload change_code tenant_payload tenant_code
+
+  csrf_json="$("${sim_curl[@]}" --cookie-jar "$cookie_jar" "$SIM_BASE/api/v1/auth/csrf")"
+  csrf="$(printf '%s' "$csrf_json" | sim_json_get csrf_token)"
+  login_payload="$(php -r 'echo json_encode(["email"=>$argv[1],"password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$email" "$password")"
+  login_code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$login_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/login")"
+  [ "$login_code" = "200" ] || fail "member_login_http_${login_code}"
+
+  csrf_json="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" "$SIM_BASE/api/v1/auth/csrf")"
+  csrf="$(printf '%s' "$csrf_json" | sim_json_get csrf_token)"
+  change_payload="$(php -r 'echo json_encode(["current_password"=>$argv[1],"new_password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$password" "$new_password")"
+  change_code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$change_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/change-password")"
+  [ "$change_code" = "200" ] || fail "member_password_change_http_${change_code}"
+
+  csrf_json="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" "$SIM_BASE/api/v1/auth/csrf")"
+  csrf="$(printf '%s' "$csrf_json" | sim_json_get csrf_token)"
+  tenant_payload="$(php -r 'echo json_encode(["tenant_id"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$tenant_id")"
+  tenant_code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$tenant_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/tenant-context")"
+  [ "$tenant_code" = "200" ] || fail "member_tenant_selection_http_${tenant_code}"
+
+  printf '%s' "$csrf"
+}
+
+member_api() {
+  local cookie_jar="$1" csrf="$2" method="$3" path="$4" payload="${5:-}"
+  shift 5 2>/dev/null || shift $#
+  if [ -n "$payload" ]; then
+    "${sim_curl[@]}" --cookie "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --request "$method" --data "$payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$@" "$SIM_BASE$path"
+  else
+    "${sim_curl[@]}" --cookie "$cookie_jar" --header "X-CSRF-TOKEN: $csrf" --request "$method" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$@" "$SIM_BASE$path"
+  fi
+}
+
+create_member_session() {
+  local suffix="$1" cookie_jar="$2"
+  local user_payload code member_id member_email member_password membership_payload member_csrf session_id
+
+  user_payload="$(php -r 'echo json_encode(["email"=>"t2b-member-".$argv[1]."@utcp.local.test","display_name"=>"T2B Proof Member ".$argv[1]], JSON_UNESCAPED_SLASHES);' "$suffix")"
+  code="$(sim_api POST /api/v1/admin/users "$user_payload")"
+  [ "$code" = "201" ] || fail "member_user_create_http_${code}"
+  member_id="$(json_body_get user.id)"
+  member_email="$(json_body_get user.email)"
+  member_password="$(json_body_get temporary_password)"
+  assert_uuid member "$member_id"
+
+  membership_payload="$(php -r 'echo json_encode(["user_id"=>$argv[1],"role_key"=>"tenant-member"], JSON_UNESCAPED_SLASHES);' "$member_id")"
+  code="$(sim_api POST /api/v1/admin/memberships "$membership_payload" --header "Idempotency-Key: t2b-membership-${suffix}")"
+  [ "$code" = "201" ] || fail "member_membership_http_${code}"
+
+  member_csrf="$(login_member "$member_email" "$member_password" "$SIM_TENANT_ID" "T2BProof${suffix}!" "$cookie_jar")"
+  code="$(member_api "$cookie_jar" "$member_csrf" POST /api/v1/telephony/sessions '' --header "Idempotency-Key: t2b-session-${suffix}")"
+  [ "$code" = "201" ] || fail "telephony_session_create_http_${code}"
+  session_id="$(json_body_get telephony_session.id)"
+  assert_uuid telephony_session "$session_id"
+
+  printf '%s:%s' "$member_csrf" "$session_id"
+}
+
+ari_summary() {
+  local tenant_id="$1" runtime_node_id="$2" conference_id="$3" participant_id="${4:-}"
+  assert_uuid tenant "$tenant_id"
+  assert_uuid runtime_node "$runtime_node_id"
+  assert_uuid conference "$conference_id"
+  if [ -n "$participant_id" ]; then
+    assert_uuid participant "$participant_id"
+  fi
+
+  local php_code
+  php_code="$(php -r 'echo "echo json_encode(app(\"App\\\\RuntimeAdapters\\\\Asterisk\\\\AsteriskAriClient\")->conferenceRuntimeSummary(\"".$argv[1]."\", \"".$argv[2]."\", \"".$argv[3]."\", ".($argv[4] === "" ? "null" : "\"".$argv[4]."\"")."), JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);";' "$tenant_id" "$runtime_node_id" "$conference_id" "$participant_id")"
+  timeout 30s kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" \
+    -n utcp-platform exec deployment/telephony-command-worker -- \
+    env XDG_CONFIG_HOME=/tmp/psysh HOME=/tmp php artisan tinker --execute="$php_code"
+}
+
+wait_ari_field() {
+  local description="$1" field="$2" expected="$3" max_seconds="$4" interval="$5" tenant_id="$6" runtime_node_id="$7" conference_id="$8" participant_id="${9:-}"
+  local started waited summary value
+  started="$(date +%s)"
+  while :; do
+    waited=$(($(date +%s) - started))
+    summary="$(ari_summary "$tenant_id" "$runtime_node_id" "$conference_id" "$participant_id" 2>/dev/null || true)"
+    value="$(printf '%s' "$summary" | json_field "$field" 2>/dev/null || true)"
+    if [ "$value" = "$expected" ]; then
+      printf 'wait_ok description=%s waited_seconds=%s value=%s\n' "$description" "$waited" "$value"
+      return 0
+    fi
+    if [ "$waited" -ge "$max_seconds" ]; then
+      printf 'wait_timeout description=%s waited_seconds=%s last_value=%s\n' "$description" "$waited" "$value" >&2
+      return 1
+    fi
+    sleep "$interval"
+  done
+}
+
+join_participant() {
+  local label="$1" cookie_jar="$2"
+  local pair csrf code participant
+  pair="$(create_member_session "${suffix}-${label}" "$cookie_jar")"
+  csrf="${pair%%:*}"
+  code="$(member_api "$cookie_jar" "$csrf" POST "/api/v1/conferences/$conference_id/participants/self" '' --header "Idempotency-Key: t2b-join-${suffix}-${label}")"
+  [ "$code" = "201" ] || fail "${label}_participant_create_http_${code}"
+  participant="$(json_body_get participant.id)"
+  assert_uuid participant "$participant"
+  participant_ids+=("$participant")
+  printf '%s' "$participant"
+}
+
+wait_joined() {
+  local participant="$1" label="$2"
+  wait_sql "${label}_participant_ensure_succeeded" 300 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference_participant' and aggregate_id='${participant}' and operation_type='conference.participant.ensure' and status='succeeded';"
+  wait_ari_field "${label}_participant_channel_exists" participant_channel_exists true 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$participant" || fail "${label}_participant_channel_timeout"
+  wait_ari_field "${label}_participant_channel_in_bridge" participant_channel_in_bridge true 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$participant" || fail "${label}_participant_membership_timeout"
+  wait_sql "${label}_participant_projected_joined" 300 5 "select count(*) from conference_participants where id='${participant}' and tenant_id='${SIM_TENANT_ID}' and desired_state='admitted' and observed_state='joined';"
+  wait_sql "${label}_participant_reconciliation_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference_participant' and target_id='${participant}' and status='converged';"
+  wait_ari_field "${label}_participant_channel_still_in_bridge" participant_channel_in_bridge true 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$participant" || fail "${label}_participant_membership_not_stable"
+}
+
+remove_participant() {
+  local participant="$1" label="$2"
+  local code
+  code="$(sim_api POST "/api/v1/admin/conferences/$conference_id/participants/$participant/remove")"
+  [ "$code" = "200" ] || fail "${label}_participant_remove_http_${code}"
+  wait_sql "${label}_participant_remove_succeeded" 300 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference_participant' and aggregate_id='${participant}' and operation_type='conference.participant.remove' and status='succeeded';"
+  wait_sql "${label}_participant_projected_left" 300 5 "select count(*) from conference_participants where id='${participant}' and tenant_id='${SIM_TENANT_ID}' and desired_state='removed' and observed_state='left';"
+  wait_sql "${label}_participant_leave_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference_participant' and target_id='${participant}' and status='converged';"
+  wait_ari_field "${label}_participant_channel_absent" participant_channel_exists false 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$participant" || fail "${label}_participant_channel_cleanup_timeout"
+}
+
+cleanup_proof() {
+  set +e
+  if [ "${ASTERISK_SCALED_DOWN:-0}" = "1" ]; then
+    kube_cmd -n utcp-runtime scale deployment/asterisk-ari --replicas=1 >/dev/null 2>&1
+    kube_cmd -n utcp-runtime rollout status deployment/asterisk-ari --timeout=180s >/dev/null 2>&1
+  fi
+  for cleanup_participant in "${participant_ids[@]:-}"; do
+    if [ -n "$cleanup_participant" ] && [ -n "${conference_id:-}" ]; then
+      sim_api POST "/api/v1/admin/conferences/$conference_id/participants/$cleanup_participant/remove" >/dev/null 2>&1
+    fi
+  done
+  if [ -n "${conference_id:-}" ]; then
+    sim_api POST "/api/v1/admin/conferences/$conference_id/desired-state" '{"desired_state":"closed"}' >/dev/null 2>&1
+  fi
+}
+
+printf 'asterisk_conference_recovery_runtime_proof=started\n'
+
+suffix="$(date +%s%N)"
+member_cookie_listener="$(mktemp)"
+member_cookie_gap="$(mktemp)"
+member_cookie_restart="$(mktemp)"
+member_cookie_partial="$(mktemp)"
+participant_ids=()
+ASTERISK_SCALED_DOWN=0
+trap 'cleanup_proof; rm -f "$member_cookie_listener" "$member_cookie_gap" "$member_cookie_restart" "$member_cookie_partial"; sim_cleanup' EXIT
+
+sim_login
+[ -n "${SIM_TENANT_ID:-}" ] || fail "tenant_context_missing"
+assert_uuid tenant "$SIM_TENANT_ID"
+
+wait_sql "asterisk_event_listener_ready" 180 5 "select count(*) from runtime_listener_leases l join runtime_nodes rn on rn.id = l.runtime_node_id join runtime_event_connection_epochs e on e.event_source_id = l.event_source_id and e.runtime_node_id = rn.id where rn.tenant_id='${SIM_TENANT_ID}' and rn.adapter_key='asterisk-ari' and rn.observed_state='ready' and l.listener_kind='asterisk-ari-events' and l.status='claimed' and l.lease_expires_at > now() and e.status='open';"
+
+conference_payload="$(php -r 'echo json_encode(["slug"=>"t2b-recovery-proof-".$argv[1],"display_name"=>"T2B Recovery Proof ".$argv[1]], JSON_UNESCAPED_SLASHES);' "$suffix")"
+code="$(sim_api POST /api/v1/admin/conferences "$conference_payload" --header "Idempotency-Key: t2b-conference-${suffix}")"
+[ "$code" = "201" ] || fail "conference_create_http_${code}"
+conference_id="$(json_body_get conference.id)"
+assert_uuid conference "$conference_id"
+
+code="$(sim_api POST "/api/v1/admin/conferences/$conference_id/desired-state" '{"desired_state":"open"}')"
+[ "$code" = "200" ] || fail "conference_open_http_${code}"
+
+wait_sql "asterisk_runtime_binding" 180 5 "select count(*) from conference_runtime_bindings b join runtime_nodes rn on rn.id = b.runtime_node_id where b.conference_id='${conference_id}' and b.tenant_id='${SIM_TENANT_ID}' and b.status='active' and rn.adapter_key='asterisk-ari' and rn.observed_state='ready';"
+runtime_node_id="$(sql_value "select b.runtime_node_id from conference_runtime_bindings b join runtime_nodes rn on rn.id = b.runtime_node_id where b.conference_id='${conference_id}' and b.tenant_id='${SIM_TENANT_ID}' and b.status='active' and rn.adapter_key='asterisk-ari' limit 1;")"
+assert_uuid runtime_node "$runtime_node_id"
+initial_binding_ref="$(hash_ref "$runtime_node_id")"
+binding_count="$(sql_value "select count(*) from conference_runtime_bindings where conference_id='${conference_id}' and status='active';")"
+[ "$binding_count" = "1" ] || fail "runtime_binding_count_${binding_count}"
+
+wait_sql "conference_ensure_succeeded" 300 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference' and aggregate_id='${conference_id}' and operation_type='conference.ensure' and status='succeeded';"
+wait_sql "conference_projected_ready" 300 5 "select count(*) from conferences where id='${conference_id}' and tenant_id='${SIM_TENANT_ID}' and desired_state='open' and observed_state='ready';"
+wait_sql "conference_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference' and target_id='${conference_id}' and status='converged';"
+wait_ari_field "baseline_bridge_exists" bridge_exists true 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "baseline_bridge_timeout"
+
+listener_participant="$(join_participant listener "$member_cookie_listener")"
+wait_joined "$listener_participant" listener
+summary="$(ari_summary "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$listener_participant")"
+channel_count="$(printf '%s' "$summary" | json_field bridge_channel_count)"
+[ "$channel_count" = "1" ] || fail "baseline_channel_count_${channel_count}"
+
+lease_owner_before="$(sql_value "select coalesce(owner,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
+lease_fence_before="$(sql_value "select coalesce(fencing_token,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
+restart_deployment_pods utcp-platform 'app.kubernetes.io/component=asterisk-ari-events' asterisk-ari-events
+wait_sql "listener_restart_epoch_open" 180 5 "select count(*) from runtime_listener_leases l join runtime_event_connection_epochs e on e.event_source_id = l.event_source_id and e.owner = l.owner where l.runtime_node_id='${runtime_node_id}' and l.listener_kind='asterisk-ari-events' and l.status='claimed' and l.lease_expires_at > now() and l.owner <> '${lease_owner_before}' and coalesce(l.fencing_token,'') <> '${lease_fence_before}' and e.status='open';"
+lease_fence_after="$(sql_value "select coalesce(fencing_token,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
+[ "$lease_fence_after" != "$lease_fence_before" ] || fail "listener_fencing_token_unchanged"
+wait_ari_field "listener_restart_bridge_retained" bridge_exists true 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "listener_restart_bridge_missing"
+wait_ari_field "listener_restart_participant_retained" participant_channel_in_bridge true 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$listener_participant" || fail "listener_restart_participant_missing"
+summary="$(ari_summary "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" "$listener_participant")"
+channel_count="$(printf '%s' "$summary" | json_field bridge_channel_count)"
+[ "$channel_count" = "1" ] || fail "listener_restart_duplicate_channel_count_${channel_count}"
+wait_sql "listener_restart_conference_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference' and target_id='${conference_id}' and status='converged';"
+wait_sql "listener_restart_participant_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference_participant' and target_id='${listener_participant}' and status='converged';"
+printf 'listener_restart_recovery=passed\n'
+
+gap_participant="$(join_participant gap "$member_cookie_gap")"
+wait_joined "$gap_participant" gap
+gap_lease_owner_before="$(sql_value "select coalesce(owner,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
+gap_lease_fence_before="$(sql_value "select coalesce(fencing_token,'') from runtime_listener_leases where runtime_node_id='${runtime_node_id}' and listener_kind='asterisk-ari-events' limit 1;")"
+restart_deployment_pods utcp-platform 'app.kubernetes.io/component=asterisk-ari-events' asterisk-ari-events &
+listener_restart_pid=$!
+remove_participant "$gap_participant" event_gap
+wait "$listener_restart_pid"
+wait_sql "event_gap_listener_epoch_open" 180 5 "select count(*) from runtime_listener_leases l join runtime_event_connection_epochs e on e.event_source_id = l.event_source_id and e.owner = l.owner where l.runtime_node_id='${runtime_node_id}' and l.listener_kind='asterisk-ari-events' and l.status='claimed' and l.lease_expires_at > now() and l.owner <> '${gap_lease_owner_before}' and coalesce(l.fencing_token,'') <> '${gap_lease_fence_before}' and e.status='open';"
+wait_ari_field "event_gap_bridge_remains" bridge_exists true 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "event_gap_bridge_missing"
+printf 'event_gap_recovery=passed\n'
+
+restart_participant="$(join_participant restart "$member_cookie_restart")"
+wait_joined "$restart_participant" restart
+restart_deployment_pods utcp-runtime 'app.kubernetes.io/component=asterisk-ari' asterisk-ari
+wait_sql "asterisk_runtime_ready_after_restart" 240 5 "select count(*) from runtime_nodes where id='${runtime_node_id}' and tenant_id='${SIM_TENANT_ID}' and observed_state='ready';"
+wait_sql "listener_ready_after_asterisk_restart" 240 5 "select count(*) from runtime_listener_leases l join runtime_event_connection_epochs e on e.event_source_id = l.event_source_id where l.runtime_node_id='${runtime_node_id}' and l.listener_kind='asterisk-ari-events' and l.status='claimed' and l.lease_expires_at > now() and e.status='open';"
+wait_sql "conference_recovery_operation_after_restart" 300 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference' and aggregate_id='${conference_id}' and operation_type='conference.ensure' and status='succeeded';"
+wait_ari_field "restart_bridge_reconstructed" bridge_exists true 240 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "restart_bridge_reconstruction_timeout"
+wait_joined "$restart_participant" restart_reconstructed
+post_restart_runtime_node_id="$(sql_value "select runtime_node_id from conference_runtime_bindings where conference_id='${conference_id}' and tenant_id='${SIM_TENANT_ID}' and status='active' limit 1;")"
+[ "$(hash_ref "$post_restart_runtime_node_id")" = "$initial_binding_ref" ] || fail "runtime_binding_changed_after_restart"
+printf 'asterisk_restart_recovery=passed\n'
+
+scale_asterisk 0
+partial_participant="$(join_participant partial "$member_cookie_partial")"
+wait_sql "partial_failure_operation_queued_or_retrying" 120 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference_participant' and aggregate_id='${partial_participant}' and operation_type='conference.participant.ensure' and status in ('pending','leased','running','retry_scheduled','failed','terminal_failed');"
+false_joined="$(sql_value "select count(*) from conference_participants where id='${partial_participant}' and tenant_id='${SIM_TENANT_ID}' and observed_state='joined';")"
+[ "$false_joined" = "0" ] || fail "partial_failure_false_joined_projection"
+scale_asterisk 1
+wait_sql "partial_failure_runtime_ready" 240 5 "select count(*) from runtime_nodes where id='${runtime_node_id}' and tenant_id='${SIM_TENANT_ID}' and observed_state='ready';"
+wait_joined "$partial_participant" partial_recovered
+printf 'retryable_partial_failure=passed\n'
+
+remove_participant "$listener_participant" cleanup_listener
+remove_participant "$restart_participant" cleanup_restart
+remove_participant "$partial_participant" cleanup_partial
+
+code="$(sim_api POST "/api/v1/admin/conferences/$conference_id/desired-state" '{"desired_state":"closed"}')"
+[ "$code" = "200" ] || fail "conference_close_http_${code}"
+wait_sql "conference_close_succeeded" 300 5 "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_type='conference' and aggregate_id='${conference_id}' and operation_type='conference.close' and status='succeeded';"
+wait_sql "conference_projected_closed" 300 5 "select count(*) from conferences where id='${conference_id}' and tenant_id='${SIM_TENANT_ID}' and desired_state='closed' and observed_state='closed';"
+wait_sql "conference_close_converged" 180 5 "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_type='conference' and target_id='${conference_id}' and status='converged';"
+wait_ari_field "final_bridge_absent" bridge_exists false 180 5 "$SIM_TENANT_ID" "$runtime_node_id" "$conference_id" || fail "final_bridge_cleanup_timeout"
+
+open_operations="$(sql_value "select count(*) from runtime_operations where tenant_id='${SIM_TENANT_ID}' and aggregate_id in ('${conference_id}', '${listener_participant}', '${gap_participant}', '${restart_participant}', '${partial_participant}') and status not in ('succeeded', 'cancelled', 'expired');")"
+[ "$open_operations" = "0" ] || fail "open_operations_${open_operations}"
+non_converged="$(sql_value "select count(*) from runtime_reconciliation_states where tenant_id='${SIM_TENANT_ID}' and target_id in ('${conference_id}', '${listener_participant}', '${gap_participant}', '${restart_participant}', '${partial_participant}') and status <> 'converged';")"
+[ "$non_converged" = "0" ] || fail "non_converged_targets_${non_converged}"
+
+trap 'rm -f "$member_cookie_listener" "$member_cookie_gap" "$member_cookie_restart" "$member_cookie_partial"; sim_cleanup' EXIT
+
+printf 'asterisk_conference_recovery_runtime_proof=passed\n'
+printf 'natural_api_authentication=passed\n'
+printf 'proof_conference_ref=%s\n' "$(hash_ref "$conference_id")"
+printf 'runtime_binding_preserved=passed\n'
+printf 'listener_restart_recovery=passed\n'
+printf 'event_gap_recovery=passed\n'
+printf 'asterisk_restart_recovery=passed\n'
+printf 'retryable_partial_failure=passed\n'
+printf 'orphan_inspection=passed\n'

@@ -35,6 +35,11 @@ if [ -z "$asset_path" ]; then
   exit 1
 fi
 curl -fsS "http://127.0.0.1:${host_port}${asset_path}" >/dev/null
+
+index_cache_control="$(curl -fsSI "http://127.0.0.1:${host_port}/" | tr -d '\r' | grep -i '^cache-control:' || true)"
+printf '%s' "$index_cache_control" | grep -qi 'no-cache' || { printf 'index.html is missing Cache-Control: no-cache (%s)\n' "$index_cache_control" >&2; exit 1; }
+asset_cache_control="$(curl -fsSI "http://127.0.0.1:${host_port}${asset_path}" | tr -d '\r' | grep -i '^cache-control:' || true)"
+printf '%s' "$asset_cache_control" | grep -qi 'immutable' || { printf 'hashed asset is missing long-lived immutable Cache-Control (%s)\n' "$asset_cache_control" >&2; exit 1; }
 curl -fsS "http://127.0.0.1:${host_port}/assets/" >/dev/null 2>&1 && {
   printf 'assets directory listing unexpectedly enabled\n' >&2
   exit 1

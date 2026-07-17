@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/../.."
+
+php -l apps/api/app/TelephonyDomain/Signaling/SignalingCredentialService.php >/dev/null
+php -l apps/api/app/TelephonyDomain/Signaling/KamailioRegistrationObserver.php >/dev/null
+php -l apps/api/app/TelephonyDomain/Signaling/KamailioRegistrationSnapshotDiffer.php >/dev/null
+php -l apps/api/app/TelephonyDomain/Signaling/KamailioRegistrationEventNormalizer.php >/dev/null
+php -l apps/api/app/TelephonyDomain/Reconciliation/SignalingRegistrationReconciler.php >/dev/null
+php -l apps/api/app/RuntimeEngine/Projection/ProjectionService.php >/dev/null
+php -l apps/api/database/migrations/2026_07_16_090000_create_signaling_registration_tables.php >/dev/null
+php -l apps/api/database/migrations/2026_07_16_160000_create_kamailio_registrar_foundation.php >/dev/null
+php -l apps/api/database/migrations/2026_07_16_170000_add_kamailio_registration_observer_projection.php >/dev/null
+php -l apps/api/tests/Feature/TelephonyDomain/KamailioRegistrationObserverTest.php >/dev/null
+
+grep -Fq 'KAMAILIO_IMAGE=ghcr.io/kamailio/kamailio:5.8.6-bookworm' versions.env
+grep -Eq '^UTCP_PHASE=T[01]$' versions.env
+
+tmp_manifest="$(mktemp)"
+tmp_gateway="$(mktemp)"
+trap 'rm -f "$tmp_manifest" "$tmp_gateway"' EXIT
+
+source scripts/kubernetes/lib
+ensure_local_kamailio_credentials
+kubectl kustomize infrastructure/kubernetes/overlays/local >"$tmp_manifest"
+kubectl kustomize infrastructure/kubernetes/gateway-api >"$tmp_gateway"
+
+grep -Fq 'image: ghcr.io/kamailio/kamailio:5.8.6-bookworm' "$tmp_manifest"
+grep -Fq 'name: utcp-local-kamailio-db-credentials' "$tmp_manifest"
+grep -Fq 'calculate_ha1", 0' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
+grep -Fq 'max_expires", 120' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
+grep -Fq 'max_contacts", 1' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
+grep -Fq 'kamailio_signaling_auth_view' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
+grep -Fq 'kamailio-registration-observer' infrastructure/docker/api/entrypoint
+grep -Fq 'kamailio-registration:observer' apps/api/routes/console.php
+grep -Fq 'name: kamailio-registration-observer' "$tmp_manifest"
+grep -Fq 'KAMAILIO_OBSERVER_DB_USER' "$tmp_manifest"
+grep -Fq 'automountServiceAccountToken: false' infrastructure/kubernetes/base/platform/kamailio-registration-observer-deployment.yaml
+grep -Fq 'sip.utcp.local.test' "$tmp_gateway"
+grep -Fq 'value: /ws' "$tmp_gateway"
+grep -Fq 'kind: HTTPRoute' "$tmp_gateway"
+
+if grep -Eq 'type:[[:space:]]*(NodePort|LoadBalancer)|hostNetwork:[[:space:]]*true|hostPort:|privileged:[[:space:]]*true|containerPort:[[:space:]]*(5060|5061|10000|20000)|port:[[:space:]]*(5060|5061|10000|20000)' "$tmp_manifest" "$tmp_gateway"; then
+    printf 'Kamailio signaling manifests expose prohibited host, public SIP, or RTP scope.\n' >&2
+    exit 1
+fi
+
+if rg -n 'KAMAILIO_.*PASSWORD=[A-Za-z0-9_./+-]+' infrastructure/kubernetes apps scripts docs \
+    --glob '!infrastructure/kubernetes/overlays/local/platform/local-kamailio-db-credentials.properties' \
+    --glob '!infrastructure/kubernetes/overlays/local/migration/local-kamailio-db-credentials.properties' >/dev/null 2>&1; then
+    printf 'Kamailio database password literal found in source-controlled paths.\n' >&2
+    exit 1
+fi
+
+if rg -n "sip_secret|ha1" apps/api/app/Http docs/evidence >/tmp/utcp-kamailio-signaling-secret-scan.txt 2>/dev/null; then
+    if rg -n "assertJsonMissingPath\\('credential\\.ha1'|assertJsonMissingPath\\('credential\\.sip_secret'|username.*domain.*ha1|HA1 is persisted" /tmp/utcp-kamailio-signaling-secret-scan.txt >/dev/null 2>&1; then
+        :
+    else
+        cat /tmp/utcp-kamailio-signaling-secret-scan.txt >&2
+        printf 'Unexpected signaling secret vocabulary in HTTP, frontend, or evidence paths.\n' >&2
+        exit 1
+    fi
+fi
+
+if rg -n "ha1" apps/web/src --glob '!*.test.ts' >/tmp/utcp-kamailio-signaling-web-secret-scan.txt 2>/dev/null; then
+    cat /tmp/utcp-kamailio-signaling-web-secret-scan.txt >&2
+    printf 'HA1 vocabulary is not allowed in production frontend signaling paths.\n' >&2
+    exit 1
+fi
+
+if rg -n "localStorage|sessionStorage" apps/web/src --glob '!*.test.ts' >/tmp/utcp-kamailio-signaling-web-storage-scan.txt 2>/dev/null; then
+    cat /tmp/utcp-kamailio-signaling-web-storage-scan.txt >&2
+    printf 'Frontend signaling credential state must not use browser storage.\n' >&2
+    exit 1
+fi
+
+if rg -n "Register now|Start registrar|Mark registered|Remove Contact|Run observer|Retry now|Emit event" apps/api apps/web infrastructure --glob '!*.test.ts' >/tmp/utcp-kamailio-signaling-manual-controls.txt 2>/dev/null; then
+    cat /tmp/utcp-kamailio-signaling-manual-controls.txt >&2
+    printf 'Manual signaling runtime control vocabulary is not allowed in T1.\n' >&2
+    exit 1
+fi
+
+if rg -n 'observer_lease_count=not_implemented|active_source_epoch_count=not_implemented|snapshot_lag=not_implemented' scripts/kamailio-signaling/status >/dev/null 2>&1; then
+    printf 'Kamailio observer status still reports implemented observer fields as not_implemented.\n' >&2
+    exit 1
+fi
+
+if rg -n 'public function .*Contact|contact[^_].*response|contact_ruid.*response|ruid.*response' apps/api/app/Http apps/api/app/TelephonyDomain >/tmp/utcp-kamailio-contact-exposure.txt 2>/dev/null; then
+    cat /tmp/utcp-kamailio-contact-exposure.txt >&2
+    printf 'Potential raw Contact or ruid exposure in public signaling paths.\n' >&2
+    exit 1
+fi
+
+printf 'kamailio_signaling_config_check=pass\n'
+printf 'live_kamailio_runtime=configured\n'

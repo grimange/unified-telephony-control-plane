@@ -9,9 +9,9 @@ fail() {
   exit 1
 }
 
-grep -qx 'UTCP_PHASE=C3' versions.env || fail 'versions.env must declare UTCP_PHASE=C3 before C4 begins'
-grep -Fq '| C3 Command, event, projection, and reconciliation engine | Complete |' docs/roadmap/phase-status.md ||
-  fail 'phase-status must mark C3 complete when UTCP_PHASE=C3'
+grep -qx 'UTCP_PHASE=T1' versions.env || fail 'versions.env must declare UTCP_PHASE=T1'
+grep -Fq '| T1 Kamailio SIP-over-WSS signaling | Complete |' docs/roadmap/phase-status.md ||
+  fail 'phase-status must mark T1 complete when UTCP_PHASE=T1'
 
 grep -Eq '^local-up:' Makefile || fail 'Makefile must expose local-up'
 grep -Eq '^local-status:' Makefile || fail 'Makefile must expose local-status'
@@ -30,10 +30,15 @@ grep -Fq 'report_persistent_compose_projects' scripts/local/status || fail 'loca
 
 grep -Fq 'utcp-compose-proof-$$' scripts/compose/compose-proof || fail 'compose-proof must default to an isolated disposable project'
 grep -Fq 'down --volumes --remove-orphans' scripts/compose/compose-proof || fail 'compose-proof must clean disposable volumes'
-grep -Fq 'trap cleanup EXIT INT TERM' scripts/compose/compose-proof || fail 'compose-proof must clean up on success and failure'
-grep -Fq 'gateway_port" = "80"' scripts/compose/compose-proof || fail 'compose-proof must reject host port 80'
-grep -Fq 'gateway_port" = "443"' scripts/compose/compose-proof || fail 'compose-proof must reject host port 443'
-grep -Fq 'utcp|utcp-debug)' scripts/compose/compose-proof || fail 'compose-proof must reject persistent project names'
+if ! grep -Fq 'trap cleanup EXIT INT TERM' scripts/compose/compose-proof \
+  && ! grep -Fq 'trap on_exit EXIT INT TERM' scripts/compose/compose-proof; then
+  fail 'compose-proof must clean up on success and failure'
+fi
+grep -Fq '80|443|5060|5061)' scripts/compose/compose-proof || fail 'compose-proof must reject standard edge and SIP ports'
+if ! grep -Fq 'utcp|utcp-debug)' scripts/compose/compose-proof \
+    && ! grep -Fq 'utcp|utcp-debug|docker)' scripts/compose/compose-proof; then
+    fail 'compose-proof must reject persistent project names'
+fi
 
 if grep -R "Start isolated Compose contract for K0 verification" .github/workflows; then
   fail 'CI Kubernetes jobs must not start Compose for K0 verification'

@@ -1,0 +1,57 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-application-metrics-from-prometheus
+  namespace: utcp-platform
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/managed-by: utcp-k4-observability
+spec:
+  podSelector:
+    matchLabels:
+      utcp.io/network-role: gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-observability
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - prometheus
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-egress-to-application-metrics
+  namespace: utcp-observability
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/managed-by: utcp-k4-observability
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - prometheus
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: gateway
+      ports:
+        - protocol: TCP
+          port: 8080

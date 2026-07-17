@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-command-worker-to-asterisk-ari
+  namespace: utcp-platform
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/managed-by: utcp-k3-security
+spec:
+  podSelector:
+    matchLabels:
+      utcp.io/network-role: worker
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-runtime
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: asterisk-ari
+      ports:
+        - protocol: TCP
+          port: 8088

@@ -2,6 +2,127 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$ROOT/apps/api"
+# shellcheck source=scripts/simulator/lib
+. "$ROOT/scripts/simulator/lib"
 
-php artisan test --filter=SimulatorRuntimeProofTest
+suffix="$(date +%s)"
+
+sim_login
+
+# Each scenario uses its own dedicated, authenticated proof node so that every
+# reconciler pass starts from a fresh, never-observed configuration generation.
+# This is what lets configuration-drift-then-converge exercise the genuine
+# inspect -> degraded -> apply_configuration -> ready sequence instead of
+# inheriting an already-observed generation from a prior scenario on a shared
+# node. All nodes run concurrently against the live Kubernetes workers so the
+# total wall-clock wait is bounded by the slowest scenario, not their sum.
+declare -A NODE_ID
+
+create_scenario_node() {
+  local key="$1" scenario="$2" seed="$3" parameters="$4"
+  local slug="c4-live-proof-${key}-${suffix}"
+  local id
+  id="$(sim_create_or_reuse_node "$slug" "C4 Live Proof $key")"
+  [ -n "$id" ] || { printf '%s: failed to create proof node\n' "$key" >&2; exit 1; }
+  sim_set_capabilities "$id"
+  sim_configure "$id" "$scenario" "$seed" "$parameters"
+  sim_activate "$id"
+  NODE_ID["$key"]="$id"
+  printf 'proof_node_%s=%s\n' "$key" "$id"
+}
+
+create_scenario_node transient "transient-failure-then-ready" "c4-live-proof-transient-${suffix}" '{"transient_attempts":1}'
+create_scenario_node terminal "terminal-failure" "c4-live-proof-terminal-${suffix}" '{}'
+create_scenario_node timeout "timeout-then-ready" "c4-live-proof-timeout-${suffix}" '{}'
+create_scenario_node duplicate "duplicate-observation" "c4-live-proof-duplicate-${suffix}" '{}'
+create_scenario_node reconnect "disconnect-reconnect" "c4-live-proof-reconnect-${suffix}" '{}'
+create_scenario_node drift "configuration-drift-then-converge" "c4-live-proof-drift-${suffix}" '{}'
+
+echo "All six scenario nodes activated; waiting for the live, deployed C3/C4 workers to converge each one automatically (no manual dispatch)." >&2
+
+# --- transient-failure-then-ready ---
+tid="${NODE_ID[transient]}"
+sim_wait_until "transient_observed_ready" 240 5 \
+  "select count(*) from runtime_nodes where id='${tid}' and observed_state='ready';"
+printf 'transient_failure_then_ready_operations_succeeded=%s\n' "$(sim_psql "select count(*) from runtime_operations where runtime_node_id='${tid}' and status='succeeded';")"
+printf 'transient_failure_then_ready_retry_observed=%s\n' "$(sim_psql "select count(*) from runtime_operations where runtime_node_id='${tid}' and last_failure_class='transient_transport';")"
+printf 'transient-failure-then-ready live scenario proof passed\n'
+
+# --- terminal-failure ---
+tf="${NODE_ID[terminal]}"
+sim_wait_until "terminal_failure_operation_terminal" 240 5 \
+  "select count(*) from runtime_operations where runtime_node_id='${tf}' and status='terminal_failed';"
+sim_wait_until "terminal_failure_reconciliation_blocked" 120 5 \
+  "select count(*) from runtime_reconciliation_states where target_id='${tf}' and status='blocked';"
+sleep 20
+printf 'terminal_failure_operation_count_after_settle=%s\n' "$(sim_psql "select count(*) from runtime_operations where runtime_node_id='${tf}';")"
+printf 'terminal_failure_observed_state=%s\n' "$(sim_psql "select observed_state from runtime_nodes where id='${tf}';")"
+[ "$(sim_psql "select count(*) from runtime_operations where runtime_node_id='${tf}';")" = "1" ] || { printf 'terminal-failure retried instead of remaining a single terminal operation\n' >&2; exit 1; }
+printf 'terminal-failure live scenario proof passed (blocked, no retry loop, no fabricated ready state)\n'
+
+# --- timeout-then-ready ---
+to="${NODE_ID[timeout]}"
+sim_wait_until "timeout_observed_ready" 240 5 \
+  "select count(*) from runtime_nodes where id='${to}' and observed_state='ready';"
+printf 'timeout_then_ready_timeout_observed=%s\n' "$(sim_psql "select count(*) from runtime_operations where runtime_node_id='${to}' and last_failure_class='timeout';")"
+printf 'timeout_then_ready_operations_succeeded=%s\n' "$(sim_psql "select count(*) from runtime_operations where runtime_node_id='${to}' and status='succeeded';")"
+printf 'timeout-then-ready live scenario proof passed\n'
+
+# --- duplicate-observation ---
+dup="${NODE_ID[duplicate]}"
+sim_wait_until "duplicate_observed_ready" 240 5 \
+  "select count(*) from runtime_nodes where id='${dup}' and observed_state='ready';"
+published="$(sim_psql "select count(*) from simulator_scheduled_events where runtime_node_id='${dup}' and status='published';")"
+receipts="$(sim_psql "select count(*) from runtime_event_receipts where runtime_node_id='${dup}';")"
+observations="$(sim_psql "select count(*) from runtime_observations where runtime_node_id='${dup}';")"
+printf 'duplicate_observation_published_events=%s\n' "$published"
+printf 'duplicate_observation_event_receipts=%s\n' "$receipts"
+printf 'duplicate_observation_observations=%s\n' "$observations"
+[ "$published" = "2" ] || { printf 'expected two duplicate publications, saw %s\n' "$published" >&2; exit 1; }
+[ "$receipts" = "1" ] || { printf 'duplicate publication produced more than one receipt: %s\n' "$receipts" >&2; exit 1; }
+[ "$observations" = "1" ] || { printf 'duplicate publication produced more than one observation: %s\n' "$observations" >&2; exit 1; }
+printf 'duplicate-observation live scenario proof passed (one projection mutation, one checkpoint advance)\n'
+
+# --- disconnect-reconnect ---
+rc="${NODE_ID[reconnect]}"
+sim_wait_until "reconnect_observed_ready" 240 5 \
+  "select count(*) from runtime_nodes where id='${rc}' and observed_state='ready';"
+epochs="$(sim_psql "select count(*) from runtime_event_connection_epochs where runtime_node_id='${rc}';")"
+closed="$(sim_psql "select count(*) from runtime_event_connection_epochs where runtime_node_id='${rc}' and status='closed';")"
+printf 'disconnect_reconnect_epochs=%s\n' "$epochs"
+printf 'disconnect_reconnect_closed_epochs=%s\n' "$closed"
+[ "$epochs" -ge 2 ] || { printf 'expected at least two connection epochs, saw %s\n' "$epochs" >&2; exit 1; }
+[ "$closed" -ge 1 ] || { printf 'expected a closed first epoch, saw none\n' >&2; exit 1; }
+printf 'disconnect-reconnect live scenario proof passed (second epoch ready restored)\n'
+printf 'disconnect-reconnect stale-epoch rejection is proven by the focused PostgreSQL test (SimulatorRuntimeProofTest::test_disconnect_reconnect_epochs_and_configuration_drift_converge_without_duplicate_repairs) because the live cluster exposes no public event-ingestion route capable of targeting an already-closed epoch; only the internal simulator-event-source worker can call RuntimeEventReceiptRepository::ingest(), and forcing it out-of-band against a closed epoch would require bypassing the live authority path this corridor is proving.\n'
+
+# --- configuration-drift-then-converge ---
+# The intermediate "degraded" observed_state is real but can resolve to "ready"
+# within the ~60s reconciler re-check window before a live poll samples it, so
+# drift detection is proven from the append-only runtime_observations audit
+# trail (which retains the degraded row forever) rather than by racing a
+# transient current-state read.
+drift="${NODE_ID[drift]}"
+sim_wait_until "drift_observed_ready" 240 5 \
+  "select count(*) from runtime_nodes where id='${drift}' and observed_state='ready';"
+degraded_observations="$(sim_psql "select count(*) from runtime_observations where runtime_node_id='${drift}' and observed_state='degraded';")"
+printf 'configuration_drift_degraded_observation_recorded=%s\n' "$degraded_observations"
+[ "$degraded_observations" -ge 1 ] || { printf 'no historical degraded observation was recorded before convergence\n' >&2; exit 1; }
+first_degraded_at="$(sim_psql "select min(observed_at) from runtime_observations where runtime_node_id='${drift}' and observed_state='degraded';")"
+first_ready_at="$(sim_psql "select min(observed_at) from runtime_observations where runtime_node_id='${drift}' and observed_state='ready';")"
+[ "$(sim_psql "select (('${first_degraded_at}'::timestamptz) < ('${first_ready_at}'::timestamptz))::int;")" = "1" ] || { printf 'degraded observation did not precede the ready observation\n' >&2; exit 1; }
+desired_gen="$(sim_psql "select configuration_version from runtime_nodes where id='${drift}';")"
+observed_gen="$(sim_psql "select observed_configuration_version from runtime_nodes where id='${drift}';")"
+ops_total="$(sim_psql "select count(*) from runtime_operations where runtime_node_id='${drift}';")"
+apply_ops="$(sim_psql "select count(*) from runtime_operations where runtime_node_id='${drift}' and operation_type='runtime.node.apply_configuration';")"
+printf 'configuration_drift_desired_generation=%s\n' "$desired_gen"
+printf 'configuration_drift_observed_generation=%s\n' "$observed_gen"
+printf 'configuration_drift_operations_total=%s\n' "$ops_total"
+printf 'configuration_drift_apply_configuration_operations=%s\n' "$apply_ops"
+[ "$desired_gen" = "$observed_gen" ] || { printf 'configuration drift did not converge to the desired generation\n' >&2; exit 1; }
+[ "$apply_ops" = "1" ] || { printf 'expected exactly one apply_configuration operation for the desired generation, saw %s\n' "$apply_ops" >&2; exit 1; }
+sim_wait_until "drift_reconciliation_converged" 120 5 \
+  "select count(*) from runtime_reconciliation_states where target_id='${drift}' and status='converged';"
+printf 'configuration-drift-then-converge live scenario proof passed\n'
+
+printf 'simulator runtime proof passed\n'

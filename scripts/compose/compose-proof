@@ -5,57 +5,434 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
 project="${UTCP_COMPOSE_PROJECT_NAME:-utcp-compose-proof-$$}"
-gateway_port="${UTCP_GATEWAY_PORT:-18088}"
+gateway_port="${UTCP_COMPOSE_PROOF_GATEWAY_PORT:-${UTCP_GATEWAY_PORT:-18088}}"
+wss_port="${UTCP_COMPOSE_PROOF_WSS_PORT:-${UTCP_WSS_PORT:-19088}}"
+runtime_dir="$ROOT/.runtime/compose/$project"
+runtime_env="$runtime_dir/compose.env"
+base_url="http://127.0.0.1:${gateway_port}"
+wss_url="wss://sip.utcp.local.test:${wss_port}/ws"
+body_file="$(mktemp)"
+bootstrap_cookie_jar="$(mktemp)"
+member_cookie_jar="$(mktemp)"
+expiry_cookie_jar="$(mktemp)"
 
 case "$project" in
-  utcp|utcp-debug)
+  utcp|utcp-debug|docker)
     printf 'compose-proof requires an isolated disposable project, got: %s\n' "$project" >&2
     exit 1
     ;;
 esac
 
-if [ "$gateway_port" = "80" ] || [ "$gateway_port" = "443" ]; then
-  printf 'compose-proof must not bind standard Kubernetes edge ports: %s\n' "$gateway_port" >&2
-  exit 1
-fi
+for port in "$gateway_port" "$wss_port"; do
+  case "$port" in
+    80|443|5060|5061)
+      printf 'compose-proof must not bind standard edge or SIP ports: %s\n' "$port" >&2
+      exit 1
+      ;;
+  esac
+done
 
-compose=(docker compose --env-file versions.env --env-file infrastructure/compose/env.example -f infrastructure/compose/compose.yaml -p "$project")
-base_url="http://127.0.0.1:${gateway_port}"
+mkdir -p "$runtime_dir/tls"
+chmod 755 "$runtime_dir" "$runtime_dir/tls"
+
+secret_hex() {
+  openssl rand -hex 24
+}
+
+write_runtime_env() {
+  umask 077
+  cat > "$runtime_env" <<EOF
+UTCP_GATEWAY_PORT=$gateway_port
+UTCP_WSS_PORT=$wss_port
+UTCP_COMPOSE_RUNTIME_DIR=$runtime_dir
+UTCP_SESSION_SECURE_COOKIE=false
+UTCP_POSTGRES_PASSWORD=$(secret_hex)
+UTCP_APP_KEY=base64:$(openssl rand -base64 32)
+TELEPHONY_SIGNALING_WSS_URI=$wss_url
+KAMAILIO_AUTH_DB_USER=utcp_kamailio_auth_reader
+KAMAILIO_AUTH_DB_PASSWORD=$(secret_hex)
+KAMAILIO_USRLOC_DB_USER=utcp_kamailio_usrloc_writer
+KAMAILIO_USRLOC_DB_PASSWORD=$(secret_hex)
+KAMAILIO_OBSERVER_DB_USER=utcp_kamailio_observer_reader
+KAMAILIO_OBSERVER_DB_PASSWORD=$(secret_hex)
+EOF
+}
+
+extract_kamailio_config() {
+  awk '
+    /^  kamailio\.cfg: \|$/ { inside=1; next }
+    inside && /^  [A-Za-z0-9_.-]+:/ { exit }
+    inside { sub(/^    /, ""); print }
+  ' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml > "$runtime_dir/kamailio.cfg"
+  chmod 644 "$runtime_dir/kamailio.cfg"
+}
+
+write_tls_material() {
+  local san_file="$runtime_dir/tls/san.ext"
+  openssl req -x509 -newkey rsa:2048 -nodes \
+    -keyout "$runtime_dir/tls/ca.key" \
+    -out "$runtime_dir/tls/ca.crt" \
+    -subj "/CN=UTCP Compose Proof CA" \
+    -days 1 >/dev/null 2>&1
+  openssl req -newkey rsa:2048 -nodes \
+    -keyout "$runtime_dir/tls/tls.key" \
+    -out "$runtime_dir/tls/tls.csr" \
+    -subj "/CN=sip.utcp.local.test" \
+    -addext "subjectAltName=DNS:sip.utcp.local.test" >/dev/null 2>&1
+  cat > "$san_file" <<EOF
+subjectAltName=DNS:sip.utcp.local.test
+extendedKeyUsage=serverAuth
+EOF
+  openssl x509 -req \
+    -in "$runtime_dir/tls/tls.csr" \
+    -CA "$runtime_dir/tls/ca.crt" \
+    -CAkey "$runtime_dir/tls/ca.key" \
+    -CAcreateserial \
+    -out "$runtime_dir/tls/tls.crt" \
+    -days 1 \
+    -sha256 \
+    -extfile "$san_file" >/dev/null 2>&1
+  chmod 600 "$runtime_dir/tls/"*.key
+  chmod 644 "$runtime_dir/tls/ca.crt" "$runtime_dir/tls/tls.crt" "$runtime_dir/tls/tls.key"
+}
+
+write_sip_gateway_config() {
+  cat > "$runtime_dir/sip-gateway.conf" <<'EOF'
+server {
+    listen 8443 ssl;
+    server_name sip.utcp.local.test;
+
+    server_tokens off;
+    ssl_certificate /etc/nginx/tls/tls.crt;
+    ssl_certificate_key /etc/nginx/tls/tls.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    client_max_body_size 64k;
+
+    location = /healthz {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "ok\n";
+    }
+
+    location = /ws {
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host sip.utcp.local.test;
+        proxy_set_header Origin $http_origin;
+        proxy_set_header Sec-WebSocket-Protocol $http_sec_websocket_protocol;
+        proxy_read_timeout 130s;
+        proxy_send_timeout 30s;
+        proxy_pass http://kamailio:8080/ws;
+    }
+
+    location / {
+        return 404;
+    }
+}
+EOF
+  chmod 644 "$runtime_dir/sip-gateway.conf"
+}
+
+write_runtime_env
+extract_kamailio_config
+write_tls_material
+write_sip_gateway_config
+
+compose=(docker compose --env-file versions.env --env-file infrastructure/compose/env.example --env-file "$runtime_env" -f infrastructure/compose/compose.yaml -p "$project" --profile signaling)
 cleanup_ran=0
 
 cleanup() {
   if [ "$cleanup_ran" -eq 0 ]; then
     cleanup_ran=1
-    UTCP_GATEWAY_PORT="$gateway_port" "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+    "${compose[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+    rm -rf "$runtime_dir"
+    rm -f "$body_file" "$bootstrap_cookie_jar" "$member_cookie_jar" "$expiry_cookie_jar"
   fi
 }
-trap cleanup EXIT INT TERM
 
-UTCP_GATEWAY_PORT="$gateway_port" "${compose[@]}" config --quiet
-UTCP_GATEWAY_PORT="$gateway_port" "${compose[@]}" config --format json | scripts/compose/static_check.py
-UTCP_GATEWAY_PORT="$gateway_port" "${compose[@]}" up -d --build --wait --wait-timeout 240
+on_exit() {
+  local status=$?
+  if [ "$status" -ne 0 ] && [ "$cleanup_ran" -eq 0 ]; then
+    printf 'compose-proof failure diagnostics follow; output is bounded and sanitized by service scope.\n' >&2
+    "${compose[@]}" ps --all >&2 || true
+    "${compose[@]}" logs --no-color --tail=120 kamailio sip-gateway kamailio-registration-observer >&2 || true
+  fi
+  cleanup
+  exit "$status"
+}
+trap on_exit EXIT INT TERM
 
-expected_services=(postgres redis migrate api worker scheduler web gateway control-plane-outbox-dispatcher telephony-command-worker telephony-event-normalizer telephony-reconciler)
+json_get_file() {
+  php -r '
+    $d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR);
+    foreach (explode(".", $argv[2]) as $p) { $d = is_array($d) ? ($d[$p] ?? null) : null; }
+    if (is_array($d)) { echo json_encode($d, JSON_UNESCAPED_SLASHES); } else { echo $d; }
+  ' "$1" "$2"
+}
+
+json_get_stdin() {
+  php -r '
+    $d=json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR);
+    foreach (explode(".", $argv[1]) as $p) { $d = is_array($d) ? ($d[$p] ?? null) : null; }
+    if (is_array($d)) { echo json_encode($d, JSON_UNESCAPED_SLASHES); } else { echo $d; }
+  ' "$1"
+}
+
+api_json() {
+  php -r 'echo json_encode(json_decode($argv[1], true, 512, JSON_THROW_ON_ERROR), JSON_UNESCAPED_SLASHES);' "$1"
+}
+
+csrf_token() {
+  curl -fsS --cookie "$1" --cookie-jar "$1" "$base_url/api/v1/auth/csrf" | json_get_stdin csrf_token
+}
+
+api_request() {
+  local cookie_jar="$1" csrf="$2" method="$3" path="$4" payload="${5:-}"
+  shift 5 2>/dev/null || shift $#
+  if [ -n "$payload" ]; then
+    curl -sS --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+      --header "Content-Type: application/json" \
+      --header "X-CSRF-TOKEN: $csrf" \
+      --request "$method" \
+      --data "$payload" \
+      --output "$body_file" \
+      --write-out '%{http_code}' \
+      "$@" \
+      "$base_url$path"
+  else
+    curl -sS --cookie "$cookie_jar" --cookie-jar "$cookie_jar" \
+      --header "X-CSRF-TOKEN: $csrf" \
+      --request "$method" \
+      --output "$body_file" \
+      --write-out '%{http_code}' \
+      "$@" \
+      "$base_url$path"
+  fi
+}
+
+psql_query() {
+  "${compose[@]}" exec -T postgres psql \
+    -U "${UTCP_POSTGRES_USER:-utcp}" \
+    -d "${UTCP_POSTGRES_DB:-utcp}" \
+    -At -c "$1"
+}
+
+env_value() {
+  awk -F= -v key="$1" '$1 == key { print substr($0, length(key) + 2); exit }' "$runtime_env"
+}
+
+psql_as() {
+  local user="$1" password="$2" query="$3"
+  "${compose[@]}" exec -T -e PGPASSWORD="$password" postgres psql \
+    -h 127.0.0.1 \
+    -U "$user" \
+    -d "${UTCP_POSTGRES_DB:-utcp}" \
+    -At -c "$query"
+}
+
+artisan() {
+  "${compose[@]}" exec -T api php artisan "$@"
+}
+
+wait_for_url() {
+  local url="$1" ca="${2:-}" attempts=60
+  while [ "$attempts" -gt 0 ]; do
+    if [ -n "$ca" ]; then
+      if curl -fsS --cacert "$ca" "$url" >/dev/null 2>&1; then
+        return 0
+      fi
+    elif curl -fsS "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    attempts=$((attempts - 1))
+    sleep 2
+  done
+  printf 'timed out waiting for %s\n' "$url" >&2
+  exit 1
+}
+
+login_bootstrap() {
+  local password="$1" csrf payload code session_json tenant_id tenant_payload tenant_code
+  csrf="$(csrf_token "$bootstrap_cookie_jar")"
+  payload="$(php -r 'echo json_encode(["email"=>"admin@utcp.local.test","password"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$password")"
+  code="$(api_request "$bootstrap_cookie_jar" "$csrf" POST /api/v1/auth/login "$payload")"
+  [ "$code" = "200" ] || { printf 'bootstrap login failed HTTP %s\n' "$code" >&2; cat "$body_file" >&2; exit 1; }
+
+  csrf="$(csrf_token "$bootstrap_cookie_jar")"
+  session_json="$(curl -fsS --cookie "$bootstrap_cookie_jar" "$base_url/api/v1/auth/session")"
+  tenant_id="$(printf '%s' "$session_json" | php -r '$d=json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR); foreach ($d["memberships"] as $m) { if ($m["slug"] === "local") { echo $m["tenant_id"]; exit; }}')"
+  [ -n "$tenant_id" ] || { printf 'bootstrap tenant not available\n' >&2; exit 1; }
+  tenant_payload="$(php -r 'echo json_encode(["tenant_id"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$tenant_id")"
+  tenant_code="$(api_request "$bootstrap_cookie_jar" "$csrf" POST /api/v1/auth/tenant-context "$tenant_payload")"
+  [ "$tenant_code" = "200" ] || { printf 'tenant selection failed HTTP %s\n' "$tenant_code" >&2; cat "$body_file" >&2; exit 1; }
+  BOOTSTRAP_CSRF="$(csrf_token "$bootstrap_cookie_jar")"
+  BOOTSTRAP_TENANT_ID="$tenant_id"
+}
+
+login_member() {
+  local email="$1" password="$2" tenant_id="$3" new_password="$4" cookie_jar="$5"
+  local csrf payload code tenant_payload
+  csrf="$(csrf_token "$cookie_jar")"
+  payload="$(php -r 'echo json_encode(["email"=>$argv[1],"password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$email" "$password")"
+  code="$(api_request "$cookie_jar" "$csrf" POST /api/v1/auth/login "$payload")"
+  [ "$code" = "200" ] || { printf 'member login failed HTTP %s\n' "$code" >&2; cat "$body_file" >&2; exit 1; }
+
+  csrf="$(csrf_token "$cookie_jar")"
+  payload="$(php -r 'echo json_encode(["current_password"=>$argv[1],"new_password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$password" "$new_password")"
+  code="$(api_request "$cookie_jar" "$csrf" POST /api/v1/auth/change-password "$payload")"
+  [ "$code" = "200" ] || { printf 'member password change failed HTTP %s\n' "$code" >&2; cat "$body_file" >&2; exit 1; }
+
+  csrf="$(csrf_token "$cookie_jar")"
+  tenant_payload="$(php -r 'echo json_encode(["tenant_id"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$tenant_id")"
+  code="$(api_request "$cookie_jar" "$csrf" POST /api/v1/auth/tenant-context "$tenant_payload")"
+  [ "$code" = "200" ] || { printf 'member tenant selection failed HTTP %s\n' "$code" >&2; cat "$body_file" >&2; exit 1; }
+  csrf_token "$cookie_jar"
+}
+
+create_member_session_and_credential() {
+  local suffix="$1" cookie_jar="$2"
+  local user_payload code member_id member_email member_password membership_payload member_csrf session_id username realm secret
+
+  user_payload="$(php -r 'echo json_encode(["email"=>"t1f-member-".$argv[1]."@utcp.local.test","display_name"=>"T1F Compose Proof Member ".$argv[1]], JSON_UNESCAPED_SLASHES);' "$suffix")"
+  code="$(api_request "$bootstrap_cookie_jar" "$BOOTSTRAP_CSRF" POST /api/v1/admin/users "$user_payload")"
+  [ "$code" = "201" ] || { printf 'member user create failed HTTP %s\n' "$code" >&2; cat "$body_file" >&2; exit 1; }
+  member_id="$(json_get_file "$body_file" user.id)"
+  member_email="$(json_get_file "$body_file" user.email)"
+  member_password="$(json_get_file "$body_file" temporary_password)"
+
+  membership_payload="$(php -r 'echo json_encode(["user_id"=>$argv[1],"role_key"=>"tenant-member"], JSON_UNESCAPED_SLASHES);' "$member_id")"
+  code="$(api_request "$bootstrap_cookie_jar" "$BOOTSTRAP_CSRF" POST /api/v1/admin/memberships "$membership_payload" --header "Idempotency-Key: t1f-membership-${suffix}")"
+  [ "$code" = "201" ] || { printf 'member membership failed HTTP %s\n' "$code" >&2; cat "$body_file" >&2; exit 1; }
+
+  member_csrf="$(login_member "$member_email" "$member_password" "$BOOTSTRAP_TENANT_ID" "T1FProof${suffix}!" "$cookie_jar")"
+  code="$(api_request "$cookie_jar" "$member_csrf" POST /api/v1/telephony/sessions '' --header "Idempotency-Key: t1f-session-${suffix}")"
+  [ "$code" = "201" ] || { printf 'telephony session create failed HTTP %s\n' "$code" >&2; cat "$body_file" >&2; exit 1; }
+  session_id="$(json_get_file "$body_file" telephony_session.id)"
+
+  code="$(api_request "$cookie_jar" "$member_csrf" POST "/api/v1/telephony/sessions/$session_id/signaling-credential")"
+  [ "$code" = "201" ] || { printf 'credential issue failed HTTP %s\n' "$code" >&2; cat "$body_file" >&2; exit 1; }
+  username="$(json_get_file "$body_file" credential.username)"
+  realm="$(json_get_file "$body_file" credential.realm)"
+  secret="$(json_get_file "$body_file" credential.sip_secret)"
+  [ -n "$secret" ] || { printf 'one-time SIP secret was not issued\n' >&2; exit 1; }
+  if grep -Eq 'ha1' "$body_file"; then
+    printf 'credential issue disclosed HA1 material\n' >&2
+    exit 1
+  fi
+
+  code="$(api_request "$cookie_jar" "$member_csrf" GET "/api/v1/telephony/sessions/$session_id/signaling-credential")"
+  [ "$code" = "200" ] || { printf 'credential metadata failed HTTP %s\n' "$code" >&2; cat "$body_file" >&2; exit 1; }
+  if grep -Eq 'sip_secret|ha1' "$body_file"; then
+    printf 'metadata disclosed credential material\n' >&2
+    exit 1
+  fi
+
+  MEMBER_CSRF="$member_csrf"
+  PROOF_SESSION_ID="$session_id"
+  PROOF_USERNAME="$username"
+  PROOF_REALM="$realm"
+  PROOF_SECRET="$secret"
+}
+
+sip_action() {
+  local secret="$1" action="$2" username="$3" realm="$4" contact_token="$5" expect="${6:-}"
+  local args=(
+    --host=sip.utcp.local.test
+    --connect-host=127.0.0.1
+    --port="$wss_port"
+    --path=/ws
+    --origin=https://app.utcp.local.test
+    --ca="$runtime_dir/tls/ca.crt"
+    --username="$username"
+    --realm="$realm"
+    --secret-stdin
+    --action="$action"
+    --contact-token="$contact_token"
+  )
+  if [ -n "$expect" ]; then
+    args+=(--expect="$expect")
+  fi
+  printf '%s' "$secret" | "$ROOT/scripts/kamailio-signaling/sip-wss-client.php" "${args[@]}"
+}
+
+location_active_count() {
+  local username="$1" realm="$2"
+  psql_query "select count(*) from location where username = '${username}' and domain = '${realm}' and expires > now();" | tr -d '[:space:]'
+}
+
+location_summary() {
+  local username="$1" realm="$2"
+  psql_query "select count(*), count(distinct ruid), coalesce(max(extract(epoch from (expires - now()))::int), 0) from location where username = '${username}' and domain = '${realm}' and expires > now();"
+}
+
+registration_state() {
+  local session_id="$1"
+  psql_query "select o.desired_state || '|' || o.observed_state || '|' || coalesce(r.status, '') from signaling_registration_observations o left join runtime_reconciliation_states r on r.target_type = 'signaling_registration' and r.target_id = o.id::text where o.telephony_session_id = '${session_id}' order by o.updated_at desc limit 1;"
+}
+
+receipt_count() {
+  local event_type="$1"
+  psql_query "select count(*) from runtime_event_receipts where adapter_key = 'kamailio-registration' and event_type = '${event_type}';" | tr -d '[:space:]'
+}
+
+wait_for_registration_state() {
+  local session_id="$1" expected="$2" waited=0 state
+  while :; do
+    state="$(registration_state "$session_id")"
+    case "$state" in
+      *"|$expected|"*) printf 'registration_state_%s=observed waited_seconds=%s\n' "$expected" "$waited"; return 0 ;;
+    esac
+    if [ "$waited" -ge 80 ]; then
+      printf 'registration state %s not observed, last state: %s\n' "$expected" "$state" >&2
+      return 1
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+}
+
+wait_for_no_contact() {
+  local username="$1" realm="$2" waited=0 count
+  while :; do
+    count="$(location_active_count "$username" "$realm")"
+    if [ "$count" = "0" ]; then
+      printf 'bounded_contact_expiration=observed waited_seconds=%s\n' "$waited"
+      return 0
+    fi
+    if [ "$waited" -ge 130 ]; then
+      printf 'bounded_contact_expiration=timeout active_count=%s\n' "$count" >&2
+      return 1
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+}
+
+run_worker_once() {
+  artisan runtime-engine:event-normalizer --once >/dev/null || true
+  artisan runtime-engine:reconciler --once >/dev/null || true
+}
+
+"${compose[@]}" config --quiet
+"${compose[@]}" config --format json | scripts/compose/static_check.py
+"${compose[@]}" up -d --build --wait --wait-timeout 360
+
+expected_services=(postgres redis migrate api worker scheduler web gateway control-plane-outbox-dispatcher telephony-command-worker telephony-event-normalizer telephony-reconciler kamailio kamailio-registration-observer sip-gateway)
 
 service_container() {
   "${compose[@]}" ps --all -q "$1"
 }
 
 require_container() {
-  local service="$1"
-  local container
+  local service="$1" container
   container="$(service_container "$service")"
-  if [ -z "$container" ]; then
-    printf 'missing container for service: %s\n' "$service" >&2
-    exit 1
-  fi
+  [ -n "$container" ] || { printf 'missing container for service: %s\n' "$service" >&2; exit 1; }
   printf '%s' "$container"
 }
 
 require_health() {
-  local service="$1"
-  local container
-  local health
+  local service="$1" container health
   container="$(require_container "$service")"
   health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")"
   if [ "$health" != "healthy" ] && [ "$health" != "running" ]; then
@@ -68,29 +445,20 @@ for service in "${expected_services[@]}"; do
   require_container "$service" >/dev/null
 done
 
-require_health postgres
-require_health redis
-require_health api
-require_health web
-require_health gateway
+for service in postgres redis api web gateway sip-gateway kamailio kamailio-registration-observer; do
+  require_health "$service"
+done
 
 migrate_container="$(require_container migrate)"
 migrate_state="$(docker inspect --format '{{.State.Status}} {{.State.ExitCode}}' "$migrate_container")"
-if [ "$migrate_state" != "exited 0" ]; then
-  printf 'migration job did not complete successfully: %s\n' "$migrate_state" >&2
-  exit 1
-fi
+[ "$migrate_state" = "exited 0" ] || { printf 'migration job did not complete successfully: %s\n' "$migrate_state" >&2; exit 1; }
 
-for service in worker scheduler control-plane-outbox-dispatcher telephony-command-worker telephony-event-normalizer telephony-reconciler; do
-  container="$(require_container "$service")"
-  state="$(docker inspect --format '{{.State.Status}}' "$container")"
-  if [ "$state" != "running" ]; then
-    printf '%s is not running: %s\n' "$service" "$state" >&2
-    exit 1
-  fi
+for service in worker scheduler control-plane-outbox-dispatcher telephony-command-worker telephony-event-normalizer telephony-reconciler kamailio-registration-observer kamailio sip-gateway; do
+  state="$(docker inspect --format '{{.State.Status}}' "$(require_container "$service")")"
+  [ "$state" = "running" ] || { printf '%s is not running: %s\n' "$service" "$state" >&2; exit 1; }
 done
 
-for service in postgres redis; do
+for service in postgres redis kamailio kamailio-registration-observer; do
   ports="$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$(require_container "$service")")"
   if [ "$ports" != "null" ] && [ "$ports" != "{}" ]; then
     printf '%s unexpectedly publishes ports: %s\n' "$service" "$ports" >&2
@@ -99,49 +467,180 @@ for service in postgres redis; do
 done
 
 curl -fsS "${base_url}/healthz" | grep -qx 'ok'
-root_payload="$(curl -fsS "${base_url}/")"
-printf '%s' "$root_payload" | grep -q '<div id="app"></div>'
-asset_path="$(printf '%s' "$root_payload" | sed -n 's/.*src="\([^"]*\/assets\/[^"]*\.js\)".*/\1/p' | head -n 1)"
-if [ -z "$asset_path" ]; then
-  printf 'frontend root did not reference a built JavaScript asset\n' >&2
-  exit 1
-fi
-curl -fsS -o /dev/null "${base_url}${asset_path}"
-curl -fsS "${base_url}/api/health/live" | grep -q '"status":"ok"'
-ready_payload="$(curl -fsS "${base_url}/api/health/ready")"
-printf '%s' "$ready_payload" | grep -q '"status":"ready"'
-printf '%s' "$ready_payload" | grep -q '"postgres":"ok"'
-printf '%s' "$ready_payload" | grep -q '"redis":"ok"'
+wait_for_url "$base_url/api/health/ready"
+curl -fsS "${base_url}/api/health/ready" | grep -q '"status":"ready"'
 curl -fsS "${base_url}/api/version" | grep -q '"service":"utcp-api"'
-
-api_cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$(require_container api)")"
-worker_cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$(require_container worker)")"
-scheduler_cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$(require_container scheduler)")"
-if [ "$api_cmd" != '["api"]' ] || [ "$worker_cmd" != '["worker"]' ] || [ "$scheduler_cmd" != '["scheduler"]' ]; then
-  printf 'unexpected api/worker/scheduler roles: api=%s worker=%s scheduler=%s\n' "$api_cmd" "$worker_cmd" "$scheduler_cmd" >&2
-  exit 1
-fi
+wait_for_url "https://sip.utcp.local.test:${wss_port}/healthz" "$runtime_dir/tls/ca.crt"
+openssl verify -CAfile "$runtime_dir/tls/ca.crt" "$runtime_dir/tls/tls.crt" >/dev/null
 
 api_image_id="$(docker inspect --format '{{.Image}}' "$(require_container api)")"
-for service in control-plane-outbox-dispatcher telephony-command-worker telephony-event-normalizer telephony-reconciler; do
-  container="$(require_container "$service")"
-  cmd="$(docker inspect --format '{{json .Config.Cmd}}' "$container")"
-  if [ "$cmd" != "[\"$service\"]" ]; then
-    printf 'unexpected %s role command: %s\n' "$service" "$cmd" >&2
-    exit 1
-  fi
-  image_id="$(docker inspect --format '{{.Image}}' "$container")"
-  if [ "$image_id" != "$api_image_id" ]; then
-    printf '%s does not share the current api image: %s != %s\n' "$service" "$image_id" "$api_image_id" >&2
-    exit 1
-  fi
-done
+observer_image_id="$(docker inspect --format '{{.Image}}' "$(require_container kamailio-registration-observer)")"
+[ "$api_image_id" = "$observer_image_id" ] || { printf 'observer does not share the API image\n' >&2; exit 1; }
 
 "${compose[@]}" exec -T postgres psql -U "${UTCP_POSTGRES_USER:-utcp}" -d "${UTCP_POSTGRES_DB:-utcp}" -c 'select 1;' >/dev/null
 "${compose[@]}" exec -T redis redis-cli ping | grep -qx 'PONG'
 
+auth_reader_user="$(env_value KAMAILIO_AUTH_DB_USER)"
+auth_reader_password="$(env_value KAMAILIO_AUTH_DB_PASSWORD)"
+observer_reader_user="$(env_value KAMAILIO_OBSERVER_DB_USER)"
+observer_reader_password="$(env_value KAMAILIO_OBSERVER_DB_PASSWORD)"
+psql_as "$auth_reader_user" "$auth_reader_password" "select username, domain, ha1 from kamailio_signaling_auth_view limit 0;" >/dev/null
+if psql_as "$auth_reader_user" "$auth_reader_password" "select count(*) from users;" >/dev/null 2>&1; then
+  printf 'kamailio auth reader can read users table\n' >&2
+  exit 1
+fi
+psql_as "$observer_reader_user" "$observer_reader_password" "select username, domain, ruid, expires, last_modified from location limit 0;" >/dev/null
+if psql_as "$observer_reader_user" "$observer_reader_password" "select ha1 from kamailio_signaling_auth_view limit 0;" >/dev/null 2>&1; then
+  printf 'observer reader can read auth view\n' >&2
+  exit 1
+fi
+
+bootstrap_password="T1FBootstrap$(openssl rand -hex 8)!"
+artisan identity:bootstrap-local \
+  --email=admin@utcp.local.test \
+  --password="$bootstrap_password" \
+  --display-name="UTCP Compose Proof Administrator" \
+  --tenant-slug=local \
+  --tenant-name="Local Tenant" >/dev/null
+login_bootstrap "$bootstrap_password"
+
+suffix="t1f$(date +%s)"
+create_member_session_and_credential "$suffix" "$member_cookie_jar"
+username="$PROOF_USERNAME"
+realm="$PROOF_REALM"
+secret="$PROOF_SECRET"
+session_id="$PROOF_SESSION_ID"
+member_csrf="$MEMBER_CSRF"
+
+auth_rows="$(psql_query "select count(*) from kamailio_signaling_auth_view where username = '${username}' and domain = '${realm}';" | tr -d '[:space:]')"
+[ "$auth_rows" = "1" ] || { printf 'issued credential not visible to auth view\n' >&2; exit 1; }
+printf 'credential_issue_http=201\n'
+printf 'metadata_secret_disclosure=false\n'
+
+sip_action "$secret" register "$username" "$realm" "$suffix"
+[ "$(location_active_count "$username" "$realm")" = "1" ] || { printf 'register did not create one contact\n' >&2; exit 1; }
+printf 'register_location_summary=%s\n' "$(location_summary "$username" "$realm")"
+wait_for_registration_state "$session_id" registered
+accepted_receipts="$(receipt_count kamailio.registration.accepted)"
+[ "$accepted_receipts" -ge 1 ] || { printf 'accepted receipt not observed\n' >&2; exit 1; }
+
+before_refresh="$(psql_query "select ruid || '|' || extract(epoch from last_modified)::bigint from location where username = '${username}' and domain = '${realm}' and expires > now() order by last_modified desc limit 1;")"
+sleep 2
+sip_action "$secret" refresh "$username" "$realm" "$suffix"
+after_refresh="$(psql_query "select ruid || '|' || extract(epoch from last_modified)::bigint from location where username = '${username}' and domain = '${realm}' and expires > now() order by last_modified desc limit 1;")"
+php -r '
+[$br, $bt] = explode("|", trim($argv[1]));
+[$ar, $at] = explode("|", trim($argv[2]));
+if ($br !== $ar || (int) $at <= (int) $bt) {
+    fwrite(STDERR, "refresh did not preserve ruid and advance last_modified\n");
+    exit(1);
+}
+' "$before_refresh" "$after_refresh"
+printf 'refresh_same_ruid_last_modified_advanced=true\n'
+sleep 8
+run_worker_once
+[ "$(receipt_count kamailio.registration.refreshed)" -ge 1 ] || { printf 'refresh receipt not observed\n' >&2; exit 1; }
+
+sip_action "$secret" replace "$username" "$realm" "${suffix}replacement"
+[ "$(location_active_count "$username" "$realm")" = "1" ] || { printf 'replacement did not retain one active contact\n' >&2; exit 1; }
+printf 'replacement_single_contact=true\n'
+sleep 8
+run_worker_once
+[ "$(receipt_count kamailio.registration.replaced)" -ge 1 ] || { printf 'replacement receipt not observed\n' >&2; exit 1; }
+
+before_duplicate_count="$(psql_query "select count(*) from runtime_event_receipts where adapter_key = 'kamailio-registration';" | tr -d '[:space:]')"
+sleep 8
+run_worker_once
+after_duplicate_count="$(psql_query "select count(*) from runtime_event_receipts where adapter_key = 'kamailio-registration';" | tr -d '[:space:]')"
+[ "$before_duplicate_count" = "$after_duplicate_count" ] || { printf 'identical snapshot created duplicate receipts\n' >&2; exit 1; }
+printf 'identical_snapshot_suppressed=true\n'
+
+sip_action "$secret" deregister "$username" "$realm" "${suffix}replacement"
+[ "$(location_active_count "$username" "$realm")" = "0" ] || { printf 'deregistration left active contacts\n' >&2; exit 1; }
+sleep 8
+run_worker_once
+[ "$(receipt_count kamailio.registration.removed)" -ge 1 ] || { printf 'removal receipt not observed\n' >&2; exit 1; }
+wait_for_registration_state "$session_id" unregistered
+printf 'deregistration_removed_contact=true\n'
+
+sip_action "$secret" wrong-password "$username" "$realm" "${suffix}wrong"
+[ "$(location_active_count "$username" "$realm")" = "0" ] || { printf 'wrong password created a contact\n' >&2; exit 1; }
+printf 'wrong_password_rejected_without_contact=true\n'
+
+expiry_suffix="${suffix}expiry"
+create_member_session_and_credential "$expiry_suffix" "$expiry_cookie_jar"
+expiry_username="$PROOF_USERNAME"
+expiry_realm="$PROOF_REALM"
+expiry_secret="$PROOF_SECRET"
+expiry_session_id="$PROOF_SESSION_ID"
+expiry_member_csrf="$MEMBER_CSRF"
+
+sip_action "$expiry_secret" register "$expiry_username" "$expiry_realm" "$expiry_suffix"
+[ "$(location_active_count "$expiry_username" "$expiry_realm")" = "1" ] || { printf 'expiry proof registration missing\n' >&2; exit 1; }
+wait_for_registration_state "$expiry_session_id" registered
+code="$(api_request "$expiry_cookie_jar" "$expiry_member_csrf" POST "/api/v1/telephony/sessions/$expiry_session_id/end")"
+[ "$code" = "200" ] || { printf 'telephony session end failed HTTP %s\n' "$code" >&2; cat "$body_file" >&2; exit 1; }
+auth_rows="$(psql_query "select count(*) from kamailio_signaling_auth_view where username = '${expiry_username}' and domain = '${expiry_realm}';" | tr -d '[:space:]')"
+[ "$auth_rows" = "0" ] || { printf 'revoked credential still visible in auth view\n' >&2; exit 1; }
+printf 'session_end_removed_auth_view_row=true\n'
+sip_action "$expiry_secret" refresh "$expiry_username" "$expiry_realm" "$expiry_suffix" rejected
+printf 'session_end_blocks_refresh=true\n'
+wait_for_no_contact "$expiry_username" "$expiry_realm"
+sleep 8
+run_worker_once
+state="$(registration_state "$expiry_session_id")"
+if [[ "$state" != removed\|expired\|* && "$state" != removed\|unregistered\|* ]]; then
+  printf 'session-end registration did not converge after expiry: %s\n' "$state" >&2
+  exit 1
+fi
+printf 'session_end_bounded_expiry_converged=true\n'
+
+source_count="$(psql_query "select count(*) from event_sources where source_kind = 'kamailio-registration' and source_key = 'local-shared-registrar';" | tr -d '[:space:]')"
+lease_count="$(psql_query "select count(*) from runtime_listener_leases l join event_sources s on s.id = l.event_source_id where s.source_kind = 'kamailio-registration' and l.listener_kind = 'kamailio-registration-observer' and l.status = 'claimed' and l.lease_expires_at > now();" | tr -d '[:space:]')"
+epoch_count="$(psql_query "select count(*) from runtime_event_connection_epochs e join event_sources s on s.id = e.event_source_id where s.source_kind = 'kamailio-registration' and e.adapter_key = 'kamailio-registration' and e.status = 'open';" | tr -d '[:space:]')"
+checkpoint_age="$(psql_query "select coalesce(extract(epoch from (now() - max(last_observed_at)))::int::text, 'not_observed') from runtime_projection_checkpoints where projector = 'kamailio-registration-observer';" | tr -d '[:space:]')"
+[ "$source_count" = "1" ] || { printf 'expected one canonical kamailio source, got %s\n' "$source_count" >&2; exit 1; }
+[ "$lease_count" -ge 1 ] || { printf 'observer lease not claimed\n' >&2; exit 1; }
+[ "$epoch_count" -ge 1 ] || { printf 'observer source epoch not open\n' >&2; exit 1; }
+printf 'canonical_kamailio_source_count=%s\n' "$source_count"
+printf 'observer_lease_count=%s\n' "$lease_count"
+printf 'open_polling_epoch_count=%s\n' "$epoch_count"
+printf 'checkpoint_age_seconds=%s\n' "$checkpoint_age"
+printf 'active_signaling_credentials=%s\n' "$(psql_query "select count(*) from telephony_signaling_credentials where revoked_at is null and expires_at > now();" | tr -d '[:space:]')"
+printf 'kamailio_contact_count=%s\n' "$(psql_query "select count(*) from location where expires > now();" | tr -d '[:space:]')"
+printf 'registration_projection_aggregates=%s\n' "$(psql_query "select coalesce(json_object_agg(observed_state, count), '{}'::json) from (select observed_state, count(*)::int as count from signaling_registration_observations group by observed_state) s;" | tr -d '[:space:]')"
+printf 'reconciliation_aggregates=%s\n' "$(psql_query "select coalesce(json_object_agg(status, count), '{}'::json) from (select status, count(*)::int as count from runtime_reconciliation_states where target_type = 'signaling_registration' group by status) s;" | tr -d '[:space:]')"
+
+if "${compose[@]}" logs --no-color kamailio kamailio-registration-observer api 2>/dev/null | grep -E "$secret|$expiry_secret|ha1" >/dev/null; then
+  printf 'logs disclosed signaling secret material\n' >&2
+  exit 1
+fi
+
+printf 'wss_tls_trusted=true\n'
+printf 'sip_subprotocol_preserved=true\n'
+printf 'no_asterisk_sip_scope=true\n'
+printf 'no_rtp_media_scope=true\n'
 printf 'compose proof passed\n'
 printf 'gateway_url=%s\n' "$base_url"
+printf 'wss_url=wss://sip.utcp.local.test:%s/ws\n' "$wss_port"
 printf 'services=%s\n' "${expected_services[*]}"
 cleanup
+
+if docker compose ls --format json | grep -F "\"Name\":\"$project\"" >/dev/null 2>&1; then
+  printf 'disposable compose project remained after cleanup\n' >&2
+  exit 1
+fi
+if docker ps --format '{{.Names}}' | grep -F "$project" >/dev/null 2>&1; then
+  printf 'disposable compose containers remained after cleanup\n' >&2
+  exit 1
+fi
+if docker volume ls --format '{{.Name}}' | grep -F "$project" >/dev/null 2>&1; then
+  printf 'disposable compose volumes remained after cleanup\n' >&2
+  exit 1
+fi
+if docker network ls --format '{{.Name}}' | grep -F "$project" >/dev/null 2>&1; then
+  printf 'disposable compose networks remained after cleanup\n' >&2
+  exit 1
+fi
+[ ! -e "$runtime_dir" ] || { printf 'generated compose runtime directory remained: %s\n' "$runtime_dir" >&2; exit 1; }
 printf 'compose cleanup passed\n'

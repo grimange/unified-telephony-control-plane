@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kamailio
+  namespace: utcp-platform
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: kamailio
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: kamailio
+  ports:
+    - name: ws
+      protocol: TCP
+      port: 8080
+      targetPort: ws

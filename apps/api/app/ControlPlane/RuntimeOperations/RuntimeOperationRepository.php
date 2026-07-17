@@ -34,6 +34,13 @@ final class RuntimeOperationRepository
         int $maxAttempts = 3,
         ?string $runtimeNodeId = null,
     ): string {
+        if ($idempotencyKey !== null) {
+            $existingId = $this->findIdempotent($operationType, $idempotencyKey);
+            if ($existingId !== null) {
+                return $existingId;
+            }
+        }
+
         $id = RuntimeOperationId::new()->value();
         $safePayload = PayloadSafety::assertSafe($payload);
 
@@ -147,9 +154,29 @@ final class RuntimeOperationRepository
     public function complete(string $id, string $leaseToken, EventEnvelope $event, OutboxRepository $outbox): void
     {
         DB::transaction(function () use ($id, $leaseToken, $event, $outbox): void {
+            $operation = $this->lockedOperation($id);
             $this->transitionWithFence($id, $leaseToken, OperationStatus::Succeeded, [
                 'completed_at' => now(),
             ]);
+            DB::table('runtime_reconciliation_states')
+                ->where(function ($query) use ($id, $operation): void {
+                    $query
+                        ->where('last_operation_id', $id)
+                        ->orWhere(function ($query) use ($operation): void {
+                            $query
+                                ->where('target_type', $operation->aggregate_type)
+                                ->where('target_id', $operation->aggregate_id);
+                        });
+                })
+                ->whereNotIn('status', ['converged'])
+                ->update([
+                    'status' => 'waiting',
+                    'next_check_at' => now(),
+                    'lease_owner' => null,
+                    'lease_token' => null,
+                    'lease_expires_at' => null,
+                    'updated_at' => now(),
+                ]);
             $outbox->append($event);
         });
     }

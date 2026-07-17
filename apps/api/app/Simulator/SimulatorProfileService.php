@@ -5,9 +5,8 @@ namespace App\Simulator;
 use App\ControlPlane\Audit\AuditRepository;
 use App\ControlPlane\Messaging\EventEnvelope;
 use App\ControlPlane\Messaging\OutboxRepository;
+use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\StableJson;
-use App\Identity\IdentityContext;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -54,7 +53,7 @@ final class SimulatorProfileService
      * @param  array<string, mixed>  $input
      * @return array<string, mixed>
      */
-    public function put(Request $request, string $tenantId, string $runtimeNodeId, array $input): array
+    public function put(ExecutionContext $context, string $tenantId, string $runtimeNodeId, array $input): array
     {
         $scenario = (string) $input['scenario_key'];
         $version = (int) ($input['scenario_version'] ?? 1);
@@ -65,13 +64,13 @@ final class SimulatorProfileService
         $parameters = $this->catalog->validateParameters($input['parameters'] ?? []);
         $this->catalog->assertScenario($scenario, $version);
 
-        DB::transaction(function () use ($request, $tenantId, $runtimeNodeId, $scenario, $version, $seed, $parameters): void {
+        DB::transaction(function () use ($context, $tenantId, $runtimeNodeId, $scenario, $version, $seed, $parameters): void {
             $node = $this->simulatorNode($tenantId, $runtimeNodeId, true);
             $generation = ((int) $node->configuration_version) + 1;
 
             DB::table('runtime_nodes')->where('id', $runtimeNodeId)->update([
                 'configuration_version' => $generation,
-                'updated_by' => $request->user()->id,
+                'updated_by' => $context->actorId,
                 'updated_at' => now(),
             ]);
             DB::table('simulator_profiles')->updateOrInsert(
@@ -105,7 +104,6 @@ final class SimulatorProfileService
             );
             DB::table('runtime_reconciliation_states')->where('target_type', 'runtime_node')->where('target_id', $runtimeNodeId)->delete();
 
-            $context = IdentityContext::fromRequest($request, $tenantId);
             $payload = [
                 'adapter_key' => $this->catalog->adapterKey(),
                 'scenario_key' => $scenario,

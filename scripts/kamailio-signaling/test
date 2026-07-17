@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")/../.."
+
+(
+    cd apps/api
+    php artisan test --filter=TelephonyDomainTest
+    php artisan test --filter=KamailioRegistrationObserverTest
+)

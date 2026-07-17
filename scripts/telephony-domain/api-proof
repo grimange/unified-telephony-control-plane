@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/simulator/lib
+. "$ROOT/scripts/simulator/lib"
+
+json_body_get() {
+  cat "$SIM_BODY_FILE" | sim_json_get "$1"
+}
+
+login_member() {
+  local email="$1" password="$2" tenant_id="$3" new_password="$4" cookie_jar="$5"
+  local csrf_json csrf login_payload login_code change_payload change_code tenant_payload tenant_code
+
+  csrf_json="$("${sim_curl[@]}" --cookie-jar "$cookie_jar" "$SIM_BASE/api/v1/auth/csrf")"
+  csrf="$(printf '%s' "$csrf_json" | sim_json_get csrf_token)"
+  login_payload="$(php -r 'echo json_encode(["email"=>$argv[1],"password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$email" "$password")"
+  login_code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$login_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/login")"
+  [ "$login_code" = "200" ] || { printf 'member login failed with HTTP %s\n' "$login_code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+  csrf_json="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" "$SIM_BASE/api/v1/auth/csrf")"
+  csrf="$(printf '%s' "$csrf_json" | sim_json_get csrf_token)"
+  change_payload="$(php -r 'echo json_encode(["current_password"=>$argv[1],"new_password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$password" "$new_password")"
+  change_code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$change_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/change-password")"
+  [ "$change_code" = "200" ] || { printf 'member password change failed with HTTP %s\n' "$change_code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+  csrf_json="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" "$SIM_BASE/api/v1/auth/csrf")"
+  csrf="$(printf '%s' "$csrf_json" | sim_json_get csrf_token)"
+  tenant_payload="$(php -r 'echo json_encode(["tenant_id"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$tenant_id")"
+  tenant_code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --data "$tenant_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/tenant-context")"
+  [ "$tenant_code" = "200" ] || { printf 'member tenant selection failed with HTTP %s\n' "$tenant_code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+  printf '%s' "$csrf"
+}
+
+member_api() {
+  local cookie_jar="$1" csrf="$2" method="$3" path="$4" payload="${5:-}"
+  shift 5 2>/dev/null || shift $#
+  if [ -n "$payload" ]; then
+    "${sim_curl[@]}" --cookie "$cookie_jar" --header "Content-Type: application/json" --header "X-CSRF-TOKEN: $csrf" --request "$method" --data "$payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$@" "$SIM_BASE$path"
+  else
+    "${sim_curl[@]}" --cookie "$cookie_jar" --header "X-CSRF-TOKEN: $csrf" --request "$method" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$@" "$SIM_BASE$path"
+  fi
+}
+
+suffix="$(date +%s)"
+member_cookie_jar="$(mktemp)"
+trap 'rm -f "$member_cookie_jar"; sim_cleanup' EXIT
+
+sim_login
+node_id="$(sim_create_or_reuse_node "c5-api-proof-simulator-${suffix}" "C5 API Proof Simulator ${suffix}")"
+sim_set_capabilities "$node_id"
+sim_configure "$node_id" "steady-ready" "c5-api-proof-${suffix}" '{"max_delay_seconds":0}'
+sim_activate "$node_id"
+
+conference_payload="$(php -r 'echo json_encode(["slug"=>"c5-api-proof-".$argv[1],"display_name"=>"C5 API Proof ".$argv[1],"runtime_node_id"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$suffix" "$node_id")"
+code="$(sim_api POST /api/v1/admin/conferences "$conference_payload" --header "Idempotency-Key: c5-api-conference-${suffix}")"
+[ "$code" = "201" ] || { printf 'conference create failed with HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+conference_id="$(json_body_get conference.id)"
+grep -Fq '"desired_state":"draft"' "$SIM_BODY_FILE" || { printf 'conference did not start in draft\n' >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+grep -Fq "\"runtime_node_id\":\"$node_id\"" "$SIM_BODY_FILE" || { printf 'conference runtime binding not reflected\n' >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+code="$(sim_api POST "/api/v1/admin/conferences/$conference_id/desired-state" '{"desired_state":"open"}')"
+[ "$code" = "200" ] || { printf 'conference open failed with HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+user_payload="$(php -r 'echo json_encode(["email"=>"c5-api-member-".$argv[1]."@utcp.local.test","display_name"=>"C5 API Member ".$argv[1]], JSON_UNESCAPED_SLASHES);' "$suffix")"
+code="$(sim_api POST /api/v1/admin/users "$user_payload")"
+[ "$code" = "201" ] || { printf 'member user create failed with HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+member_id="$(json_body_get user.id)"
+member_email="$(json_body_get user.email)"
+member_password="$(json_body_get temporary_password)"
+
+membership_payload="$(php -r 'echo json_encode(["user_id"=>$argv[1],"role_key"=>"tenant-member"], JSON_UNESCAPED_SLASHES);' "$member_id")"
+code="$(sim_api POST /api/v1/admin/memberships "$membership_payload" --header "Idempotency-Key: c5-api-membership-${suffix}")"
+[ "$code" = "201" ] || { printf 'member membership failed with HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+member_csrf="$(login_member "$member_email" "$member_password" "$SIM_TENANT_ID" "C5ApiProof${suffix}!" "$member_cookie_jar")"
+
+denied_payload="$(php -r 'echo json_encode(["slug"=>"c5-member-denied-".$argv[1],"display_name"=>"Denied"], JSON_UNESCAPED_SLASHES);' "$suffix")"
+code="$(member_api "$member_cookie_jar" "$member_csrf" POST /api/v1/admin/conferences "$denied_payload" || true)"
+[ "$code" = "403" ] || { printf 'tenant member was not denied administrative conference create: HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+foreign_conference_id="$(sim_psql "select id from conferences where tenant_id <> '${SIM_TENANT_ID}' limit 1;")"
+if [ -n "$foreign_conference_id" ]; then
+  code="$(member_api "$member_cookie_jar" "$member_csrf" GET "/api/v1/conferences/$foreign_conference_id" || true)"
+  [ "$code" = "404" ] || { printf 'cross-tenant conference access did not fail closed: HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+  printf 'cross_tenant_conference_access_failed_closed=true\n'
+else
+  printf 'cross_tenant_conference_access_failed_closed=not_observed_no_foreign_conference\n'
+fi
+
+code="$(member_api "$member_cookie_jar" "$member_csrf" POST /api/v1/telephony/sessions '' --header "Idempotency-Key: c5-api-session-${suffix}")"
+[ "$code" = "201" ] || { printf 'telephony session create failed with HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+session_id="$(json_body_get telephony_session.id)"
+grep -Fq '"status":"active"' "$SIM_BODY_FILE" || { printf 'telephony session did not become active\n' >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+code="$(member_api "$member_cookie_jar" "$member_csrf" POST /api/v1/telephony/sessions '' --header "Idempotency-Key: c5-api-session-${suffix}")"
+[ "$code" = "201" ] || { printf 'duplicate telephony session request failed with HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+[ "$(json_body_get telephony_session.id)" = "$session_id" ] || { printf 'duplicate session idempotency returned a different session\n' >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+code="$(member_api "$member_cookie_jar" "$member_csrf" GET /api/v1/conferences)"
+[ "$code" = "200" ] || { printf 'member conference list failed with HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+grep -Fq "$conference_id" "$SIM_BODY_FILE" || { printf 'member cannot see open proof conference\n' >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+code="$(member_api "$member_cookie_jar" "$member_csrf" POST "/api/v1/conferences/$conference_id/participants/self" '' --header "Idempotency-Key: c5-api-join-${suffix}")"
+[ "$code" = "201" ] || { printf 'self admission failed with HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+participant_id="$(json_body_get participant.id)"
+grep -Fq '"desired_state":"admitted"' "$SIM_BODY_FILE" || { printf 'participant was not desired admitted\n' >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+code="$(member_api "$member_cookie_jar" "$member_csrf" POST "/api/v1/conferences/$conference_id/participants/self" '' --header "Idempotency-Key: c5-api-join-${suffix}")"
+[ "$code" = "201" ] || { printf 'duplicate self admission failed with HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+[ "$(json_body_get participant.id)" = "$participant_id" ] || { printf 'duplicate admission returned a different participant\n' >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+printf 'telephony domain api proof passed\n'
+printf 'proof_runtime_node_id=%s\n' "$node_id"
+printf 'proof_conference_id=%s\n' "$conference_id"
+printf 'proof_session_id=%s\n' "$session_id"
+printf 'proof_participant_id=%s\n' "$participant_id"

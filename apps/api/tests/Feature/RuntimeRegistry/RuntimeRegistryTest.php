@@ -4,6 +4,8 @@ namespace Tests\Feature\RuntimeRegistry;
 
 use App\Identity\IdentityIds;
 use App\Models\User;
+use App\RuntimeEngine\EngineIds;
+use App\RuntimeEngine\Sources\EventSourceRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
@@ -55,10 +57,11 @@ final class RuntimeRegistryTest extends TestCase
 
         $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
             ->putJson("/api/v1/admin/runtime-nodes/{$created['id']}/capabilities", [
-                'capabilities' => ['conference.execution', 'event.stream'],
+                'capabilities' => ['event.stream', 'runtime.observation'],
             ])
             ->assertOk()
-            ->assertJsonPath('runtime_node.capabilities.0', 'conference.execution');
+            ->assertJsonPath('runtime_node.capabilities.0', 'event.stream')
+            ->assertJsonPath('runtime_node.capabilities.1', 'runtime.observation');
 
         $credential = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
             ->postJson("/api/v1/admin/runtime-nodes/{$created['id']}/credentials", [
@@ -162,6 +165,261 @@ final class RuntimeRegistryTest extends TestCase
         $this->assertStringNotContainsString('reconcile', $routes);
     }
 
+    public function test_runtime_management_catalog_is_backend_authority_for_families_adapters_and_capabilities(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin();
+
+        $catalog = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->getJson('/api/v1/admin/runtime-node-catalog')
+            ->assertOk()
+            ->assertJsonPath('catalog.runtime_families.simulator.adapters.0', 'simulator-deterministic')
+            ->assertJsonPath('catalog.adapter_keys.asterisk-ari.adapter_configuration_available', true)
+            ->json('catalog');
+
+        $this->assertContains('event.stream', $catalog['adapter_keys']['asterisk-ari']['supported_capabilities']);
+        $this->assertContains('runtime.observation', $catalog['adapter_keys']['asterisk-ari']['supported_capabilities']);
+        $this->assertNotContains('conference.execution', $catalog['adapter_keys']['asterisk-ari']['supported_capabilities']);
+        $this->assertArrayNotHasKey('implementation_class', $catalog['adapter_keys']['asterisk-ari']);
+    }
+
+    public function test_asterisk_capabilities_reject_unsupported_values_and_preserve_unchanged_actual_values(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin();
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $this->nodePayload('asterisk-capability-proof'))
+            ->assertCreated()
+            ->json('runtime_node');
+
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->putJson("/api/v1/admin/runtime-nodes/{$node['id']}/capabilities", [
+                'capabilities' => ['event.stream', 'runtime.observation'],
+            ])
+            ->assertOk();
+
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->putJson("/api/v1/admin/runtime-nodes/{$node['id']}/capabilities", [
+                'capabilities' => ['event.stream', 'runtime.observation'],
+            ])
+            ->assertOk()
+            ->assertJsonPath('runtime_node.capabilities.0', 'event.stream')
+            ->assertJsonPath('runtime_node.capabilities.1', 'runtime.observation');
+
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->putJson("/api/v1/admin/runtime-nodes/{$node['id']}/capabilities", [
+                'capabilities' => ['event.stream', 'runtime.observation', 'conference.execution'],
+            ])
+            ->assertUnprocessable();
+
+        $this->assertDatabaseMissing('runtime_node_capabilities', [
+            'runtime_node_id' => $node['id'],
+            'capability_key' => 'conference.execution',
+        ]);
+    }
+
+    public function test_asterisk_adapter_configuration_is_per_node_scoped_and_wakes_processing(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin();
+        [$otherAdmin, $otherTenantId] = $this->createTenantAdmin('other-config-admin@utcp.local.test', 'other-config');
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $this->nodePayload('asterisk-config-proof'))
+            ->assertCreated()
+            ->json('runtime_node');
+
+        DB::table('runtime_reconciliation_states')->insert([
+            'id' => EngineIds::new(),
+            'tenant_id' => $tenantId,
+            'target_type' => 'runtime_node',
+            'target_id' => $node['id'],
+            'desired_generation' => 1,
+            'observed_generation' => null,
+            'status' => 'blocked',
+            'next_check_at' => now()->addHour(),
+            'blocked_reason' => 'old_configuration',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $source = (new EventSourceRepository)->ensureRuntimeNodeSource($tenantId, $node['id']);
+        DB::table('runtime_listener_leases')->insert([
+            'id' => EngineIds::new(),
+            'event_source_id' => $source->id,
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $node['id'],
+            'listener_kind' => 'asterisk-ari-events',
+            'status' => 'claimed',
+            'owner' => 'listener-private',
+            'fencing_token' => EngineIds::token(),
+            'claimed_at' => now(),
+            'heartbeat_at' => now(),
+            'lease_expires_at' => now()->addMinute(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->getJson("/api/v1/admin/runtime-nodes/{$node['id']}/adapter-configuration")
+            ->assertOk()
+            ->assertJsonPath('adapter_configuration.configured', false);
+
+        $updated = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->putJson("/api/v1/admin/runtime-nodes/{$node['id']}/adapter-configuration", [
+                'application_name' => 'utcp_t0',
+                'connect_timeout_ms' => 1500,
+                'request_timeout_ms' => 7000,
+                'websocket_handshake_timeout_ms' => 8000,
+                'heartbeat_interval_ms' => 15000,
+                'reconnect_min_delay_ms' => 500,
+                'reconnect_max_delay_ms' => 10000,
+            ])
+            ->assertOk()
+            ->assertJsonPath('adapter_configuration.configured', true)
+            ->assertJsonPath('adapter_configuration.profile.application_name', 'utcp_t0')
+            ->json('adapter_configuration');
+
+        $this->assertSame(2, (int) $updated['profile']['configuration_version']);
+        $this->assertDatabaseHas('asterisk_ari_profiles', ['runtime_node_id' => $node['id'], 'application_name' => 'utcp_t0']);
+        $this->assertDatabaseMissing('runtime_reconciliation_states', ['target_id' => $node['id']]);
+        $this->assertDatabaseHas('runtime_listener_leases', ['runtime_node_id' => $node['id'], 'status' => 'released']);
+        $this->assertDatabaseHas('control_plane_audit_records', ['subject_id' => $node['id'], 'action' => 'runtime_node.asterisk_ari_configuration_changed']);
+        $this->assertDatabaseHas('control_plane_outbox_messages', ['aggregate_id' => $node['id'], 'event_type' => 'runtime_node.asterisk_ari_configuration_changed']);
+
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->putJson("/api/v1/admin/runtime-nodes/{$node['id']}/adapter-configuration", [
+                'application_name' => 'bad value',
+                'connect_timeout_ms' => 1,
+            ])
+            ->assertUnprocessable();
+
+        $this->actingAs($otherAdmin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $otherTenantId])
+            ->getJson("/api/v1/admin/runtime-nodes/{$node['id']}/adapter-configuration")
+            ->assertNotFound();
+    }
+
+    public function test_runtime_evidence_history_and_credential_retirement_are_scoped_and_sanitized(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin();
+        [$otherAdmin, $otherTenantId] = $this->createTenantAdmin('other-evidence-admin@utcp.local.test', 'other-evidence');
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $this->nodePayload('evidence-proof'))
+            ->assertCreated()
+            ->json('runtime_node');
+        $epochId = EngineIds::new();
+        $eventId = EngineIds::new();
+        $operationId = EngineIds::new();
+        $oldCredential = $this->createCredentialRow($node['id'], 'control-api', 'old-secret');
+        $newCredential = $this->createCredentialRow($node['id'], 'control-api', 'new-secret', 2);
+
+        DB::table('runtime_event_connection_epochs')->insert([
+            'id' => $epochId,
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $node['id'],
+            'adapter_key' => 'asterisk-ari',
+            'status' => 'closed',
+            'owner' => 'epoch-private',
+            'fencing_token' => EngineIds::token(),
+            'opened_at' => now()->subMinutes(5),
+            'closed_at' => now()->subMinute(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('runtime_event_receipts')->insert([
+            'id' => $eventId,
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $node['id'],
+            'adapter_key' => 'asterisk-ari',
+            'connection_epoch_id' => $epochId,
+            'external_event_key' => 'event-1',
+            'event_type' => 'asterisk.authentication_failed',
+            'event_version' => 1,
+            'payload_hash' => hash('sha256', 'payload'),
+            'sanitized_payload' => json_encode(['status' => 'safe'], JSON_THROW_ON_ERROR),
+            'occurred_at' => now()->subMinute(),
+            'received_at' => now()->subMinute(),
+            'status' => 'processed',
+            'available_at' => now()->subMinute(),
+            'failure_class' => 'authentication_failed',
+            'failure_code' => 'bad password / private host',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('runtime_operations')->insert([
+            'id' => $operationId,
+            'tenant_id' => $tenantId,
+            'operation_type' => 'runtime.node.inspect',
+            'aggregate_type' => 'runtime_node',
+            'aggregate_id' => $node['id'],
+            'runtime_node_id' => $node['id'],
+            'payload_version' => 1,
+            'payload' => json_encode(['safe' => true], JSON_THROW_ON_ERROR),
+            'status' => 'terminal_failed',
+            'correlation_id' => EngineIds::new(),
+            'request_id' => EngineIds::new(),
+            'available_at' => now()->subMinute(),
+            'last_failure_class' => 'runtime_unavailable',
+            'last_failure_code' => 'private error with host',
+            'updated_at' => now(),
+            'created_at' => now(),
+        ]);
+        DB::table('runtime_reconciliation_states')->insert([
+            'id' => EngineIds::new(),
+            'tenant_id' => $tenantId,
+            'target_type' => 'runtime_node',
+            'target_id' => $node['id'],
+            'desired_generation' => 1,
+            'status' => 'blocked',
+            'next_check_at' => now()->addMinute(),
+            'last_checked_at' => now(),
+            'last_operation_id' => $operationId,
+            'blocked_reason' => 'host password stack',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $evidence = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->getJson("/api/v1/admin/runtime-nodes/{$node['id']}/runtime-evidence")
+            ->assertOk()
+            ->json('runtime_evidence');
+        $this->assertSame('closed', $evidence['connection']['state']);
+        $this->assertArrayNotHasKey('owner', $evidence['listener']);
+        $this->assertArrayNotHasKey('fencing_token', $evidence['connection']);
+        $this->assertStringNotContainsString(' ', $evidence['reconciliation']['sanitized_failure_code']);
+
+        DB::table('control_plane_audit_records')->insert([
+            'id' => EngineIds::new(),
+            'tenant_id' => $tenantId,
+            'actor_type' => 'user',
+            'actor_id' => $admin->id,
+            'action' => 'runtime_node.credential_retired',
+            'subject_type' => 'runtime_node',
+            'subject_id' => $node['id'],
+            'request_id' => EngineIds::new(),
+            'correlation_id' => EngineIds::new(),
+            'metadata' => json_encode(['data' => ['secret' => 'should-not-appear', 'change' => 'credential retired']], JSON_THROW_ON_ERROR),
+            'occurred_at' => now(),
+            'created_at' => now(),
+        ]);
+        $history = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->getJson("/api/v1/admin/runtime-nodes/{$node['id']}/history?limit=5")
+            ->assertOk()
+            ->assertJsonPath('pagination.limit', 5)
+            ->json();
+        $this->assertTrue(in_array('runtime_node.credential_retired', array_column($history['history'], 'action'), true));
+        $this->assertStringNotContainsString('should-not-appear', json_encode($history, JSON_THROW_ON_ERROR));
+
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/credentials/{$oldCredential}/retire")
+            ->assertOk();
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/credentials/{$newCredential}/retire")
+            ->assertUnprocessable();
+
+        $this->actingAs($otherAdmin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $otherTenantId])
+            ->getJson("/api/v1/admin/runtime-nodes/{$node['id']}/runtime-evidence")
+            ->assertNotFound();
+        $this->actingAs($otherAdmin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $otherTenantId])
+            ->getJson("/api/v1/admin/runtime-nodes/{$node['id']}/history")
+            ->assertNotFound();
+    }
+
     /**
      * @return array{0: User, 1: string}
      */
@@ -239,5 +497,25 @@ final class RuntimeRegistryTest extends TestCase
             'capacity_weight' => 10,
             'labels' => ['purpose' => 'proof'],
         ];
+    }
+
+    private function createCredentialRow(string $runtimeNodeId, string $type, string $secret, int $version = 1): string
+    {
+        $id = IdentityIds::new();
+        DB::table('runtime_node_credentials')->insert([
+            'id' => $id,
+            'runtime_node_id' => $runtimeNodeId,
+            'credential_type' => $type,
+            'identifier' => 'proof-user',
+            'encrypted_secret' => Crypt::encryptString($secret),
+            'secret_fingerprint' => hash('sha256', $runtimeNodeId.':'.$secret),
+            'status' => 'active',
+            'version' => $version,
+            'rotated_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $id;
     }
 }

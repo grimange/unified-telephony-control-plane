@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/kubernetes/lib
+. "$ROOT/scripts/kubernetes/lib"
+
+ensure_cluster
+"$ROOT/scripts/asterisk-ari/api-proof" >/dev/null
+
+api_pod="$(kube -n "$K8S_PLATFORM_NAMESPACE" get pod -l app.kubernetes.io/component=api -o jsonpath='{.items[0].metadata.name}')"
+
+deadline=$((SECONDS + 180))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  status="$(kube -n "$K8S_PLATFORM_NAMESPACE" exec "$api_pod" -- php artisan asterisk-ari:status)"
+  printf '%s\n' "$status" | grep -q 'asterisk_observed_ready=' && ready="$(printf '%s\n' "$status" | awk -F= '$1=="asterisk_observed_ready"{print $2+0}')"
+  ready="${ready:-0}"
+  if [ "$ready" -gt 0 ] && printf '%s\n' "$status" | awk -F= '$1=="asterisk_receipts_processed"{exit !($2+0>0)}'; then
+    printf 'asterisk_ari_runtime_proof=ok\n'
+    printf '%s\n' "$status"
+    exit 0
+  fi
+  sleep 5
+done
+
+printf 'asterisk ARI runtime proof did not observe ready projection before timeout\n' >&2
+kube -n "$K8S_PLATFORM_NAMESPACE" exec "$api_pod" -- php artisan asterisk-ari:status >&2 || true
+exit 1

@@ -42,3 +42,13 @@ spec:
       ports:
         - protocol: TCP
           port: 8080
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: kamailio-signaling
+      ports:
+        - protocol: TCP
+          port: 8080

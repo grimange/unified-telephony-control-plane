@@ -32,6 +32,30 @@ spec:
               kubernetes.io/metadata.name: utcp-platform
           podSelector:
             matchLabels:
+              utcp.io/network-role: simulator-event-source
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: asterisk-ari-events
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: kamailio-signaling
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: kamailio-registration-observer
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
               utcp.io/network-role: scheduler
         - namespaceSelector:
             matchLabels:

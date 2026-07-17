@@ -29,6 +29,186 @@ spec:
             namespace: utcp-platform
           annotations:
             summary: Required UTCP runtime-engine process role is unavailable.
+        - alert: UTCPSimulatorEventSourceUnavailable
+          expr: kube_deployment_status_replicas_available{namespace="utcp-platform",deployment="simulator-event-source"} < 1
+          for: 2m
+          labels:
+            severity: critical
+            component: simulator
+            namespace: utcp-platform
+          annotations:
+            summary: The deterministic simulator event-source process role is unavailable.
+        - alert: UTCPSimulatorScheduledEventBacklogGrowing
+          expr: sum(simulator_scheduled_events{result=~"pending|retry_scheduled",due="due"}) > 20
+          for: 10m
+          labels:
+            severity: warning
+            component: simulator
+            namespace: utcp-platform
+          annotations:
+            summary: Deterministic simulator due scheduled-event backlog is growing.
+        - alert: UTCPSimulatorTerminalFailures
+          expr: sum(simulator_operations_total{result="terminal_failed",failure_class!="none"}) > 2 and sum(simulator_reconciliation_total{result!="unsupported"}) > 0
+          for: 10m
+          labels:
+            severity: warning
+            component: simulator
+            namespace: utcp-platform
+          annotations:
+            summary: Deterministic simulator terminal failures are repeating while simulator reconciliation is active.
+        - alert: UTCPSimulatorReconciliationStuck
+          expr: sum(simulator_reconciliation_total{result=~"operation_required|retry_scheduled|blocked"}) > 0 and sum(increase(simulator_event_publish_total{result="published"}[10m])) == 0
+          for: 15m
+          labels:
+            severity: warning
+            component: simulator
+            namespace: utcp-platform
+          annotations:
+            summary: Deterministic simulator reconciliation appears stuck without event publication progress.
+        - alert: UTCPTelephonyConferenceReconciliationStuck
+          expr: sum(conference_reconciliation_total{result=~"operation_required|retry_scheduled|waiting|blocked"}) > 0 and sum(increase(conference_operations_total{result="succeeded"}[15m])) == 0
+          for: 15m
+          labels:
+            severity: warning
+            component: telephony-domain
+            namespace: utcp-platform
+          annotations:
+            summary: Conference reconciliation appears stuck without successful operation progress.
+        - alert: UTCPTelephonyParticipantReconciliationStuck
+          expr: sum(conference_participant_reconciliation_total{result=~"operation_required|retry_scheduled|waiting|blocked"}) > 0 and sum(increase(conference_participant_operations_total{result="succeeded"}[15m])) == 0
+          for: 15m
+          labels:
+            severity: warning
+            component: telephony-domain
+            namespace: utcp-platform
+          annotations:
+            summary: Conference participant reconciliation appears stuck without successful operation progress.
+        - alert: UTCPTelephonyConferenceOperationTerminalFailure
+          expr: sum(conference_operations_total{result="terminal_failed",failure_class!="none"}) > 0
+          for: 10m
+          labels:
+            severity: warning
+            component: telephony-domain
+            namespace: utcp-platform
+          annotations:
+            summary: Conference runtime operation reached terminal failure.
+        - alert: UTCPTelephonyParticipantOperationTerminalFailure
+          expr: sum(conference_participant_operations_total{result="terminal_failed",failure_class!="none"}) > 0
+          for: 10m
+          labels:
+            severity: warning
+            component: telephony-domain
+            namespace: utcp-platform
+          annotations:
+            summary: Conference participant runtime operation reached terminal failure.
+        - alert: UTCPTelephonyExpiredActiveSessions
+          expr: telephony_sessions_expired_active{status="active"} > 0
+          for: 5m
+          labels:
+            severity: warning
+            component: telephony-domain
+            namespace: utcp-platform
+          annotations:
+            summary: Active telephony sessions have expired timestamps.
+        - alert: UTCPAsteriskAriEventsUnavailable
+          expr: sum(asterisk_ari_nodes{desired_state=~"active|draining"}) > 0 and kube_deployment_status_replicas_available{namespace="utcp-platform",deployment="asterisk-ari-events"} < 1
+          for: 2m
+          labels:
+            severity: critical
+            component: asterisk-ari
+            namespace: utcp-platform
+          annotations:
+            summary: Asterisk ARI event listener is unavailable while Asterisk nodes are active.
+        - alert: UTCPAsteriskAriNodeWithoutListenerEvidence
+          expr: sum(asterisk_ari_nodes{desired_state=~"active|draining"}) > 0 and sum(asterisk_ari_listener_nodes{result="claimed"}) == 0
+          for: 10m
+          labels:
+            severity: warning
+            component: asterisk-ari
+            namespace: utcp-platform
+          annotations:
+            summary: Active Asterisk ARI nodes have no recent listener ownership evidence.
+        - alert: UTCPAsteriskAriAuthenticationFailures
+          expr: increase(asterisk_ari_authentication_failures_total{failure_class="authentication_failed"}[10m]) > 2
+          for: 5m
+          labels:
+            severity: warning
+            component: asterisk-ari
+            namespace: utcp-platform
+          annotations:
+            summary: Asterisk ARI authentication failures are repeating.
+        - alert: UTCPAsteriskAriReconnectLoop
+          expr: sum(increase(asterisk_ari_reconnects_total[10m])) > 5
+          for: 5m
+          labels:
+            severity: warning
+            component: asterisk-ari
+            namespace: utcp-platform
+          annotations:
+            summary: Asterisk ARI listener is reconnecting repeatedly.
+        - alert: UTCPAsteriskAriReceiptBacklog
+          expr: sum(asterisk_ari_events_received_total{result=~"pending|retry_scheduled"}) > 20
+          for: 10m
+          labels:
+            severity: warning
+            component: asterisk-ari
+            namespace: utcp-platform
+          annotations:
+            summary: Asterisk ARI raw event receipt backlog is growing.
+        - alert: UTCPAsteriskRuntimeObservationStale
+          expr: sum(asterisk_ari_nodes{desired_state=~"active|draining",observed_state=~"stale|unavailable|degraded"}) > 0
+          for: 15m
+          labels:
+            severity: warning
+            component: asterisk-ari
+            namespace: utcp-platform
+          annotations:
+            summary: Asterisk ARI runtime observations are stale or unavailable.
+        - alert: UTCPKamailioRegistrationObserverUnavailable
+          expr: kube_deployment_status_replicas_available{namespace="utcp-platform",deployment="kamailio-registration-observer"} < 1
+          for: 2m
+          labels:
+            severity: critical
+            component: kamailio-registration-observer
+            namespace: utcp-platform
+          annotations:
+            summary: Kamailio registration observer Deployment has no available replicas.
+        - alert: UTCPKamailioRegistrationObserverMissingLease
+          expr: kube_deployment_status_replicas_available{namespace="utcp-platform",deployment="kamailio-registration-observer"} >= 1 and kamailio_registration_observer_active == 0
+          for: 5m
+          labels:
+            severity: warning
+            component: kamailio-registration-observer
+            namespace: utcp-platform
+          annotations:
+            summary: Kamailio registration observer Deployment is ready but holds no active listener lease.
+        - alert: UTCPKamailioRegistrationCheckpointStale
+          expr: kamailio_registration_observer_lag_seconds > 120
+          for: 5m
+          labels:
+            severity: warning
+            component: kamailio-registration-observer
+            namespace: utcp-platform
+          annotations:
+            summary: Kamailio registration observer checkpoint has not advanced recently.
+        - alert: UTCPKamailioRegistrationRepeatedPollFailure
+          expr: increase(kamailio_registration_snapshot_poll_failures_total[10m]) > 3
+          for: 5m
+          labels:
+            severity: warning
+            component: kamailio-registration-observer
+            namespace: utcp-platform
+          annotations:
+            summary: Kamailio registration observer usrloc snapshot polls are repeatedly failing.
+        - alert: UTCPKamailioRegistrationProjectionBacklog
+          expr: kamailio_registration_projection_backlog > 20
+          for: 10m
+          labels:
+            severity: warning
+            component: kamailio-registration-observer
+            namespace: utcp-platform
+          annotations:
+            summary: Kamailio registration event receipt backlog is growing.
         - alert: UTCPStatefulSetUnavailable
           expr: kube_statefulset_status_replicas_ready{namespace="utcp-data",statefulset=~"postgres|redis"} < 1
           for: 2m

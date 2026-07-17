@@ -1,7 +1,7 @@
 <?php
 
 return [
-    'catalog_version' => 'c2.2026-07-14',
+    'catalog_version' => 'c5.2026-07-15',
 
     'capabilities' => [
         'platform.tenants.view' => ['scope' => 'platform', 'description' => 'View tenants'],
@@ -15,6 +15,16 @@ return [
         'runtime.nodes.view' => ['scope' => 'tenant', 'description' => 'View tenant runtime-node registry configuration'],
         'runtime.nodes.manage' => ['scope' => 'tenant', 'description' => 'Manage tenant runtime-node registry configuration'],
         'runtime.credentials.rotate' => ['scope' => 'tenant', 'description' => 'Create, rotate, and retire runtime-node credentials'],
+        'telephony.sessions.create_own' => ['scope' => 'tenant', 'description' => 'Create own control-plane telephony session'],
+        'telephony.sessions.view_own' => ['scope' => 'tenant', 'description' => 'View own control-plane telephony session'],
+        'telephony.sessions.manage' => ['scope' => 'tenant', 'description' => 'Manage tenant control-plane telephony sessions'],
+        'telephony.signaling.issue_own' => ['scope' => 'tenant', 'description' => 'Issue own short-lived signaling registration credential'],
+        'telephony.signaling.view_own' => ['scope' => 'tenant', 'description' => 'View own signaling registration metadata'],
+        'telephony.signaling.manage' => ['scope' => 'tenant', 'description' => 'Manage tenant signaling registration metadata'],
+        'telephony.conferences.view' => ['scope' => 'tenant', 'description' => 'View tenant conferences'],
+        'telephony.conferences.manage' => ['scope' => 'tenant', 'description' => 'Manage tenant conferences and desired state'],
+        'telephony.conferences.join' => ['scope' => 'tenant', 'description' => 'Join open tenant conferences through an active control session'],
+        'telephony.conferences.participants.manage' => ['scope' => 'tenant', 'description' => 'Manage tenant conference participants'],
     ],
 
     'roles' => [
@@ -36,6 +46,14 @@ return [
                 'tenant.memberships.manage',
                 'tenant.roles.view',
                 'tenant.roles.assign',
+                'telephony.sessions.manage',
+                'telephony.signaling.issue_own',
+                'telephony.signaling.view_own',
+                'telephony.signaling.manage',
+                'telephony.conferences.view',
+                'telephony.conferences.manage',
+                'telephony.conferences.join',
+                'telephony.conferences.participants.manage',
                 'runtime.nodes.view',
                 'runtime.nodes.manage',
                 'runtime.credentials.rotate',
@@ -47,6 +65,12 @@ return [
             'capabilities' => [
                 'tenant.memberships.view',
                 'tenant.roles.view',
+                'telephony.sessions.create_own',
+                'telephony.sessions.view_own',
+                'telephony.signaling.issue_own',
+                'telephony.signaling.view_own',
+                'telephony.conferences.view',
+                'telephony.conferences.join',
             ],
         ],
     ],

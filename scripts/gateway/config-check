@@ -48,6 +48,9 @@ grep -Fq 'utcp.io/gateway-access: enabled' "$ROOT/infrastructure/k3d/namespaces.
 grep -Fq 'from: Selector' "$tmp_gateway"
 grep -Fq 'app.utcp.local.test' "$tmp_gateway"
 grep -Fq 'utcp.local.test' "$tmp_gateway"
+grep -Fq 'sip.utcp.local.test' "$tmp_gateway"
+grep -Fq 'name: sip-wss' "$tmp_gateway"
+grep -Fq 'value: /ws' "$tmp_gateway"
 if grep -Eq '18080|18443|port:[[:space:]]*(18080|18443)' "$tmp_gateway" "$tmp_traefik" "$TRAEFIK_VALUES"; then
   printf 'gateway config check failed: custom edge ports remain in active configuration\n' >&2
   exit 1
@@ -55,9 +58,16 @@ fi
 grep -Fq 'name: gateway' "$tmp_gateway"
 grep -Fq 'port: 8080' "$tmp_gateway"
 
-if grep -Eiq 'sip\.utcp\.local\.test|events\.utcp\.local\.test|kind:[[:space:]]*(TCPRoute|UDPRoute|TLSRoute)|asterisk|freeswitch|kamailio|rtpengine|hostNetwork:[[:space:]]*true|hostPath:|privileged:[[:space:]]*true|nodePort:' "$tmp_gateway" "$tmp_traefik"; then
+if grep -Eiq 'events\.utcp\.local\.test|kind:[[:space:]]*(TCPRoute|UDPRoute|TLSRoute)|asterisk|freeswitch|rtpengine|hostNetwork:[[:space:]]*true|hostPath:|privileged:[[:space:]]*true|nodePort:' "$tmp_gateway" "$tmp_traefik"; then
   printf 'gateway config check failed: prohibited telephony, reserved hostname, host, or NodePort configuration found\n' >&2
   exit 1
+fi
+
+if grep -Fq 'kamailio' "$tmp_gateway"; then
+  grep -Fq 'name: sip-wss' "$tmp_gateway" || {
+    printf 'gateway config check failed: Kamailio may only be exposed by the exact sip-wss HTTPRoute\n' >&2
+    exit 1
+  }
 fi
 
 for required_crd in \

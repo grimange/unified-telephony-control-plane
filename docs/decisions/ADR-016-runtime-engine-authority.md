@@ -18,8 +18,9 @@ UTCP uses PostgreSQL as the canonical authority for:
 
 - runtime operations and their leases/fencing;
 - outbox dispatch state and dispatch leases;
+- canonical event-source identity;
 - raw runtime-event receipts;
-- connection epochs;
+- source epochs;
 - normalized observations;
 - projection checkpoints;
 - reconciliation state, leases, and fencing.
@@ -39,10 +40,13 @@ Runtime-specific listeners and adapters remain leaf implementations in later pha
 
 Observed runtime-node state changes only through projection authority. Administrative desired state and projected observed state remain separate.
 
+C3 event-source authority is runtime-neutral. A source may be backed by a canonical `RuntimeNode`, or it may represent shared platform infrastructure that has no RuntimeNode. The same PostgreSQL source identity owns its lease, fencing, source epochs, receipts, and checkpoints. Platform infrastructure must not create fake RuntimeNodes or parallel platform-specific lease, epoch, receipt, or checkpoint tables.
+
 ## Consequences
 
 - PostgreSQL remains the source of truth when queue messages are duplicated, delayed, or lost.
 - Leases and fencing protect outbox dispatch, command execution, event normalization, projection checkpoints, and reconciliation.
+- RuntimeNode-backed listeners and future platform observers use the same event-source ownership and stale-owner rejection path.
 - Unsupported handlers, unsupported event types, and missing adapters fail observably instead of silently succeeding.
 - The deterministic simulator begins later as a real adapter implementation against these contracts.
 - Asterisk and FreeSWITCH integrations remain runtime-specific leaf adapters/listeners and must not become central domain authority.

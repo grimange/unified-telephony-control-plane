@@ -46,15 +46,25 @@ final class AuthorizationService
 
     public function requirePlatform(string $userId, string $capability): void
     {
-        if (! in_array($capability, $this->platformCapabilities($userId), true)) {
+        if (! $this->hasPlatform($userId, $capability)) {
             throw new HttpException(403, 'Forbidden');
         }
     }
 
     public function requireTenant(string $userId, string $tenantId, string $capability): void
     {
-        if (! in_array($capability, $this->tenantCapabilities($userId, $tenantId), true)) {
+        if (! $this->hasTenant($userId, $tenantId, $capability)) {
             throw new HttpException(403, 'Forbidden');
         }
+    }
+
+    public function hasPlatform(string $userId, string $capability): bool
+    {
+        return in_array($capability, $this->platformCapabilities($userId), true);
+    }
+
+    public function hasTenant(string $userId, string $tenantId, string $capability): bool
+    {
+        return in_array($capability, $this->tenantCapabilities($userId, $tenantId), true);
     }
 }

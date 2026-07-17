@@ -12,6 +12,7 @@ final readonly class ReconciliationResult
         public ?string $reasonCode = null,
         public ?string $operationType = null,
         public array $operationPayload = [],
+        public ?string $runtimeNodeId = null,
         public int $nextCheckSeconds = 300,
     ) {}
 
@@ -28,9 +29,9 @@ final readonly class ReconciliationResult
     /**
      * @param  array<string, mixed>  $payload
      */
-    public static function operationRequired(string $operationType, array $payload, string $reasonCode = 'drift_detected'): self
+    public static function operationRequired(string $operationType, array $payload, string $reasonCode = 'drift_detected', ?string $runtimeNodeId = null): self
     {
-        return new self('operation_required', $reasonCode, $operationType, $payload, 60);
+        return new self('operation_required', $reasonCode, $operationType, $payload, $runtimeNodeId, 60);
     }
 
     public static function blocked(string $reasonCode, int $nextCheckSeconds = 900): self

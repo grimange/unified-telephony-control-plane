@@ -5,26 +5,38 @@ namespace App\RuntimeEngine\Events;
 use App\ControlPlane\Shared\PayloadSafety;
 use App\ControlPlane\Shared\StableJson;
 use App\RuntimeEngine\EngineIds;
+use App\RuntimeEngine\Sources\EventSourceRepository;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 
 final class RuntimeEventReceiptRepository
 {
+    public function __construct(private readonly ?EventSourceRepository $sources = null) {}
+
     /**
      * @param  array<string, mixed>  $payload
      */
     public function openEpoch(string $tenantId, string $runtimeNodeId, string $adapterKey, string $owner): string
     {
-        $node = DB::table('runtime_nodes')->where('id', $runtimeNodeId)->where('tenant_id', $tenantId)->first();
-        if ($node === null || $node->adapter_key !== $adapterKey) {
-            throw new DomainException('runtime node does not match event source');
+        $source = $this->sourceRepository()->ensureRuntimeNodeSource($tenantId, $runtimeNodeId, $adapterKey);
+
+        return $this->openSourceEpoch($source->id, $adapterKey, $owner);
+    }
+
+    public function openSourceEpoch(string $eventSourceId, string $adapterKey, string $owner): string
+    {
+        $source = $this->sourceRepository()->find($eventSourceId);
+        if ($source === null) {
+            throw new DomainException('event source does not exist');
         }
 
+        $tenantId = $this->tenantIdForSource($source);
         $id = EngineIds::new();
         DB::table('runtime_event_connection_epochs')->insert([
             'id' => $id,
+            'event_source_id' => $eventSourceId,
             'tenant_id' => $tenantId,
-            'runtime_node_id' => $runtimeNodeId,
+            'runtime_node_id' => $source->runtime_node_id,
             'adapter_key' => $adapterKey,
             'status' => 'open',
             'owner' => $owner,
@@ -43,10 +55,25 @@ final class RuntimeEventReceiptRepository
      */
     public function ingest(string $tenantId, string $runtimeNodeId, string $adapterKey, string $epochId, ?string $externalEventKey, string $eventType, int $eventVersion, array $payload): array
     {
+        $source = $this->sourceRepository()->ensureRuntimeNodeSource($tenantId, $runtimeNodeId, $adapterKey);
+
+        return $this->ingestSource($source->id, $adapterKey, $epochId, $externalEventKey, $eventType, $eventVersion, $payload);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array{status:string,id:string}
+     */
+    public function ingestSource(string $eventSourceId, string $adapterKey, string $epochId, ?string $externalEventKey, string $eventType, int $eventVersion, array $payload): array
+    {
+        $source = $this->sourceRepository()->find($eventSourceId);
+        if ($source === null) {
+            throw new DomainException('event source does not exist');
+        }
+
         $epoch = DB::table('runtime_event_connection_epochs')
             ->where('id', $epochId)
-            ->where('tenant_id', $tenantId)
-            ->where('runtime_node_id', $runtimeNodeId)
+            ->where('event_source_id', $eventSourceId)
             ->where('adapter_key', $adapterKey)
             ->first();
         if ($epoch === null || $epoch->status !== 'open') {
@@ -62,8 +89,9 @@ final class RuntimeEventReceiptRepository
 
         $inserted = DB::table('runtime_event_receipts')->insertOrIgnore([
             'id' => $id,
-            'tenant_id' => $tenantId,
-            'runtime_node_id' => $runtimeNodeId,
+            'event_source_id' => $eventSourceId,
+            'tenant_id' => $this->tenantIdForSource($source),
+            'runtime_node_id' => $source->runtime_node_id,
             'adapter_key' => $adapterKey,
             'connection_epoch_id' => $epochId,
             'external_event_key' => $key,
@@ -85,10 +113,21 @@ final class RuntimeEventReceiptRepository
         }
 
         $existing = DB::table('runtime_event_receipts')
-            ->where('runtime_node_id', $runtimeNodeId)
             ->where('connection_epoch_id', $epochId)
             ->where('external_event_key', $key)
+            ->where(function ($query) use ($eventSourceId, $source): void {
+                $query->where('event_source_id', $eventSourceId);
+                if ($source->runtime_node_id !== null) {
+                    $query->orWhere('runtime_node_id', $source->runtime_node_id);
+                }
+            })
             ->first();
+        if ($existing === null) {
+            $existing = DB::table('runtime_event_receipts')
+                ->where('connection_epoch_id', $epochId)
+                ->where('external_event_key', $key)
+                ->first();
+        }
         if ($existing === null) {
             throw new DomainException('event duplicate detected but original receipt is missing');
         }
@@ -118,6 +157,47 @@ final class RuntimeEventReceiptRepository
             ]) === 1;
     }
 
+    /**
+     * Close any epoch left open by a superseded owner for this node. A node's listener
+     * lease guarantees a single current owner, so once that owner has been confirmed,
+     * any other still-open epoch belongs to a process that died without running its
+     * own shutdown path (e.g. a killed Pod) and must not be left reporting as open.
+     */
+    public function closeStaleEpochs(string $runtimeNodeId, string $currentOwner): int
+    {
+        $source = DB::table('event_sources')
+            ->where('source_kind', EventSourceRepository::KIND_RUNTIME_NODE)
+            ->where('source_key', $runtimeNodeId)
+            ->first();
+
+        if ($source === null) {
+            return DB::table('runtime_event_connection_epochs')
+                ->where('runtime_node_id', $runtimeNodeId)
+                ->where('status', 'open')
+                ->where('owner', '!=', $currentOwner)
+                ->update([
+                    'status' => 'expired',
+                    'closed_at' => now(),
+                    'updated_at' => now(),
+                ]);
+        }
+
+        return $this->closeStaleEpochsForSource($source->id, $currentOwner);
+    }
+
+    public function closeStaleEpochsForSource(string $eventSourceId, string $currentOwner): int
+    {
+        return DB::table('runtime_event_connection_epochs')
+            ->where('event_source_id', $eventSourceId)
+            ->where('status', 'open')
+            ->where('owner', '!=', $currentOwner)
+            ->update([
+                'status' => 'expired',
+                'closed_at' => now(),
+                'updated_at' => now(),
+            ]);
+    }
+
     public function find(string $id): ?object
     {
         return DB::table('runtime_event_receipts')->where('id', $id)->first();
@@ -129,7 +209,7 @@ final class RuntimeEventReceiptRepository
     public function claimAvailable(string $leaseOwner, int $batchSize = 10, int $leaseSeconds = 60): array
     {
         return DB::transaction(function () use ($leaseOwner, $batchSize, $leaseSeconds): array {
-            $rows = DB::table('runtime_event_receipts')
+            $query = DB::table('runtime_event_receipts')
                 ->whereIn('status', ['pending', 'retry_scheduled', 'leased'])
                 ->where('available_at', '<=', now())
                 ->where(function ($query): void {
@@ -141,9 +221,15 @@ final class RuntimeEventReceiptRepository
                 ->orderBy('occurred_at')
                 ->orderBy('connection_epoch_id')
                 ->orderBy('created_at')
-                ->limit($batchSize)
-                ->lockForUpdate()
-                ->get();
+                ->limit($batchSize);
+
+            if (DB::getDriverName() === 'pgsql') {
+                $query->lock('for update skip locked');
+            } else {
+                $query->lockForUpdate();
+            }
+
+            $rows = $query->get();
 
             foreach ($rows as $row) {
                 $row->lease_token = EngineIds::token();
@@ -194,5 +280,19 @@ final class RuntimeEventReceiptRepository
                 'lease_expires_at' => null,
                 'updated_at' => now(),
             ]) === 1;
+    }
+
+    private function sourceRepository(): EventSourceRepository
+    {
+        return $this->sources ?? app(EventSourceRepository::class);
+    }
+
+    private function tenantIdForSource(object $source): ?string
+    {
+        if ($source->runtime_node_id === null) {
+            return null;
+        }
+
+        return DB::table('runtime_nodes')->where('id', $source->runtime_node_id)->value('tenant_id');
     }
 }

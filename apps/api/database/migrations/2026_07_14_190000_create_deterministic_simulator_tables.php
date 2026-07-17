@@ -9,8 +9,12 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::dropIfExists('simulator_scheduled_events');
+        Schema::dropIfExists('simulator_states');
+        Schema::dropIfExists('simulator_profiles');
+
         Schema::create('simulator_profiles', function (Blueprint $table): void {
-            $table->char('runtime_node_id', 32)->primary();
+            $table->uuid('runtime_node_id')->primary();
             $table->string('scenario_key', 80);
             $table->unsignedInteger('scenario_version')->default(1);
             $table->string('seed', 120);
@@ -23,7 +27,7 @@ return new class extends Migration
         });
 
         Schema::create('simulator_states', function (Blueprint $table): void {
-            $table->char('runtime_node_id', 32)->primary();
+            $table->uuid('runtime_node_id')->primary();
             $table->string('scenario_key', 80);
             $table->unsignedInteger('scenario_version')->default(1);
             $table->string('seed', 120);
@@ -42,8 +46,8 @@ return new class extends Migration
 
         Schema::create('simulator_scheduled_events', function (Blueprint $table): void {
             $table->char('id', 32)->primary();
-            $table->char('tenant_id', 32);
-            $table->char('runtime_node_id', 32);
+            $table->uuid('tenant_id');
+            $table->uuid('runtime_node_id');
             $table->char('connection_epoch_id', 32);
             $table->unsignedBigInteger('event_sequence');
             $table->string('event_type', 120);

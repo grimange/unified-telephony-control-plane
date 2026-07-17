@@ -7,6 +7,11 @@ resources:
   - platform/allow-web.yaml
   - platform/allow-api.yaml
   - platform/allow-worker.yaml
+  - platform/allow-simulator-event-source.yaml
+  - platform/allow-asterisk-ari-events.yaml
+  - platform/allow-asterisk-ari-egress.yaml
+  - platform/allow-kamailio-signaling.yaml
+  - platform/allow-kamailio-registration-observer-egress.yaml
   - platform/allow-scheduler.yaml
   - platform/allow-migration.yaml
   - data/default-deny.yaml
@@ -15,4 +20,5 @@ resources:
   - traefik/default-deny.yaml
   - traefik/allow-traefik.yaml
   - empty-namespaces/default-deny-runtime.yaml
+  - runtime/allow-asterisk-ari-ingress.yaml
   - empty-namespaces/default-deny-observability.yaml

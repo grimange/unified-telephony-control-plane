@@ -4,7 +4,7 @@ UTCP is the platform layer beneath telephony applications. Applications such as 
 
 ## Current Phase
 
-Phase C3 establishes the runtime-neutral command, event, projection, and reconciliation engine on top of the completed K0-K4 infrastructure, C0 application kernel, C1 identity foundation, and C2 runtime registry. The canonical integrated local runtime is the `utcp-local` Kubernetes cluster. Docker Compose remains as a disposable compatibility proof and explicit optional debug mode, not a continuously running parallel runtime. The current platform has a Laravel API process, Vue administration shell, k3d/Kubernetes application base, standard-port local Gateway edge, pinned Pod Security Admission labels, default-deny NetworkPolicies with explicit allow paths, Prometheus metrics, Loki log aggregation, Grafana dashboards, Alertmanager alerts, Alloy Kubernetes API log collection, runtime-neutral kernel primitives for operations, leases, fencing, outbox, inbox, idempotency, audit, event envelopes, and execution context, PostgreSQL-authoritative users, tenants, memberships, built-in roles/capabilities, first-party sessions, active-tenant selection, server-computed capability projection, a tenant-scoped runtime-node registry, and C3 PostgreSQL-backed runtime receipts, observations, projection checkpoints, and reconciliation state. Simulator behavior, tracing, SIP, WSS signaling, media, conferences, live runtime connections, ARI/ESL event listeners, and runtime adapters remain future phases.
+T0 is complete locally on top of K0-K4 and C0-C5. T1 Kamailio SIP-over-WSS registration is in progress and `UTCP_PHASE` remains `T0` until the remaining T1 acceptance work passes. The canonical integrated local runtime is the `utcp-local` Kubernetes cluster. Docker Compose remains as a disposable compatibility proof and explicit optional debug mode, not a continuously running parallel runtime. The current platform has a Laravel API process, Vue administration shell, k3d/Kubernetes application base, standard-port local Gateway edge, pinned Pod Security Admission labels, default-deny NetworkPolicies with explicit allow paths, Prometheus metrics, Loki log aggregation, Grafana dashboards, Alertmanager alerts, Alloy Kubernetes API log collection, runtime-neutral kernel primitives for operations, leases, fencing, outbox, inbox, idempotency, audit, event envelopes, and execution context, PostgreSQL-authoritative users, tenants, memberships, built-in roles/capabilities, first-party sessions, active-tenant selection, server-computed capability projection, a tenant-scoped runtime-node registry, backend-driven RuntimeNode management catalogs, scoped runtime evidence and history APIs, C3 PostgreSQL-backed runtime receipts, observations, projection checkpoints, reconciliation state, a C4 deterministic runtime-neutral simulator adapter selected only through the existing authenticated runtime-registry API, C5 PostgreSQL-authoritative telephony sessions, conferences, runtime bindings, conference participants, runtime-neutral conference operations, simulator-backed conference observations, projection, reconciliation, and expiry automation, and a T0 `asterisk-ari` adapter boundary for ARI HTTP inspection and event WebSocket ingestion. The T1 repository implementation now includes TelephonySession-scoped signaling credentials, a pinned Kamailio WSS registrar foundation, fenced registration observer/projection repository logic, registration reconciliation, and a User & Access Management signaling panel under the active TelephonySession. Natural browser acceptance, disposable Kamailio Compose compatibility, full T1 promotion, media, ESL event listeners, and Asterisk conference execution remain future work.
 
 ## Planned System Shape
 
@@ -82,11 +82,11 @@ Bootstrap is limited to first local administrator initialization through `identi
 
 ## Current Runtime Registry Boundary
 
-C2 adds `RuntimeNode` as the sole canonical registry entity for managed telephony execution providers. Every node belongs to exactly one tenant and is managed through the C1-authenticated web/API authority. Tenant administrators can manage their tenant's nodes when granted `runtime.nodes.manage` and `runtime.credentials.rotate`; tenant members do not receive runtime-node management by default.
+C2 adds `RuntimeNode` as the sole canonical registry entity for managed telephony execution providers. UI labels may describe these as PBX nodes, but there is no separate ProviderNode, PBXServer, AsteriskNode, or TelephonyServer authority. Every node belongs to exactly one tenant and is managed through the C1-authenticated web/API authority. Tenant administrators can manage their tenant's nodes when granted `runtime.nodes.manage` and `runtime.credentials.rotate`; tenant members do not receive runtime-node management by default.
 
 Runtime family (`asterisk`, `freeswitch`) identifies the external technology family. Adapter key (`asterisk-ari`, `freeswitch-esl`) records the future binding point. C2 validates and stores both values but does not instantiate adapters, open HTTP or WebSocket connections, run health checks, or execute commands.
 
-Desired lifecycle state is administrator intent (`draft`, `active`, `draining`, `disabled`). C3 owns runtime observation, projection, command execution, and reconciliation. Observed state changes only through projection services that reference runtime-event evidence or stale-observation derivation; there is no administrative mark-ready path.
+Desired lifecycle state is administrator intent (`draft`, `active`, `draining`, `disabled`). Backend catalog authority provides safe runtime families, adapter keys, adapter capability support, endpoint requirements, credential requirements, and adapter-configuration availability to the web UI. C3 owns runtime observation, projection, command execution, and reconciliation. Observed state changes only through projection services that reference runtime-event evidence or stale-observation derivation; there is no administrative mark-ready path.
 
 Endpoints are normalized configuration records for `control`, `events`, and `health` purposes. Credentials are separate encrypted write-only records. API responses expose safe credential metadata and fingerprints only; plaintext and ciphertext are excluded from logs, audit metadata, outbox payloads, status output, and UI detail views.
 
@@ -105,6 +105,26 @@ The outbox dispatcher claims C0 outbox rows with PostgreSQL leases and fencing, 
 
 C3 does not add a simulator, null adapter, ARI client, ESL client, Asterisk listener, FreeSWITCH listener, manual reconciliation route, manual projection route, or public runtime-command execution API. Runtime-specific listeners and adapters are future leaf implementations.
 
+## Current Deterministic Simulator Boundary
+
+C4 adds the first leaf implementation of the C3 adapter contract: `runtime_family: simulator`, `adapter_key: simulator-deterministic`, selected only through the existing authenticated runtime-registry API. It adds one Kubernetes process role, `simulator-event-source`, that publishes scheduled simulator events automatically with no public Service, Gateway route, or external egress beyond DNS, PostgreSQL, and Redis. The simulator's own scenario logic lives entirely in `App\Simulator`; the generic C3 engine (`App\RuntimeEngine`, `App\ControlPlane`) contains no reference to the simulator adapter class or to any scenario key.
+
+C4 does not add telephony sessions, conference behavior, SIP registration, or any live Asterisk, FreeSWITCH, Kamailio, or rtpengine adapter. Those remain C5 and later phases.
+
+## Current Telephony Domain Boundary
+
+C5 introduces PostgreSQL-authoritative telephony sessions, conferences, runtime bindings, and conference participants. A `TelephonySession` is a tenant-scoped authenticated control-plane authorization session only; it is not SIP registration, media connectivity, a call, browser microphone access, or a runtime channel.
+
+Conference desired state and participant desired state are application authority. Conference and participant observed state are projection authority and may change only from C3 normalized observations. Runtime work is expressed through runtime-neutral operations and adapter contracts; controllers and services do not call adapters directly, do not insert runtime operations directly, and do not expose a manual runtime/projection/reconciliation API.
+
+The deterministic simulator can execute C5 operations as a leaf adapter, but C5 does not add SIP credentials, SIP registration, WebRTC/media, Asterisk ARI, FreeSWITCH ESL, Kamailio, rtpengine, dialing, PSTN, recording, or an agent desktop.
+
+## Current Asterisk ARI Boundary
+
+T0 adds Asterisk ARI as a leaf runtime adapter for observation only. `AsteriskAriClient` performs authenticated ARI HTTP inspection and ARI event WebSocket connections using credentials stored by C2 and per-node ARI settings from `asterisk_ari_profiles`. The `asterisk-ari-events` process role discovers active Asterisk RuntimeNodes from PostgreSQL, requires an explicit per-node profile, claims node-scoped listener leases, opens C3 connection epochs, and ingests bounded raw ARI evidence through C3 receipt authority. Adapter-configuration updates go through the generic RuntimeNode adapter-configuration route, dispatch at the registered application boundary, audit the change, advance configuration generation, and wake automatic processing.
+
+Readiness projection remains runtime-neutral and evidence-based. A successful HTTP request alone is not conference or media readiness, and T0 does not implement ConfBridge, C5 conference operations on Asterisk, channel origination, SIP registration, PJSIP, RTP/media, trunks, PSTN, browser WebRTC, or FreeSWITCH ESL.
+
 ## Current Kubernetes Security Boundary
 
 K3 enforces `restricted` Pod Security Admission pinned to Kubernetes `v1.35` for `utcp-platform`, `utcp-data`, `utcp-runtime`, `utcp-observability`, and `traefik-system`. Application workloads keep service-account token automount disabled and run without privileged mode, host networking, hostPath mounts, or broad Linux capabilities.
@@ -119,7 +139,7 @@ gateway -> web, api
 api/worker/scheduler/migration -> PostgreSQL, Redis
 ```
 
-`utcp-runtime` remains empty and default-denied. `utcp-observability` runs only the K4 observability stack with explicit policies for Kubernetes discovery, metrics scraping, log ingestion, dashboard access, and local alert delivery. Future signaling, events, and media phases must add their own concrete workloads and policies.
+`utcp-runtime` may host the internal local Asterisk ARI fixture for T0 proof. That fixture exposes only an internal ClusterIP ARI port and no SIP, RTP, Gateway route, NodePort, LoadBalancer, host port, host network, host PID, hostPath, or Kubernetes API token. `utcp-observability` runs only the K4 observability stack with explicit policies for Kubernetes discovery, metrics scraping, log ingestion, dashboard access, and local alert delivery. Future signaling, conference execution, and media phases must add their own concrete workloads and policies.
 
 ## Current Observability Boundary
 

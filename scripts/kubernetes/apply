@@ -12,6 +12,8 @@ ensure_cluster
 
 kube apply -k "$K8S_DATA_OVERLAY"
 wait_data
+kube apply -k "$K8S_RUNTIME_OVERLAY"
+wait_runtime
 
 kube apply -f "$ROOT/infrastructure/kubernetes/base/platform/service-account.yaml"
 delete_migration_job

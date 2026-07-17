@@ -42,8 +42,8 @@ foreach ($required as $capability) {
   }
 }
 foreach ($catalog["capabilities"] as $key => $_) {
-  if (preg_match("/(sip|wss|conference|asterisk|freeswitch|ari|esl|rtp|kamailio|provider-node)/i", $key)) {
-    fwrite(STDERR, "telephony or vendor-specific capability is not allowed in identity catalog: {$key}\n");
+  if (preg_match("/(sip|wss|asterisk|freeswitch|ari|esl|rtp|kamailio|provider-node)/i", $key)) {
+    fwrite(STDERR, "vendor-specific capability is not allowed in identity catalog: {$key}\n");
     exit(1);
   }
 }
@@ -65,8 +65,8 @@ if rg -n "register|signup|bootstrap.*Route|identity:.*user|identity:.*tenant" ap
   fi
 fi
 
-if rg -n "sip|sips|wss|kamailio|rtpengine|asterisk|freeswitch|\\bari\\b|\\besl\\b|conference|telephony-session|provider-node" apps/api/config/identity.php apps/api/routes/web.php apps/api/app/Identity >/dev/null; then
-  fail "found forbidden telephony/vendor vocabulary in identity authority surface"
+if rg -n "sip|sips|wss|kamailio|rtpengine|asterisk|freeswitch|\\bari\\b|\\besl\\b|provider-node" apps/api/config/identity.php apps/api/routes/web.php apps/api/app/Identity >/dev/null; then
+  fail "found forbidden vendor/protocol vocabulary in identity authority surface"
 fi
 
 cd apps/api

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+"$ROOT/scripts/asterisk-ari/config-check" >/dev/null
+
+cd "$ROOT/apps/api"
+php artisan test tests/Feature/Asterisk

@@ -2,6 +2,48 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$ROOT/apps/api"
+# shellcheck source=scripts/simulator/lib
+. "$ROOT/scripts/simulator/lib"
 
-php artisan test --filter=SimulatorApiProofTest
+NODE_SLUG="local-deterministic-simulator"
+NODE_NAME="Local Deterministic Simulator"
+
+sim_login
+node_id="$(sim_create_or_reuse_node "$NODE_SLUG" "$NODE_NAME")"
+[ -n "$node_id" ] || { printf 'failed to create or reuse %s\n' "$NODE_SLUG" >&2; exit 1; }
+printf 'proof_node_id=%s\n' "$node_id"
+
+sim_set_capabilities "$node_id"
+
+code="$(sim_api GET "/api/v1/admin/runtime-nodes/$node_id")"
+[ "$code" = "200" ] || { printf 'runtime node show failed with HTTP %s\n' "$code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+grep -Fq '"endpoints":[]' "$SIM_BODY_FILE" || { printf 'proof node unexpectedly has endpoints\n' >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+grep -Fq '"credentials":[]' "$SIM_BODY_FILE" || { printf 'proof node unexpectedly has credentials\n' >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+sim_configure "$node_id" "steady-ready" "c4-live-proof-steady-ready" '{"max_delay_seconds":0}'
+
+profile_code="$(sim_api GET "/api/v1/admin/runtime-nodes/$node_id/adapter-configuration")"
+[ "$profile_code" = "200" ] || { printf 'adapter configuration read failed with HTTP %s\n' "$profile_code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+grep -Fq '"scenario_key":"steady-ready"' "$SIM_BODY_FILE" || { printf 'adapter configuration did not reflect steady-ready scenario\n' >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+grep -Fq 'fencing_token' "$SIM_BODY_FILE" && { printf 'adapter configuration leaked fencing token\n' >&2; exit 1; }
+grep -Fq 'raw_payload' "$SIM_BODY_FILE" && { printf 'adapter configuration leaked raw payload\n' >&2; exit 1; }
+
+sim_activate "$node_id"
+
+state_code="$(sim_api GET "/api/v1/admin/runtime-nodes/$node_id")"
+[ "$state_code" = "200" ] || { printf 'runtime node re-read failed with HTTP %s\n' "$state_code" >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+grep -Fq '"desired_state":"active"' "$SIM_BODY_FILE" || { printf 'desired state did not become active\n' >&2; cat "$SIM_BODY_FILE" >&2; exit 1; }
+
+printf 'simulator api proof passed\n'
+printf 'proof_node_slug=%s\n' "$NODE_SLUG"
+
+echo "Waiting for the live steady-ready scenario to converge through the deployed Kubernetes workers (no manual dispatch)." >&2
+sim_wait_until "steady_ready_observed_ready" 180 5 \
+  "select count(*) from runtime_nodes where id='${node_id}' and observed_state='ready';"
+sim_wait_until "steady_ready_reconciliation_converged" 180 5 \
+  "select count(*) from runtime_reconciliation_states where target_id='${node_id}' and status='converged';"
+
+printf 'simulator_steady_ready_operations=%s\n' "$(sim_psql "select count(*) from runtime_operations where runtime_node_id='${node_id}';")"
+printf 'simulator_steady_ready_event_receipts_processed=%s\n' "$(sim_psql "select count(*) from runtime_event_receipts where runtime_node_id='${node_id}' and status='processed';")"
+printf 'simulator_steady_ready_checkpoints=%s\n' "$(sim_psql "select count(*) from runtime_projection_checkpoints where runtime_node_id='${node_id}';")"
+printf 'steady ready live scenario proof passed\n'

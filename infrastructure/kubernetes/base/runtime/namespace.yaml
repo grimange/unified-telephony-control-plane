@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: utcp-runtime
+  labels:
+    app.kubernetes.io/name: utcp
+    app.kubernetes.io/part-of: unified-telephony-control-plane
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
