@@ -2254,6 +2254,62 @@ Kubernetes client, dedicated infrastructure worker, RBAC, projected token,
 RuntimeNode B, live scale-to-zero proof, and two-node failover acceptance remain
 pending.
 
+## T5-A6 repository client and worker staging
+
+T5-A6 adds the repository components needed for future live Kubernetes fencing
+without activating them in the current single-node environment.
+
+`RuntimeOperationRepository::claimAvailable(...)` now supports database-level
+operation-type include and exclude filters while preserving deterministic claim
+ordering, leases, and PostgreSQL `FOR UPDATE SKIP LOCKED` behavior. The existing
+generic `runtime-engine:command-worker` excludes
+`runtime.node.runtime.fence`, and the new internal
+`runtime-engine:infrastructure-worker {--once}` includes only that operation
+type. This keeps normal runtime operations on the generic worker and reserves
+Kubernetes mutation authority for a dedicated later-deployed worker identity.
+
+`HttpKubernetesWorkloadClient` is the bounded production client behind the
+existing `KubernetesWorkloadClient` interface. It implements only exact
+Deployment GET, Deployment scale-subresource PATCH, and owned-Pod listing
+requests. It uses the standard in-cluster API host and port plus the mounted
+projected ServiceAccount token and `ca.crt`; TLS verification is mandatory. The
+token file is read for each request so projected-token rotation is honored.
+Missing host, token, CA material, connection failure, TLS failure, throttling, or
+server errors fail closed as `unavailable_to_control`. Authorization failures map
+to `permission_denied`, expected-workload 404 maps to `target_mismatch`, 409 maps
+to retryable `fence_in_progress`, and malformed Kubernetes objects map to
+`failed`. No HTTP or credential failure can produce `fenced` evidence.
+
+A non-applied Kustomize component exists at
+`infrastructure/kubernetes/components/runtime-fencing/`. It stages the
+`utcp-runtime-fencer` ServiceAccount, a namespace-scoped Role/RoleBinding in
+`utcp-runtime`, and a dedicated infrastructure worker Deployment using the same
+application image and the `telephony-infrastructure-worker` entrypoint role. The
+worker has `automountServiceAccountToken: false` and mounts one explicit
+projected ServiceAccount token volume at the standard Kubernetes credential path.
+The Role permits only `get/list` on Deployments, `get/patch` on
+`deployments/scale`, and `get/list` on Pods; it grants no Pod deletion, full
+Deployment patch, Secret read, wildcard, ClusterRole, Service, or cross-namespace
+authority. EndpointSlice permissions are intentionally absent because the client
+does not read EndpointSlices in this slice.
+
+The active single-node overlay does not include the runtime-fencing component.
+Live fencing remains inert because existing generic workers cannot claim
+`runtime.node.runtime.fence`, and no current Pod receives the fencing token or
+the staged ServiceAccount. When the component is deployed later, the
+replacement-before-fence guard still executes immediately before infrastructure
+mutation, and `failoverRebindConferenceAfterFence(...)` still validates verified
+absence or external-fence evidence against the current binding and Conference
+generation before any RuntimeBinding authority cutoff.
+
+Safe deployment order remains: deploy and register a distinct ready RuntimeNode
+B first; prove it is eligible; then apply the fencing ServiceAccount/RBAC and
+dedicated worker identity; then run non-destructive connectivity proof before
+any live scale-to-zero acceptance. Parameterized A/B manifests, RuntimeNode B
+registration, real RBAC application, live Kubernetes-client connectivity, live
+scale-to-zero proof, replacement reconstruction proof, former-workload
+restoration policy, and two-node automatic failover acceptance remain pending.
+
 ## Ready-to-paste Codex prompt (T5-A5)
 
 ```

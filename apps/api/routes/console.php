@@ -309,7 +309,11 @@ Artisan::command('runtime-engine:outbox-dispatcher {--once : Process one batch a
 Artisan::command('runtime-engine:command-worker {--once : Process one batch and exit}', function (CommandWorker $worker): int {
     $workerId = gethostname().':command:'.getmypid();
     do {
-        $worker->workOnce($workerId, (int) config('runtime_engine.batch_size', 10));
+        $worker->workOnce(
+            $workerId,
+            (int) config('runtime_engine.batch_size', 10),
+            excludeOperationTypes: [(string) config('telephony_domain.operation_types.runtime_fence')],
+        );
         if (! $this->option('once')) {
             sleep((int) config('runtime_engine.poll_seconds', 5));
         }
@@ -317,6 +321,22 @@ Artisan::command('runtime-engine:command-worker {--once : Process one batch and 
 
     return 0;
 })->purpose('Run the generic runtime-operation command worker.');
+
+Artisan::command('runtime-engine:infrastructure-worker {--once : Process one infrastructure-operation batch and exit}', function (CommandWorker $worker): int {
+    $workerId = gethostname().':infrastructure:'.getmypid();
+    do {
+        $worker->workOnce(
+            $workerId,
+            (int) config('runtime_engine.batch_size', 10),
+            includeOperationTypes: [(string) config('telephony_domain.operation_types.runtime_fence')],
+        );
+        if (! $this->option('once')) {
+            sleep((int) config('runtime_engine.poll_seconds', 5));
+        }
+    } while (! $this->option('once'));
+
+    return 0;
+})->purpose('Run the dedicated runtime infrastructure-operation worker.');
 
 Artisan::command('runtime-engine:event-normalizer {--once : Process one batch and exit}', function (EventNormalizerWorker $worker): int {
     $workerId = gethostname().':normalizer:'.getmypid();

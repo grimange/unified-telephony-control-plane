@@ -17,10 +17,14 @@ for file in \
   apps/api/app/RuntimeEngine/Events/EventNormalizerWorker.php \
   apps/api/app/RuntimeEngine/Projection/ProjectionService.php \
   apps/api/app/RuntimeEngine/Reconciliation/ReconciliationWorker.php \
+  apps/api/app/Infrastructure/RuntimeFencing/HttpKubernetesWorkloadClient.php \
   infrastructure/kubernetes/base/platform/outbox-dispatcher-deployment.yaml \
   infrastructure/kubernetes/base/platform/telephony-command-worker-deployment.yaml \
   infrastructure/kubernetes/base/platform/telephony-event-normalizer-deployment.yaml \
   infrastructure/kubernetes/base/platform/telephony-reconciler-deployment.yaml \
+  infrastructure/kubernetes/components/runtime-fencing/infrastructure-worker-deployment.yaml \
+  infrastructure/kubernetes/components/runtime-fencing/rbac.yaml \
+  infrastructure/kubernetes/components/runtime-fencing/service-account.yaml \
   scripts/gateway/tls-apply
 do
   [ -s "$file" ] || fail "missing required C3 file: $file"
@@ -35,7 +39,7 @@ if (! function_exists("env")) {
   function env($key, $default = null) { return $default; }
 }
 $config = require "apps/api/config/runtime_engine.php";
-foreach (["control-plane-outbox-dispatcher","telephony-command-worker","telephony-event-normalizer","telephony-reconciler"] as $role) {
+foreach (["control-plane-outbox-dispatcher","telephony-command-worker","telephony-infrastructure-worker","telephony-event-normalizer","telephony-reconciler"] as $role) {
   if (! in_array($role, $config["roles"], true)) {
     fwrite(STDERR, "missing C3 role: {$role}\n");
     exit(1);
@@ -49,10 +53,21 @@ foreach (["unobserved","unknown","connecting","ready","degraded","unavailable","
 }
 '
 
-for role in control-plane-outbox-dispatcher telephony-command-worker telephony-event-normalizer telephony-reconciler; do
-  rg -n -- "runtime-engine:|$role" infrastructure/docker/api/entrypoint infrastructure/compose/compose.yaml infrastructure/kubernetes/base/platform >/dev/null ||
+for role in control-plane-outbox-dispatcher telephony-command-worker telephony-infrastructure-worker telephony-event-normalizer telephony-reconciler; do
+  rg -n -- "runtime-engine:|$role" infrastructure/docker/api/entrypoint infrastructure/compose/compose.yaml infrastructure/kubernetes/base/platform infrastructure/kubernetes/components/runtime-fencing >/dev/null ||
     fail "process role is not wired: $role"
 done
+
+grep -q "includeOperationTypes" apps/api/app/ControlPlane/RuntimeOperations/RuntimeOperationRepository.php ||
+  fail "runtime operation repository does not support include type filtering"
+grep -q "excludeOperationTypes" apps/api/app/ControlPlane/RuntimeOperations/RuntimeOperationRepository.php ||
+  fail "runtime operation repository does not support exclude type filtering"
+rg -F "excludeOperationTypes: [(string) config('telephony_domain.operation_types.runtime_fence')]" apps/api/routes/console.php >/dev/null ||
+  fail "generic command worker does not exclude runtime fence operations"
+rg -F "includeOperationTypes: [(string) config('telephony_domain.operation_types.runtime_fence')]" apps/api/routes/console.php >/dev/null ||
+  fail "infrastructure worker does not include only runtime fence operations"
+grep -q "runtime-engine:infrastructure-worker {--once" apps/api/routes/console.php ||
+  fail "missing dedicated infrastructure worker command"
 
 if ! printf '%s\n' 'ari-worker' 'public AriController' 'NullRuntimeAdapter' | rg -n "AriController|EslController|(^|[^[:alnum:]-])ari-worker([^[:alnum:]-]|$)|(^|[^[:alnum:]-])esl-worker([^[:alnum:]-]|$)|freeswitch-esl-events|FakeAsterisk|FakeFreeSwitch|NullRuntimeAdapter|NoopRuntimeAdapter" >/dev/null; then
   fail "legacy runtime vocabulary regression fixture did not match prohibited names"
@@ -83,5 +98,6 @@ if rg -n "tenant_id|runtime_node_id|operation_id|event_id|request_id|user_id" in
 fi
 
 kubectl kustomize infrastructure/kubernetes/base >/dev/null
+kubectl kustomize infrastructure/kubernetes/components/runtime-fencing >/dev/null
 
 printf 'runtime engine config check passed\n'

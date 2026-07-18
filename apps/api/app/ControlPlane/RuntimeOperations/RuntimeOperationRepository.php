@@ -91,13 +91,24 @@ final class RuntimeOperationRepository
     /**
      * @return list<ClaimedOperation>
      */
-    public function claimAvailable(string $leaseOwner, int $batchSize = 1, int $leaseSeconds = 60): array
-    {
+    /**
+     * @param  list<string>  $includeOperationTypes
+     * @param  list<string>  $excludeOperationTypes
+     */
+    public function claimAvailable(
+        string $leaseOwner,
+        int $batchSize = 1,
+        int $leaseSeconds = 60,
+        array $includeOperationTypes = [],
+        array $excludeOperationTypes = [],
+    ): array {
         if ($batchSize < 1 || $batchSize > 100) {
             throw new \InvalidArgumentException('batch size must be 1-100');
         }
+        $includeOperationTypes = $this->normalizeOperationTypes($includeOperationTypes, 'includeOperationTypes');
+        $excludeOperationTypes = $this->normalizeOperationTypes($excludeOperationTypes, 'excludeOperationTypes');
 
-        return DB::transaction(function () use ($leaseOwner, $batchSize, $leaseSeconds): array {
+        return DB::transaction(function () use ($leaseOwner, $batchSize, $leaseSeconds, $includeOperationTypes, $excludeOperationTypes): array {
             $query = DB::table('runtime_operations')
                 ->where(function ($query): void {
                     $query
@@ -109,6 +120,8 @@ final class RuntimeOperationRepository
                                 ->where('lease_expires_at', '<', now());
                         });
                 })
+                ->when($includeOperationTypes !== [], fn ($query) => $query->whereIn('operation_type', $includeOperationTypes))
+                ->when($excludeOperationTypes !== [], fn ($query) => $query->whereNotIn('operation_type', $excludeOperationTypes))
                 ->orderBy('priority')
                 ->orderBy('available_at')
                 ->orderBy('created_at')
@@ -144,6 +157,23 @@ final class RuntimeOperationRepository
 
             return $claimed;
         });
+    }
+
+    /**
+     * @param  list<string>  $operationTypes
+     * @return list<string>
+     */
+    private function normalizeOperationTypes(array $operationTypes, string $argument): array
+    {
+        $normalized = [];
+        foreach ($operationTypes as $operationType) {
+            if (! is_string($operationType) || trim($operationType) === '') {
+                throw new \InvalidArgumentException($argument.' must contain non-empty operation type strings');
+            }
+            $normalized[] = trim($operationType);
+        }
+
+        return array_values(array_unique($normalized));
     }
 
     public function markRunning(string $id, string $leaseToken): void

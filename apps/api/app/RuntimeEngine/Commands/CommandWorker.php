@@ -23,10 +23,27 @@ final class CommandWorker
         private readonly RuntimeAdapterRegistry $adapters,
     ) {}
 
-    public function workOnce(string $workerId, int $batchSize = 10, int $leaseSeconds = 60): int
-    {
+    /**
+     * @param  list<string>  $includeOperationTypes
+     * @param  list<string>  $excludeOperationTypes
+     */
+    public function workOnce(
+        string $workerId,
+        int $batchSize = 10,
+        int $leaseSeconds = 60,
+        array $includeOperationTypes = [],
+        array $excludeOperationTypes = [],
+    ): int {
+        $includeOperationTypes = $this->assertKnownOperationTypes($includeOperationTypes, 'includeOperationTypes');
+        $excludeOperationTypes = $this->assertKnownOperationTypes($excludeOperationTypes, 'excludeOperationTypes');
         $processed = 0;
-        foreach ($this->operations->claimAvailable($workerId, $batchSize, $leaseSeconds) as $claim) {
+        foreach ($this->operations->claimAvailable(
+            $workerId,
+            $batchSize,
+            $leaseSeconds,
+            $includeOperationTypes,
+            $excludeOperationTypes,
+        ) as $claim) {
             $row = DB::table('runtime_operations')->where('id', $claim->id)->first();
             if ($row === null) {
                 continue;
@@ -86,6 +103,28 @@ final class CommandWorker
         }
 
         return $processed;
+    }
+
+    /**
+     * @param  list<string>  $operationTypes
+     * @return list<string>
+     */
+    private function assertKnownOperationTypes(array $operationTypes, string $argument): array
+    {
+        $known = $this->handlers->operationTypes();
+        $normalized = [];
+        foreach ($operationTypes as $operationType) {
+            if (! is_string($operationType) || trim($operationType) === '') {
+                throw new \InvalidArgumentException($argument.' must contain non-empty operation type strings');
+            }
+            $operationType = trim($operationType);
+            if (! in_array($operationType, $known, true)) {
+                throw new \InvalidArgumentException($argument.' contains an unknown runtime operation type: '.$operationType);
+            }
+            $normalized[] = $operationType;
+        }
+
+        return array_values(array_unique($normalized));
     }
 
     private function resolveAdapter(object $operation, RuntimeOperationHandler $handler): RuntimeAdapter|FailureClass|null

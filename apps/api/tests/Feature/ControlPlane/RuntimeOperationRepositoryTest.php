@@ -86,6 +86,59 @@ final class RuntimeOperationRepositoryTest extends TestCase
         ]);
     }
 
+    public function test_operation_claiming_filters_types_before_leasing(): void
+    {
+        $repository = new RuntimeOperationRepository;
+        $context = ExecutionContext::system();
+        $normalId = $repository->create(
+            'test.operation.normal',
+            'test.aggregate',
+            'aggregate-normal',
+            ['action' => 'normal'],
+            $context,
+        );
+        $fenceId = $repository->create(
+            'runtime.node.runtime.fence',
+            'conference',
+            'conference-1',
+            ['action' => 'fence'],
+            $context,
+        );
+
+        $genericClaims = $repository->claimAvailable(
+            'generic-worker',
+            batchSize: 10,
+            excludeOperationTypes: ['runtime.node.runtime.fence'],
+        );
+
+        $this->assertCount(1, $genericClaims);
+        $this->assertSame($normalId, $genericClaims[0]->id);
+        $this->assertDatabaseHas('runtime_operations', [
+            'id' => $normalId,
+            'status' => OperationStatus::Leased->value,
+            'lease_owner' => 'generic-worker',
+        ]);
+        $this->assertDatabaseHas('runtime_operations', [
+            'id' => $fenceId,
+            'status' => OperationStatus::Pending->value,
+            'lease_owner' => null,
+        ]);
+
+        $infrastructureClaims = $repository->claimAvailable(
+            'infrastructure-worker',
+            batchSize: 10,
+            includeOperationTypes: ['runtime.node.runtime.fence'],
+        );
+
+        $this->assertCount(1, $infrastructureClaims);
+        $this->assertSame($fenceId, $infrastructureClaims[0]->id);
+        $this->assertDatabaseHas('runtime_operations', [
+            'id' => $fenceId,
+            'status' => OperationStatus::Leased->value,
+            'lease_owner' => 'infrastructure-worker',
+        ]);
+    }
+
     public function test_retryable_failures_schedule_retry_and_terminal_failures_complete(): void
     {
         $repository = new RuntimeOperationRepository;

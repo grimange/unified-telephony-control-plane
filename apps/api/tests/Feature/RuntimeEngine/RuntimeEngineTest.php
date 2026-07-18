@@ -139,6 +139,81 @@ final class RuntimeEngineTest extends TestCase
         $this->assertDatabaseHas('runtime_operations', ['id' => $unsupportedAdapterId, 'status' => OperationStatus::TerminalFailed->value, 'last_failure_class' => 'unsupported_capability']);
     }
 
+    public function test_worker_type_filters_keep_fence_operations_out_of_generic_workers(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('active');
+        $context = ExecutionContext::system(tenantId: $tenantId);
+        $operations = new RuntimeOperationRepository;
+        $worker = new CommandWorker(
+            $operations,
+            new OutboxRepository,
+            new RuntimeOperationHandlerRegistry([
+                new TestRuntimeHandler('test.operation.normal', 'completed'),
+                new TestRuntimeHandler('runtime.node.runtime.fence', 'completed'),
+            ]),
+            new RuntimeAdapterRegistry([new TestRuntimeAdapter]),
+        );
+
+        $normalId = $operations->create('test.operation.normal', 'runtime_node', $nodeId, ['safe' => true], $context, runtimeNodeId: $nodeId);
+        $fenceId = $operations->create('runtime.node.runtime.fence', 'runtime_node', $nodeId, ['safe' => true], $context, runtimeNodeId: $nodeId);
+
+        $this->assertSame(1, $worker->workOnce(
+            'generic-worker',
+            batchSize: 10,
+            excludeOperationTypes: ['runtime.node.runtime.fence'],
+        ));
+        $this->assertDatabaseHas('runtime_operations', ['id' => $normalId, 'status' => OperationStatus::Succeeded->value]);
+        $this->assertDatabaseHas('runtime_operations', ['id' => $fenceId, 'status' => OperationStatus::Pending->value]);
+
+        $this->assertSame(1, $worker->workOnce(
+            'infrastructure-worker',
+            batchSize: 10,
+            includeOperationTypes: ['runtime.node.runtime.fence'],
+        ));
+        $this->assertDatabaseHas('runtime_operations', ['id' => $fenceId, 'status' => OperationStatus::Succeeded->value]);
+        $this->assertDatabaseCount('control_plane_outbox_messages', 2);
+    }
+
+    public function test_infrastructure_worker_filter_does_not_claim_normal_operations(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('active');
+        $context = ExecutionContext::system(tenantId: $tenantId);
+        $operations = new RuntimeOperationRepository;
+        $worker = new CommandWorker(
+            $operations,
+            new OutboxRepository,
+            new RuntimeOperationHandlerRegistry([
+                new TestRuntimeHandler('test.operation.normal', 'completed'),
+                new TestRuntimeHandler('runtime.node.runtime.fence', 'completed'),
+            ]),
+            new RuntimeAdapterRegistry([new TestRuntimeAdapter]),
+        );
+
+        $normalId = $operations->create('test.operation.normal', 'runtime_node', $nodeId, ['safe' => true], $context, runtimeNodeId: $nodeId);
+
+        $this->assertSame(0, $worker->workOnce(
+            'infrastructure-worker',
+            batchSize: 10,
+            includeOperationTypes: ['runtime.node.runtime.fence'],
+        ));
+        $this->assertDatabaseHas('runtime_operations', ['id' => $normalId, 'status' => OperationStatus::Pending->value]);
+    }
+
+    public function test_worker_filters_reject_unknown_operation_types(): void
+    {
+        $worker = new CommandWorker(
+            new RuntimeOperationRepository,
+            new OutboxRepository,
+            new RuntimeOperationHandlerRegistry([
+                new TestRuntimeHandler('test.operation.normal', 'completed'),
+            ]),
+            new RuntimeAdapterRegistry([new TestRuntimeAdapter]),
+        );
+
+        $this->expectException(\InvalidArgumentException::class);
+        $worker->workOnce('generic-worker', includeOperationTypes: ['runtime.node.runtime.fence']);
+    }
+
     public function test_event_receipts_deduplicate_normalize_project_checkpoint_and_fence(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode('active');

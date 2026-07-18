@@ -26,4 +26,15 @@ final class RuntimeOperationHandlerRegistry
     {
         return $this->handlers[$operationType.':'.$payloadVersion] ?? null;
     }
+
+    /**
+     * @return list<string>
+     */
+    public function operationTypes(): array
+    {
+        return array_values(array_unique(array_map(
+            static fn (RuntimeOperationHandler $handler): string => $handler->operationType(),
+            $this->handlers,
+        )));
+    }
 }

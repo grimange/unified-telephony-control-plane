@@ -1,0 +1,37 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: utcp-runtime-fencer
+  namespace: utcp-runtime
+  labels:
+    app.kubernetes.io/name: utcp
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: runtime-fencing
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: utcp-runtime-fencer
+  namespace: utcp-runtime
+  labels:
+    app.kubernetes.io/name: utcp
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: runtime-fencing
+subjects:
+  - kind: ServiceAccount
+    name: utcp-runtime-fencer
+    namespace: utcp-runtime
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: utcp-runtime-fencer

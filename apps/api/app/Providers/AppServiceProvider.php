@@ -2,11 +2,11 @@
 
 namespace App\Providers;
 
+use App\Infrastructure\RuntimeFencing\HttpKubernetesWorkloadClient;
 use App\Infrastructure\RuntimeFencing\InfrastructureAdapterRegistry;
 use App\Infrastructure\RuntimeFencing\KubernetesRuntimeFenceAdapter;
 use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClient;
 use App\Infrastructure\RuntimeFencing\RuntimeFenceOperationHandler;
-use App\Infrastructure\RuntimeFencing\UnavailableKubernetesWorkloadClient;
 use App\RuntimeAdapters\Asterisk\AsteriskAdapterConfigurationHandler;
 use App\RuntimeAdapters\Asterisk\AsteriskAriEventNormalizer;
 use App\RuntimeAdapters\Asterisk\AsteriskCatalog;
@@ -42,7 +42,7 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->bind(ReadinessChecker::class, ConfiguredReadinessChecker::class);
-        $this->app->bind(KubernetesWorkloadClient::class, UnavailableKubernetesWorkloadClient::class);
+        $this->app->bind(KubernetesWorkloadClient::class, HttpKubernetesWorkloadClient::class);
         $this->app->singleton(InfrastructureAdapterRegistry::class, fn ($app): InfrastructureAdapterRegistry => new InfrastructureAdapterRegistry([
             $app->make(KubernetesRuntimeFenceAdapter::class),
         ]));
