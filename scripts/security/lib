@@ -19,6 +19,10 @@ SECURITY_KUSTOMIZATION="$ROOT/infrastructure/kubernetes/security"
 SECURITY_RUNTIME_DIR="$ROOT/.runtime/kubernetes/security"
 SECURITY_APISERVER_TEMPLATE="$SECURITY_KUSTOMIZATION/traefik/allow-apiserver-egress.template.yaml"
 SECURITY_APISERVER_POLICY="$SECURITY_RUNTIME_DIR/traefik-apiserver-egress.yaml"
+SECURITY_FENCER_APISERVER_TEMPLATE="$SECURITY_KUSTOMIZATION/kubernetes-api/allow-runtime-fencer-kubernetes-api.template.yaml"
+SECURITY_FENCER_APISERVER_POLICY="$SECURITY_RUNTIME_DIR/runtime-fencer-apiserver-egress.yaml"
+OBSERVABILITY_APISERVER_TEMPLATE="$ROOT/infrastructure/kubernetes/observability/network-policies/allow-apiserver-egress.template.yaml"
+OBSERVABILITY_APISERVER_POLICY="$ROOT/.runtime/observability/allow-apiserver-egress.yaml"
 SECURITY_SERVICE_TEMPLATE="$SECURITY_KUSTOMIZATION/service-clusterips/allow-service-clusterip-egress.template.yaml"
 SECURITY_SERVICE_POLICY="$SECURITY_RUNTIME_DIR/service-clusterip-egress.yaml"
 SECURITY_PROOF_IMAGE="${SECURITY_PROOF_IMAGE:-utcp-local-registry:5000/utcp/api:0.1.0-k1-dev}"
@@ -91,8 +95,14 @@ ensure_service_endpoints() {
 service_endpoint_ip() {
   local namespace="$1"
   local service="$2"
-  local ip
-  ip="$(kube -n "$namespace" get endpoints "$service" -o jsonpath='{.subsets[0].addresses[0].ip}')"
+  local endpoints ip count
+  endpoints="$(kube -n "$namespace" get endpoints "$service" -o jsonpath='{.subsets[*].addresses[*].ip}')"
+  count="$(printf '%s\n' "$endpoints" | awk '{print NF}')"
+  if [ "$count" -ne 1 ]; then
+    printf 'service endpoint is not exactly one address: %s/%s -> %s\n' "$namespace" "$service" "$endpoints" >&2
+    exit 1
+  fi
+  ip="$endpoints"
   if ! printf '%s\n' "$ip" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
     printf 'service endpoint is not a single IPv4 address: %s/%s -> %s\n' "$namespace" "$service" "$ip" >&2
     exit 1
@@ -103,8 +113,14 @@ service_endpoint_ip() {
 service_endpoint_port() {
   local namespace="$1"
   local service="$2"
-  local port
-  port="$(kube -n "$namespace" get endpoints "$service" -o jsonpath='{.subsets[0].ports[0].port}')"
+  local ports port count
+  ports="$(kube -n "$namespace" get endpoints "$service" -o jsonpath='{.subsets[*].ports[*].port}')"
+  count="$(printf '%s\n' "$ports" | awk '{print NF}')"
+  if [ "$count" -ne 1 ]; then
+    printf 'service endpoint is not exactly one port: %s/%s -> %s\n' "$namespace" "$service" "$ports" >&2
+    exit 1
+  fi
+  port="$ports"
   if ! printf '%s\n' "$port" | grep -Eq '^[0-9]+$'; then
     printf 'service endpoint port is not numeric: %s/%s -> %s\n' "$namespace" "$service" "$port" >&2
     exit 1
@@ -114,21 +130,24 @@ service_endpoint_port() {
 
 render_apiserver_policy() {
   mkdir -p "$SECURITY_RUNTIME_DIR"
-  local ip endpoint_ip endpoint_port
-  ip="$(service_cluster_ip default kubernetes)"
+  local endpoint_ip endpoint_port
   endpoint_ip="$(service_endpoint_ip default kubernetes)"
   endpoint_port="$(service_endpoint_port default kubernetes)"
-  if ! printf '%s\n' "$ip" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
-    printf 'Kubernetes API Service ClusterIP is not a single IPv4 address: %s\n' "$ip" >&2
-    exit 1
-  fi
   sed \
-    -e "s#__KUBERNETES_API_CIDR__#${ip}/32#g" \
     -e "s#__KUBERNETES_API_ENDPOINT_CIDR__#${endpoint_ip}/32#g" \
     -e "s#__KUBERNETES_API_ENDPOINT_PORT__#${endpoint_port}#g" \
     "$SECURITY_APISERVER_TEMPLATE" > "$SECURITY_APISERVER_POLICY"
-  printf 'rendered Traefik Kubernetes API egress policy for service=%s/32:443 endpoint=%s/32:%s\n' \
-    "$ip" "$endpoint_ip" "$endpoint_port"
+  sed \
+    -e "s#__KUBERNETES_API_ENDPOINT_CIDR__#${endpoint_ip}/32#g" \
+    -e "s#__KUBERNETES_API_ENDPOINT_PORT__#${endpoint_port}#g" \
+    "$SECURITY_FENCER_APISERVER_TEMPLATE" > "$SECURITY_FENCER_APISERVER_POLICY"
+  mkdir -p "$(dirname "$OBSERVABILITY_APISERVER_POLICY")"
+  sed \
+    -e "s#__KUBERNETES_API_ENDPOINT_CIDR__#${endpoint_ip}/32#g" \
+    -e "s#__KUBERNETES_API_ENDPOINT_PORT__#${endpoint_port}#g" \
+    "$OBSERVABILITY_APISERVER_TEMPLATE" > "$OBSERVABILITY_APISERVER_POLICY"
+  printf 'rendered Kubernetes API endpoint egress policies endpoint=%s/32:%s\n' \
+    "$endpoint_ip" "$endpoint_port"
 }
 
 render_service_clusterip_policy() {

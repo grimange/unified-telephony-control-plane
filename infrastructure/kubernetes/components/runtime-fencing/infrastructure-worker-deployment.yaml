@@ -20,6 +20,8 @@ spec:
         app.kubernetes.io/name: utcp
         app.kubernetes.io/part-of: utcp
         app.kubernetes.io/component: runtime-fence-worker
+        utcp.io/network-role: worker
+        utcp.io/kubernetes-api-client: "true"
     spec:
       serviceAccountName: utcp-runtime-fencer
       automountServiceAccountToken: false

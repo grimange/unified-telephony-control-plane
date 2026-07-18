@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/security/lib
+. "$SCRIPT_DIR/lib"
+
+if [ "${UTCP_SECURITY_EXPECTED_API_ENDPOINT_IP:-}" != "" ]; then
+  endpoint_ip="$UTCP_SECURITY_EXPECTED_API_ENDPOINT_IP"
+  endpoint_port="$UTCP_SECURITY_EXPECTED_API_ENDPOINT_PORT"
+  service_ip="${UTCP_SECURITY_KUBERNETES_SERVICE_IP:-}"
+else
+  required_tools
+  ensure_kubeconfig
+  endpoint_ip="$(service_endpoint_ip default kubernetes)"
+  endpoint_port="$(service_endpoint_port default kubernetes)"
+  service_ip="$(service_cluster_ip default kubernetes)"
+fi
+
+if ! printf '%s\n' "$endpoint_ip" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+  printf 'Kubernetes API endpoint IP is not a single IPv4 address: %s\n' "$endpoint_ip" >&2
+  exit 1
+fi
+if ! printf '%s\n' "$endpoint_port" | grep -Eq '^[0-9]+$'; then
+  printf 'Kubernetes API endpoint port is not numeric: %s\n' "$endpoint_port" >&2
+  exit 1
+fi
+
+if [ "$#" -gt 0 ]; then
+  policies=("$@")
+else
+  policies=(
+    "$SECURITY_FENCER_APISERVER_POLICY"
+    "$SECURITY_APISERVER_POLICY"
+    "$OBSERVABILITY_APISERVER_POLICY"
+  )
+fi
+
+python3 - "$endpoint_ip" "$endpoint_port" "$service_ip" "${policies[@]}" <<'PY'
+import ipaddress
+import os
+import sys
+from pathlib import Path
+
+import yaml
+
+expected_ip = sys.argv[1]
+expected_port = int(sys.argv[2])
+service_ip = sys.argv[3]
+paths = [Path(path) for path in sys.argv[4:]]
+
+def fail(message: str) -> None:
+    print(f"Kubernetes API egress drift check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+if not paths:
+    fail("no policies supplied")
+
+expected_cidr = f"{expected_ip}/32"
+broad_prefixes = {
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+}
+service_cidr = f"{service_ip}/32" if service_ip else None
+
+for path in paths:
+    if not path.exists() or path.stat().st_size == 0:
+        fail(f"missing policy file: {path}")
+    with path.open("r", encoding="utf-8") as handle:
+        docs = [doc for doc in yaml.safe_load_all(handle) if doc]
+    policies = [doc for doc in docs if doc.get("kind") == "NetworkPolicy"]
+    if len(policies) != 1:
+        fail(f"{path}: expected exactly one NetworkPolicy, found {len(policies)}")
+    policy = policies[0]
+    name = policy.get("metadata", {}).get("name", str(path))
+    egress = policy.get("spec", {}).get("egress") or []
+    cidrs: list[str] = []
+    ports: list[tuple[str, int]] = []
+    for rule in egress:
+        for target in rule.get("to") or []:
+            ip_block = target.get("ipBlock") or {}
+            cidr = ip_block.get("cidr")
+            if cidr:
+                cidrs.append(str(cidr))
+        for port in rule.get("ports") or []:
+            value = port.get("port")
+            try:
+                value = int(value)
+            except (TypeError, ValueError):
+                fail(f"{name}: non-numeric API endpoint port {value!r}")
+            ports.append((str(port.get("protocol", "TCP")).upper(), value))
+
+    if len(cidrs) != 1:
+        fail(f"{name}: expected one destination {expected_cidr}, found {cidrs}")
+    if len(ports) != 1:
+        fail(f"{name}: expected one TCP port {expected_port}, found {ports}")
+
+    actual_cidr = cidrs[0]
+    actual_protocol, actual_port = ports[0]
+    if actual_cidr == "0.0.0.0/0" or actual_cidr == "::/0":
+        fail(f"{name}: broad all-destination CIDR is forbidden: {actual_cidr}")
+    if actual_cidr in broad_prefixes:
+        fail(f"{name}: broad node or cluster CIDR is forbidden: {actual_cidr}")
+    try:
+        network = ipaddress.ip_network(actual_cidr, strict=False)
+    except ValueError:
+        fail(f"{name}: invalid CIDR {actual_cidr}")
+    if network.prefixlen != 32:
+        fail(f"{name}: expected /32 destination {expected_cidr}, found {actual_cidr}")
+    if service_cidr and actual_cidr == service_cidr:
+        fail(f"{name}: Service ClusterIP destination is forbidden: {actual_cidr}")
+    if actual_cidr != expected_cidr:
+        fail(f"{name}: stale endpoint destination, expected {expected_cidr}, found {actual_cidr}")
+    if actual_protocol != "TCP" or actual_port != expected_port:
+        fail(f"{name}: stale endpoint port, expected TCP {expected_port}, found {actual_protocol} {actual_port}")
+
+print(f"Kubernetes API egress drift check passed endpoint={expected_cidr}:{expected_port}")
+PY

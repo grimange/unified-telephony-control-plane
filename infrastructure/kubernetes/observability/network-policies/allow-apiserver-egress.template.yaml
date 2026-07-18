@@ -22,11 +22,7 @@ spec:
   egress:
     - to:
         - ipBlock:
-            cidr: __KUBERNETES_API_CIDR__
-        - ipBlock:
             cidr: __KUBERNETES_API_ENDPOINT_CIDR__
       ports:
-        - protocol: TCP
-          port: 443
         - protocol: TCP
           port: __KUBERNETES_API_ENDPOINT_PORT__

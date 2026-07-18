@@ -110,6 +110,7 @@ runtime_fencing_render="$(mktemp)"
 kubectl kustomize infrastructure/kubernetes/components/runtime-fencing > "$runtime_fencing_render"
 python3 - "$runtime_fencing_render" <<'PY'
 import sys
+import subprocess
 import yaml
 
 path = sys.argv[1]
@@ -133,6 +134,11 @@ if any(doc.get('kind') in {'ClusterRole', 'ClusterRoleBinding'} for doc in docs)
     fail('runtime fencing component rendered cluster-scoped RBAC')
 
 deployment = objects[('Deployment', 'utcp-platform', 'utcp-runtime-fence-worker')]
+labels = deployment['spec']['template'].get('metadata', {}).get('labels') or {}
+if labels.get('utcp.io/network-role') != 'worker':
+    fail('runtime fence worker must carry the common worker NetworkPolicy label')
+if labels.get('utcp.io/kubernetes-api-client') != 'true':
+    fail('runtime fence worker must carry the dedicated Kubernetes API client label')
 pod_spec = deployment['spec']['template']['spec']
 if pod_spec.get('serviceAccountName') != 'utcp-runtime-fencer':
     fail('runtime fence worker does not use the fencer ServiceAccount')
@@ -199,6 +205,69 @@ if subjects != [{'kind': 'ServiceAccount', 'name': 'utcp-runtime-fencer', 'names
 role_ref = binding.get('roleRef') or {}
 if role_ref.get('kind') != 'Role' or role_ref.get('name') != 'utcp-runtime-fencer':
     fail('runtime fence RoleBinding roleRef must stay namespaced to the runtime Role')
+
+base_render = subprocess.run(
+    ['kubectl', 'kustomize', 'infrastructure/kubernetes/base'],
+    cwd='.',
+    check=True,
+    text=True,
+    capture_output=True,
+)
+base_docs = [doc for doc in yaml.safe_load_all(base_render.stdout) if doc]
+ordinary_api_clients = []
+for doc in base_docs:
+    if doc.get('kind') != 'Deployment':
+        continue
+    metadata = doc.get('metadata', {})
+    pod_labels = doc.get('spec', {}).get('template', {}).get('metadata', {}).get('labels') or {}
+    if pod_labels.get('utcp.io/kubernetes-api-client') == 'true':
+        ordinary_api_clients.append(f"{metadata.get('namespace')}/{metadata.get('name')}")
+if ordinary_api_clients:
+    fail(f'ordinary platform workers must not carry the Kubernetes API client label: {ordinary_api_clients}')
+
+with open('infrastructure/kubernetes/security/platform/allow-worker.yaml', 'r', encoding='utf-8') as handle:
+    worker_policy = yaml.safe_load(handle)
+if worker_policy.get('spec', {}).get('podSelector', {}).get('matchLabels') != {'utcp.io/network-role': 'worker'}:
+    fail('common worker egress policy must remain selected only by utcp.io/network-role=worker')
+worker_ports = sorted(
+    (str(port.get('protocol', 'TCP')).upper(), int(port.get('port')))
+    for rule in worker_policy.get('spec', {}).get('egress') or []
+    for port in rule.get('ports') or []
+)
+if worker_ports != [('TCP', 53), ('TCP', 5432), ('TCP', 6379), ('UDP', 53)]:
+    fail(f'common worker egress policy changed away from DNS/PostgreSQL/Redis only: {worker_ports}')
+
+with open('infrastructure/kubernetes/security/kubernetes-api/allow-runtime-fencer-kubernetes-api.template.yaml', 'r', encoding='utf-8') as handle:
+    fencer_policy = yaml.safe_load(handle)
+if fencer_policy.get('metadata', {}).get('namespace') != 'utcp-platform':
+    fail('runtime fencer Kubernetes API policy must live in utcp-platform')
+if fencer_policy.get('spec', {}).get('podSelector', {}).get('matchLabels') != {'utcp.io/kubernetes-api-client': 'true'}:
+    fail('runtime fencer Kubernetes API policy must be selected only by the API-client label')
+egress = fencer_policy.get('spec', {}).get('egress') or []
+cidrs = [
+    target.get('ipBlock', {}).get('cidr')
+    for rule in egress
+    for target in rule.get('to') or []
+    if target.get('ipBlock', {}).get('cidr')
+]
+ports = [
+    (str(port.get('protocol', 'TCP')).upper(), str(port.get('port')))
+    for rule in egress
+    for port in rule.get('ports') or []
+]
+if cidrs != ['__KUBERNETES_API_ENDPOINT_CIDR__']:
+    fail(f'runtime fencer Kubernetes API policy must have one endpoint CIDR placeholder only: {cidrs}')
+if ports != [('TCP', '__KUBERNETES_API_ENDPOINT_PORT__')]:
+    fail(f'runtime fencer Kubernetes API policy must have one TCP endpoint port placeholder only: {ports}')
+for path in [
+    'infrastructure/kubernetes/security/kubernetes-api/allow-runtime-fencer-kubernetes-api.template.yaml',
+    'infrastructure/kubernetes/security/traefik/allow-apiserver-egress.template.yaml',
+    'infrastructure/kubernetes/observability/network-policies/allow-apiserver-egress.template.yaml',
+]:
+    with open(path, 'r', encoding='utf-8') as handle:
+        content = handle.read()
+    if '__KUBERNETES_API_CIDR__' in content or '0.0.0.0/0' in content:
+        fail(f'Kubernetes API endpoint policy contains a ClusterIP placeholder or broad CIDR: {path}')
 PY
 rm -f "$runtime_fencing_render"
 

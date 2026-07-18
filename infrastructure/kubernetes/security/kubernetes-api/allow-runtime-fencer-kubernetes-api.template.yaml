@@ -1,15 +1,15 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-traefik-kubernetes-api
-  namespace: traefik-system
+  name: allow-runtime-fencer-kubernetes-api
+  namespace: utcp-platform
   labels:
     app.kubernetes.io/part-of: utcp
     app.kubernetes.io/managed-by: utcp-k3-security
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/name: traefik
+      utcp.io/kubernetes-api-client: "true"
   policyTypes:
     - Egress
   egress:

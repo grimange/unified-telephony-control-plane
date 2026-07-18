@@ -3839,3 +3839,86 @@ Asterisk Deployments report `1/1`, RuntimeNodes `Local Asterisk ARI` and
 `Local Asterisk ARI B` remain `active|ready`, zero fence/verify-absence
 operations and zero pending operations exist, and the working tree is clean at
 `8e72e63` with `UTCP_PHASE=T1`.
+
+## T5-A18 — Fencing-worker NetworkPolicy egress contract (repository implementation)
+
+Repository implementation at `UTCP_PHASE=T1` adds the T5-A17-proven egress
+contract without activating the fencing worker and without applying live fencing
+resources.
+
+### Implemented contract
+
+- `utcp-runtime-fence-worker` Pod template now carries
+  `utcp.io/network-role: worker`, reusing the existing common worker policies
+  for CoreDNS, PostgreSQL, and Redis egress.
+- The same Pod template carries the dedicated selector
+  `utcp.io/kubernetes-api-client: "true"`.
+- No ordinary platform worker in `infrastructure/kubernetes/base` carries the
+  API-client label.
+- The fencer-only policy template is
+  `infrastructure/kubernetes/security/kubernetes-api/allow-runtime-fencer-kubernetes-api.template.yaml`.
+  It selects only `utcp.io/kubernetes-api-client: "true"` in `utcp-platform`,
+  has policy type `Egress`, one `ipBlock` destination, and one TCP port.
+- The fencer policy is rendered by `scripts/security/lib` from the existing
+  `service_endpoint_ip default kubernetes` and `service_endpoint_port default
+  kubernetes` helpers into
+  `.runtime/kubernetes/security/runtime-fencer-apiserver-egress.yaml`.
+- `scripts/security/apply` renders and validates the endpoint-targeted policies
+  before applying the canonical security manifests, then applies the rendered
+  fencer policy with the other security policies.
+
+### ClusterIP fallback removal
+
+The Traefik and observability Kubernetes API egress templates now target only the
+current post-DNAT `default/kubernetes` endpoint IP `/32` and backend endpoint
+port. The proven-ineffective Service ClusterIP `/32:443` fallback was removed
+from:
+
+- `infrastructure/kubernetes/security/traefik/allow-apiserver-egress.template.yaml`
+- `infrastructure/kubernetes/observability/network-policies/allow-apiserver-egress.template.yaml`
+
+No `0.0.0.0/0`, node CIDR, cluster CIDR, hidden fallback destination, or Service
+ClusterIP API rule was added.
+
+### Drift detection
+
+`scripts/security/check-apiserver-policy-drift` compares endpoint-targeted
+NetworkPolicies against the current `default/kubernetes` endpoint IP and port.
+It covers:
+
+- `allow-runtime-fencer-kubernetes-api`
+- `allow-traefik-kubernetes-api`
+- `allow-observability-kubernetes-api-egress`
+
+The check fails on stale IP, stale port, missing policy, Service ClusterIP
+destination, broad CIDR, and duplicate fallback destinations. `make
+security-config-check` renders the policies, runs the drift check, and performs
+server-side dry-run validation. Re-running the standard security lifecycle is
+the reconciliation path for endpoint drift; no manual endpoint configuration or
+feature gate was introduced.
+
+### Repository proof
+
+Focused repository tests prove the fencer labels, ordinary-worker isolation,
+common worker egress reuse, fencer-only API selector, endpoint `/32` rendering,
+backend endpoint port rendering, absence of the Service ClusterIP fallback,
+stale IP and stale port rejection, missing policy rejection, broad CIDR
+rejection, duplicate fallback rejection, RBAC preservation, projected-token
+isolation, UID/GID `33:33`, and operation routing preservation.
+
+Non-destructive validation rendered
+`infrastructure/kubernetes/components/runtime-fencing/` and the new fencer
+API-egress policy. Server-side dry-run was performed against
+`.runtime/kubeconfig/utcp-local.yaml`, context `k3d-utcp-local`, for the
+runtime-fencing component and the rendered fencer NetworkPolicy. No Kubernetes
+resource was applied, no RBAC was applied, no Deployment was scaled, no Pod was
+deleted, no runtime-fence operation was created, and no failover occurred.
+
+### Still pending
+
+Live worker activation remains pending. Live projected-token Kubernetes-client
+proof, real scale-to-zero proof, automatic failover, replacement reconstruction,
+former-node restoration, stale active-binding retirement, signaling cutoff,
+Provider Node Admin UI, replacement-node failure handling, coordinator metrics,
+fencing metrics, capacity policy, and placement policy are not proven by this
+repository-only task.

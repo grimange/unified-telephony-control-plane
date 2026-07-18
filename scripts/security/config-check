@@ -11,7 +11,12 @@ ensure_kubeconfig
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 render_security > "$tmp"
+render_apiserver_policy >/dev/null
 kube apply --dry-run=server -f "$tmp" >/dev/null
+"$SCRIPT_DIR/check-apiserver-policy-drift" >/dev/null
+kube apply --dry-run=server -f "$SECURITY_APISERVER_POLICY" >/dev/null
+kube apply --dry-run=server -f "$SECURITY_FENCER_APISERVER_POLICY" >/dev/null
+kube apply --dry-run=server -f "$OBSERVABILITY_APISERVER_POLICY" >/dev/null
 
 for ns in "${UTCP_NAMESPACES[@]}"; do
   awk -v ns="$ns" '

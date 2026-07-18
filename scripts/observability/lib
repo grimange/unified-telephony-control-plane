@@ -85,8 +85,14 @@ service_cluster_ip() {
 service_endpoint_ip() {
   local namespace="$1"
   local service="$2"
-  local ip
-  ip="$(kube -n "$namespace" get endpoints "$service" -o jsonpath='{.subsets[0].addresses[0].ip}')"
+  local endpoints ip count
+  endpoints="$(kube -n "$namespace" get endpoints "$service" -o jsonpath='{.subsets[*].addresses[*].ip}')"
+  count="$(printf '%s\n' "$endpoints" | awk '{print NF}')"
+  if [ "$count" -ne 1 ]; then
+    printf 'service endpoint is not exactly one address: %s/%s -> %s\n' "$namespace" "$service" "$endpoints" >&2
+    exit 1
+  fi
+  ip="$endpoints"
   if ! printf '%s\n' "$ip" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
     printf 'service endpoint is not a single IPv4 address: %s/%s -> %s\n' "$namespace" "$service" "$ip" >&2
     exit 1
@@ -97,8 +103,14 @@ service_endpoint_ip() {
 service_endpoint_port() {
   local namespace="$1"
   local service="$2"
-  local port
-  port="$(kube -n "$namespace" get endpoints "$service" -o jsonpath='{.subsets[0].ports[0].port}')"
+  local ports port count
+  ports="$(kube -n "$namespace" get endpoints "$service" -o jsonpath='{.subsets[*].ports[*].port}')"
+  count="$(printf '%s\n' "$ports" | awk '{print NF}')"
+  if [ "$count" -ne 1 ]; then
+    printf 'service endpoint is not exactly one port: %s/%s -> %s\n' "$namespace" "$service" "$ports" >&2
+    exit 1
+  fi
+  port="$ports"
   if ! printf '%s\n' "$port" | grep -Eq '^[0-9]+$'; then
     printf 'service endpoint port is not numeric: %s/%s -> %s\n' "$namespace" "$service" "$port" >&2
     exit 1
@@ -108,23 +120,15 @@ service_endpoint_port() {
 
 render_apiserver_policy() {
   mkdir -p "$OBSERVABILITY_RUNTIME_DIR"
-  local ip endpoint_ip endpoint_port
-  ip="$(service_cluster_ip default kubernetes)"
+  local endpoint_ip endpoint_port
   endpoint_ip="$(service_endpoint_ip default kubernetes)"
   endpoint_port="$(service_endpoint_port default kubernetes)"
-  for value in "$ip" "$endpoint_ip"; do
-    if ! printf '%s\n' "$value" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
-      printf 'Kubernetes API address is not a single IPv4 address: %s\n' "$value" >&2
-      exit 1
-    fi
-  done
   sed \
-    -e "s#__KUBERNETES_API_CIDR__#${ip}/32#g" \
     -e "s#__KUBERNETES_API_ENDPOINT_CIDR__#${endpoint_ip}/32#g" \
     -e "s#__KUBERNETES_API_ENDPOINT_PORT__#${endpoint_port}#g" \
     "$OBSERVABILITY_APISERVER_TEMPLATE" > "$OBSERVABILITY_APISERVER_POLICY"
-  printf 'rendered observability Kubernetes API egress policy service=%s/32 endpoint=%s/32:%s\n' \
-    "$ip" "$endpoint_ip" "$endpoint_port"
+  printf 'rendered observability Kubernetes API egress policy endpoint=%s/32:%s\n' \
+    "$endpoint_ip" "$endpoint_port"
 }
 
 create_grafana_secret_file() {
