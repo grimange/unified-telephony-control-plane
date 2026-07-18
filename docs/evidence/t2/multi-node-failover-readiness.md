@@ -1305,3 +1305,509 @@ Kubernetes runtime-termination fencing, Kamailio signaling cutoff, second-node
 deployment, and live two-node acceptance remain later T5 work. The first
 two-node target remains control-plane reconstruction after verified absence, not
 seamless media migration.
+
+---
+
+# T5-A4 — Second Asterisk RuntimeNode and Kubernetes Termination-Fence Readiness
+
+Evidence-only audit at commit `cf621eb`, `UTCP_PHASE=T1`, 2026-07-18. Defines the
+two-node topology and Kubernetes runtime-fence contract that lets the T5-A3
+`former_runtime_present`/`unavailable` outcomes escalate to an authoritative
+process-termination fence and then rebind. No second node built, no fence
+adapter, no RBAC change, no live failover.
+
+## Exact Asterisk and Kubernetes versions
+
+Asterisk **20.20.1**, image `utcp-local-registry:5000/utcp/asterisk-ari:0.1.0-k1-dev`
+@ `sha256:944c10598da6902d6c7bfb54493376f7219e640a4245c03de5204e32c2f429bb`
+(base `andrius/asterisk:20@sha256:a27dae75…`). Kubernetes/k3d **v1.35.3+k3s1**
+(server and all three nodes). Deployment scale subresource present
+(`replicas: 1`); one `EndpointSlice` (`asterisk-ari-*`) tracks endpoint
+readiness; the Asterisk Pod carries an observable `metadata.uid`.
+
+## Official sources consulted
+
+- Asterisk (docs + community): each Asterisk server maintains its **own local
+  channel/bridge ID namespace**; a Stasis application "will only be able to
+  manipulate the channels that it controls"; the same app name on separate
+  processes creates no cross-instance authority (corroborated by the T5-A3
+  exact-image test: Local channels persisted with no ARI connected).
+- Kubernetes v1.35 (Deployments/scale, Pods, EndpointSlice): a Deployment's
+  `scale` subresource sets desired replicas; scaling a Deployment to 0 terminates
+  all owned Pods and prevents recreation until scaled back up; deleting a Pod
+  under a Deployment triggers immediate controller recreation (a new Pod UID);
+  EndpointSlice readiness reflects probe state, not process liveness.
+
+Sources: [ARI and Bridges — Bridge Operations](https://docs.asterisk.org/Configuration/Interfaces/Asterisk-REST-Interface-ARI/Introduction-to-ARI-and-Bridges/ARI-and-Bridges-Bridge-Operations/), [Getting Started with ARI](https://docs.asterisk.org/Configuration/Interfaces/Asterisk-REST-Interface-ARI/Getting-Started-with-ARI/).
+
+## Current Asterisk Kubernetes topology
+
+Single instance, all identity hard-coded to one node:
+
+| Concern | Current value |
+|---|---|
+| Deployment | `asterisk-ari` (ns `utcp-runtime`, `replicas: 1`) |
+| Pod labels | `app.kubernetes.io/component: asterisk-ari`, `utcp.io/network-role: asterisk-ari` |
+| Service | `asterisk-ari` (ClusterIP), selector = the same component label |
+| ARI port/endpoint | `8088` / `asterisk-ari.utcp-runtime.svc.cluster.local:8088` (RuntimeNode `control`/`events`/`health` endpoints) |
+| Secret | `utcp-local-asterisk-ari-credentials` (overlay `secretGenerator`) |
+| ConfigMap | none — Asterisk config is baked into the image; ARI creds via env `secretRef` |
+| RuntimeNode | slug `local-asterisk-ari`, `adapter_key: asterisk-ari`, `runtime_family: asterisk`, registered through the authenticated C2 API |
+| listener/lease/event source | single `asterisk-ari-events` Deployment; lease + event epoch are **per event source = per RuntimeNode** |
+| Stasis app | `utcp-t0-observation` (config default, per-process) |
+| ServiceAccount | `utcp-runtime-asterisk`, `automountServiceAccountToken: false` |
+
+**Already multi-node-capable (no per-instance hard-coding):** the listener
+`eligibleNodes()` iterates *all* `adapter_key='asterisk-ari'` active nodes and
+keeps a per-node `connections` map with a per-node lease; `asterisk-ari:ensure-targets`
+ensures a reconciliation target for *every* such node; leases/epochs are per event
+source. **Hard-coded to one instance:** the Deployment/Service/Secret names, the
+Pod component label + selector, and the single RuntimeNode endpoint host string.
+
+## Two-node isolation requirements
+
+| Element | Distinct per node? |
+|---|---|
+| Deployment name | **yes** (`asterisk-ari-a` / `-b`) |
+| Service | **yes** (distinct name + selector label per node) |
+| Secret (ARI creds) | **yes** (distinct credentials per node) |
+| ConfigMap | n/a (config baked in image; reusable identically) |
+| ARI credentials | **yes** (distinct) |
+| RuntimeNode record | **yes** (distinct slug/id, both `asterisk-ari`) |
+| adapter endpoint host | **yes** (each RuntimeNode's `control`/`events` host = its own Service DNS) |
+| listener process | **no** — one `asterisk-ari-events` Deployment already claims both nodes via per-node leases |
+| lease key | **yes** already (per event source = per node) |
+| event-source epoch | **yes** already (per node) |
+| monitoring labels | **yes** (per-node instance label) |
+| proof-target selection | **yes** (each node inspected independently by binding) |
+
+Answers: (1) same image reused — **yes**; (2) same Stasis app name safe on
+separate processes — **yes** (per-instance); (3) bridge/channel IDs need node
+qualification — **no**, they are already conference/participant-derived and the
+active-binding join fences by node, and IDs are node-local namespaces; (4)
+reusing canonical IDs on separate processes is **safe** (local namespaces); (5)
+the current listener Deployment **already serves multiple RuntimeNodes**; (6) the
+claim model **already supports** multiple ready nodes; (7) one listener process
+failure affects both nodes' event ingestion (single point — acceptable for the
+proof, a later HA concern, not a fencing blocker); (8) each node rolls out
+independently (separate Deployments); (9) node A terminates without touching B
+(separate Deployments/Services); (10) orphan inspection queries each node
+independently through its own RuntimeNode/endpoint.
+
+## RuntimeNode-to-workload identity
+
+**Selected: RuntimeNode metadata → immutable Kubernetes workload reference
+(namespace + Deployment name), validated against a UTCP-ownership label, resolved
+by the fence adapter — never accepted from a public API.** The RuntimeNode
+already carries a `labels` JSON column (set at registration); the canonical
+mapping records the owning workload there (e.g.
+`labels.kubernetes_workload = {namespace, deployment}`) at node-registration time
+through the trusted deployment tooling, not via operator/public input. The
+adapter resolves that reference, then **confirms the Deployment carries the UTCP
+ownership label** (`app.kubernetes.io/part-of: utcp`, component `asterisk-ari`)
+before any mutation, so a stray or mistyped reference cannot target a non-UTCP or
+wrong-family workload.
+
+Rejected alternatives: endpoint-host→Service→selector→Deployment (fragile —
+selector edits or shared labels could resolve two Deployments); free-form
+namespace/Pod/Deployment/selector from the domain API (**explicitly forbidden** —
+the domain layer must not accept an arbitrary Kubernetes target); a brand-new
+infra-target entity (unnecessary — the `labels` column + ownership-label
+validation suffices, no schema). This is tenant-safe (RuntimeNode is
+tenant-scoped), runtime-neutral (adapter-resolved), immutable (set at
+registration), auditable (in the node record + fence operation payload), and
+robust to Pod replacement (it targets the Deployment, not a Pod UID).
+
+## Selected Kubernetes fencing target
+
+**Deployment scale-to-zero** (`scale` subresource `spec.replicas = 0`), targeting
+the node's own Deployment. It terminates all owned Pods (SIGTERM →
+`terminationGracePeriodSeconds: 30` → SIGKILL; Asterisk exits, destroying its
+in-memory bridges/channels) **and prevents automatic recreation** — the decisive
+property. Pod deletion is rejected (the Deployment immediately recreates a new Pod
+that would restore the old RuntimeNode as authoritative). NetworkPolicy isolation
+is rejected as a *termination* proof (it stops control/ARI traffic but not the
+process or any media). Selector change / pause is rejected (topology drift, may
+not terminate the process). Restoration of the scaled-to-zero workload is a
+**separate later "former-node workload restoration" policy** — a returning node
+re-registers through the normal C2 lifecycle and its RuntimeNode becomes
+selectable again only after readiness proof; it never auto-reclaims the failed
+Conference (binding authority + generation already prevent that).
+
+## Authoritative termination evidence
+
+The `runtime.node.runtime.fence` completion predicate = **all** of:
+
+| Evidence | Classification |
+|---|---|
+| Deployment `spec.replicas` observed 0 (mutation accepted) | required (mutation) |
+| Deployment `status.replicas == 0` AND `status.availableReplicas == 0` | required (termination completed) |
+| no Pod owned by the workload remains (`status.replicas`+`readyReplicas` 0; owned Pod list empty) | required (recreation prevented) |
+| Service has zero ready endpoints (EndpointSlice) | **supporting** (routing withdrawn — corroborates, not sufficient alone) |
+| old Pod UID no longer exists | supporting |
+| container terminated exit state | supporting |
+| ARI endpoint unreachable | **insufficient alone** (also produced by partition) |
+
+Minimum sufficient set for `fenced`: mutation accepted **and** the workload
+reports zero replicas / zero available / zero owned Pods. Service/EndpointSlice
+removal is corroborating but never sufficient by itself (a NotReady Pod with a
+live process also drops endpoints). **An incomplete or unconfirmed scale-down must
+never produce `fenced` evidence** — the operation stays `fence_in_progress`
+(retryable) until zero-replica/zero-Pod is observed, or `failed` on permission or
+API error.
+
+## Service and EndpointSlice evidence
+
+`EndpointSlice` readiness reflects probe state, not process liveness: endpoint
+absence is produced by Pod-NotReady, endpoint removal, *and* true termination
+alike, so it is **supporting evidence only**. It corroborates a scale-to-zero
+(zero endpoints is expected after termination) but must never be read as proof the
+process/media stopped. Live check confirmed one ready EndpointSlice for the
+current Service.
+
+## Kubernetes RBAC boundary
+
+Current state: **UTCP holds no Kubernetes API access** — three ServiceAccounts,
+all `automountServiceAccountToken: false`, **zero Role/ClusterRole/binding objects
+in the repo**, no Kubernetes client library in `composer.json`. The fence
+requires a **narrow namespaced Role in `utcp-runtime`**, bound to a dedicated
+fence ServiceAccount used only by the worker that executes the fence operation:
+
+```
+apiGroups: ["apps"]   resources: ["deployments"]        verbs: ["get","list","watch"]
+apiGroups: ["apps"]   resources: ["deployments/scale"]  verbs: ["get","patch"]
+apiGroups: [""]       resources: ["pods"]               verbs: ["get","list","watch"]
+apiGroups: ["discovery.k8s.io"] resources: ["endpointslices"] verbs: ["get","list","watch"]
+```
+
+Namespace-scoped to `utcp-runtime` only; **no** delete-pods, no arbitrary
+deployment patch beyond the scale subresource, no cluster-admin, no wildcards, no
+cross-namespace mutation. Resource-name restriction is not enforceable on
+`deployments/scale` via RBAC `resourceNames` for patch reliably across versions,
+so **node B is protected at the adapter layer**: the adapter resolves only the
+RuntimeNode's own recorded workload reference and re-validates the UTCP ownership
++ component label before patching, so a node-A fence request cannot scale node B.
+The token must be mounted **only** on the executing worker (a scoped change from
+today's `automountServiceAccountToken: false`), not on the API/web pods.
+
+## Fencing adapter ownership
+
+**A distinct `KubernetesRuntimeFenceAdapter` behind a new infrastructure-adapter
+registry**, not the `RuntimeAdapterRegistry` (which is keyed by `adapterKey` =
+runtime family for ARI execution/inspection; Kubernetes fencing is a different
+infrastructure authority that applies across runtime families). The fence adapter:
+accepts a validated RuntimeNode + its recorded workload identity; resolves and
+ownership-validates the Deployment; requests scale-to-zero idempotently; polls
+termination completion; returns bounded adapter-neutral outcomes; and **never**
+writes RuntimeBindings, observed Conference state, invokes reconstruction, or
+chooses the replacement. The generic operation engine dispatches to it via a new
+handler that selects the infrastructure adapter by target kind
+(`runtime_node.runtime.fence`), keeping Kubernetes specifics out of the Asterisk
+ARI adapter.
+
+## Generic runtime-fence operation
+
+`runtime.node.runtime.fence` — target = the former RuntimeNode; payload =
+`{runtime_node_id, workload_ref, fence_reason, configuration_generation,
+former_runtime_binding_id, conference_id}`. Idempotency keyed on
+`former_node + conference + binding + generation` (mirrors `verify_conference_absent`),
+so concurrent requests collapse to one operation. Outcomes:
+
+| Outcome | Retry? | Authorizes rebind? |
+|---|---|---|
+| `fenced` (replicas 0, no Pods) | no | **yes** (records durable fence evidence) |
+| `already_fenced` (workload already at 0) | no | yes |
+| `fence_in_progress` (scaled, Pods still terminating) | yes | no |
+| `target_recovered` (node re-projected ready before mutation) | no | no — **abandon fence** |
+| `target_mismatch` (workload ownership/label mismatch, or authority generation moved) | no | no |
+| `unavailable_to_control` (K8s API unreachable) | yes | no |
+| `permission_denied` (RBAC) | no (alert) | no |
+| `failed` (other) | classified | no |
+
+A completed `fenced` result is reused via idempotency; evidence becomes stale if
+the binding or Conference generation changes before rebind (validated in the
+rebind transaction, exactly like the absence path). A worker restart resumes by
+re-reading the operation row and re-polling. Fencing a replacement workload
+created under a changed authority context is prevented by the generation-tagged
+idempotency key + ownership-label re-validation. **Never exposed as a management
+command.**
+
+## Idempotency and concurrency
+
+Same discipline as T5-A3: one idempotent operation per (former node, conference,
+binding, generation); `SKIP LOCKED` candidate claiming in the coordinator; the
+primitive's row locks are the final serialization; two fence operations for the
+same node collapse to one; a completed fence is reused, not repeated.
+
+## Absence verification integration
+
+The combined flow extends the existing `RuntimeFencingCoordinator::evaluate`
+outcomes:
+
+```
+verify_conference_absent →
+  absent      → validate evidence → failoverRebindConferenceAfterFence  [EXISTS today]
+  present     → runtime.node.runtime.fence → fenced → rebind             [NEW: escalate]
+  unavailable → runtime.node.runtime.fence → fenced → rebind             [NEW: escalate]
+  failed      → classify; retry or fence explicitly; never infer absence [EXISTS: no rebind]
+```
+
+Today `present`/`unavailable` (former runtime reachable-and-hosting, or
+unreachable) terminate without rebind — exactly the hard-outage/partition case the
+external fence resolves. `failoverRebindConferenceAfterFence()` must accept
+**either** `verified_absence` **or** `external_runtime_fenced` evidence; the
+narrowest transaction-time validation is unchanged (active binding, former node,
+generation, open desired state, sustained unavailable/stale eligibility) plus the
+fence operation completed with a matching authority digest. **No fallback bypasses
+both evidence types.**
+
+## Fencing and rebind ordering
+
+`detect (coordinator) → verify absent → if absent, rebind; else request
+runtime.node.runtime.fence → prove termination (replicas 0 / no Pods) → record
+fenced evidence → rebind → reconstruct (existing reconcilers)`. Node recovery
+before mutation → `target_recovered`, abandon (primitive's under-lock ready
+recheck backstops). No replacement after a successful fence → wait (no false
+projection). Reconstruction failure → reconciler retries on the new node.
+
+## RuntimeFencingCoordinator responsibilities
+
+The **existing** `RuntimeFencingCoordinator` orchestrates both verification and
+external fencing (one orchestration authority; no subordinate service needed). It
+stays adapter-neutral (dispatches generic operations, never calls Kubernetes/ARI
+directly), persists through operation rows, survives restart (re-reads
+operations), avoids duplicate requests (idempotency), validates evidence before
+rebind (in the domain transaction), abandons stale work on binding/generation
+change, does not fence a recovered node (`target_recovered` + under-lock recheck),
+and never auto-failbacks. New responsibility = a `former_runtime_present`/
+`former_runtime_unavailable` → dispatch-fence branch; the ARI absence check and the
+Kubernetes fence stay behind their respective adapters.
+
+## Second RuntimeNode registration
+
+**Declarative + normal C2 lifecycle, no manual creation required.** Node B is
+added by applying its manifests (Deployment/Service/Secret B) and registering its
+RuntimeNode through the same authenticated C2 API path the current node uses
+(deployment tooling, not a human), which projects its endpoints and credentials;
+the existing listener then claims it (per-node lease), proves ARI/Stasis health,
+projects `ready`, and the replacement selector may choose it — all automatic after
+readiness. Two distinct credentials are two Secrets + two `runtime_node_credentials`
+rows. A removed/stale workload retires its RuntimeNode by transitioning
+`desired_state` to `disabled` through the C2 API (existing capability). The current
+single-node tooling registers one node; the second-node slice generalizes that
+registration to parameterize node identity — it does **not** introduce a manual
+step.
+
+## Asterisk multi-instance contract
+
+Verified (docs + pinned image, T5-A3 + this audit): (1) same ARI app name safe
+across separate processes — **yes**; (2) each instance needs its own ARI WebSocket
+— **yes** (already per-node); (3) bridge/channel IDs are node-local — **yes**; (4)
+identical explicit IDs can exist independently on A and B — **yes** (separate
+namespaces; the active-binding join fences by node); (5) required modules on both
+— the existing ARI/Stasis/bridge/Local set in `modules.conf` (readiness script
+already asserts them); (6) Local channels + dialplan identical on both — **yes**
+(baked in the shared image); (7) shared file/db/socket/port collision — **none**
+(each Pod is isolated; ARI is per-Pod ClusterIP; no shared volume); (8)
+internal-only ARI Services sufficient — **yes**; (9) current module/readiness
+checks reusable unchanged — **yes**; (10) reconstruction without SIP/RTP modules —
+**yes** (Local-channel conferences need no SIP/RTP).
+
+## Implementation dependency order
+
+**Order B — workload-identity + generic fence operation + Kubernetes adapter
+contract first, then second-node manifests.** The fence operation, adapter, RBAC,
+and coordinator escalation branch are all **repository-testable without a second
+live node** (fake Kubernetes client / stubbed adapter, operation-outcome
+classification, rebind-evidence validation), and they are the actual blocker that
+makes hard-outage failover safe. Second-node manifests + registration are a
+separable slice that only becomes *useful* once a replacement can be selected, but
+they are not a prerequisite for building and unit-proving the fence path. Rejected:
+Order A (manifests first) delivers a second node the coordinator still cannot
+safely fail over to; Order C bundles too much.
+
+## Failure-scenario assessment (fence)
+
+1. ARI unavailable, Pod running → verify=present/unavailable → fence → rebind
+   only after termination proven. 2. Pod terminating normally → `fence_in_progress`
+   until zero-Pod, then `fenced`. 3. Pod deleted, controller recreates → **why
+   scale-to-zero, not delete**: delete would let the new Pod restore the node;
+   scale-to-zero prevents recreation. 4. Deployment scaled to 0 → the fence action
+   itself → `fenced` on zero-replica confirmation. 5. Fence repeated after success
+   → `already_fenced` (idempotent). 6. Worker crash mid-termination → resume by
+   re-reading the operation, re-poll. 7. Recovery before mutation → `target_recovered`,
+   no fence, no rebind. 8. Recovery after mutation but before termination → the
+   scale-to-zero still terminates it; a returning node re-registers later (no
+   auto-reclaim). 9. Node B matched by node-A selector → prevented by
+   adapter-layer workload-ref + ownership-label validation. 10. Rollout changes
+   Pod UID during fencing → target is the Deployment (not a UID); scale-to-zero is
+   UID-independent. 11. EndpointSlice gone before termination → supporting-only;
+   fence still requires zero-replica proof. 12. Process exits, Pod API object still
+   Terminating → not yet `fenced` (Pod still owned); wait for removal. 13. K8s API
+   unavailable → `unavailable_to_control`, retry, no rebind. 14. Fence SA lacks
+   permission → `permission_denied`, no rebind, alert. 15. No replacement after
+   fence → wait. 16. Coordinator restart after fence, before rebind → durable fence
+   evidence in the operation row; resumes. 17. Former workload restored after
+   rebind → no reclaim (binding authority + generation; delayed events/ops fenced).
+   18. Two fence operations same node → idempotency collapse. **Rebind is allowed
+   only after `fenced`/`already_fenced` or `absent_verified` — never on
+   `in_progress`, `unavailable_to_control`, `permission_denied`, `target_recovered`,
+   `target_mismatch`, or `failed`.**
+
+## Existing implementation
+
+Multi-node-capable listener claim model (per-node lease/epoch, `eligibleNodes`
+iterates all asterisk-ari nodes) and `ensure-targets`; C2 RuntimeNode registration
+with per-node endpoints/credentials and `labels` JSON; deterministic
+replacement selector with node exclusion; atomic generation-fenced rebind
+(`failoverRebindConferenceAfterFence`); `RuntimeFencingCoordinator` with a
+`former_runtime_present`/`former_runtime_unavailable` terminal branch ready to
+escalate; generic operation engine + idempotency + durable audit/outbox evidence;
+Deployment scale subresource, EndpointSlice, and observable Pod UID confirmed live.
+
+## Missing implementation
+
+`runtime.node.runtime.fence` operation + handler; `KubernetesRuntimeFenceAdapter`
++ infrastructure-adapter registry; the RuntimeNode→workload identity binding
+(`labels.kubernetes_workload`) set at registration; narrow `utcp-runtime` RBAC +
+scoped fence ServiceAccount with a mounted token on the executing worker only; the
+coordinator `present`/`unavailable` → fence escalation branch;
+`failoverRebindConferenceAfterFence` accepting `external_runtime_fenced` evidence;
+parameterized second-node manifests + registration; live two-node acceptance.
+
+## T5-A4 implementation-readiness decision
+
+**A — one bounded Codex implementation slice is ready.** Workload identity,
+fencing target, termination evidence, adapter ownership, RBAC, operation semantics,
+dependency order (B), and focused tests are all defined, and the fence path is
+fully repository-testable without a live second node.
+
+## T5-A4 first bounded implementation slice
+
+**The generic `runtime.node.runtime.fence` operation + a `KubernetesRuntimeFenceAdapter`
+contract behind a new infrastructure-adapter registry, driven through a fake
+Kubernetes client — repository-only, no RBAC applied live, no second node, no
+live fencing.** Adds the operation type + handler, the adapter interface + a
+Kubernetes implementation that takes an injected client abstraction (patch
+scale, read Deployment/Pod status), the RuntimeNode→workload resolution with
+ownership-label validation, the outcome enum with the exact rebind-authorization
+rules, the coordinator `present`/`unavailable`→fence escalation branch, and
+`failoverRebindConferenceAfterFence` acceptance of `external_runtime_fenced`
+evidence. Excludes: applying RBAC to the cluster, mounting the SA token,
+second-node manifests, and any live scale mutation.
+
+## Ready-to-paste Codex prompt (T5-A4)
+
+```
+# T5-A4 — Generic Kubernetes runtime-fence operation and adapter (repository-only, faked client)
+
+Repository-only slice at HEAD cf621eb. Keep UTCP_PHASE=T1. Do NOT create a second
+Asterisk node, apply RBAC to the cluster, mount a service-account token, run live
+failover, scale/delete any Deployment/Pod, or add a manual fence command.
+
+Context (docs/evidence/t2/multi-node-failover-readiness.md §T5-A4): the T5-A3
+RuntimeFencingCoordinator returns former_runtime_present / former_runtime_unavailable
+without rebinding when the former Asterisk still hosts the conference or is
+unreachable (hard outage / partition). Add an external Kubernetes runtime fence
+(Deployment scale-to-zero) that proves the former process terminated, then allow
+rebind. All Kubernetes calls go through an injected client abstraction so this is
+unit-tested with a fake — no live cluster calls.
+
+1. RuntimeNode→workload identity: at RuntimeNode registration, allow the trusted
+   tooling to record labels.kubernetes_workload = {namespace, deployment}. Add a
+   resolver that reads it and returns null if absent (do NOT accept a workload ref
+   from any public/operator API field). No schema change (reuse the runtime_nodes
+   labels JSON column).
+
+2. Infrastructure adapter: new interface App\RuntimeEngine\Infrastructure\RuntimeInfrastructureFenceAdapter
+   with fence(RuntimeNode workloadRef, authorityContext): FenceOutcome; and a new
+   App\RuntimeEngine\Infrastructure\InfrastructureAdapterRegistry (separate from
+   RuntimeAdapterRegistry). Implement App\RuntimeAdapters\Kubernetes\KubernetesRuntimeFenceAdapter
+   taking an injected KubernetesWorkloadClient interface (methods: getDeploymentScale,
+   patchDeploymentScale, getDeploymentStatus, listOwnedPods) — provide a real HTTP
+   impl stub AND a fake used in tests. The adapter must: resolve+validate the
+   Deployment carries app.kubernetes.io/part-of=utcp and component=asterisk-ari
+   before mutating; patch scale to 0 idempotently; poll status; return a bounded
+   FenceOutcome enum: fenced, already_fenced, fence_in_progress, target_recovered,
+   target_mismatch, unavailable_to_control, permission_denied, failed. NEVER write
+   bindings/observed state/reconstruction.
+
+3. Generic operation runtime.node.runtime.fence: add the operation type
+   (config/telephony_domain.php or runtime_engine.php operation_types), a handler
+   that selects the infrastructure adapter by target kind and executes the fence,
+   completing with a durable event conference.runtime_fence_terminated carrying
+   {operation_id, runtime_node_id, verification_result: 'external_runtime_fenced',
+   configuration_generation} on fenced/already_fenced only. fence_in_progress and
+   unavailable_to_control are retryable; target_recovered/target_mismatch/
+   permission_denied/failed do not authorize rebind. Idempotency key mirrors
+   verify_conference_absent (former node + conference + binding + generation).
+
+4. RuntimeFencingCoordinator: in evaluate(), when the verification gate returns
+   former_runtime_present or former_runtime_unavailable, create/observe one
+   idempotent runtime.node.runtime.fence operation for the former node; on a
+   completed fenced/already_fenced result, call
+   failoverRebindConferenceAfterFence with the fence operation id and reason
+   'external_runtime_fenced'; otherwise return the mapped non-rebind outcome. Do
+   not remove the absent_verified→rebind path.
+
+5. TelephonyDomainService::failoverRebindConferenceAfterFence: accept EITHER a
+   completed verify_conference_absent (verification_result 'absent') OR a completed
+   runtime.node.runtime.fence (verification_result 'external_runtime_fenced')
+   operation id; validate inside the serialized rebind transaction against the
+   current active binding, former node, conference generation, open desired state,
+   and sustained unavailable/stale eligibility — exactly as today. No fallback that
+   bypasses both evidence types.
+
+6. Tests (tests/Feature/TelephonyDomain/ or Failover/ or Infrastructure/):
+   - fake client: scale patched to 0 and status/owned-pods report zero →
+     adapter returns fenced; coordinator then rebinds once; one active binding;
+     generation bumped.
+   - scaled but pods still terminating → fence_in_progress → no rebind.
+   - deployment lacks the UTCP ownership/component label → target_mismatch → no
+     rebind, no scale patch issued.
+   - client reports API unavailable → unavailable_to_control → no rebind.
+   - node re-projected ready before mutation → target_recovered → no rebind.
+   - rebind accepts external_runtime_fenced evidence but rejects stale-generation
+     fence evidence.
+   - idempotent re-evaluation after a successful fenced rebind makes no second
+     binding change.
+
+7. Update docs/evidence/t2/multi-node-failover-readiness.md §T5-A4 with an
+   "implemented" note (fence operation+adapter+coordinator escalation in place;
+   live RBAC, token mount, second-node manifests, and live two-node acceptance
+   still pending).
+
+Verification (all must pass):
+  make repository-hygiene && make secret-scan
+  make runtime-engine-config-check && make telephony-domain-config-check
+  make asterisk-ari-config-check && make asterisk-conference-config-check
+  make runtime-engine-test && make telephony-domain-test
+  make asterisk-ari-test && make asterisk-conference-recovery-test
+  make test && make check && make build
+  git diff --check
+
+One scoped commit, e.g.:
+  feat(t5): add generic Kubernetes runtime-fence operation and adapter
+Do not push. Do not apply RBAC live, scale any Deployment, deploy a second node,
+or run live failover.
+```
+
+## T5-A4 staged acceptance criteria
+
+**Repository acceptance:** RuntimeNode→workload identity resolved from recorded
+labels (never public input) with ownership-label validation; scale-to-zero fence
+via an injected client (faked in tests); `fenced` requires zero-replica/zero-Pod
+proof; the outcome enum authorizes rebind only on `fenced`/`already_fenced`;
+coordinator escalates `present`/`unavailable` to the fence and rebinds only on
+proven termination; `failoverRebindConferenceAfterFence` accepts either absence or
+external-fence evidence with unchanged transaction validation; no live RBAC/token/
+scale, no second node; focused tests green.
+
+**Live acceptance (later, layered):** apply the narrow `utcp-runtime` fence Role +
+scoped SA (token mounted only on the executing worker); deploy node B; bind a
+conference to node A; hard-fail node A (process alive, ARI unreachable) → verify
+present/unavailable → scale-to-zero fence → termination proven → rebind once to
+node B → reconstruct exactly one bridge/participant on B; node A's scaled-to-zero
+workload restored later re-registers without reclaiming; both-node orphan
+inspection clean; replica counts restored. Kamailio signaling cutoff proven in its
+own later slice once SIP call routing exists.
