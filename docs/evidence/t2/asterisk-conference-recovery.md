@@ -281,15 +281,88 @@ kube-state-metrics, Loki, Alloy, and Grafana all fully Ready; zero proof
 bridges/channels; Asterisk at one ready replica; all recovery alerts
 inactive.
 
-## 10. Remaining gaps (not closed by these corridors)
-- Listener event drain rate is one frame per poll cycle (~3–5 s per event
-  during recovery bursts); tolerable now but worth a bounded improvement.
-- Stale-ensure churn during the close-before-remove window: the recovery wake
-  path repeatedly reopens the participant target for an admitted participant
-  of a closed conference (~60 stale no-op ensure operations at ~3 s cadence in
-  T2-B8) and the admitted+left projection predicate settles slowly (~180 s)
-  during that window. Bounded and side-effect-free, but needs a follow-up
-  churn/wake-storm assessment together with the listener drain-rate item.
+## 10. ARI event-drain latency and recovery-operation churn — isolated (T2-B10, 2026-07-18)
+
+Evidence audit at commit `ed50f08` using one bounded
+`close_before_remove_cleanup` reproduction (passed, orphan-free) plus
+2-second sampling of the participant reconciliation row during the churn
+window. Both historical symptoms reproduced and are now fully explained. No
+production code was changed.
+
+**Event drain (measured).** The listener process loop is
+`workOnce(); sleep(poll_seconds=5)`, and `workOnce` reads **at most one
+WebSocket frame per claimed connection per cycle** (single non-blocking
+`readEvent` call; no drain loop). Measured receipt times show exactly one
+`ari:*` frame every ~5 s (28 frames over 160 s; occasional 10 s gaps on
+heartbeat cycles). A single Local participant join emits a burst of ~19
+frames (channel create/state/varset events arrive as
+`unknown_event_observed` under `subscribeAll=true`), so the burst alone takes
+~95 s to drain. In this run `ChannelLeftBridge` (emitted 00:34:29) was read
+at 00:35:59 — **90 s of pure queue delay** — then normalized and projected
+within ≤2 s each. The dominant delay stage is the listener read/poll loop;
+every downstream stage (ingestion, normalizer, projector) measured ≤2 s.
+The historical 180 s left-projection delay was the same mechanism behind a
+deeper queue.
+
+**Operation churn (proven trigger chain).** During the window between
+conference close and participant removal, the 30 ensure operations (1 genuine
+join + 29 stale no-ops at ~3.3 s cadence) were sustained by a fully proven
+loop:
+
+1. `ConferenceParticipantReconciler` (admitted branch) dispatches
+   `conference.participant.ensure` whenever inspection shows the participant
+   not attached — it loads the conference row but never checks
+   `conferences.desired_state`, so it keeps dispatching for a **closed**
+   conference;
+2. the Asterisk adapter's stale fence (`conference.desired_state !== 'open'`)
+   completes each operation as a stale no-op — zero of the 29 touched
+   Asterisk;
+3. `RuntimeOperationRepository::complete()` unconditionally rewakes the
+   aggregate's reconciliation target (`waiting`, `next_check_at = now()`,
+   sampled live with `last_operation_id`/`attempt_count` preserved),
+   overriding the reconciler's own 60 s `operation_required` pacing;
+4. the reconciler's idempotency key includes `last_operation_id`, so each
+   completed no-op licenses a fresh operation row.
+
+Cycle period ≈ command-worker poll (3 s). The loop terminates only when the
+drain-delayed `ChannelLeftBridge` finally projects `left` (converging the
+target, which the completion-wake skips) or when removal changes the desired
+state. Churn is therefore an **independent reconciliation-policy defect whose
+duration is amplified by the listener drain latency** — not one shared root
+cause, and not caused by event latency.
+
+**Correctness and scaling.** No correctness violation was found: generation
+and desired-state fencing kept every stale operation away from Asterisk, no
+false projection occurred, and cleanup converged orphan-free. The cost is
+waste: ~1 stale operation row + outbox message + evaluation per 3 s per
+affected participant (linear in participants caught in a close-before-remove
+window), and event-burst drain time grows linearly with frames outstanding
+(~5 s × queue depth). For T2-C failover this matters: a runtime failover
+generates large event bursts and many simultaneously non-converged targets,
+so minute-scale evidence delays and operation-row churn would multiply.
+Secondary measured artifact: every drained `unknown_event_observed` frame
+projects the RuntimeNode to observed `degraded` (flapping ready/degraded
+throughout the drain window), which could interact with readiness-gated
+corridors and the stale-observation alert during long drains.
+
+**Missing operational signals** (not implemented here): listener frame
+backlog / emit-to-read age, and stale no-op operation visibility (stale
+completions count as plain `succeeded` in
+`utcp_conference_recovery_operations_total`, so churn is invisible to
+metrics).
+
+**Selected correction (bounded, not yet implemented):** (a) drain all
+immediately available frames per listener cycle (loop `readEvent` until null
+within the existing cycle, keeping heartbeat cadence unchanged); (b) in the
+participant reconciler's admitted branch, when the bound conference's desired
+state is not `open`, return `waiting` instead of dispatching an ensure the
+adapter is guaranteed to fence. Both use existing contracts; neither adds
+tuning gates or new authorities.
+
+## 11. Remaining gaps (not closed by these corridors)
+- Listener event drain and stale-ensure churn: isolated in §10 with a
+  selected bounded correction (per-cycle frame drain + closed-conference
+  ensure suppression) awaiting implementation before T2-C.
 - Rendered NetworkPolicy endpoint pins (`allow-observability-kubernetes-api-egress`,
   `allow-traefik-kubernetes-api`) become stale whenever k3d node addresses
   change; the canonical re-render/apply mechanism recovers them, but nothing
