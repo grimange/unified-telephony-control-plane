@@ -4264,14 +4264,87 @@ claimed, one open epoch per node, tree clean, `UTCP_PHASE=T1`.
 
 ### Required bounded correction (for Codex — T5-A22)
 
-One-line manifest change in
-`infrastructure/kubernetes/components/runtime-fencing/infrastructure-worker-deployment.yaml`:
-set the projected `serviceAccountToken` audience to
-`https://kubernetes.default.svc.cluster.local` (the cluster issuer-derived
-audience proven accepted; keep `path: token`, `expirationSeconds: 3600`, CA
-item mode 0444, defaultMode 0440). Update
-`RuntimeFencingManifestTest`/`scripts/runtime-engine/config-check` audience
-assertions to the corrected value. No RBAC, image, label, NetworkPolicy,
-client, or handler change. Then re-run the T5-A21 activation sequence
-unchanged; the expected outcome is the full production
+The repository correction must remove the explicit projected-token audience
+rather than replacing it with a k3s-specific literal. Kubernetes makes
+`serviceAccountToken.audience` optional and defaults omitted projected-token
+audience to the API server identifier, which is the portable contract for this
+worker because the token is used only for Kubernetes API requests. Keep
+`path: token`, `expirationSeconds: 3600`, CA item mode 0444, and defaultMode
+0440. Update `RuntimeFencingManifestTest` and
+`scripts/runtime-engine/config-check` to assert audience omission and reject
+cluster-specific audience literals or fallback behavior. No RBAC, image, label,
+NetworkPolicy, client, or handler change. Then re-run the T5-A21 activation
+sequence unchanged; the expected outcome is the full production
 `runtime-engine:infrastructure-probe` GET/LIST success.
+
+## T5-A22 — Default Kubernetes API audience for projected fencing token
+
+Repository-only correction at `UTCP_PHASE=T1` removes the remaining production
+authentication blocker without activating the worker and without applying live
+RBAC or fencing resources.
+
+### Proven defect
+
+The production worker token requested the explicit audience
+`https://kubernetes.default.svc`, while the current k3s API server accepted
+`https://kubernetes.default.svc.cluster.local` and `k3s`. The worker therefore
+received HTTP 401 before Kubernetes authorization. A bounded positive control
+using an accepted audience for the same ServiceAccount, CA, NetworkPolicy,
+endpoint, and RBAC proved Deployment GET and owned-Pod LIST returned 200, while
+Secret GET returned 403. That isolated the projected-token audience string as
+the remaining blocker.
+
+### Correction
+
+`infrastructure/kubernetes/components/runtime-fencing/infrastructure-worker-deployment.yaml`
+now omits `serviceAccountToken.audience` so Kubernetes defaults the projected
+token audience to the API server identifier. The token projection remains:
+
+```yaml
+serviceAccountToken:
+  path: token
+  expirationSeconds: 3600
+```
+
+No replacement literal was added. In particular, the repository does not pin the
+worker to `https://kubernetes.default.svc.cluster.local`, `k3s`, a second
+audience, an environment-rendered audience, or retry/fallback behavior. This
+keeps token audience distinct from TLS peer naming, Service DNS, ServiceAccount
+issuer, Service ClusterIP, and the endpoint-targeted NetworkPolicy IP.
+
+### Preserved boundaries
+
+The token remains a short-lived projected ServiceAccount credential at
+`/var/run/secrets/kubernetes.io/serviceaccount/token`, with kubelet rotation and
+`expirationSeconds: 3600`. The CA remains the projected `kube-root-ca.crt`
+ConfigMap item at `ca.crt` with per-item mode `0444`, mounted read-only under
+`/var/run/secrets/kubernetes.io/serviceaccount`; the projected volume default
+remains `0440`. `automountServiceAccountToken: false`, UID/GID `33:33`,
+`runAsNonRoot: true`, dropped capabilities, `allowPrivilegeEscalation: false`,
+`RuntimeDefault` seccomp, fencer NetworkPolicy labels, endpoint-targeted
+NetworkPolicies, cross-namespace RBAC, and fence-only operation routing remain
+unchanged.
+
+### Repository proof
+
+Focused manifest tests and `scripts/runtime-engine/config-check` parse the
+rendered runtime-fencing component and assert exactly one ServiceAccount token
+projection, absent audience, token path `token`, token lifetime `3600`,
+read-only credential mount, volume default `0440`, CA item mode `0444`, no
+cluster-specific audience literals, no audience environment configuration,
+unchanged worker-only credential mount, unchanged hardening, unchanged RBAC,
+unchanged NetworkPolicy labels, and unchanged operation routing.
+
+Non-destructive validation rendered
+`infrastructure/kubernetes/components/runtime-fencing/` and confirmed the worker
+token projection omits `audience`, keeps `path: token` and
+`expirationSeconds: 3600`, preserves CA item mode `0444`, preserves projected
+volume defaultMode `0440`, and preserves `automountServiceAccountToken: false`.
+Server-side dry-run was performed against `.runtime/kubeconfig/utcp-local.yaml`,
+context `k3d-utcp-local`, for the runtime-fencing component. No Kubernetes
+resource was applied, no RBAC was created, no worker was deployed, no Deployment
+was scaled, no Pod was deleted, no runtime-fence operation was created, and no
+failover occurred.
+
+Live production Kubernetes-client GET/LIST proof remains pending; this
+repository-only correction does not claim that the production probe has passed.

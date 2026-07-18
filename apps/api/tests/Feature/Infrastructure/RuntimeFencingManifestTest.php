@@ -166,10 +166,13 @@ final class RuntimeFencingManifestTest extends TestCase
         $this->assertSame(288, $projected['defaultMode']);
         $this->assertNotSame(292, $projected['defaultMode']);
 
-        $token = collect($projected['sources'])
-            ->first(fn (array $source): bool => array_key_exists('serviceAccountToken', $source))['serviceAccountToken'];
+        $tokenSources = collect($projected['sources'])
+            ->filter(fn (array $source): bool => array_key_exists('serviceAccountToken', $source))
+            ->values();
+        $this->assertCount(1, $tokenSources);
+        $token = $tokenSources[0]['serviceAccountToken'];
         $this->assertSame('token', $token['path']);
-        $this->assertSame('https://kubernetes.default.svc', $token['audience']);
+        $this->assertArrayNotHasKey('audience', $token);
         $this->assertSame(3600, $token['expirationSeconds']);
         $this->assertArrayNotHasKey('mode', $token);
         $this->assertSame($volumeMount['mountPath'].'/'.$token['path'], config('runtime_engine.kubernetes.token_path'));
@@ -182,6 +185,11 @@ final class RuntimeFencingManifestTest extends TestCase
         $this->assertSame('ca.crt', $configMap['items'][0]['path']);
         $this->assertSame(292, $configMap['items'][0]['mode']);
         $this->assertSame($volumeMount['mountPath'].'/'.$configMap['items'][0]['path'], config('runtime_engine.kubernetes.ca_path'));
+
+        $manifest = file_get_contents(base_path('../../infrastructure/kubernetes/components/runtime-fencing/infrastructure-worker-deployment.yaml'));
+        $this->assertStringNotContainsString('audience:', $manifest);
+        $this->assertStringNotContainsString('https://kubernetes.default.svc', $manifest);
+        $this->assertStringNotContainsString('k3s', $manifest);
     }
 
     public function test_runtime_fence_worker_keeps_namespace_config_token_and_rbac_boundaries(): void
@@ -208,7 +216,7 @@ final class RuntimeFencingManifestTest extends TestCase
             ->firstWhere('name', 'kubernetes-api-credentials');
         $this->assertNotNull($tokenVolume);
         $this->assertSame(3600, $tokenVolume['projected']['sources'][0]['serviceAccountToken']['expirationSeconds']);
-        $this->assertSame('https://kubernetes.default.svc', $tokenVolume['projected']['sources'][0]['serviceAccountToken']['audience']);
+        $this->assertArrayNotHasKey('audience', $tokenVolume['projected']['sources'][0]['serviceAccountToken']);
         $this->assertSame('token', $tokenVolume['projected']['sources'][0]['serviceAccountToken']['path']);
 
         $role = $objects['Role/utcp-runtime/utcp-runtime-fencer'];

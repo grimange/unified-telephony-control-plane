@@ -201,10 +201,18 @@ sources = projected[0]['projected'].get('sources') or []
 token_sources = [source.get('serviceAccountToken') for source in sources if 'serviceAccountToken' in source]
 if len(token_sources) != 1 or token_sources[0].get('path') != 'token' or token_sources[0].get('expirationSeconds') != 3600:
     fail('runtime fence worker projected token contract is invalid')
-if token_sources[0].get('audience') != 'https://kubernetes.default.svc':
-    fail('runtime fence worker projected token audience changed unexpectedly')
+if 'audience' in token_sources[0]:
+    fail('runtime fence worker projected token must omit audience and use the Kubernetes API-server default')
 if 'mode' in token_sources[0]:
     fail('runtime fence worker projected token must not have an explicit world-readable mode')
+rendered_worker = yaml.dump(deployment, sort_keys=True)
+for rejected_audience in [
+    'https://kubernetes.default.svc',
+    'https://kubernetes.default.svc.cluster.local',
+    'k3s',
+]:
+    if rejected_audience in rendered_worker:
+        fail(f'runtime fence worker must not hard-code Kubernetes token audience {rejected_audience}')
 ca_sources = [source.get('configMap') for source in sources if 'configMap' in source]
 if len(ca_sources) != 1 or ca_sources[0].get('name') != 'kube-root-ca.crt':
     fail('runtime fence worker must source the Kubernetes CA from ConfigMap/kube-root-ca.crt')
@@ -222,6 +230,15 @@ if "'ca_path' => env('KUBERNETES_SERVICEACCOUNT_CA_PATH', '/var/run/secrets/kube
     fail('runtime engine CA path no longer matches the projected CA path')
 if 'insecureSkipVerify' in runtime_config or "'verify' => false" in runtime_config:
     fail('runtime engine config contains a Kubernetes TLS verification bypass')
+if 'AUDIENCE' in runtime_config.upper():
+    fail('runtime engine config must not introduce Kubernetes token audience configuration')
+for rejected_audience in [
+    'https://kubernetes.default.svc',
+    'https://kubernetes.default.svc.cluster.local',
+    'k3s',
+]:
+    if rejected_audience in runtime_config:
+        fail(f'runtime engine config must not hard-code Kubernetes token audience {rejected_audience}')
 
 role = objects[('Role', 'utcp-runtime', 'utcp-runtime-fencer')]
 rules = role.get('rules') or []
