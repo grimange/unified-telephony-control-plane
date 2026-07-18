@@ -364,10 +364,80 @@ operation the adapter stale-generation fence is guaranteed to reject. Adapter
 generation fencing remains defense in depth; live latency and stale-ensure
 churn verification remains pending for Claude Code.
 
-## 11. Remaining gaps (not closed by these corridors)
-- Listener event drain and stale-ensure churn: isolated in §10 with a
-  selected bounded correction (per-cycle frame drain + closed-conference
-  ensure suppression) awaiting implementation before T2-C.
+## 11. ARI burst-drain and participant-ensure suppression — passed live (T2-B12, commit c3e478c deployed)
+
+Live acceptance of the two corrections in `c3e478c` on `utcp-local`,
+2026-07-18. Deployment currency was proven by md5-identical
+`AsteriskAriEventListener.php` (asterisk-ari-events) and
+`ConferenceParticipantReconciler.php` (telephony-reconciler **and** scheduler,
+which runs `runtime-engine:reconciler --once`), with the running listener
+reporting `config('asterisk_ari.max_events_per_cycle') = 50`,
+`poll_seconds = 5`, heartbeat 15000 ms, and lease 45 s unchanged. Asterisk,
+Kamailio, Traefik, and Prometheus were not restarted. Focused suites grew and
+passed (asterisk-ari 41→49, recovery 41→49), and the T2-A baseline passed
+orphan-free with exactly one participant ensure.
+
+One bounded `close_before_remove_cleanup` corridor
+(`close_before_remove_cleanup=passed`, `orphan_inspection=passed`) reproduced
+both historical symptoms and proved both fixed. All timing below is from
+durable receipt/observation/operation rows (second precision).
+
+**Burst drain.** The Local-participant join emitted a 17-frame burst
+(`occurred_at` 01:20:56). All 17 receipts share one `received_at` of 01:21:00
+with a clean 10-second gap to the following batch — i.e. the whole queue was
+drained in a single `workOnce` cycle, not one frame per five-second poll. The old pattern (one application frame, then a
+five-second sleep, then one frame — ~85 s for 17 frames) no longer occurs.
+The `ChannelLeftBridge` frame emitted 01:21:08 was read 01:21:10 and
+normalized 01:21:12: **emit-to-read ≈ 2 s versus ~90 s in T2-B10**. The
+largest single-cycle burst (17) stayed well under the bound of 50; the
+listener returned to the outer loop between bursts (idle at 1 m CPU, no spin),
+event order was preserved, and no error/failure/cycle-failed lines appeared.
+Multi-connection drain fairness is repository-tested
+(`test_listener_drains_multiple_queued_frames_in_one_cycle_and_wakes_recovery`,
+`test_listener_stops_draining_immediately_on_empty_queue`,
+`test_listener_exception_during_drain_uses_existing_teardown_and_retry_path`),
+since only one live Asterisk node exists.
+
+**Participant-ensure suppression.** The conference closed at 01:21:06; the
+participant first projected `left` at 01:21:12 (~6 s after close, driven by the
+now-fast `ChannelLeftBridge` projection) versus a ~90–180 s settle in
+T2-B10. Across the whole lifecycle the participant received **exactly one**
+`conference.participant.ensure` (01:20:54, the legitimate join, before close)
+and **zero** ensures after the conference stopped being `open` — the outbox
+recorded one `..._participant_ensured` and **zero**
+`..._participant_stale` completions, versus 29 stale no-ops in T2-B10. The
+reconciler's admitted branch returned
+`waiting(conference_not_open_for_participant_ensure)` for the closed
+conference; because no ensure row was created, the unchanged
+`RuntimeOperationRepository::complete()` wake could not restart churn, and the
+adapter stale-generation fence was never exercised as the normal mechanism.
+
+**Lifecycle correctness.** Runtime inspection still detected the parked Local
+channel after the removal desired-state change (one `inspection:channel-present`
+receipt) and dispatched exactly one `conference.participant.remove` (no
+duplicate-removal loop); post-removal absence was recorded
+(`inspection:channel-absent`), the participant converged `left`, and the
+corridor left zero proof bridges, zero proof channels, zero open proof
+operations, and zero non-converged proof targets. Asterisk stayed 1/1 with the
+RuntimeNode `ready`; API, workers, Kamailio, observer, Postgres, Redis, and
+monitoring stayed healthy; ports 80/443 remained UTCP-owned; APNTalk and the
+global `k3d-apntalk-local` context were untouched.
+
+Before/after (single bounded run, not a scaling projection):
+
+| Signal | T2-B10 | T2-B12 |
+|---|---|---|
+| Frames read per cycle (join burst) | 1 | 17 (whole queue) |
+| `ChannelLeftBridge` emit→read | ~90 s | ~2 s |
+| Participant-`left` settle after close | ~90–180 s | ~6 s |
+| Stale `participant.ensure` completions | 29 | 0 |
+| Ensures after Conference left `open` | 29 | 0 |
+
+## 12. Remaining gaps (not closed by these corridors)
+- Listener backlog / emit-to-read-age observability and stale no-op outcome
+  observability are still not emitted as metrics (churn/latency remain
+  invisible to dashboards); unknown-event RuntimeNode `degraded` projection
+  during long drains is unassessed.
 - Rendered NetworkPolicy endpoint pins (`allow-observability-kubernetes-api-egress`,
   `allow-traefik-kubernetes-api`) become stale whenever k3d node addresses
   change; the canonical re-render/apply mechanism recovers them, but nothing
