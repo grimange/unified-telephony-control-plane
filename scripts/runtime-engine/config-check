@@ -138,12 +138,34 @@ if pod_spec.get('serviceAccountName') != 'utcp-runtime-fencer':
     fail('runtime fence worker does not use the fencer ServiceAccount')
 if pod_spec.get('automountServiceAccountToken') is not False:
     fail('runtime fence worker automounts the default ServiceAccount token')
+pod_security = pod_spec.get('securityContext') or {}
+if pod_security.get('runAsNonRoot') is not True:
+    fail('runtime fence worker must require non-root execution')
+if pod_security.get('runAsUser') != 33 or pod_security.get('runAsGroup') != 33:
+    fail('runtime fence worker must run as the canonical www-data UID/GID 33')
+if pod_security.get('runAsUser') == 0 or pod_security.get('runAsGroup') == 0:
+    fail('runtime fence worker must not run as root')
+if pod_security.get('runAsUser') == 1000 or pod_security.get('runAsGroup') == 1000:
+    fail('runtime fence worker retained the invalid UID/GID 1000')
+if 'fsGroup' in pod_security or 'fsGroupChangePolicy' in pod_security:
+    fail('runtime fence worker must not use fsGroup as an application-tree permission workaround')
+if pod_security.get('seccompProfile', {}).get('type') != 'RuntimeDefault':
+    fail('runtime fence worker must preserve the RuntimeDefault seccomp profile')
+if pod_spec.get('initContainers'):
+    fail('runtime fence worker must not add permission-changing init containers')
 containers = pod_spec.get('containers') or []
 if len(containers) != 1:
     fail('runtime fence worker must render one container')
 worker = containers[0]
 if worker.get('args') != ['telephony-infrastructure-worker']:
     fail('runtime fence worker command changed unexpectedly')
+container_security = worker.get('securityContext') or {}
+if container_security.get('allowPrivilegeEscalation') is not False:
+    fail('runtime fence worker must prevent privilege escalation')
+if container_security.get('privileged') is True:
+    fail('runtime fence worker must not run privileged')
+if container_security.get('capabilities', {}).get('drop') != ['ALL']:
+    fail('runtime fence worker must drop all Linux capabilities')
 env_from = worker.get('envFrom') or []
 config_names = [entry.get('configMapRef', {}).get('name') for entry in env_from if 'configMapRef' in entry]
 secret_names = [entry.get('secretRef', {}).get('name') for entry in env_from if 'secretRef' in entry]

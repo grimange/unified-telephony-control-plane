@@ -3596,3 +3596,49 @@ runAsUser:33. So the fence worker crashes at Laravel bootstrap
 Rollback per object: delete worker -> RoleBinding -> Role -> ServiceAccount; do not
 alter RuntimeNodes/RuntimeBindings or the durable node-A Deployment.
 ```
+
+## T5-A15 — Fencing worker runtime identity correction
+
+Repository correction at `UTCP_PHASE=T1`. The dedicated fencing worker manifest now
+runs as the same API-image application identity used by the API, generic worker,
+scheduler, telephony command worker, reconciler, event normalizer, ARI listener, and
+other Laravel platform workers:
+
+```yaml
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 33
+  runAsGroup: 33
+```
+
+The defect was the previous `runAsUser: 1000` / `runAsGroup: 1000` override. The API
+image prepares `storage` and `bootstrap/cache` for `www-data:www-data` and then runs
+as `USER www-data`; on Debian/PHP images this is UID/GID 33. The cache directory is
+group-writable for that identity and not world-writable, so UID/GID 1000 reached
+Laravel bootstrap but could not write `/var/www/html/bootstrap/cache`.
+
+The correction deliberately aligns the fencing worker with the canonical image user
+instead of adding a permission workaround. The manifest still preserves explicit
+non-root execution, `seccompProfile: RuntimeDefault`, `allowPrivilegeEscalation:
+false`, and `capabilities.drop: [ALL]`. No root execution, init-container `chown`,
+startup `chmod`, world-writable permission, `fsGroup` workaround, alternate image,
+duplicate cache path, feature gate, RuntimeNode allowlist, RBAC change, token change,
+or operation-routing change was introduced.
+
+The namespace split remains unchanged: `Deployment/utcp-runtime-fence-worker` and
+`ServiceAccount/utcp-runtime-fencer` render in `utcp-platform`; `Role` and
+`RoleBinding` render in `utcp-runtime`; the RoleBinding subject remains
+`system:serviceaccount:utcp-platform:utcp-runtime-fencer`. The worker still consumes
+the canonical `utcp-application-config` ConfigMap and `utcp-local-data-credentials`
+Secret from its own namespace, and only the dedicated worker mounts the projected
+Kubernetes API token.
+
+Repository validation now asserts the rendered worker uses UID/GID 33, keeps
+`runAsNonRoot: true`, retains hardening fields, has no permission-changing init
+container, and has no `fsGroup` workaround. Runtime-fencing component rendering and
+server-side dry-run were performed non-destructively; no Kubernetes resource was
+applied, no worker was activated, no runtime-fence operation was created, no
+Deployment was scaled, no Pod was deleted, and no failover occurred.
+
+Live worker activation, projected-token Kubernetes-client proof, real scale-to-zero
+proof, and automatic two-node failover remain pending.
