@@ -128,6 +128,7 @@ def validate_active_overlay(active: list[dict[str, Any]]) -> None:
     expected_selector = {
         "app.kubernetes.io/part-of": "utcp",
         "app.kubernetes.io/component": "asterisk-ari",
+        "utcp.dev/runtime-node": "local-asterisk-ari",
     }
     if deployment_labels.get("utcp.dev/runtime-node") != "local-asterisk-ari":
         raise ValidationError("active deployment runtime-node label drifted")

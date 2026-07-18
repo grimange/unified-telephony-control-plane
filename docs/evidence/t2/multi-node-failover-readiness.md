@@ -2851,3 +2851,149 @@ node-B Secret + credential; apply node-B Deployment/Service; register node B thr
 the C2 API; prove listener claim + `observed_state=ready` + capability-complete +
 distinct-replacement-selectable, with the live node undisturbed and no fencing worker
 active. Fencing RBAC/worker/token and two-node failover remain separate later slices.
+
+---
+
+# T5-A10 — Live node-B deployment and runtime readiness (executed)
+
+Live checkpointed implementation at commit `8d7db56`, `UTCP_PHASE=T1`,
+2026-07-18. UTCP moved from one live Asterisk RuntimeNode to **two ready
+RuntimeNodes**, stopping before Kubernetes fencing authority. Node A preserved
+without rename/restart; fencing worker/RBAC never deployed. Two small production
+corrections were required (Service selector isolation) and are committed.
+
+## Deployment currency prerequisite
+
+The running `api` pod predated the T5-A9 structured-label fix (the
+`RuntimeNodeWorkloadIdentityValidator` class was absent; `validatedLabels`
+rejected the nested `kubernetes_workload` object), so the first PATCH returned
+`422 Invalid placement label`. The committed image was built/pushed and **only
+`deploy/api` was rollout-restarted** (registration is HTTP-served by api; the
+listener's multi-node code was already deployed). No worker/listener/Asterisk
+restart. After rollout the validator class and label acceptance were live.
+
+## Existing RuntimeNode workload PATCH
+
+`PATCH /api/v1/admin/runtime-nodes/{id}` (canonical, authenticated) merged the
+complete label set `{"purpose":"t0-proof","kubernetes_workload":{"namespace":
+"utcp-runtime","deployment":"asterisk-ari"}}` → 200. Re-read confirmed: id/slug
+unchanged, desired `active`/observed `ready` unchanged, `purpose` preserved,
+`kubernetes_workload` added, 3 endpoints + 4 capabilities + active credential v3
+all intact, listener lease still claimed, 76 active bindings unchanged.
+`RuntimeNodeWorkloadIdentityResolver` now resolves the existing node to
+`namespace=utcp-runtime deployment=asterisk-ari`.
+
+## Service-selector isolation defect (found and fixed)
+
+Applying node B exposed a latent defect: the base `asterisk-ari` **Service**
+selector was `{part-of, component}` — it lacked the `utcp.dev/runtime-node`
+label the base **Deployment** already carried. With a second `component=asterisk-ari`
+pod present, node A's Service load-balanced across **both** pods, and the listener
+immediately logged `authentication_failed` (node-A ARI inspects round-robined to
+node B, which only knows `utcp_ari_b`). Two corrections, both committed:
+
+1. **Repository:** added `utcp.dev/runtime-node: local-asterisk-ari` to the base
+   `asterisk-ari-service.yaml` selector (mirrors the base Deployment; overlays
+   already patch it per node). Updated `validate-ab-topology` to expect the
+   3-label active selector.
+2. **Live (non-disruptive, no restart):** labeled the single node-A pod
+   `utcp.dev/runtime-node=local-asterisk-ari` (additive `kubectl label`, 0
+   restarts) and merge-patched the live node-A Service selector to include it.
+   EndpointSlices then isolated cleanly (node-A Service → node-A pod only; node-B
+   Service → node-B pod only); node-A auth failures cleared and it stayed `ready`.
+
+Residual: the live node-A **Deployment** template/selector still lack the label
+(its selector is immutable at 2 labels; the committed 3-label-selector Deployment
+was never applied). The live pod-label + Service-selector patch achieves isolation
+now, but a **controlled node-A Deployment recreation** (restart, out of scope here)
+is needed to make the label durable in the template. Documented as a remaining gap.
+
+## Node-B credential handling
+
+A distinct ARI username `utcp_ari_b` and a 48-hex-char password were generated
+with `openssl rand` into a `0600` temp file, never printed or committed
+(password fingerprint `0e33509255a8…`). The **same** material fed both projections:
+the Kubernetes Secret (`kubectl create secret --from-env-file`) and the canonical
+encrypted credential record (`POST …/credentials`). The canonical credential's
+stored fingerprint (`0e33509255a8`) matches the generated password fingerprint,
+and the Secret's `ARI_USERNAME` (`utcp_ari_b`) matches the canonical `identifier`
+— one credential value, two deterministic projections, no drift. Temp file shredded
+at completion.
+
+## Node-B Kubernetes Secret / Deployment / Service
+
+Secret `utcp-local-asterisk-ari-b-credentials` (Opaque, keys `ARI_USERNAME`/
+`ARI_PASSWORD`), referenced only by node B; node A's Secret untouched. Node-B
+Deployment + Service rendered from the committed `overlays/local-two-asterisk/node-b`
+subtree (with the registry image transform applied), server-side dry-run passed,
+then applied: `asterisk-ari-b` 1/1 Ready, SA `utcp-runtime-asterisk`,
+`automountServiceAccountToken=false` (no fencing token), readiness script passed,
+`Local` channel driver loaded, zero module-loader errors. Node A stayed 1/1.
+
+## Canonical RuntimeNode-B registration
+
+Idempotent authenticated sequence (per-request idempotency keys): create node
+(`local-asterisk-ari-b`, family `asterisk`, adapter `asterisk-ari`, workload label)
+→ 3 endpoints (control/events/health → `asterisk-ari-b.utcp-runtime.svc.cluster.local:8088`)
+→ ari-basic credential → capabilities (all four) → adapter configuration
+(`utcp-t0-observation` + timeouts) → desired-state `active`. All 2xx. No SQL, no
+seeding, no management command.
+
+## Listener claim, epochs, ARI/Stasis, observed-ready
+
+No listener restart. Within the first sweep (~5 s) the running `asterisk-ari-events`
+listener discovered node B, claimed a **distinct** per-node lease (fencing token
+`e7f036e2` vs node A `a5a4d4d4`), opened an independent event epoch (`d0e375b2`),
+authenticated ARI (info endpoint 200), and registered the Stasis app
+`utcp-t0-observation` on node B's process (active independently of node A's
+same-named app). Node B projected `observed_state=ready`; node A's lease, epochs,
+and health remained unchanged (one node's evidence never overwrote the other's).
+
+## Observed-ready evidence
+
+RuntimeNode B: id `05ddb383…`, slug `local-asterisk-ari-b`, desired `active`,
+observed `ready`; endpoints on `asterisk-ari-b.svc`; credential active v1
+(fingerprint `0e33509255a8`); capabilities lifecycle/participation/event.stream/
+observation; workload `{utcp-runtime, asterisk-ari-b}`; lease claimed; open event
+epoch; readiness observations flowing; Pod `asterisk-ari-b-589c94c588-mnv2t`.
+
+## Replacement eligibility and horizontal scale
+
+Both nodes are same-tenant, `active`, `ready`, and carry both conference
+capabilities — so for a conference bound to `local-asterisk-ari`,
+`local-asterisk-ari-b` is a **distinct eligible replacement** (proven read-only;
+no binding/conference/failover created). Registry, listener eligibility, status
+tooling (`asterisk_desired_active=2`), and the workload resolver all enumerate
+**both** nodes generically. Node C would need only a new isolated workload + a new
+credential + a canonical registration — no control-plane code change.
+
+## Fencing inactivity
+
+Zero fencing-worker Deployments, zero fencing RBAC objects (SA/Role/RoleBinding),
+zero `runtime.node.runtime.fence` operations ever, no projected fencing token on
+any utcp-runtime/utcp-platform pod (all `automount=false`; the only `automount=true`
+pods are unrelated traefik/observability system pods). No Deployment scaled, no Pod
+deleted, existing RuntimeBinding authority unchanged. The generic command worker
+does not execute fence operations, and the real Kubernetes client is inert without
+the (undeployed) dedicated worker + token + RBAC.
+
+## Rollback performed
+
+None — every checkpoint succeeded. (Rollback would have been node-B-scoped:
+desired-state disabled → retire credential → delete Deployment/Service/Secret,
+node A untouched.)
+
+## T5-A10 committed corrections
+
+`infrastructure/kubernetes/base/runtime/asterisk-ari-service.yaml` (add
+runtime-node label to the Service selector) and `scripts/asterisk-ari/validate-ab-topology`
+(expect the 3-label active selector). No application code changed.
+
+## T5-A10 remaining gaps
+
+Durable node-A Deployment template/selector alignment (needs a controlled node-A
+recreation — restart, deferred); then fencing RBAC + dedicated worker + token
+deployment, live Kubernetes-client connectivity proof, real scale-to-zero proof,
+two-node automatic failover, replacement reconstruction, former-workload
+restoration, Kamailio signaling cutoff (when SIP routing exists), Provider Node
+Admin UI, replacement-node failure handling, metrics, and capacity/placement policy.

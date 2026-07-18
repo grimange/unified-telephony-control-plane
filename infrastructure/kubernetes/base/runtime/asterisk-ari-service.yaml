@@ -11,6 +11,7 @@ spec:
   selector:
     app.kubernetes.io/part-of: utcp
     app.kubernetes.io/component: asterisk-ari
+    utcp.dev/runtime-node: local-asterisk-ari
   ports:
     - name: ari
       protocol: TCP
