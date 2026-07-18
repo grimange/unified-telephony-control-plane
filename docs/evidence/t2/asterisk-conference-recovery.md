@@ -209,7 +209,79 @@ to settle even though the bridge-teardown `left` observation was recorded
 within seconds of the close. This churn/wake-storm behavior is recorded below
 as a remaining gap.
 
-## 9. Remaining gaps (not closed by these corridors)
+## 9. Live recovery-alert evaluation — passed (T2-B9, 2026-07-18)
+
+Monitoring diagnosis first corrected the record: the Prometheus Operator was
+**not** crash-looping at T2-B9 start (1/1 Ready; its historical 59 restarts
+dated from the earlier cluster node-address fault). The actually failing
+component was the Grafana dashboard sidecar (`grafana-sc-dashboard`,
+CrashLoopBackOff ×37) — and the real defect behind both its crashes and a
+silent Prometheus outage was environmental: after the node-IP shuffle, two
+rendered NetworkPolicies still pinned the old API-server endpoint
+(`172.24.0.2/32` instead of `172.24.0.4/32`):
+
+- `utcp-observability/allow-observability-kubernetes-api-egress`
+- `traefik-system/allow-traefik-kubernetes-api`
+
+With kube-proxy DNAT translating the `kubernetes` Service VIP to the endpoint
+address, all API egress from observability Pods was dropped: the Grafana
+sidecar crash-looped listing dashboard resources, and Prometheus
+service discovery silently emptied — zero active targets and no scraped
+`utcp_*` series since the node-IP fault, with no errors in the Prometheus log.
+
+Correction (live/environmental only; the repository templates were already
+correct): both policies were re-rendered and re-applied through their
+canonical render mechanisms (`scripts/observability/lib
+render_apiserver_policy` and the K3 security equivalent). No repository file
+changed; no manual long-term workaround was added. Discovery repopulated to
+10 scrape pools with all expected targets up, and the Grafana replacement Pod
+came up 2/2 with zero restarts.
+
+Operator reconciliation proof: the operator Pod was deleted once; the
+replacement synced caches with no errors and the full `utcp-platform-alerts`
+group (34 rules, including the three recovery rules) remained loaded in the
+Prometheus rules API with `health=ok` — reconciliation is operator-owned and
+survives operator replacement. The `PrometheusRule` namespace/labels match the
+Prometheus `ruleNamespaceSelector` (`utcp-observability`) and empty
+`ruleSelector`.
+
+Metrics proof: all seven recovery series
+(`utcp_conference_runtime_inspections_total`,
+`utcp_conference_runtime_inspection_failures_total`,
+`utcp_conference_recovery_operations_total`,
+`utcp_conference_recovery_operation_failures_total`,
+`utcp_conference_recovery_stale_events_rejected_total`,
+`utcp_conference_recovery_backlog`, `utcp_conference_recovery_lag_seconds`)
+are queryable with historical corridor evidence retained; the 34 series carry
+only bounded label keys (`adapter_key`, `failure_class`, `operation`,
+`reason`, `resource_type`, `result`) with no tenant/conference/participant/
+runtime/bridge/channel/operation/receipt/epoch/fencing identifiers; backlog
+and lag were 0 after completed recovery.
+
+Alert-expression proof: all three recovery alert expressions evaluate without
+error and were FALSE/inactive in the healthy state. A bounded live condition
+(one proof conference; Asterisk scaled 0→1 through the established corridor
+mechanism, restored within ~2.5 minutes) drove
+`UTCPTelephonyConferenceRuntimeInspectionFailures` through the complete
+lifecycle, directly observed in the `ALERTS` series: inactive → expression
+TRUE within 60 s → **pending** (23:59–00:08) → **firing** (00:09–00:19,
+after the full production `for: 10m`, satisfied by real
+`ari_http_transport_failed` inspection failures in the rolling window) →
+expression FALSE and rule **inactive/resolved** (00:24) with Alertmanager
+showing zero active alerts afterwards. No thresholds or `for` durations were
+modified; no metric rows were fabricated. The other two recovery rules were
+proven loaded, healthy, and inactive against live data; their firing was not
+separately induced.
+
+During this task, sixteen stale open proof conferences left behind by earlier
+corridor runs were closed through the canonical admin API (all projected
+closed and converged), so `UTCPTelephonyConferenceReconciliationStuck` no
+longer has standing input. Final state: operator, Prometheus, Alertmanager,
+kube-state-metrics, Loki, Alloy, and Grafana all fully Ready; zero proof
+bridges/channels; Asterisk at one ready replica; all recovery alerts
+inactive.
+
+## 10. Remaining gaps (not closed by these corridors)
 - Listener event drain rate is one frame per poll cycle (~3–5 s per event
   during recovery bursts); tolerable now but worth a bounded improvement.
 - Stale-ensure churn during the close-before-remove window: the recovery wake
@@ -218,9 +290,10 @@ as a remaining gap.
   T2-B8) and the admitted+left projection predicate settles slowly (~180 s)
   during that window. Bounded and side-effect-free, but needs a follow-up
   churn/wake-storm assessment together with the listener drain-rate item.
-- Prometheus Operator remains in its pre-existing crash loop; recovery metrics
-  are live and the alert `PrometheusRule` exists, but live alert evaluation is
-  still unproven (separate task).
+- Rendered NetworkPolicy endpoint pins (`allow-observability-kubernetes-api-egress`,
+  `allow-traefik-kubernetes-api`) become stale whenever k3d node addresses
+  change; the canonical re-render/apply mechanism recovers them, but nothing
+  detects the drift automatically. Worth a bounded check in a status target.
 - Multi-node failover/fencing, T2 Compose compatibility, and final T2
   phase-wide acceptance remain open.
 - Host tooling: `helm` is missing from this workstation, so
