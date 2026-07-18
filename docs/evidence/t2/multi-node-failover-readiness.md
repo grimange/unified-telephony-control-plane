@@ -3456,3 +3456,143 @@ Fencing resources only: `Deployment/utcp-runtime-fence-worker`,
 `ServiceAccount/utcp-runtime-fencer` (all in `utcp-runtime`) were deleted after the
 worker failed to start. Node A (durable recreation), node B, RuntimeNodes,
 credentials, and RuntimeBindings were not touched by rollback.
+
+---
+
+# T5-A14 — Fencing worker activation: namespace fix confirmed, blocked by securityContext user defect
+
+Checkpointed live implementation at commit `d4a9386`, `UTCP_PHASE=T1`,
+2026-07-18. The T5-A13 namespace correction is confirmed working (config/secret
+now resolve, RBAC is exactly correct), but the worker Pod is blocked by a **second
+committed-manifest defect**: it forces `runAsUser: 1000` while the api image and
+every sibling platform worker run as `www-data` (UID 33). Rolled back cleanly.
+No fence operation, no scale, no Pod deletion, no failover.
+
+## Baseline preconditions
+
+Both nodes active/ready, Services isolated (durable node-A recreation from T5-A12
+holds: node-A Service → `asterisk-ari-69bcc8f79f-tmmxw` only), 2 leases claimed,
+zero open conferences/operations/fence-operations/verify-operations, zero live
+channels/bridges, fencing absent in both namespaces. All status targets passed.
+
+## Worker image currency
+
+The registry `utcp/api:0.1.0-k1-dev` predated `d4a9386` (it had
+`runtime-engine:infrastructure-worker` but **not** `runtime-engine:infrastructure-probe`).
+Built from the clean tree and pushed to the local registry so the image contains
+the probe command and the cross-namespace worker wiring. No unrelated Deployment
+was restarted.
+
+## Rendered namespace split (T5-A13 fix — correct)
+
+`kubectl kustomize components/runtime-fencing` (registry image applied) rendered
+exactly: `ServiceAccount/utcp-runtime-fencer`→**utcp-platform**;
+`Role/utcp-runtime-fencer`→**utcp-runtime**; `RoleBinding/utcp-runtime-fencer`→
+**utcp-runtime** with subject `ServiceAccount/utcp-runtime-fencer@utcp-platform`
+(cross-namespace) and roleRef the utcp-runtime Role; `Deployment/utcp-runtime-fence-worker`→
+**utcp-platform**, SA `utcp-runtime-fencer`, `envFrom` the utcp-platform
+`utcp-application-config` + `utcp-local-data-credentials`, `automountServiceAccountToken:false`,
+projected token (audience `https://kubernetes.default.svc`, 3600 s). Server-side
+dry-run passed for all four objects.
+
+## Effective RBAC (correct)
+
+Applied SA + Role + RoleBinding. Impersonating
+`system:serviceaccount:utcp-platform:utcp-runtime-fencer`: **allowed in
+utcp-runtime** `get/list deployments`, `get/patch deployments --subresource=scale`,
+`get/list pods`; **denied** `get secrets`, `delete pods`, `patch deployments`
+(full), `update services` (all utcp-runtime), and **all** utcp-platform workload
+access (`get deployments` and `patch scale` in utcp-platform both denied). The
+cross-namespace binding grants exactly the bounded utcp-runtime permissions and
+nothing in the worker's own namespace. No ClusterRole.
+
+## Blocking defect — worker securityContext user
+
+The worker Pod failed with exit 1:
+`The /var/www/html/bootstrap/cache directory must be present and writable`. The api
+image's `/var/www/html/bootstrap/cache` is owned by `www-data` (UID/GID 33) mode
+`drwxrwx---` (no other-write), and every working platform worker
+(`telephony-command-worker`, `telephony-reconciler`, `scheduler`) runs as
+`runAsUser: 33`. The committed fence worker forces `runAsUser: 1000, runAsGroup:
+1000` (`infrastructure-worker-deployment.yaml` securityContext), so UID 1000 cannot
+write the www-data-owned cache and Laravel bootstrap aborts. This is a genuine
+committed-manifest defect. Per the task contract for a discovered defect, the
+fencing resources were rolled back rather than patched live.
+
+## Required correction (bounded, for Codex)
+
+In `components/runtime-fencing/infrastructure-worker-deployment.yaml`, change the
+Pod `securityContext` to run as the api image's user, matching the sibling platform
+workers: `runAsUser: 33`, `runAsGroup: 33` (keep `runAsNonRoot: true`,
+`seccompProfile: RuntimeDefault`, and the container `allowPrivilegeEscalation:false`
++ `capabilities.drop:[ALL]`). No other change. Any fencing config-check should
+assert the worker user matches the platform worker contract (33), not 1000.
+
+## Rollback performed
+
+Fencing resources only, in contract order: `Deployment/utcp-runtime-fence-worker`
+(utcp-platform) → `RoleBinding/utcp-runtime-fencer` (utcp-runtime) →
+`Role/utcp-runtime-fencer` (utcp-runtime) → `ServiceAccount/utcp-runtime-fencer`
+(utcp-platform). The durable node-A recreation, node B, RuntimeNodes, credentials,
+and the 76 RuntimeBindings were not touched.
+
+## Scale / deletion / failover absence
+
+Both Asterisk Deployments stayed `replicas=1` with unchanged pods
+(`asterisk-ari-69bcc8f79f-tmmxw`, `asterisk-ari-b-589c94c588-mnv2t`) — no scale, no
+Pod deletion, no restart. Zero `runtime.node.runtime.fence` operations and zero
+`conference.runtime_fence_terminated` events ever created (the worker crashed at
+Laravel bootstrap, before any operation claim). No RuntimeBinding generation
+changed.
+
+## Ready-to-paste next prompt (T5-A15)
+
+```
+# T5-A15 — Correct fence-worker securityContext user and re-activate
+
+Repository fix then checkpointed live activation at HEAD after T5-A14. Keep
+UTCP_PHASE=T1. Stop before any scale-to-zero or live failover.
+
+Problem (docs/evidence/t2/multi-node-failover-readiness.md T5-A14): the committed
+components/runtime-fencing/infrastructure-worker-deployment.yaml Pod securityContext
+forces runAsUser:1000/runAsGroup:1000, but the api image's /var/www/html/bootstrap/cache
+is owned by www-data (UID 33, mode 770) and every sibling platform worker runs as
+runAsUser:33. So the fence worker crashes at Laravel bootstrap
+("bootstrap/cache must be present and writable").
+
+1. Repository correction (one file): set the fence worker Pod securityContext to
+   runAsUser:33, runAsGroup:33 (keep runAsNonRoot:true, seccompProfile RuntimeDefault,
+   container allowPrivilegeEscalation:false, capabilities.drop:[ALL]). If a fencing
+   config-check asserts the worker user, update it to 33 (matching the platform
+   worker contract). No other change; no feature gate.
+
+2. Verification: make repository-hygiene && make workflow-check && make secret-scan
+   && the four config-checks && the focused test suites && make test && make check
+   && make build && git diff --check. Commit: fix(t5): run fencing worker as the
+   platform image user. Do not push.
+
+3. Live activation (only after the fix; build+push the image if it predates the fix;
+   reconfirm zero open conferences, zero fence ops, both nodes ready):
+   - render components/runtime-fencing with the registry image; server-side dry-run.
+   - apply SA (utcp-platform) + Role + RoleBinding (utcp-runtime); prove effective
+     perms by impersonation (allowed: deployments get/list, deployments
+     --subresource=scale get/patch, pods get/list in utcp-runtime; denied: full
+     patch, secrets, pod delete, service update, all utcp-platform workload access).
+   - apply the worker Deployment (utcp-platform); wait Ready; prove only it mounts
+     the projected token, it runs telephony-infrastructure-worker, and its config/
+     secret resolve.
+   - run kubectl exec ... php artisan runtime-engine:infrastructure-probe --once and
+     prove: RuntimeNode slug resolved, namespace=utcp-runtime, Deployment GET
+     succeeds, owned-Pod LIST succeeds, ownership labels validate, replica/pod counts
+     reported, and NO token/secret/credential in output. Never call scaleDeployment().
+   - prove token+CA files exist with safe perms and the client rereads the token
+     (run the probe twice); reconfirm denied authority via impersonation.
+   - prove generic command-worker still excludes fence ops and the infra worker
+     includes only fence ops; confirm zero scale, zero pod deletions, zero fence
+     operations created, both nodes ready, bindings unchanged.
+   - STOP before destructive failover. Update the evidence doc; one scoped commit;
+     do not push.
+
+Rollback per object: delete worker -> RoleBinding -> Role -> ServiceAccount; do not
+alter RuntimeNodes/RuntimeBindings or the durable node-A Deployment.
+```
