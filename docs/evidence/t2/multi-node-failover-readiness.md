@@ -3642,3 +3642,200 @@ Deployment was scaled, no Pod was deleted, and no failover occurred.
 
 Live worker activation, projected-token Kubernetes-client proof, real scale-to-zero
 proof, and automatic two-node failover remain pending.
+
+## T5-A17 — Fencing-worker egress and Kubernetes API NetworkPolicy contract (evidence-only)
+
+Live audit at `UTCP_PHASE=T1`, HEAD `8e72e63`, clean tree. No repository correction
+was implemented; no fencing resource was applied; no runtime-fence operation,
+scale, Pod deletion, RuntimeNode/RuntimeBinding mutation, Conference, or failover
+occurred. Both Asterisk nodes stayed `1/1` and both RuntimeNodes stayed
+`active|ready` throughout. All probe resources were removed.
+
+### Official NetworkPolicy interpretation
+
+NetworkPolicy is additive-only. `utcp-platform` carries a `default-deny` policy
+with empty `podSelector` and `policyTypes: [Ingress, Egress]`, so every Pod in the
+namespace is isolated for both directions and each required flow needs an explicit
+allow policy whose `podSelector` matches the Pod. A label with no matching policy
+grants nothing: the probe carried `utcp.io/kubernetes-api-client: "true"` before
+any candidate policy existed and all API egress remained refused.
+
+### Existing default-deny and allow policies (live inventory)
+
+`utcp-platform` held exactly 15 NetworkPolicies before and after the audit:
+`default-deny` (selector `{}`), plus role-scoped allows keyed on
+`utcp.io/network-role`: `api`, `gateway` (×3 incl. metrics and service-clusterips),
+`web`, `worker` (`allow-worker-required-egress`, `allow-command-worker-to-asterisk-ari`),
+`scheduler`, `migration`, `asterisk-ari-events`, `simulator-event-source`,
+`kamailio-registration-observer`, `kamailio-signaling`, and
+`allow-backend-data-service-clusterips` (selector `utcp.io/network-role in
+(api, worker, scheduler, migration)`).
+
+### Fencing-worker selector gap
+
+`infrastructure/kubernetes/components/runtime-fencing/infrastructure-worker-deployment.yaml`
+labels the Pod template only with `app.kubernetes.io/{name,part-of,component}`.
+No NetworkPolicy in `utcp-platform` selects any of those labels. Under
+default-deny the worker therefore has zero egress: CoreDNS is unreachable, so
+PostgreSQL hostname resolution fails before any database or Kubernetes API
+connection is attempted. This is the sole remaining activation blocker from
+T5-A16.
+
+### Common worker egress proof
+
+Disposable probe `Pod/t5-a17-egress-probe` (restricted-PSS-compliant, UID/GID 33,
+API image, ServiceAccount `t5-a17-egress-probe` with no Role/RoleBinding) was
+labeled `utcp.io/network-role: worker`. Live results:
+
+```text
+dns_udp postgres.utcp-data.svc.cluster.local => 10.43.8.153
+dns_udp redis.utcp-data.svc.cluster.local    => 10.43.87.131
+dns_udp kubernetes.default.svc               => 10.43.0.1
+dns_tcp 10.43.0.10:53                        => connect_ok
+postgres 5432                                => connect_ok
+redis 6379                                   => connect_ok
+DENY api-clusterip 10.43.0.1:443             => connect_failed errno=111
+DENY api-endpoint 172.24.0.5:6443            => connect_failed errno=111
+DENY web 10.43.218.176:8080                  => connect_failed errno=111
+DENY external 1.1.1.1:443                    => connect_failed errno=111
+```
+
+The `worker` role label yields exactly DNS UDP/TCP 53 (kube-dns), PostgreSQL
+TCP 5432, and Redis TCP 6379 — through two cooperating policies:
+`allow-worker-required-egress` (namespace+pod-selector destinations) and
+`allow-backend-data-service-clusterips` (rendered Service-ClusterIP /32
+destinations, currently 10.43.0.10 / 10.43.8.153 / 10.43.87.131, matching live
+Services). Destination-side ingress (`utcp-data` default-deny plus its allow
+policies) already admits `utcp-platform` sources for 5432/6379; no source-label
+change is needed on the destination side. Nothing else is reachable. Adding
+`utcp.io/network-role: worker` to the fencing-worker Pod template is therefore
+the exact bounded correction for DNS, PostgreSQL, and Redis — no duplicate
+policy is required.
+
+### Kubernetes API service identity (client-visible)
+
+```text
+KUBERNETES_SERVICE_HOST=10.43.0.1
+KUBERNETES_SERVICE_PORT_HTTPS=443
+default/kubernetes Service: ClusterIP 10.43.0.1, port https 443/TCP -> targetPort 6443
+```
+
+### Kubernetes API backend identity (post-DNAT)
+
+```text
+default/kubernetes EndpointSlice "kubernetes": 172.24.0.5:6443 (single backend)
+172.24.0.5 = k3d-utcp-local-server-0 InternalIP (control-plane node)
+K3s v1.35.3+k3s1, flannel VXLAN, embedded kube-router NetworkPolicy controller
+```
+
+The in-cluster client dials `10.43.0.1:443`; kube-proxy DNAT rewrites the flow to
+`172.24.0.5:6443` before policy filtering. `443` and `6443` are not
+interchangeable policy targets.
+
+### Candidate policy results (live, single-variable)
+
+Candidate A — `t5-a17-candidate-apiserver-clusterip`, selector
+`utcp.io/kubernetes-api-client: "true"`, egress `10.43.0.1/32` TCP 443 only:
+
+```text
+api-clusterip 10.43.0.1:443 => connect_failed errno=111   (after 3s and again after 15s sync)
+control postgres 5432       => connect_ok                 (enforcement live)
+```
+
+FAILED. kube-router does not match the pre-DNAT Service ClusterIP for the
+apiserver flow.
+
+Candidate B — Candidate A deleted first, then
+`t5-a17-candidate-apiserver-endpoint`, same selector, egress `172.24.0.5/32`
+TCP 6443 only:
+
+```text
+via-service 10.43.0.1:443       => connect_ok
+endpoint-direct 172.24.0.5:6443 => connect_ok
+tls_verified_get /version       => HTTP/1.1 200 OK   (CA-verified, peer kubernetes.default.svc)
+gitVersion                      => v1.35.3+k3s1
+authenticated_discovery /api    => HTTP/1.1 200 OK
+list pods (no RBAC)             => HTTP/1.1 403 Forbidden   (probe SA correctly powerless)
+```
+
+SUCCEEDED alone. After deleting and recreating the probe Pod pinned to
+`k3d-utcp-local-agent-0` (different node, VXLAN path), the same policy again
+permitted `10.43.0.1:443` connect and an authenticated CA-verified `/version`
+GET, while PostgreSQL stayed reachable and `1.1.1.1:443` stayed refused. The
+result is not tied to one Pod or to server-node placement.
+
+Effective K3s/kube-router destination: **post-DNAT backend endpoint
+`172.24.0.5/32` TCP 6443**. The Service-ClusterIP rule is neither sufficient nor
+necessary; permitting both would be an unsupported compatibility fallback and is
+rejected.
+
+### Drift and lifecycle assessment
+
+The backend endpoint is the k3d server container's Docker-network IP. It is
+stable while the cluster runs but can change when node containers restart in a
+different order (observed live: the 2026-07-17 host restart moved the server
+from `172.24.0.4` to `172.24.0.5`). At audit time the live
+`allow-traefik-kubernetes-api` and `allow-observability-kubernetes-api-egress`
+policies and their `.runtime` rendered files still pinned the stale
+`172.24.0.4/32` — which is why the Grafana Pod sat at `1/2 Error` — while their
+ClusterIP `10.43.0.1/32:443` rules did not keep them alive, independently
+confirming the Candidate A result. The endpoint is queryable
+(`default/kubernetes` Endpoints/EndpointSlice), the repository already derives
+it automatically (`render_apiserver_policy` in `scripts/security/lib` and
+`scripts/observability/lib`, template
+`infrastructure/kubernetes/security/traefik/allow-apiserver-egress.template.yaml`),
+and `scripts/security/apply` re-renders on every apply — but **no config-check
+compares rendered or live policies against the current endpoint**, so drift
+persists silently between applies. The existing template pattern is canonical
+(shared helpers, used by K3 and K4) and reusable with a narrower selector; its
+dual ClusterIP+endpoint rule set predates this audit's single-variable proof.
+
+### Selected canonical strategy
+
+**B — generated current API endpoint IP `/32` and backend port (6443), rendered
+from the live `default/kubernetes` Endpoints object via the existing
+template/render pattern, selected by `utcp.io/kubernetes-api-client: "true"`,
+plus an explicit drift check.**
+
+Rejected alternatives:
+
+- A (Service ClusterIP /32:443): proven non-functional under kube-router
+  post-DNAT enforcement.
+- A+B combined: ClusterIP rule proven dead weight; forbidden compatibility
+  fallback that masks nothing and widens the allowed set.
+- C (reuse existing template output as-is): the existing rendered policies
+  select Traefik/observability Pods only, carry the dead ClusterIP rule, and
+  have no staleness detection; the pattern is reused, not the artifact.
+- Broad node/cluster CIDR or `0.0.0.0/0`: rejected as non-least-privilege; an
+  exact `/32` is proven sufficient.
+
+### Required repository correction (bounded, for Codex — T5-A18)
+
+1. Add `utcp.io/network-role: worker` to the fencing-worker Pod template
+   (grants exactly DNS/PostgreSQL/Redis via existing policies; no duplicates).
+2. Add `utcp.io/kubernetes-api-client: "true"` to the same Pod template only.
+3. Add one rendered fencer-only NetworkPolicy in `utcp-platform` (selector
+   `utcp.io/kubernetes-api-client: "true"`, egress = current API endpoint
+   IP/32 + endpoint port from `default/kubernetes`, no ClusterIP rule),
+   rendered through the existing `scripts/security` template mechanism into
+   `.runtime/kubernetes/security/` and applied by `scripts/security/apply`.
+4. Extend semantic validation (`scripts/runtime-engine/config-check`) to assert
+   both Pod labels and forbid broad CIDRs in the fencer policy.
+5. Add a drift check that fails when a rendered/live apiserver egress policy
+   does not match the current `default/kubernetes` endpoint (this also covers
+   the Traefik/observability policies that are stale today).
+6. No ClusterRole change, no RBAC change, no allow-all, no feature gate, no
+   API egress for the ordinary `worker` role.
+
+### Cleanup proof
+
+`NetworkPolicy/t5-a17-candidate-apiserver-clusterip` (deleted before Candidate
+B), `NetworkPolicy/t5-a17-candidate-apiserver-endpoint`,
+`Pod/t5-a17-egress-probe`, and `ServiceAccount/t5-a17-egress-probe` were all
+deleted; a cluster-wide scan for `t5-a17` across pods, service accounts,
+network policies, config maps, roles, and role bindings returned nothing.
+Post-audit: `utcp-platform` again holds exactly 15 NetworkPolicies, both
+Asterisk Deployments report `1/1`, RuntimeNodes `Local Asterisk ARI` and
+`Local Asterisk ARI B` remain `active|ready`, zero fence/verify-absence
+operations and zero pending operations exist, and the working tree is clean at
+`8e72e63` with `UTCP_PHASE=T1`.
