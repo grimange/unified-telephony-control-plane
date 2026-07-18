@@ -48,6 +48,87 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertSame('asterisk_operation_unsupported', $result['failure_code']);
     }
 
+    public function test_asterisk_absence_verification_reports_absent_only_after_bridge_and_participants_absent(): void
+    {
+        [$tenantId, $nodeId, $conferenceId, $bindingId] = $this->conferenceFenceContext(withParticipant: true);
+        [$adapter, $client] = $this->adapterWithRuntimeSummary(fn (string $participantId): array => $participantId === ''
+            ? ['bridge_exists' => false]
+            : ['bridge_exists' => false, 'participant_channel_exists' => false, 'participant_channel_in_bridge' => false]
+        );
+
+        $result = $adapter->execute($this->fenceOperation($tenantId, $nodeId, $conferenceId, $bindingId));
+
+        $this->assertSame('completed', $result['status']);
+        $this->assertSame('conference.runtime_fence_verified', $result['event_type']);
+        $this->assertSame('absent', $result['event_payload']['verification_result']);
+        $this->assertFalse($result['event_payload']['bridge_present']);
+        $this->assertFalse($result['event_payload']['participant_channel_present']);
+        $this->assertCount(2, $client->calls);
+    }
+
+    public function test_asterisk_absence_verification_reports_present_when_bridge_exists(): void
+    {
+        [$tenantId, $nodeId, $conferenceId, $bindingId] = $this->conferenceFenceContext();
+        [$adapter, $client] = $this->adapterWithRuntimeSummary(fn (): array => ['bridge_exists' => true]);
+
+        $result = $adapter->execute($this->fenceOperation($tenantId, $nodeId, $conferenceId, $bindingId));
+
+        $this->assertSame('completed', $result['status']);
+        $this->assertSame('present', $result['event_payload']['verification_result']);
+        $this->assertTrue($result['event_payload']['bridge_present']);
+        $this->assertCount(1, $client->calls);
+    }
+
+    public function test_asterisk_absence_verification_reports_present_when_participant_channel_exists(): void
+    {
+        [$tenantId, $nodeId, $conferenceId, $bindingId] = $this->conferenceFenceContext(withParticipant: true);
+        [$adapter] = $this->adapterWithRuntimeSummary(fn (string $participantId): array => $participantId === ''
+            ? ['bridge_exists' => false]
+            : ['bridge_exists' => false, 'participant_channel_exists' => true, 'participant_channel_in_bridge' => false]
+        );
+
+        $result = $adapter->execute($this->fenceOperation($tenantId, $nodeId, $conferenceId, $bindingId));
+
+        $this->assertSame('completed', $result['status']);
+        $this->assertSame('present', $result['event_payload']['verification_result']);
+        $this->assertFalse($result['event_payload']['bridge_present']);
+        $this->assertTrue($result['event_payload']['participant_channel_present']);
+    }
+
+    public function test_asterisk_absence_verification_treats_unreachable_runtime_as_unavailable_not_absent(): void
+    {
+        [$tenantId, $nodeId, $conferenceId, $bindingId] = $this->conferenceFenceContext();
+        [$adapter] = $this->adapterWithRuntimeSummary(function (): array {
+            throw new AsteriskAriException(FailureClass::RuntimeUnavailable, 'ari_unreachable', 'ARI endpoint is unavailable.', true);
+        });
+
+        $result = $adapter->execute($this->fenceOperation($tenantId, $nodeId, $conferenceId, $bindingId));
+
+        $this->assertSame('retry_scheduled', $result['status']);
+        $this->assertSame('runtime_unavailable', $result['failure_class']);
+        $this->assertSame('ari_unreachable', $result['failure_code']);
+        $this->assertArrayNotHasKey('event_payload', $result);
+    }
+
+    public function test_asterisk_absence_verification_treats_partial_inspection_failure_as_failed_not_absent(): void
+    {
+        [$tenantId, $nodeId, $conferenceId, $bindingId] = $this->conferenceFenceContext(withParticipant: true);
+        [$adapter] = $this->adapterWithRuntimeSummary(function (string $participantId): array {
+            if ($participantId === '') {
+                return ['bridge_exists' => false];
+            }
+
+            throw new AsteriskAriException(FailureClass::InternalError, 'participant_inspection_failed', 'Participant inspection failed.', true);
+        });
+
+        $result = $adapter->execute($this->fenceOperation($tenantId, $nodeId, $conferenceId, $bindingId));
+
+        $this->assertSame('retry_scheduled', $result['status']);
+        $this->assertSame('internal_error', $result['failure_class']);
+        $this->assertSame('participant_inspection_failed', $result['failure_code']);
+        $this->assertArrayNotHasKey('event_payload', $result);
+    }
+
     public function test_listener_leases_are_node_scoped_and_fenced(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode();
@@ -851,6 +932,136 @@ final class AsteriskAriAdapterTest extends TestCase
 
         $this->assertSame(3, $payload['auth_generation']);
         $this->assertArrayNotHasKey('credential_version', $payload);
+    }
+
+    /**
+     * @return array{0:string,1:string,2:string,3:string}
+     */
+    private function conferenceFenceContext(bool $withParticipant = false): array
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $conferenceId = IdentityIds::new();
+        $bindingId = IdentityIds::new();
+        DB::table('conferences')->insert([
+            'id' => $conferenceId,
+            'tenant_id' => $tenantId,
+            'slug' => 'asterisk-fence-'.substr($conferenceId, 0, 8),
+            'display_name' => 'Asterisk Fence',
+            'runtime_node_id' => $nodeId,
+            'desired_state' => 'open',
+            'observed_state' => 'ready',
+            'configuration_generation' => 7,
+            'opened_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('conference_runtime_bindings')->insert([
+            'id' => $bindingId,
+            'tenant_id' => $tenantId,
+            'conference_id' => $conferenceId,
+            'runtime_node_id' => $nodeId,
+            'status' => 'active',
+            'bound_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        if ($withParticipant) {
+            $userId = IdentityIds::new();
+            $sessionId = IdentityIds::new();
+            DB::table('users')->insert([
+                'id' => $userId,
+                'email' => 'asterisk-fence-'.substr($userId, 0, 8).'@utcp.local.test',
+                'normalized_email' => 'asterisk-fence-'.substr($userId, 0, 8).'@utcp.local.test',
+                'display_name' => 'Asterisk Fence User',
+                'password' => 'not-used',
+                'status' => 'active',
+                'password_change_required' => false,
+                'session_version' => 1,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            DB::table('telephony_sessions')->insert([
+                'id' => $sessionId,
+                'tenant_id' => $tenantId,
+                'user_id' => $userId,
+                'status' => 'active',
+                'issued_at' => now(),
+                'expires_at' => now()->addHour(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            DB::table('conference_participants')->insert([
+                'id' => IdentityIds::new(),
+                'tenant_id' => $tenantId,
+                'conference_id' => $conferenceId,
+                'telephony_session_id' => $sessionId,
+                'user_id' => $userId,
+                'desired_state' => 'admitted',
+                'observed_state' => 'joined',
+                'role' => 'participant',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        return [$tenantId, $nodeId, $conferenceId, $bindingId];
+    }
+
+    /**
+     * @return array{0:AsteriskRuntimeAdapter,1:AsteriskAriClient}
+     */
+    private function adapterWithRuntimeSummary(callable $summary): array
+    {
+        $catalog = new AsteriskCatalog;
+        $client = new class($catalog, app(AsteriskAriProfileService::class), $summary) extends AsteriskAriClient
+        {
+            /**
+             * @var list<array{conference_id:string,participant_id:string}>
+             */
+            public array $calls = [];
+
+            private \Closure $summary;
+
+            public function __construct(AsteriskCatalog $catalog, AsteriskAriProfileService $profiles, callable $summary)
+            {
+                parent::__construct($catalog, $profiles);
+                $this->summary = $summary(...);
+            }
+
+            public function conferenceRuntimeSummary(string $tenantId, string $runtimeNodeId, string $conferenceId, ?string $participantId = null): array
+            {
+                unset($tenantId, $runtimeNodeId);
+                $this->calls[] = ['conference_id' => $conferenceId, 'participant_id' => $participantId ?? ''];
+
+                return ($this->summary)($participantId ?? '');
+            }
+        };
+
+        return [new AsteriskRuntimeAdapter($catalog, $client), $client];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function fenceOperation(string $tenantId, string $nodeId, string $conferenceId, string $bindingId): array
+    {
+        return [
+            'id' => 'operation-fence-1',
+            'tenant_id' => $tenantId,
+            'operation_type' => 'runtime.node.verify_conference_absent',
+            'aggregate_type' => 'conference',
+            'aggregate_id' => $conferenceId,
+            'runtime_node_id' => $nodeId,
+            'payload_version' => 1,
+            'payload' => [
+                'conference_id' => $conferenceId,
+                'former_runtime_binding_id' => $bindingId,
+                'former_runtime_node_id' => $nodeId,
+                'runtime_node_id' => $nodeId,
+                'configuration_generation' => 7,
+            ],
+        ];
     }
 
     /**

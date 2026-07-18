@@ -12,6 +12,8 @@ grep -q "'conference.participation'" apps/api/config/runtime_registry.php
 grep -q "telephony.sessions.create_own" apps/api/config/identity.php
 grep -q "conference.ensure" apps/api/config/telephony_domain.php
 grep -q "conference.participant.ensure" apps/api/config/telephony_domain.php
+grep -q "runtime.node.verify_conference_absent" apps/api/config/telephony_domain.php
+grep -q "verify_conference_absent" apps/api/app/Providers/AppServiceProvider.php
 grep -q "telephony_sessions_total" apps/api/app/Http/Controllers/Platform/MetricsController.php
 grep -q "conference_participant_reconciliation_total" apps/api/app/Http/Controllers/Platform/MetricsController.php
 grep -q "UTCPTelephonyConferenceReconciliationStuck" infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml
@@ -25,15 +27,21 @@ grep -q "bound_runtime_node_ready" apps/api/app/TelephonyDomain/TelephonyDomainS
 grep -q "where('observed_state', 'ready')" apps/api/app/TelephonyDomain/TelephonyDomainService.php
 grep -q "wakeTarget" apps/api/app/TelephonyDomain/TelephonyDomainService.php
 grep -q "class ConferenceFailoverCoordinator" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php
+grep -q "class RuntimeFencingCoordinator" apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php
+grep -q "failoverRebindConferenceAfterFence" apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php
+grep -q "required_fence_operation_id" apps/api/app/TelephonyDomain/TelephonyDomainService.php
+grep -q "conference.runtime_fence_verified" apps/api/app/RuntimeAdapters/Asterisk/AsteriskRuntimeAdapter.php
+grep -q "absent_verified" apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php
 grep -q "stale_observation_seconds" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php
 grep -q "for update skip locked" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php
 grep -q "whereIn('runtime_nodes.observed_state', self::QUALIFYING_BOUND_STATES)" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php
-grep -q "'replacement_desired_states' => self::AUTOMATIC_REPLACEMENT_DESIRED_STATES" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php
+grep -q "'replacement_desired_states' => self::AUTOMATIC_REPLACEMENT_DESIRED_STATES" apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php
 grep -q "telephony-domain:failover-coordinator {--once" apps/api/routes/console.php
 grep -q "Schedule::command('telephony-domain:failover-coordinator --once')->everyMinute()->withoutOverlapping()" apps/api/routes/console.php
 
 php -l apps/api/app/TelephonyDomain/TelephonyDomainService.php >/dev/null
 php -l apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php >/dev/null
+php -l apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php >/dev/null
 php -l apps/api/app/TelephonyDomain/Reconciliation/ConferenceReconciler.php >/dev/null
 php -l apps/api/app/TelephonyDomain/Reconciliation/ConferenceParticipantReconciler.php >/dev/null
 php -l apps/api/app/TelephonyDomain/Runtime/ConferenceOperationHandler.php >/dev/null
@@ -51,6 +59,16 @@ fi
 
 if rg -n "AsteriskAriClient|RuntimeAdapter|adapter_key.*asterisk|runtime_node_id.*allowlist|UTCP_.*(FAILOVER|REBIN[D]|RUNTIME_NODE|ALLOWLIST)" apps/api/app/TelephonyDomain/TelephonyDomainService.php apps/api/app/TelephonyDomain/Failover apps/api/app/Http/Controllers/TelephonyDomain apps/api/routes/web.php; then
   printf 'C5 controller/service boundary contains a vendor branch, allowlist, or environment-gated rebind path.\n' >&2
+  exit 1
+fi
+
+if rg -n "failoverRebindConference\\(" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php; then
+  printf 'C5 failover coordinator bypasses former-runtime absence verification.\n' >&2
+  exit 1
+fi
+
+if rg -n "hangup|deleteBridge|destroyBridge|ensureConferenceBridge|ensureParticipantChannel|removeParticipantChannel" apps/api/app/RuntimeAdapters/Asterisk/AsteriskRuntimeAdapter.php | grep -F "verifyConferenceAbsent"; then
+  printf 'C5 Asterisk absence verification is not read-only.\n' >&2
   exit 1
 fi
 

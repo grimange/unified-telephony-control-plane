@@ -7,6 +7,7 @@ use App\ControlPlane\Idempotency\IdempotencyConflict;
 use App\ControlPlane\Idempotency\IdempotencyStore;
 use App\ControlPlane\Messaging\EventEnvelope;
 use App\ControlPlane\Messaging\OutboxRepository;
+use App\ControlPlane\RuntimeOperations\OperationStatus;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\IdempotencyKey;
 use App\Identity\IdentityContext;
@@ -335,7 +336,8 @@ final class TelephonyDomainService
      *     expected_runtime_node_id?:string,
      *     qualifying_bound_states?:list<string>,
      *     replacement_desired_states?:list<string>,
-     *     ready_observation_grace_seconds?:int
+     *     ready_observation_grace_seconds?:int,
+     *     required_fence_operation_id?:string
      * }  $options
      * @return array<string, mixed>
      */
@@ -395,6 +397,18 @@ final class TelephonyDomainService
                 max(1, (int) $options['ready_observation_grace_seconds']),
             )) {
                 return ['status' => 'noop', 'reason' => 'bound_runtime_node_recently_ready'];
+            }
+            if (($options['required_fence_operation_id'] ?? null) !== null) {
+                $fenceFailure = $this->validateFailoverFenceEvidence(
+                    $tenantId,
+                    $conferenceId,
+                    $conference,
+                    $activeBinding,
+                    (string) $options['required_fence_operation_id'],
+                );
+                if ($fenceFailure !== null) {
+                    return $fenceFailure;
+                }
             }
 
             $requiredCapabilities = [
@@ -463,6 +477,23 @@ final class TelephonyDomainService
                 'conference' => $this->serializeConference($updated),
             ];
         });
+    }
+
+    /**
+     * @param  array{
+     *     expected_binding_id?:string,
+     *     expected_runtime_node_id?:string,
+     *     qualifying_bound_states?:list<string>,
+     *     replacement_desired_states?:list<string>,
+     *     ready_observation_grace_seconds?:int
+     * }  $options
+     * @return array<string, mixed>
+     */
+    public function failoverRebindConferenceAfterFence(ExecutionContext $context, string $tenantId, string $conferenceId, string $fenceOperationId, string $reason = 'former_runtime_absent_verified', array $options = []): array
+    {
+        return $this->failoverRebindConference($context, $tenantId, $conferenceId, $reason, array_merge($options, [
+            'required_fence_operation_id' => $fenceOperationId,
+        ]));
     }
 
     /**
@@ -782,6 +813,99 @@ final class TelephonyDomainService
             ->max('received_at');
 
         return is_string($latestReady) && Carbon::parse($latestReady)->lessThanOrEqualTo(now()->subSeconds($graceSeconds));
+    }
+
+    /**
+     * @return array{status:string,reason:string}|null
+     */
+    private function validateFailoverFenceEvidence(string $tenantId, string $conferenceId, object $conference, object $activeBinding, string $operationId): ?array
+    {
+        $operation = DB::table('runtime_operations')
+            ->where('id', $operationId)
+            ->lockForUpdate()
+            ->first();
+        if ($operation === null
+            || (string) $operation->tenant_id !== $tenantId
+            || (string) $operation->operation_type !== (string) config('telephony_domain.operation_types.verify_conference_absent', 'runtime.node.verify_conference_absent')
+            || (string) $operation->aggregate_type !== 'conference'
+            || (string) $operation->aggregate_id !== $conferenceId
+            || (string) $operation->runtime_node_id !== (string) $activeBinding->runtime_node_id
+        ) {
+            return ['status' => 'noop', 'reason' => 'fence_evidence_stale'];
+        }
+        if ((string) $operation->status !== OperationStatus::Succeeded->value) {
+            return ['status' => 'noop', 'reason' => 'fence_evidence_missing'];
+        }
+
+        $payload = $this->decodeJsonObject($operation->payload);
+        if ((string) ($payload['conference_id'] ?? '') !== $conferenceId
+            || (string) ($payload['former_runtime_binding_id'] ?? '') !== (string) $activeBinding->id
+            || (string) ($payload['former_runtime_node_id'] ?? '') !== (string) $activeBinding->runtime_node_id
+            || (int) ($payload['configuration_generation'] ?? 0) !== (int) $conference->configuration_generation
+        ) {
+            return ['status' => 'noop', 'reason' => 'fence_evidence_stale'];
+        }
+
+        $evidence = $this->completedFenceEvidencePayload($tenantId, $conferenceId, $operationId);
+        if ($evidence === null) {
+            return ['status' => 'noop', 'reason' => 'fence_evidence_missing'];
+        }
+        if ((string) ($evidence['conference_id'] ?? '') !== $conferenceId
+            || (string) ($evidence['former_runtime_binding_id'] ?? '') !== (string) $activeBinding->id
+            || (string) ($evidence['former_runtime_node_id'] ?? '') !== (string) $activeBinding->runtime_node_id
+            || (int) ($evidence['configuration_generation'] ?? 0) !== (int) $conference->configuration_generation
+        ) {
+            return ['status' => 'noop', 'reason' => 'fence_evidence_stale'];
+        }
+        if ((string) ($evidence['verification_result'] ?? '') !== 'absent') {
+            return ['status' => 'noop', 'reason' => 'fence_evidence_not_absent'];
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function completedFenceEvidencePayload(string $tenantId, string $conferenceId, string $operationId): ?array
+    {
+        $rows = DB::table('control_plane_outbox_messages')
+            ->where('tenant_id', $tenantId)
+            ->where('aggregate_type', 'conference')
+            ->where('aggregate_id', $conferenceId)
+            ->where('event_type', 'conference.runtime_fence_verified')
+            ->orderByDesc('created_at')
+            ->limit(25)
+            ->get();
+
+        foreach ($rows as $row) {
+            $payload = $this->decodeJsonObject($row->payload);
+            if ((string) ($payload['operation_id'] ?? '') === $operationId) {
+                return $payload;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function decodeJsonObject(mixed $value): array
+    {
+        if (is_array($value)) {
+            return $value;
+        }
+        if (is_object($value)) {
+            return get_object_vars($value);
+        }
+        if (! is_string($value) || trim($value) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($value, true);
+
+        return is_array($decoded) ? $decoded : [];
     }
 
     private function writeBinding(string $tenantId, string $conferenceId, string $runtimeNodeId, ?string $userId): void

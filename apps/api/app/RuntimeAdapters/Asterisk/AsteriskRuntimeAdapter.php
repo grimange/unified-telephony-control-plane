@@ -42,6 +42,7 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
                 'conference.close' => $this->closeConference($operation, $node),
                 'conference.participant.ensure' => $this->ensureParticipant($operation, $node),
                 'conference.participant.remove' => $this->removeParticipant($operation, $node),
+                'runtime.node.verify_conference_absent' => $this->verifyConferenceAbsent($operation, $node),
                 default => $this->failure(FailureClass::UnsupportedCapability, 'asterisk_operation_unsupported', 'Asterisk ARI adapter does not support this operation.'),
             };
         } catch (AsteriskAriException $exception) {
@@ -325,6 +326,86 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
             'configuration_generation' => (int) $result['configuration_generation'],
             'runtime_reference_present' => true,
         ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $operation
+     * @return array<string, mixed>
+     */
+    private function verifyConferenceAbsent(array $operation, object $node): array
+    {
+        $payload = $operation['payload'] ?? [];
+        if (! is_array($payload)) {
+            return $this->failure(FailureClass::InvalidRequest, 'invalid_absence_verification_payload', 'Conference absence verification payload is invalid.');
+        }
+
+        $conferenceId = (string) ($payload['conference_id'] ?? '');
+        $formerBindingId = (string) ($payload['former_runtime_binding_id'] ?? '');
+        $formerRuntimeNodeId = (string) ($payload['former_runtime_node_id'] ?? '');
+        $generation = (int) ($payload['configuration_generation'] ?? 0);
+        if ($conferenceId === '' || $formerBindingId === '' || $formerRuntimeNodeId === '' || $generation < 1 || $formerRuntimeNodeId !== (string) $node->id) {
+            return $this->failure(FailureClass::InvalidRequest, 'invalid_absence_verification_payload', 'Conference absence verification payload is invalid.');
+        }
+
+        $conference = DB::table('conferences')
+            ->where('id', $conferenceId)
+            ->where('tenant_id', (string) $node->tenant_id)
+            ->first();
+        $binding = DB::table('conference_runtime_bindings')
+            ->where('id', $formerBindingId)
+            ->where('tenant_id', (string) $node->tenant_id)
+            ->where('conference_id', $conferenceId)
+            ->where('runtime_node_id', $formerRuntimeNodeId)
+            ->first();
+        if ($conference === null || $binding === null) {
+            return $this->failure(FailureClass::InvalidRequest, 'absence_verification_context_not_found', 'Conference absence verification context is not valid.');
+        }
+
+        $bridgeSummary = $this->client->conferenceRuntimeSummary((string) $node->tenant_id, (string) $node->id, $conferenceId);
+        if ((bool) ($bridgeSummary['bridge_exists'] ?? false)) {
+            return $this->absenceVerificationCompleted($operation, $conferenceId, $formerBindingId, $formerRuntimeNodeId, $generation, 'present', [
+                'bridge_present' => true,
+                'participant_channel_present' => false,
+            ]);
+        }
+
+        $participantIds = DB::table('conference_participants')
+            ->where('tenant_id', (string) $node->tenant_id)
+            ->where('conference_id', $conferenceId)
+            ->orderBy('id')
+            ->pluck('id');
+        foreach ($participantIds as $participantId) {
+            $participantSummary = $this->client->conferenceRuntimeSummary((string) $node->tenant_id, (string) $node->id, $conferenceId, (string) $participantId);
+            if ((bool) ($participantSummary['participant_channel_exists'] ?? false)) {
+                return $this->absenceVerificationCompleted($operation, $conferenceId, $formerBindingId, $formerRuntimeNodeId, $generation, 'present', [
+                    'bridge_present' => false,
+                    'participant_channel_present' => true,
+                ]);
+            }
+        }
+
+        return $this->absenceVerificationCompleted($operation, $conferenceId, $formerBindingId, $formerRuntimeNodeId, $generation, 'absent', [
+            'bridge_present' => false,
+            'participant_channel_present' => false,
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $operation
+     * @param  array<string, mixed>  $extra
+     * @return array<string, mixed>
+     */
+    private function absenceVerificationCompleted(array $operation, string $conferenceId, string $formerBindingId, string $formerRuntimeNodeId, int $generation, string $result, array $extra): array
+    {
+        return $this->completed('conference.runtime_fence_verified', $operation, array_merge([
+            'operation_id' => (string) ($operation['id'] ?? ''),
+            'conference_id' => $conferenceId,
+            'former_runtime_binding_id' => $formerBindingId,
+            'former_runtime_node_id' => $formerRuntimeNodeId,
+            'configuration_generation' => $generation,
+            'verification_result' => $result,
+            'runtime_reference_present' => $result === 'present',
+        ], $extra));
     }
 
     /**

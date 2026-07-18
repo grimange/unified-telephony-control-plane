@@ -17,6 +17,7 @@ return [
         'conference_close' => 'conference.close',
         'participant_ensure' => 'conference.participant.ensure',
         'participant_remove' => 'conference.participant.remove',
+        'verify_conference_absent' => 'runtime.node.verify_conference_absent',
     ],
 
     'runtime_capabilities' => [

@@ -489,7 +489,12 @@ final class TelephonyDomainTest extends TestCase
         $this->readyObservation($tenantId, $nodeA, now()->subSeconds(301), 'coordinator-success-old-ready');
         DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
 
-        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-success-worker', 10);
+        $requested = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-success-worker', 10);
+        $this->assertSame(1, $requested['verification_requested']);
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->completeFenceOperationForConference($tenantId, $conference['id'], 'absent');
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-success-worker-2', 10);
 
         $updated = DB::table('conferences')->where('id', $conference['id'])->first();
         $this->assertSame(1, $summary['candidates']);
@@ -512,7 +517,7 @@ final class TelephonyDomainTest extends TestCase
             'status' => 'waiting',
             'desired_generation' => ((int) $updated->configuration_generation * 2),
         ]);
-        $this->assertDatabaseHas('control_plane_audit_records', ['action' => 'conference.failover_coordinator.eligible']);
+        $this->assertDatabaseHas('control_plane_audit_records', ['action' => 'conference.failover_coordinator.verification_requested']);
         $this->assertDatabaseHas('control_plane_audit_records', ['action' => 'conference.failover_coordinator.rebound']);
         $this->assertDatabaseHas('control_plane_audit_records', ['action' => 'conference.runtime_binding_replaced']);
     }
@@ -560,7 +565,12 @@ final class TelephonyDomainTest extends TestCase
         $this->readyObservation($tenantB, $nodeB, now()->subSeconds(600), 'coordinator-no-replacement-ready-b');
         DB::table('runtime_nodes')->where('id', $nodeB)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
 
-        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-replacement-worker', 10);
+        $requested = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-replacement-worker', 10);
+        $this->assertSame(2, $requested['verification_requested']);
+        $this->completeFenceOperationForConference($tenantA, $conferenceA['id'], 'absent');
+        $this->completeFenceOperationForConference($tenantB, $conferenceB['id'], 'absent');
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-replacement-worker-2', 10);
 
         $this->assertSame(2, $summary['candidates']);
         $this->assertSame(1, $summary['no_replacement']);
@@ -578,10 +588,13 @@ final class TelephonyDomainTest extends TestCase
         $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-idempotent-ready');
         DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
 
-        $first = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-idempotent-first', 10);
+        $requested = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-idempotent-first', 10);
+        $this->completeFenceOperationForConference($tenantId, $conference['id'], 'absent');
+        $first = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-idempotent-second', 10);
         $generationAfterFirst = (int) DB::table('conferences')->where('id', $conference['id'])->value('configuration_generation');
-        $second = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-idempotent-second', 10);
+        $second = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-idempotent-third', 10);
 
+        $this->assertSame(1, $requested['verification_requested']);
         $this->assertSame(1, $first['rebound']);
         $this->assertSame(0, $second['candidates']);
         $this->assertSame($nodeB, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
@@ -607,7 +620,11 @@ final class TelephonyDomainTest extends TestCase
         $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-draining-ready');
         DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'stale', 'updated_at' => now()]);
 
-        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-draining-worker', 10);
+        $requested = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-draining-worker', 10);
+        $this->assertSame(1, $requested['verification_requested']);
+        $this->completeFenceOperationForConference($tenantId, $conference['id'], 'absent');
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-draining-worker-2', 10);
 
         $this->assertSame(1, $summary['candidates']);
         $this->assertSame(1, $summary['no_replacement']);
@@ -617,6 +634,147 @@ final class TelephonyDomainTest extends TestCase
             'runtime_node_id' => $nodeB,
             'status' => 'active',
         ]);
+    }
+
+    public function test_failover_coordinator_does_not_duplicate_pending_absence_verification(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-pending-fence');
+        $this->runtimeNode($tenantId, 'coordinator-pending-fence-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-pending-fence');
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-pending-fence-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        $first = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-pending-fence-first', 10);
+        $second = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-pending-fence-second', 10);
+
+        $this->assertSame(1, $first['verification_requested']);
+        $this->assertSame(1, $second['verification_waiting']);
+        $this->assertSame(1, DB::table('runtime_operations')->where('operation_type', 'runtime.node.verify_conference_absent')->where('aggregate_id', $conference['id'])->count());
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->assertDatabaseMissing('control_plane_audit_records', ['action' => 'conference.failover_coordinator.rebound']);
+    }
+
+    public function test_present_absence_verification_blocks_rebind(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-present-fence');
+        $this->runtimeNode($tenantId, 'coordinator-present-fence-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-present-fence');
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-present-fence-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'stale', 'updated_at' => now()]);
+
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-present-fence-first', 10);
+        $this->completeFenceOperationForConference($tenantId, $conference['id'], 'present', ['bridge_present' => true]);
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-present-fence-second', 10);
+
+        $this->assertSame(1, $summary['former_runtime_present']);
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->assertSame((int) $conference['configuration_generation'], (int) DB::table('conferences')->where('id', $conference['id'])->value('configuration_generation'));
+        $this->assertDatabaseMissing('control_plane_audit_records', ['action' => 'conference.runtime_binding_replaced']);
+    }
+
+    public function test_stale_binding_absence_evidence_is_rejected_before_rebind(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-stale-binding-fence');
+        $nodeB = $this->runtimeNode($tenantId, 'coordinator-stale-binding-fence-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-stale-binding-fence');
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-stale-binding-fence-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-stale-binding-fence-first', 10);
+        $operationId = $this->completeFenceOperationForConference($tenantId, $conference['id'], 'absent');
+        DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->update(['status' => 'retired', 'unbound_at' => now(), 'updated_at' => now()]);
+        DB::table('conference_runtime_bindings')->insert([
+            'id' => IdentityIds::new(),
+            'tenant_id' => $tenantId,
+            'conference_id' => $conference['id'],
+            'runtime_node_id' => $nodeB,
+            'status' => 'active',
+            'bound_at' => now(),
+            'created_by' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('conferences')->where('id', $conference['id'])->update(['runtime_node_id' => $nodeB, 'updated_at' => now()]);
+        $this->readyObservation($tenantId, $nodeB, now()->subSeconds(600), 'coordinator-stale-binding-fence-ready-b');
+        DB::table('runtime_nodes')->where('id', $nodeB)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        $result = app(TelephonyDomainService::class)->failoverRebindConferenceAfterFence(
+            ExecutionContext::system(tenantId: $tenantId, reason: 'stale binding fence test'),
+            $tenantId,
+            $conference['id'],
+            $operationId,
+            options: ['expected_binding_id' => DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->value('id')],
+        );
+
+        $this->assertSame(['status' => 'noop', 'reason' => 'fence_evidence_stale'], $result);
+        $this->assertSame($nodeB, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+    }
+
+    public function test_stale_generation_absence_evidence_is_rejected_before_rebind(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-stale-generation-fence');
+        $this->runtimeNode($tenantId, 'coordinator-stale-generation-fence-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-stale-generation-fence');
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-stale-generation-fence-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-stale-generation-fence-first', 10);
+        $operationId = $this->completeFenceOperationForConference($tenantId, $conference['id'], 'absent');
+        DB::table('conferences')->where('id', $conference['id'])->update(['configuration_generation' => DB::raw('configuration_generation + 1'), 'updated_at' => now()]);
+
+        $result = app(TelephonyDomainService::class)->failoverRebindConferenceAfterFence(
+            ExecutionContext::system(tenantId: $tenantId, reason: 'stale generation fence test'),
+            $tenantId,
+            $conference['id'],
+            $operationId,
+        );
+
+        $this->assertSame(['status' => 'noop', 'reason' => 'fence_evidence_stale'], $result);
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->assertSame((int) $conference['configuration_generation'] + 1, (int) DB::table('conferences')->where('id', $conference['id'])->value('configuration_generation'));
+    }
+
+    public function test_same_absent_evidence_produces_one_authoritative_rebind(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-concurrent-fence');
+        $nodeB = $this->runtimeNode($tenantId, 'coordinator-concurrent-fence-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-concurrent-fence');
+        $bindingId = (string) DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->value('id');
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-concurrent-fence-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-concurrent-fence-request', 10);
+        $operationId = $this->completeFenceOperationForConference($tenantId, $conference['id'], 'absent');
+        $first = app(TelephonyDomainService::class)->failoverRebindConferenceAfterFence(
+            ExecutionContext::system(tenantId: $tenantId, reason: 'first fence consumption'),
+            $tenantId,
+            $conference['id'],
+            $operationId,
+            options: ['expected_binding_id' => $bindingId, 'expected_runtime_node_id' => $nodeA],
+        );
+        $second = app(TelephonyDomainService::class)->failoverRebindConferenceAfterFence(
+            ExecutionContext::system(tenantId: $tenantId, reason: 'second fence consumption'),
+            $tenantId,
+            $conference['id'],
+            $operationId,
+            options: ['expected_binding_id' => $bindingId, 'expected_runtime_node_id' => $nodeA],
+        );
+
+        $this->assertSame('rebound', $first['status']);
+        $this->assertSame(['status' => 'noop', 'reason' => 'active_binding_changed'], $second);
+        $this->assertSame($nodeB, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->assertSame((int) $conference['configuration_generation'] + 1, (int) DB::table('conferences')->where('id', $conference['id'])->value('configuration_generation'));
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+    }
+
+    public function test_failover_coordinator_has_no_direct_rebind_path(): void
+    {
+        $source = file_get_contents(app_path('TelephonyDomain/Failover/ConferenceFailoverCoordinator.php'));
+        $this->assertIsString($source);
+        $this->assertStringContainsString('RuntimeFencingCoordinator', $source);
+        $this->assertStringNotContainsString('failoverRebindConference(', $source);
+        $this->assertStringNotContainsString('failoverRebindConferenceAfterFence(', $source);
     }
 
     public function test_failover_coordinator_command_and_scheduler_registration_are_bounded(): void
@@ -859,6 +1017,61 @@ final class TelephonyDomainTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $overrides
+     */
+    private function completeFenceOperationForConference(string $tenantId, string $conferenceId, string $result, array $overrides = []): string
+    {
+        $operation = DB::table('runtime_operations')
+            ->where('tenant_id', $tenantId)
+            ->where('aggregate_type', 'conference')
+            ->where('aggregate_id', $conferenceId)
+            ->where('operation_type', 'runtime.node.verify_conference_absent')
+            ->orderByDesc('created_at')
+            ->first();
+        $this->assertNotNull($operation, 'Expected a pending conference absence verification operation.');
+        $payload = json_decode((string) $operation->payload, true, 512, JSON_THROW_ON_ERROR);
+        $evidence = array_merge([
+            'operation_id' => (string) $operation->id,
+            'adapter_key' => 'simulator-deterministic',
+            'operation_type' => 'runtime.node.verify_conference_absent',
+            'conference_id' => (string) $payload['conference_id'],
+            'former_runtime_binding_id' => (string) $payload['former_runtime_binding_id'],
+            'former_runtime_node_id' => (string) $payload['former_runtime_node_id'],
+            'configuration_generation' => (int) $payload['configuration_generation'],
+            'verification_result' => $result,
+            'runtime_reference_present' => $result === 'present',
+            'bridge_present' => (bool) ($overrides['bridge_present'] ?? false),
+            'participant_channel_present' => (bool) ($overrides['participant_channel_present'] ?? false),
+        ], $overrides);
+
+        DB::table('runtime_operations')->where('id', $operation->id)->update([
+            'status' => 'succeeded',
+            'completed_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('control_plane_outbox_messages')->insert([
+            'id' => EngineIds::new(),
+            'tenant_id' => $tenantId,
+            'aggregate_type' => 'conference',
+            'aggregate_id' => $conferenceId,
+            'event_type' => 'conference.runtime_fence_verified',
+            'event_version' => 1,
+            'payload' => json_encode($evidence, JSON_THROW_ON_ERROR),
+            'correlation_id' => (string) $operation->correlation_id,
+            'causation_id' => $operation->causation_id,
+            'request_id' => (string) $operation->request_id,
+            'occurred_at' => now(),
+            'available_at' => now(),
+            'attempt_count' => 0,
+            'dispatch_status' => 'pending',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return (string) $operation->id;
     }
 
     private function user(string $email): User

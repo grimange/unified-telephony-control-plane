@@ -6,10 +6,8 @@ use App\ControlPlane\Audit\AuditRepository;
 use App\ControlPlane\Messaging\EventEnvelope;
 use App\ControlPlane\Messaging\OutboxRepository;
 use App\ControlPlane\Shared\ExecutionContext;
-use App\TelephonyDomain\TelephonyDomainService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
 
 final class ConferenceFailoverCoordinator
@@ -19,13 +17,8 @@ final class ConferenceFailoverCoordinator
      */
     private const QUALIFYING_BOUND_STATES = ['unavailable', 'stale'];
 
-    /**
-     * @var list<string>
-     */
-    private const AUTOMATIC_REPLACEMENT_DESIRED_STATES = ['active'];
-
     public function __construct(
-        private readonly TelephonyDomainService $domain,
+        private readonly RuntimeFencingCoordinator $fencing,
         private readonly AuditRepository $audit,
         private readonly OutboxRepository $outbox,
     ) {}
@@ -48,29 +41,18 @@ final class ConferenceFailoverCoordinator
                 tenantId: (string) $candidate->tenant_id,
                 origin: 'telephony-domain:failover-coordinator',
             );
-            $this->recordOutcome($context, $candidate, 'eligible');
 
             try {
-                $result = $this->domain->failoverRebindConference(
+                $result = $this->fencing->evaluate(
                     $context,
-                    (string) $candidate->tenant_id,
-                    (string) $candidate->conference_id,
-                    'automatic_runtime_node_unavailable',
-                    [
-                        'expected_binding_id' => (string) $candidate->binding_id,
-                        'expected_runtime_node_id' => (string) $candidate->runtime_node_id,
-                        'qualifying_bound_states' => self::QUALIFYING_BOUND_STATES,
-                        'replacement_desired_states' => self::AUTOMATIC_REPLACEMENT_DESIRED_STATES,
-                        'ready_observation_grace_seconds' => $graceSeconds,
-                    ],
+                    $candidate,
+                    $graceSeconds,
                 );
                 $classification = $this->classifyResult($result);
                 $summary[$classification]++;
-                $this->recordOutcome($context, $candidate, $classification, (string) ($result['reason'] ?? $result['status'] ?? 'unknown'));
-            } catch (HttpExceptionInterface $exception) {
-                $classification = $this->classifyHttpException($exception);
-                $summary[$classification]++;
-                $this->recordOutcome($context, $candidate, $classification, mb_substr($exception->getMessage(), 0, 120));
+                if ($classification !== 'verification_waiting') {
+                    $this->recordOutcome($context, $candidate, $classification, (string) ($result['reason'] ?? $result['status'] ?? 'unknown'));
+                }
             } catch (Throwable $exception) {
                 $summary['failed']++;
                 $this->recordOutcome($context, $candidate, 'failed', mb_substr($exception->getMessage(), 0, 120));
@@ -150,30 +132,20 @@ final class ConferenceFailoverCoordinator
             return 'rebound';
         }
 
-        return match ((string) ($result['reason'] ?? 'unknown')) {
-            'bound_runtime_node_ready',
-            'bound_runtime_node_not_eligible',
-            'bound_runtime_node_recently_ready' => 'recovered_before_cutoff',
-            'replacement_runtime_node_not_distinct' => 'no_replacement',
-            'active_binding_changed' => 'concurrent_conflict',
-            'conference_not_open',
-            'active_binding_missing',
-            'bound_runtime_node_missing' => 'terminal_skip',
+        return match ((string) ($result['status'] ?? 'unknown')) {
+            'verification_requested',
+            'verification_waiting',
+            'former_runtime_present',
+            'former_runtime_unavailable',
+            'verification_failed',
+            'fence_evidence_stale',
+            'rebound',
+            'recovered_before_cutoff',
+            'no_replacement',
+            'concurrent_conflict',
+            'terminal_skip' => (string) $result['status'],
             default => 'concurrent_conflict',
         };
-    }
-
-    private function classifyHttpException(HttpExceptionInterface $exception): string
-    {
-        if ($exception->getStatusCode() === 404) {
-            return 'terminal_skip';
-        }
-
-        if ($exception->getStatusCode() === 422 && str_contains($exception->getMessage(), 'No eligible runtime node')) {
-            return 'no_replacement';
-        }
-
-        return 'concurrent_conflict';
     }
 
     private function recordOutcome(ExecutionContext $context, object $candidate, string $outcome, ?string $reason = null): void
@@ -202,6 +174,12 @@ final class ConferenceFailoverCoordinator
         return [
             'candidates' => 0,
             'eligible' => 0,
+            'verification_requested' => 0,
+            'verification_waiting' => 0,
+            'former_runtime_present' => 0,
+            'former_runtime_unavailable' => 0,
+            'verification_failed' => 0,
+            'fence_evidence_stale' => 0,
             'rebound' => 0,
             'recovered_before_cutoff' => 0,
             'no_replacement' => 0,

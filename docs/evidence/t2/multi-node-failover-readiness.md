@@ -1261,3 +1261,47 @@ A definitively terminated → coordinator verifies absence, fences, rebinds once
 reconstructs exactly one bridge/participant on B; both-node orphan inspection
 clean. Kubernetes-termination and Kamailio-signaling fences proven in their own
 later slices.
+
+## T5-A3 implemented repository gate
+
+T5-A3 cuts off the unsafe automatic path where
+`ConferenceFailoverCoordinator` could invoke `failoverRebindConference()`
+directly after durable RuntimeNode unavailability. ARI loss, stale health, or
+inspection failure is only control-plane connectivity evidence; it does not prove
+that the former Asterisk 20.20.1 process has destroyed its bridge or Local
+participant channels.
+
+The coordinator now delegates eligible candidates to `RuntimeFencingCoordinator`.
+That service creates or observes one idempotent generic runtime operation,
+`runtime.node.verify_conference_absent`, keyed to the former RuntimeNode, former
+RuntimeBinding authority, Conference, and current configuration generation. The
+Asterisk adapter handles the operation read-only against the operation-target
+former node. It reports:
+
+- `absent` only after successful inspection proves the Conference bridge is
+  absent and every participant channel associated with that Conference is absent.
+- `present` when any owned bridge or participant channel remains.
+- `unavailable` when the former runtime cannot be reached.
+- `failed` for partial inspection failure, malformed evidence, or internal
+  execution failure.
+
+Unreachable and partial inspection results never authorize rebind. Completed
+absence evidence is durable through the operation row plus bounded
+`conference.runtime_fence_verified` audit/outbox evidence.
+
+The authority cutoff remains in `TelephonyDomainService`. Production rebind now
+requires a completed fence operation ID, and the service validates the evidence
+inside the serialized rebind transaction against the current active binding,
+former RuntimeNode, Conference generation, open desired state, and sustained
+unavailable/stale bound-node eligibility. Stale binding evidence, stale
+generation evidence, recovered former runtimes, and non-absent results block
+rebind. Concurrent consumers of the same valid absent evidence produce one
+authoritative replacement, one active binding, and one generation increment.
+
+No schema, management route, manual failover command, direct coordinator-to-
+Asterisk path, direct binding write outside the domain service, feature gate,
+RuntimeNode allowlist, or fallback direct rebind path was introduced. External
+Kubernetes runtime-termination fencing, Kamailio signaling cutoff, second-node
+deployment, and live two-node acceptance remain later T5 work. The first
+two-node target remains control-plane reconstruction after verified absence, not
+seamless media migration.
