@@ -781,3 +781,483 @@ no schema, no manual authority, no live failover.
 proving the coordinator (not a manual call) triggers the single rebind after the
 sustained-unavailability grace, and does not trigger on a same-node Pod restart
 that recovers within the grace window.
+
+---
+
+# T5-A3 — Former Asterisk Runtime Fencing and Signaling-Cutoff Readiness
+
+Evidence-only audit at commit `cca57ea`, `UTCP_PHASE=T1`, 2026-07-18. Determines
+whether the automatic coordinator (T5-A2) is safe to invoke
+`failoverRebindConference` on ARI-unavailability alone. No live failover, no
+second node, no Kamailio/RuntimeBinding mutation.
+
+## Exact Asterisk version and image
+
+Asterisk **20.20.1** (LTS series 20). Deployed image
+`utcp-local-registry:5000/utcp/asterisk-ari:0.1.0-k1-dev` @
+`sha256:944c10598da6902d6c7bfb54493376f7219e640a4245c03de5204e32c2f429bb`,
+built FROM pinned base
+`andrius/asterisk:20@sha256:a27dae75b15343ac50ab7bf45eb0ca22681fd770a14863091c32883829cf3fc9`.
+`modules.conf` loads **no PJSIP, chan_sip, RTP, or udptl modules** — the current
+conference proof uses only ARI-originated `Local/participant@utcp-conference-proof`
+channels driven into a Stasis bridge; there is no SIP signaling into Asterisk and
+no RTP media plane in this build.
+
+## Official Asterisk sources consulted
+
+- ARI Getting Started (docs.asterisk.org): "**application code runs in a separate
+  process from Asterisk**" — the ARI app is an external controller, not the media
+  engine.
+- ARI Outbound Websockets: on a broken connection Asterisk **reconnects at a
+  configurable interval**; disconnection is a transport event, not a teardown.
+- ARI and Bridges — Bridge Operations: bridges are cleaned up by explicit
+  `bridge.destroy()`; there is **no automatic bridge destruction** on app
+  disconnect.
+- Community (asterisk.org): after a deliberate WebSocket close simulating a
+  network/power outage, on reconnect you **"retrieve a list of bridges … your
+  application was responsible for and attempt to delete them"** — i.e. bridges
+  and channels **persist** across the disconnect.
+- No official source describes any ARI/Stasis mechanism to move a bridge or
+  channel between separate Asterisk processes, or any distributed/cluster-wide
+  Stasis ownership. Bridge IDs, channel IDs, and Stasis app instances are
+  **local to one Asterisk process**; reusing the same Stasis app name on a second
+  Asterisk creates **no** cross-instance authority.
+
+## Exact-image validation (pinned 20.20.1)
+
+Direct read-only test in an ephemeral `--network none` container from the exact
+deployed image (`utcp-asterisk-ari:dev`, id `4ed3ab1d1711`, removed after):
+originated a `Local/hold@…` channel pair into `Wait(600)` with **no ARI
+application ever connected** (`utcp-t0-observation` not running). Result: both
+legs stayed `Up` in `Wait(600)` and persisted across repeated polls with zero
+control-plane connection. This directly confirms, against the pinned image, that
+Asterisk's core hosts channels/bridges/media **independently of ARI**.
+
+## ARI connection-loss behavior
+
+In UTCP, every listener transport fault — WebSocket read error/EOF, lost Stasis
+subscription (`ari_stasis_subscription_lost`), or failed periodic HTTP inspect —
+is ingested by `AsteriskAriEventListener::ingestFailure()` as a
+`connection_closed` event, which `AsteriskAriEventNormalizer` maps to
+`observed_state = 'unavailable'`. `markStale` independently flips any node with no
+observation for 300 s to `stale`. **Both `unavailable` and `stale` are
+control-plane-connectivity signals**, produced by loss of ARI reachability — not
+by any evidence that the Asterisk process, bridge, channels, or media stopped.
+
+## Bridge and channel lifetime
+
+Bridges and channels created via ARI persist until explicitly destroyed, until
+their channels hang up, or until the Asterisk process itself exits. ARI
+disconnection does none of these. A Stasis bridge whose controller vanished
+remains a live mixing/holding bridge in the core; its member channels keep
+running their applications.
+
+## SIP-dialog and RTP continuity
+
+In the **current** build there is no SIP or RTP plane, so there is nothing to
+continue there — the only runtime state is the local Stasis bridge + Local
+channels, which persist as above. In a **future** SIP/RTP-bearing build the
+distinction becomes sharper and worse: SIP dialogs are pinned to the node via
+Record-Route and RTP flows peer-to-peer or through a media relay, so both would
+continue on the former node entirely independent of ARI or even of Kamailio
+routing changes. The fencing contract must be defined now for that trajectory,
+not just the Local-channel present.
+
+## Distributed Asterisk limitations
+
+None available: no cross-process bridge/channel migration, no distributed Stasis
+ownership, node-local resource identifiers. Two-node failover is therefore always
+**reconstruction on the replacement**, never migration — and the former node's
+resources can only be removed by destroying them on that node or by terminating
+that node's process.
+
+## Current coordinator behavior
+
+`ConferenceFailoverCoordinator::sweepOnce` (scheduled `everyMinute`) selects open
+conferences whose bound node is `observed_state ∈ {unavailable,stale}` with no
+`ready` observation within the 300 s grace, and **directly calls
+`failoverRebindConference` (coordinator line 54)** for each. There is **no
+signaling fence, no runtime fence, and no old-resource inspection** between
+detection and rebind. The primitive rechecks only `observed_state !== 'ready'`
+under lock — the same control-plane signal — and then retires the binding, binds
+the replacement, bumps generation, and wakes reconstruction.
+
+## ARI-loss versus runtime-loss assessment
+
+**ARI loss does NOT imply runtime loss** (classification, backed by official docs
++ community + exact-image validation). `unavailable` is produced by ARI transport
+loss while Asterisk keeps running; `stale` occurs after 300 s of no observation,
+which a network partition or a dead *listener* produces just as readily as a dead
+*node*. The 300 s grace proves only "no ARI evidence for 5 minutes," **not**
+process termination. Same-node Pod restart is excluded by the grace (it
+re-projects `ready` well within 300 s), but a **network partition with the
+Asterisk process and its bridge/media still live is not excluded** — and that is
+exactly the split-brain case.
+
+## Failure-domain distinction
+
+| Case | Old bridge/channels exist? | Media/dialogs continue? | New SIP reachable? | UTCP inspect? | Reconstruct safe? | Extra fence needed |
+|---|---|---|---|---|---|---|
+| A ARI WS down, HTTP up | yes | yes (n/a today) | n/a today | partial | no | subscription/runtime fence |
+| B ARI down, process up | yes | yes | (would be) yes | no | **no** | runtime + signaling fence |
+| C Pod NotReady, process up | yes | yes | maybe | no | **no** | runtime + signaling fence |
+| D Pod deleted/terminated | no (process gone) | no | no | no | **yes** | none (termination *is* the fence) |
+| E endpoint removed, Pod up | yes | yes | no (new) | no | no | runtime fence (media persists) |
+| F Kamailio stops new routing | yes | yes (existing) | no (new) | maybe | partial | runtime fence still needed |
+| G existing dialogs remain | yes | yes | — | — | no | runtime fence |
+| H RTP continues despite isolation | yes | yes | — | — | no | runtime fence |
+| I node partitioned, endpoints live | yes | yes | maybe | no | **no — split-brain risk** | definitive runtime fence |
+| J host/Pod definitively terminated | no | no | no | no | **yes** | none |
+
+Only **D** and **J** (definitive termination) make reconstruction safe with no
+extra fence. Every "process still up" case (B, C, E, F, G, H, I) leaves the old
+runtime able to host the bridge/media, so control-plane rebinding alone is
+insufficient.
+
+## Kamailio signaling authority
+
+The deployed Kamailio (`kamailio-configmap.yaml`) is a **T1 registrar only**: its
+`request_route` handles `REGISTER` (with auth + `save("location")`), `OPTIONS`
+keepalive, and rejects every other method (`405`). There is **no dispatcher, no
+`t_relay` to Asterisk, and no Asterisk backend selection** — Kamailio does not
+route calls to Asterisk at all today, and RuntimeNode observed state does not feed
+any routing decision. So there is currently no signaling path to fence, but also
+**no existing mechanism to guarantee a former node receives no new signaling**
+once SIP call routing is added. Node-specific route identity, observed-state-driven
+route withdrawal, and persisted routing cutoff all remain to be built; signaling
+fencing would be performed adapter-neutrally through the registration/routing
+authority, not by the coordinator.
+
+## Kubernetes fencing capabilities
+
+The Asterisk Deployment has `replicas: 1`, `terminationGracePeriodSeconds: 30`, an
+exec readiness probe + tcpSocket liveness probe, **no preStop hook, no
+PodDisruptionBudget, no NetworkPolicy-based isolation primitive**, and a service
+account with `automountServiceAccountToken: false`. Crucially, **no Role/ClusterRole
+grants UTCP pod-delete or deployment-patch permission** — the control plane
+**cannot terminate or isolate an Asterisk Pod today**. UTCP can therefore observe
+Pod state via the API (a future adapter) but cannot yet *effect* a Kubernetes
+runtime fence. Distinguishing the states: Pod-NotReady and endpoint-removed do
+**not** stop the process/media; only container termination or Node loss does;
+network isolation stops UTCP's view without stopping the runtime.
+
+## Minimum former-runtime fencing invariant
+
+Before replacement reconstruction, all three must hold:
+
+```
+1. Control-plane fence  — former binding retired; former-node operations stale
+   (generation fence); former-node events rejected (active-binding join).
+   [ALREADY ENFORCED by the T5-A1 primitive, repository-proven.]
+2. Signaling fence      — the former node can receive no NEW conference signaling,
+   and a returning node cannot auto-re-enter routing for the failed Conference.
+   [NOT YET REQUIRED for Local-channel conferences; MANDATORY before SIP calls.]
+3. Runtime/media fence  — ONE of: (a) former Asterisk process definitively
+   terminated; (b) former runtime network-isolated from signaling+media;
+   (c) old Conference bridge/channels authoritatively verified absent; (d) an
+   external infrastructure fence guarantees the runtime cannot continue.
+   [NOT ENFORCED. This is the missing safety gate.]
+```
+
+Authority cutoff (1) may precede reconstruction, but reconstruction must not begin
+until (3) is satisfied (and (2) once SIP routing exists). For the **current
+Local-channel build**, fence (3c) "authoritative runtime-absence verification" is
+the cheapest sufficient form — but it must be *positively verified against the
+runtime*, not inferred from `unavailable`/`stale`, which is precisely what today's
+coordinator fails to do.
+
+## Safe failover ordering
+
+**Sequence D (verify-absence-first), escalating to C (external fence) —** the
+safest consistent with current contracts:
+
+```
+detect sustained unavailability (coordinator, existing)
+→ attempt authoritative runtime-absence verification of the former node's
+   bridge/channels (generic inspection operation)
+   → if authoritatively ABSENT (or the node's process/Pod is proven terminated):
+        record fence evidence → failoverRebindConference → reconstruct
+   → if PRESENT or UNVERIFIABLE (partition):
+        require an external fence (Kubernetes termination / isolation) via a
+        generic fencing operation → record fence evidence → then rebind
+→ no replacement after fence: remain waiting (no false projection)
+→ replacement reconstruction fails: existing reconciler waits/retries on the
+   new bound node
+→ former node recovers during fencing: fence intent is abandoned if the node
+   re-projects ready before cutoff (primitive's under-lock ready recheck already
+   backstops this)
+```
+
+Fencing begins in a fencing orchestrator (below), durable fence intent/evidence
+lives in the generic operation + audit tables, and `failoverRebindConference`
+runs **only after** fence evidence is recorded. No operator approval is required
+*for the Local-channel build* (absence verification is automatable); an
+irreversible Kubernetes termination is also automatable through a scoped adapter,
+so no manual step is mandated — but the coordinator must not rebind before the
+fence.
+
+## Fencing ownership
+
+**Combination with one orchestration authority:** a dedicated
+`RuntimeFencingCoordinator` (domain-layer, runtime-neutral) owns fence
+orchestration and evidence; it dispatches **generic runtime operations** for the
+runtime-specific actions, keeping Kubernetes/Kamailio specifics behind adapters:
+
+| Concern | Owner |
+|---|---|
+| eligibility (sustained unavailability) | existing `ConferenceFailoverCoordinator` candidate query |
+| fence orchestration + evidence + idempotency | new `RuntimeFencingCoordinator` (domain) |
+| runtime absence-verification / termination / isolation | generic operation executed by a runtime/infra **adapter** (Asterisk ARI inspect today; a Kubernetes runtime adapter later) |
+| signaling cutoff | Kamailio routing authority (later, when SIP routing exists) |
+| atomic rebind | existing `TelephonyDomainService::failoverRebindConference` |
+| replacement reconstruction | existing reconcilers |
+
+The domain layer stays runtime-neutral; no direct coordinator-to-kubectl or
+coordinator-to-Kamailio execution; fence evidence persists and survives restart;
+the generic operation's idempotency + the primitive's row locks prevent duplicate
+fencing; rebind is invoked only after the fence.
+
+## Fencing state and evidence
+
+Reuse existing generic infrastructure rather than new Conference columns:
+
+| Field/entity | Classification |
+|---|---|
+| fence request / evidence | **generic `runtime_operations` row + completion event** (reuse) — a `runtime_node.runtime.verify_absent` / `runtime_node.runtime.fence` operation carrying its result; no new table |
+| fence audit trail | **existing audit + outbox** (reuse) |
+| `former_runtime_node_id`, `replacement_reason` | **already carried** in the primitive's `conference.runtime_binding_replaced` payload |
+| `runtime_fence_status` / `..._at` on the conference | **not required / do not add** — do not overload Conference observed state with infrastructure-operation state |
+| `runtime_fence_generation` | derivable from Conference `configuration_generation`; not required |
+| a per-node "fenced" marker | **useful later** (to stop re-fencing a node with many conferences) — derivable from the node's operation history for the first slice |
+
+No new schema is required for the first slice; the generic operation + audit model
+accurately represents infrastructure fencing.
+
+## Generic operation reuse
+
+**Yes — use the existing generic operation engine.** Candidate operations
+(repository-consistent, target = the runtime node, node-scoped idempotency,
+generation-tagged, adapter-selected, claimed/retried by the command worker,
+completion evidence in the operation + outbox):
+`runtime_node.runtime.verify_absent` (Asterisk ARI adapter: inspect the former
+node for the conference bridge/channels; "absent" or "still present/unreachable"),
+and later `runtime_node.runtime.fence` (Kubernetes adapter: terminate/isolate the
+Pod) and `runtime_node.signaling.disable` (Kamailio authority: withdraw routing).
+These are **never** exposed as operator commands; they are internal operations the
+`RuntimeFencingCoordinator` dispatches. This keeps all runtime/infra mutation
+behind the adapter boundary — no coordinator-to-Kubernetes/Kamailio shelling.
+
+## Participant continuity contract
+
+Honest terminology, from repository + Asterisk behavior: SIP dialogs do **not**
+survive a hard node loss; channels **cannot** move between processes; RTP
+**cannot** be preserved. The first two-node acceptance target is
+**control-plane reconstruction only** — on the replacement node UTCP recreates the
+conference bridge and re-originates each `admitted` participant's `Local/` channel
+(participant desired state carries enough to recreate the proof leg; no external
+origination credential is needed for Local channels). It is **not** automatic
+participant redial, **not** signaling-dialog recovery, and **not** seamless media
+migration. Real SIP/WebRTC participants would require new dialogs / re-INVITE /
+re-admission — explicitly out of scope until a SIP-bearing build exists.
+
+## Local two-node proof topology (defined, not built)
+
+Node A and node B as two Deployments (`asterisk-ari-a`/`-b`) with distinct
+Services, Secrets, ARI endpoints, RuntimeNode records, listener leases, and event
+sources; internal-only ARI (no public SIP/RTP). Same Stasis app name is **safe**
+across the two separate processes (no cross-instance authority; each app instance
+is process-local). Bridge/channel IDs are already conference/participant-derived
+and node-local, so no additional qualification is needed (the active-binding join
+already fences by node). Node A is fenced (verify-absent or Pod termination)
+without touching node B; final orphan inspection must query **both** nodes' ARI
+for zero residual proof bridges/channels.
+
+## Failure-scenario assessment (fencing)
+
+1. Listener disconnect, Asterisk healthy → `unavailable`; **must NOT reconstruct**
+   until fence — today it would. 2. ARI HTTP unreachable, SIP/RTP continue → same.
+3. Pod NotReady, process up → same (media persists). 4. Endpoint gone, dialogs
+continue → same. 5. Kamailio removes A for new calls, existing dialogs remain →
+runtime fence still required. 6. Pod deleted cleanly → safe to reconstruct
+(termination is the fence) — but UTCP cannot *cause* this yet. 7. Node partitioned
+from control plane → **split-brain**: reconstruct only after external fence. 8.
+Reachable by endpoints, not by UTCP → same as 7. 9. Runtime fenced, signaling
+fence fails → block reconstruction (SIP build). 10. Signaling fenced, runtime
+termination fails → block until absence verified. 11. Fenced, no replacement →
+wait. 12. Replacement fails mid-reconstruction → reconciler retries on B. 13.
+Former node returns after cutoff → no reclaim (binding authority + generation).
+14. Delayed former-node events after rebind → dropped (normalizer join,
+test-locked). 15. Old operations after rebind → stale (generation, test-locked).
+16. Coordinator restarts during fencing → fence intent/evidence is durable in the
+operation row; re-derived. 17. Two workers fence same node → generic operation
+idempotency + `SKIP LOCKED`. 18. Fence unprovable → **do not reconstruct**;
+escalate to external fence or remain waiting.
+
+## Current coordinator safety classification
+
+```
+must be cut off until fencing exists
+```
+
+The coordinator invokes `failoverRebindConference` on control-plane
+unavailability alone. Control-plane authority cutoff (retire binding, stale ops,
+reject events) is safe and correct, but **replacement reconstruction that follows
+is unsafe**: for every "process still up" failure domain (B, C, E, F, G, H, I) the
+former Asterisk can still host the conference bridge/media, so reconstructing on a
+second node would create two live runtimes for one Conference (split-brain) the
+moment a second node and reconstruction exist. It is not yet a live hazard (single
+node; reconstruction has no second node to target), but the coordinator must not
+be allowed to reach automatic reconstruction before fencing is in place.
+
+## Exact unsafe path
+
+```
+The coordinator must not invoke failoverRebindConference directly
+until canonical former-runtime fencing evidence is satisfied.
+```
+
+Concretely: `ConferenceFailoverCoordinator::sweepOnce` →
+`ConferenceFailoverCoordinator.php:54` `$this->domain->failoverRebindConference(...)`.
+This direct call is the path to gate — it must be replaced by a call that first
+obtains durable fence evidence (absence-verified or externally fenced) and only
+then rebinds. It must **not** be preserved behind a fallback or feature flag.
+
+## T5-A3 implementation-readiness decision
+
+**B — coordinator requires a bounded pre-rebind fencing stage.** The required
+fence, its ownership, sequencing, generic-operation representation, the exact
+unsafe call path, and acceptance tests are all defined. The first slice inserts an
+authoritative runtime-absence verification gate before rebind (sufficient for the
+Local-channel build); the Kubernetes-termination and Kamailio-signaling fences are
+later slices layered on the same orchestrator.
+
+## T5-A3 first bounded implementation slice
+
+**Insert an authoritative former-runtime absence-verification gate between the
+coordinator's candidate detection and `failoverRebindConference`, using a generic
+runtime operation — repository-only, no live failover, no second node, no
+Kubernetes/Kamailio adapter.**
+
+- **Affected:** `ConferenceFailoverCoordinator` (stop calling the primitive
+  directly), a new `RuntimeFencingCoordinator` (or a bounded fencing step the
+  coordinator delegates to), a generic `runtime_node.runtime.verify_absent`
+  operation handled by the existing `AsteriskRuntimeAdapter` (reusing its
+  conference inspection), and the existing operation/audit infrastructure.
+- **Authority boundary:** domain-layer orchestration; runtime check via the
+  adapter; rebind still only in `TelephonyDomainService`; no coordinator-to-infra
+  execution.
+- **Transition:** candidate → dispatch `verify_absent` for the former node+conference
+  → on result `absent` (bridge and participant channels not present on the former
+  node) record fence evidence and invoke `failoverRebindConference` → on result
+  `present`/`unavailable`/`unverifiable`, do **not** rebind (record outcome, retry
+  next sweep; escalation to an external fence is a later slice).
+- **Legacy behavior to remove:** the direct
+  `failoverRebindConference` call at coordinator line 54 — replaced by the gated
+  path; no feature-flag fallback.
+- **Tests:** absence-verified former node → coordinator rebinds once; former node
+  still reporting the bridge/channels present → coordinator does not rebind, no
+  binding change; former node unverifiable (inspection unavailable) → no rebind;
+  idempotent re-sweep after a successful gated rebind creates no second change.
+- **Excludes:** Kubernetes runtime-fence adapter, Kamailio signaling cutoff,
+  second-node manifests, live failover, participant reconstruction changes.
+
+## Ready-to-paste Codex prompt (T5-A3)
+
+```
+# T5-A3 — Gate the failover coordinator behind authoritative former-runtime absence verification
+
+Repository-only slice at HEAD cca57ea. Keep UTCP_PHASE=T1. Do NOT create a second
+Asterisk node, run live failover, add a Kubernetes/Kamailio fence adapter, add
+schema, or add any manual failover/fence command as authority.
+
+Problem (proven in docs/evidence/t2/multi-node-failover-readiness.md §T5-A3):
+RuntimeNode observed_state 'unavailable'/'stale' is a CONTROL-PLANE connectivity
+signal (ARI transport loss / 300s no-observation). It does NOT prove the former
+Asterisk process, bridge, channels, or media stopped (Asterisk 20.20.1; bridges
+persist until explicitly destroyed; ARI runs in a separate process — validated
+against the pinned image). The coordinator today calls failoverRebindConference
+directly (ConferenceFailoverCoordinator.php:54), so replacement reconstruction
+could run while the former node still hosts the conference — split-brain once a
+second node exists. Insert an authoritative runtime-absence gate before rebind.
+
+1. Generic operation: add a runtime operation type 'runtime.node.verify_conference_absent'
+   (payload: tenant_id, conference_id, runtime_node_id, configuration_generation).
+   Handle it in AsteriskRuntimeAdapter::execute (new case) by reusing the existing
+   conference runtime inspection (conferenceRuntimeSummary / inspectConferenceRuntime)
+   against the given node+conference: complete with an event payload
+   {absent: bool, inspected: bool} where absent=true only when the inspection is
+   'observed' AND neither the conference bridge nor any participant channel is
+   present; inspected=false when the runtime is unavailable/unreachable. Never mutate
+   Asterisk. Keep it behind the adapter boundary; do not shell out.
+
+2. Fencing step: add App\TelephonyDomain\Failover\RuntimeFencingCoordinator (or a
+   bounded method the ConferenceFailoverCoordinator delegates to) that, for a
+   candidate (tenantId, conferenceId, formerRuntimeNodeId):
+   - creates/claims one idempotent runtime.node.verify_conference_absent operation
+     (idempotency keyed on former node + conference + generation), reusing the
+     existing RuntimeOperationRepository + command execution path (do NOT invent a
+     new worker; the existing command worker executes it);
+   - reads the completed operation's result:
+       absent=true  -> record durable fence evidence (audit + outbox
+                       'conference.runtime_fence_verified') and return "fenced";
+       absent=false or inspected=false or operation not yet complete
+                    -> return "not_fenced" (record outcome; do NOT rebind).
+   Do not add Conference columns; represent fence state via the operation row +
+   audit/outbox only.
+
+3. ConferenceFailoverCoordinator: REPLACE the direct
+   $this->domain->failoverRebindConference(...) call at line ~54 with:
+   only invoke failoverRebindConference when the fencing step returns "fenced";
+   otherwise classify the candidate as 'awaiting_fence' (new summary bucket) and
+   move on (retry next sweep). Keep the existing result/exception classification
+   for the rebind call that now runs only post-fence. No feature flag, no fallback
+   direct call.
+
+4. Tests (tests/Feature/TelephonyDomain/ or Failover/):
+   - former node inspection reports conference bridge+participant ABSENT ->
+     coordinator fences then rebinds once; exactly one active binding; generation
+     bumped.
+   - former node inspection reports the bridge/channels still PRESENT ->
+     coordinator does NOT rebind; binding unchanged; outcome 'awaiting_fence'.
+   - former node inspection UNAVAILABLE (inspected=false) -> no rebind, binding
+     unchanged.
+   - two consecutive sweeps after a successful gated rebind make no second binding
+     change (idempotent).
+   Build node/conference/binding/observation fixtures and a fake inspection result
+   as the existing failover/adapter tests do.
+
+5. Update docs/evidence/t2/multi-node-failover-readiness.md §T5-A3 with an
+   "implemented" note: the absence gate is in place; Kubernetes-termination and
+   Kamailio-signaling fences remain later slices.
+
+Verification (all must pass):
+  make repository-hygiene && make secret-scan
+  make runtime-engine-config-check && make telephony-domain-config-check
+  make asterisk-ari-config-check && make asterisk-conference-config-check
+  make runtime-engine-test && make telephony-domain-test
+  make asterisk-ari-test && make asterisk-conference-recovery-test
+  make test && make check && make build
+  git diff --check
+
+One scoped commit, e.g.:
+  feat(t5): gate conference failover behind former-runtime absence verification
+Do not push. Do not run live failover, a second Asterisk deployment, Asterisk
+scaling/Pod deletion, Kamailio changes, or the full recovery corridor suite.
+```
+
+## T5-A3 staged acceptance criteria
+
+**Repository acceptance:** the coordinator never rebinds without a recorded
+absence-verification fence result; `verify_conference_absent` is a generic
+operation executed via the adapter (no direct infra calls); fence evidence lives
+in the operation + audit/outbox (no Conference schema overload); the direct
+coordinator→primitive call at line 54 is removed (no fallback); focused tests
+green; no live failover, no second node.
+
+**Live acceptance (later, layered):** two nodes; node A hosts the conference; A
+made ARI-unavailable while its process still holds the bridge → coordinator
+verifies presence and **does not** reconstruct (proves split-brain prevention);
+A definitively terminated → coordinator verifies absence, fences, rebinds once,
+reconstructs exactly one bridge/participant on B; both-node orphan inspection
+clean. Kubernetes-termination and Kamailio-signaling fences proven in their own
+later slices.
