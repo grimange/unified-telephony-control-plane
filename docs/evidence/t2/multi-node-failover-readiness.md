@@ -2463,3 +2463,357 @@ bind the real client and prove one live scale-to-zero fence of a hard-failed nod
 followed by a single rebind + reconstruction on node B, with the guard proven to
 block fencing whenever node B is not ready; both-node orphan inspection clean;
 former node-A workload restored later without reclaiming.
+
+---
+
+# T5-A8 — Node-B Live Rollout, Existing-Node Identity, and Horizontal-Scale Readiness
+
+Evidence-only audit at commit `05fcecb`, `UTCP_PHASE=T1`, 2026-07-18. Resolves the
+safe transition from the live single-Asterisk topology to the first live
+two-RuntimeNode topology. Nothing applied, registered, scaled, or restarted.
+
+## Current live Asterisk identity
+
+| Concern | Live value |
+|---|---|
+| Deployment / Service | `asterisk-ari` / `asterisk-ari` (ns `utcp-runtime`, ClusterIP `10.43.29.130:8088`, 1/1) |
+| Pod labels / selector | `part-of=utcp`, `component=asterisk-ari`, `utcp.dev/runtime-node=local-asterisk-ari`, `utcp.io/network-role=asterisk-ari` |
+| Secret | `utcp-local-asterisk-ari-credentials` |
+| RuntimeNode id / slug | `1d15ca88-1f74-4192-ae36-4eb2b6ef9a3c` / `local-asterisk-ari` |
+| desired / observed | `active` / `ready` |
+| adapter_key / family | `asterisk-ari` / `asterisk` |
+| capabilities | `conference.lifecycle`, `conference.participation`, `event.stream`, `runtime.observation` |
+| endpoints | control/events/health → `asterisk-ari.utcp-runtime.svc.cluster.local:8088` |
+| credential | `ari-basic` `utcp_ari`, active v3 (v1/v2 retired) |
+| listener lease / event source | `asterisk-ari-events`, `claimed`, owned |
+| Stasis app | `utcp-t0-observation` |
+| **`labels`** | **`{"purpose":"t0-proof"}` — NO `kubernetes_workload`** |
+
+## Staged node-A identity
+
+The `local-two-asterisk` overlay's `node-a` renders a **fresh** `asterisk-ari-a`
+Deployment + Service, `utcp.dev/runtime-node=local-asterisk-ari-a`, secretRef
+`utcp-local-asterisk-ari-a-credentials`; its registration artifact declares slug
+`local-asterisk-ari-a` and `kubernetes_workload.deployment=asterisk-ari-a`. This is
+a **distinct** workload and RuntimeNode from the live `asterisk-ari`/`local-asterisk-ari`
+— not a rename of it. Deploying staged node-A would create a **third** Asterisk and
+a duplicate conceptual first node.
+
+## Selected first live two-node topology
+
+**Option A — keep the existing `asterisk-ari`/`local-asterisk-ari` as the first
+live node and deploy only staged node B (`asterisk-ari-b`/`local-asterisk-ari-b`).**
+The live node already fulfills the logical node-A role (active, ready, both
+conference capabilities, claimed lease). Rendering the `node-b` subtree produces
+only `Deployment/asterisk-ari-b` + `Service/asterisk-ari-b` (no namespace/SA — those
+live in the parent overlay), fully isolated from the live `asterisk-ari`; the
+reusable component renders B independently. Rejected: B (three processes, duplicate
+first-node identity, no proof needs it); C (renaming the live node changes Service
+DNS, RuntimeNode identity, listener/event-source, and endangers the active binding
+for zero benefit).
+
+## Existing-node transition decision
+
+No rename, no rollout, no re-registration of the live node. It stays exactly as-is
+and becomes "node A" logically. The only change it needs is the additive
+`kubernetes_workload` label (below), applied through the canonical API — not a
+workload change.
+
+## Required repository adjustment
+
+**Two bounded repository corrections are required before live rollout — this is
+the decisive finding.**
+
+1. **Structured-label rejection (blocker).** `RuntimeRegistryService::validatedLabels`
+   (line 538) requires **every label value to be a string** (`! is_string($value)`
+   → `InvalidArgumentException('Invalid placement label.')`). But the
+   `kubernetes_workload` label that the fence adapter's
+   `RuntimeNodeWorkloadIdentityResolver` reads — and that **every** node-A/B
+   `*.registration.json` provides — is a nested object
+   `{"namespace","deployment"}`. Therefore **`POST /api/v1/admin/runtime-nodes` (and
+   `PATCH`) would reject the staged node-B payload**, and would equally reject
+   adding `kubernetes_workload` to the existing live node. `AsteriskTwoNodeTopologyTest`
+   only asserts the JSON artifact shape; it never posts it through the API, so this
+   gap is untested. The registry must accept the structured `kubernetes_workload`
+   label (validate namespace+deployment as DNS labels, namespace = canonical
+   `utcp-runtime`) while keeping all other labels flat strings.
+2. **Existing-node workload identity (blocker for fencing).** The live RuntimeNode's
+   `labels` = `{"purpose":"t0-proof"}` has no `kubernetes_workload`. Until (1) lands
+   and the label is added via `PATCH /runtime-nodes/{id}`, the fence adapter cannot
+   resolve the live node's workload (it would return `target_mismatch`). This does
+   not block node-B *readiness*, but it blocks ever fencing the existing node.
+
+A dedicated **`local-add-asterisk-b` incremental overlay** is **not strictly
+required** — the existing `overlays/local-two-asterisk/node-b` subtree already
+renders exactly the node-B-only resources and can be applied against the live
+namespace without disturbing `asterisk-ari`. A thin convenience overlay wrapping
+`node-b` + a node-B `secretGenerator` (the two-asterisk overlay has **no**
+secretGenerator — credentials Secrets must be created separately) would be a
+nice-to-have, not a blocker.
+
+## Canonical node-B registration sequence
+
+Several authenticated C2 requests (all routes confirmed present in `routes/web.php`),
+per the `local-asterisk-ari-b.registration.json` artifact, in order:
+`POST /runtime-nodes` (create, with labels incl. `kubernetes_workload`) →
+`POST /runtime-nodes/{id}/endpoints` ×3 (control/events/health →
+`asterisk-ari-b.utcp-runtime.svc.cluster.local`) →
+`POST /runtime-nodes/{id}/credentials` (ari-basic, identifier + secret) →
+`PUT /runtime-nodes/{id}/capabilities` (the four caps) →
+`PUT /runtime-nodes/{id}/adapter-configuration` (Stasis app + timeouts) →
+`POST /runtime-nodes/{id}/desired-state` (`active`). Answers: it is **several**
+requests, not one; the **credentials** request creates the canonical write-only
+encrypted credential; the artifact carries a **placeholder secret + a
+`kubernetes_secret` reference** (no real plaintext); each request is idempotent
+(per-request `idempotency_key`); a duplicate slug returns the existing node via the
+create idempotency fingerprint; a re-run resolves rather than duplicates; a partial
+failure is re-driven by re-running the remaining idempotent requests (reconciled,
+not auto-rolled-back); the authenticated actor is a platform admin session with
+`runtime.nodes.manage`/`runtime.credentials.rotate`. **No SQL or seeding.**
+
+## Credential authority and projection
+
+Two deterministic projections of **one** ARI username/password: (a) the canonical
+write-only encrypted credential record (`runtime_node_credentials`, created via
+`POST …/credentials`, fingerprinted, rot/retire supported) that the ARI adapter
+uses to authenticate; and (b) the Kubernetes Secret
+`utcp-local-asterisk-ari-b-credentials` (env `secretRef`) that configures Asterisk's
+own ARI user. Non-secret inputs: Secret name + keys (ARI username/password env),
+the ARI username (`identifier`). The two copies must be generated from the same
+material to avoid drift; the canonical authority is the C2 credentials API + the
+operator-supplied Secret, generated together by the deployment tooling. No credential
+projection automation exists linking the Secret to the record — they are created in
+the same rollout step. Real credentials are **not** generated in this audit.
+
+## Listener multi-node readiness
+
+Proven in prior audits and re-confirmed: `AsteriskAriEventListener::eligibleNodes()`
+selects **all** `adapter_key='asterisk-ari'` active nodes and maintains a per-node
+`connections` map; leases and event epochs are keyed **per RuntimeNode / event
+source**; `asterisk-ari:ensure-targets` targets every such node. So one listener
+process connects to `local-asterisk-ari` **and** `local-asterisk-ari-b`
+simultaneously; one node's reconnect cannot steal another's lease (lease keyed by
+event source); epochs and health observations are node-specific; the same Stasis
+app name is safe across separate processes (per-instance, verified T5-A3/A4); the
+listener assumes no fixed count. **No listener restart is required** after canonical
+node-B registration — the running listener discovers the new eligible node on its
+next sweep and claims it.
+
+## Node-B replacement eligibility
+
+Node B becomes selectable when `desired_state=active` AND `observed_state=ready` AND
+both `conference.lifecycle`+`conference.participation` present AND it is distinct
+from the former node. Timeline: registration (`desired_state=active`) → listener
+claim + ARI/Stasis health → `runtime_info_observed` → projector writes
+`observed_state=ready` → `selectRuntimeNodeForConference` (orders all eligible by
+`runtime_family,adapter_key,id`, `.first()`, exclude-former) sees it. The
+per-minute `asterisk-ari:ensure-targets`/reconciler sweeps drive readiness; **no
+manual reconciliation command is required**.
+
+## Existing-node workload identity
+
+**Missing.** The live node's `labels` lack `kubernetes_workload`, and the live
+Deployment does carry the ownership labels the adapter checks
+(`part-of=utcp`, `component=asterisk-ari`, `utcp.dev/runtime-node=local-asterisk-ari`).
+Correction (after the structured-label fix): `PATCH /api/v1/admin/runtime-nodes/{id}`
+with `labels` merged to include
+`{"kubernetes_workload":{"namespace":"utcp-runtime","deployment":"asterisk-ari"}}`
+plus the existing `purpose`. Canonical API, no schema, no SQL, not mutated in this
+audit. Not inferred from the endpoint hostname (per rule).
+
+## Horizontal-scale assessment
+
+**N-node clean.** Canonical selection (`selectRuntimeNodeForConference` — orderBy +
+`.first()` over all eligible), listener (`eligibleNodes` iterates all), registration
+API, and fence resolver (reads each node's own `kubernetes_workload`) carry **no
+fixed-two-node assumption** (scan of `apps/api/app` found only unrelated byte-offset
+arithmetic and event-type strings). Adding node C requires only: a new isolated
+workload (component invocation with suffix `-c`), a new canonical RuntimeNode
+registration, and a new credential identity — **no control-plane code change**. The
+A/B naming lives only in proof artifacts (`validate-ab-topology`, the
+`local-two-asterisk` overlay, `AsteriskTwoNodeTopologyTest`, the two registration
+JSONs) — acceptable proof-specific scope. The reusable `components/asterisk-instance`
+instantiates node C via a new overlay dir (nameSuffix `-c` + runtime-node patch)
+without copying implementation or editing canonical code.
+
+## Fixed-two-node assumptions
+
+Acceptable (proof-specific): `validate-ab-topology`, the `local-two-asterisk`
+overlay `node-a`/`node-b`, `AsteriskTwoNodeTopologyTest`, the two `*.registration.json`.
+Unacceptable platform assumptions: **none found** — the selector, listener,
+registration API, fence resolver, and status tooling are all node-count-agnostic.
+
+## Non-destructive validation
+
+1. `kubectl kustomize infrastructure/kubernetes/overlays/local-two-asterisk/node-b`
+   (renders `asterisk-ari-b` only). 2. `kubectl apply --dry-run=server -f -` piped
+   from that render (v1.35 GA; validates against the live API + admission, no
+   persist). 3. Secret-name collision: assert `utcp-local-asterisk-ari-b-credentials`
+   ∉ existing `utcp-runtime` Secrets. 4. Service-selector: node-B Service selects
+   only `utcp.dev/runtime-node=local-asterisk-ari-b`. 5. Endpoint DNS: node-B endpoints
+   resolve to `asterisk-ari-b.utcp-runtime.svc.cluster.local`. 6. Registration-payload
+   schema validation (the `utcp.runtime-node-registration.v1` shape). 7. Duplicate
+   RuntimeNode: `GET /runtime-nodes` shows no `local-asterisk-ari-b`. 8. Listener
+   eligibility (read-only DB: node not yet present). 9. Workload-identity match
+   (node-B `kubernetes_workload.deployment` == rendered Deployment name). 10.
+   Replacement-selector read-only proof (query returns the live node today; would
+   return B once ready). No apply, no real credential.
+
+## Checkpointed live rollout (later, not executed)
+
+1. Render + server-side dry-run node-B resources (rollback: none — read-only). 2.
+Create node-B credential material through canonical tooling (rollback: retire the
+credential). 3. Create the node-B Kubernetes Secret (rollback: delete the Secret).
+4. Apply node-B Deployment + Service (rollback: delete both; live `asterisk-ari`
+untouched). 5. Wait for Pod + Service readiness (rollback: delete node-B workload).
+6. Register node B through the C2 API — create/endpoints/credential/capabilities/
+adapter-config/desired-state (rollback: `desired_state=disabled`, retire credential).
+7. Wait for listener claim + ARI/Stasis readiness. 8. Prove node B `observed_state=ready`
++ capability-complete. 9. Prove the replacement selector sees a distinct eligible
+node. 10. **Only afterward** deploy fencing RBAC + the infrastructure worker + token
+(the last, separate step that activates live fencing). Registration should occur
+**after** the Deployment/Service are reachable (step 6 after step 5) so the listener
+can immediately claim and prove ARI/Stasis health; registering before reachability
+would leave the node `active` but never `ready`.
+
+## Rollback plan
+
+Every checkpoint is independently reversible without touching the live node:
+pre-apply steps are read-only; Secret/Deployment/Service are deletable; registration
+is reversible via `desired_state=disabled` + credential retire (the listener releases
+the lease and the node drops out of eligibility). The live `asterisk-ari` node and
+all active RuntimeBindings are never modified at any checkpoint.
+
+## Live readiness acceptance
+
+Later node-B readiness proof requires: live node still healthy; node-B Deployment
+ready; node-B Service has only the node-B endpoint; node-B ARI endpoint authenticated;
+node-B listener lease owned; node-B event epoch created; node-B Stasis app active;
+node-B `observed_state=ready`; both conference capabilities present; the replacement
+selector identifies a distinct eligible node; zero active proof Conference resources;
+**no fencing worker active yet**. Failover is **not** required in the node-B readiness
+proof.
+
+## Provider Node management alignment
+
+All node-B lifecycle (create, endpoints, credentials, capabilities, adapter config,
+desired state, workload-identity label, health/readiness) flows through the C2
+`/api/v1/admin/runtime-nodes` API — the same authority a future **Provider Node Admin
+UI** would call. The registration JSON artifacts are **declarative API request
+descriptions**, not a competing authority; the deployment tooling is a trusted API
+client. No artifact writes state directly. The UI is not implemented here.
+
+## T5-A8 existing implementation
+
+Reusable `components/asterisk-instance`; `local-two-asterisk` overlay (node-a/node-b);
+node-A/node-B registration JSON artifacts (canonical API request descriptions with
+`kubernetes_workload`); `validate-ab-topology`; multi-node listener/selector/registration
+(N-node clean); fence adapter + resolver reading per-node `kubernetes_workload`;
+`AsteriskTwoNodeTopologyTest` (artifact-shape validation).
+
+## T5-A8 missing implementation
+
+(1) Registry acceptance of the structured `kubernetes_workload` label (blocker —
+the canonical API currently rejects it); (2) the existing live node's
+`kubernetes_workload` label via canonical `PATCH` (blocked by #1); then the live
+rollout itself: node-B Secret + Deployment + Service, canonical node-B registration,
+listener-claim/observed-ready proof, and later the fencing RBAC/worker/token.
+
+## T5-A8 implementation-readiness decision
+
+**A — Codex repository implementation is required before live rollout.** The
+canonical registration API cannot accept the structured `kubernetes_workload` label
+that every registration artifact and the fence resolver require, so neither node B
+nor the existing-node workload-identity correction can be registered canonically
+until the registry label validation is generalized. This is a small, unambiguous,
+repository-testable correction and is the earliest dependency.
+
+## T5-A8 next bounded task
+
+Generalize `RuntimeRegistryService` label validation to accept the structured
+`kubernetes_workload` object (namespace + deployment as DNS-1123 labels, namespace
+constrained to the canonical runtime namespace) alongside flat string labels, on
+both create and update, and prove via an API-level test that a node registered with
+`kubernetes_workload` round-trips and resolves through `RuntimeNodeWorkloadIdentityResolver`.
+
+## Ready-to-paste next prompt (T5-A9)
+
+```
+# T5-A9 — Accept structured kubernetes_workload RuntimeNode label in the canonical registry
+
+Repository-only slice at HEAD 05fcecb. Keep UTCP_PHASE=T1. Do NOT deploy node B,
+create Secrets, register RuntimeNodes live, apply RBAC, or run live failover.
+
+Problem (docs/evidence/t2/multi-node-failover-readiness.md §T5-A8):
+RuntimeRegistryService::validatedLabels rejects any label value that is not a
+string, but the Kubernetes fence adapter's RuntimeNodeWorkloadIdentityResolver
+reads a nested labels.kubernetes_workload = {namespace, deployment}, and every
+infrastructure/runtime-nodes/asterisk-ari/*.registration.json provides it as a
+nested object. So POST/PATCH /api/v1/admin/runtime-nodes would reject the staged
+node-B payload and cannot add kubernetes_workload to the existing live node. Fix
+the registry to accept this one structured label while keeping all others flat.
+
+1. RuntimeRegistryService::validatedLabels: keep the existing flat-string rule for
+   every label key EXCEPT the reserved key 'kubernetes_workload'. For that key,
+   require an array with exactly 'namespace' and 'deployment' string values, each
+   matching DNS-1123 label rules (^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$), and
+   require namespace === the canonical runtime namespace constant used by
+   RuntimeNodeWorkloadIdentityResolver (utcp-runtime). Reject any other nested
+   value. Preserve JSON encoding of the full labels object (the resolver already
+   decodes labels.kubernetes_workload as a nested array).
+
+2. Confirm createNode and updateNode both route through the generalized validator
+   (they already call validatedLabels), so create and PATCH both accept the
+   structured label. Do not change the runtime_nodes schema (labels stays JSON).
+
+3. Do not change RuntimeNodeWorkloadIdentityResolver, the fence adapter, the
+   controller validation rules beyond what is needed to pass labels through, or
+   any manifest.
+
+4. Tests (tests/Feature/RuntimeRegistry/ and/or Infrastructure/):
+   - POST /api/v1/admin/runtime-nodes with labels.kubernetes_workload
+     {namespace: utcp-runtime, deployment: asterisk-ari-b} succeeds (201) and the
+     stored node's labels round-trip the nested object via GET.
+   - the same value resolves through RuntimeNodeWorkloadIdentityResolver to
+     namespace=utcp-runtime, deployment=asterisk-ari-b.
+   - PATCH adds kubernetes_workload to an existing node whose labels previously had
+     only flat string labels (e.g. purpose), preserving the flat label.
+   - rejection cases: kubernetes_workload with a non-utcp-runtime namespace; with a
+     malformed DNS deployment; with extra keys; a non-kubernetes_workload label with
+     a nested/object value still rejected.
+   - a flat string label (e.g. purpose=t0-proof) still works unchanged.
+
+5. Update docs/evidence/t2/multi-node-failover-readiness.md §T5-A8 with an
+   "implemented" note: the registry now accepts kubernetes_workload; live node-B
+   rollout and the existing-node label PATCH can proceed as the next Claude Code
+   step.
+
+Verification (all must pass):
+  make repository-hygiene && make secret-scan
+  make runtime-engine-config-check && make telephony-domain-config-check
+  make asterisk-ari-config-check && make asterisk-conference-config-check
+  make runtime-engine-test && make telephony-domain-test
+  make asterisk-ari-test && make asterisk-conference-recovery-test
+  make test && make check && make build
+  git diff --check
+
+One scoped commit, e.g.:
+  feat(t5): accept structured kubernetes_workload RuntimeNode label
+Do not push. Do not deploy node B, apply manifests, register nodes live, or run
+live failover.
+```
+
+## T5-A8 staged acceptance criteria
+
+**Repository acceptance (T5-A9):** the canonical create/update API accepts
+`labels.kubernetes_workload = {namespace, deployment}` (DNS-validated, namespace =
+utcp-runtime) and rejects malformed/foreign-namespace/other nested labels; the value
+round-trips and resolves through the fence identity resolver; flat labels unchanged;
+no schema change; focused tests green.
+
+**Live acceptance (later Claude Code, Option A topology):** PATCH the existing live
+node to add its `kubernetes_workload`; render + server-side dry-run node-B; create the
+node-B Secret + credential; apply node-B Deployment/Service; register node B through
+the C2 API; prove listener claim + `observed_state=ready` + capability-complete +
+distinct-replacement-selectable, with the live node undisturbed and no fencing worker
+active. Fencing RBAC/worker/token and two-node failover remain separate later slices.
