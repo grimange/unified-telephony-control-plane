@@ -3254,3 +3254,165 @@ node hosting live state.
 ## T5-A11 rollback
 
 None performed (audit only).
+
+---
+
+# T5-A12 — Durable node-A recreation (done) and fencing activation (blocked by manifest defect)
+
+Checkpointed live implementation at commit `a9487b9`, `UTCP_PHASE=T1`,
+2026-07-18. The node-A durable isolation correction **succeeded**; the
+fencing-worker activation **hit a committed-manifest namespace defect** and was
+rolled back cleanly. No scale-to-zero, no Pod deletion, no failover, no
+RuntimeBinding mutation.
+
+## Node-A Deployment replacement (succeeded)
+
+Preconditions reconfirmed immediately before mutation (zero open conferences,
+zero live channels/bridges, zero fence ops, node B ready). Captured the live
+node-A Deployment (UID `358198fc…`, 2-label immutable selector) to an untracked
+`0600` rollback file. Rendered the canonical node-A Deployment via
+`overlays/local/runtime` (registry image, unchanged secret/SA/probes/resources/
+securityContext; 3-label selector + template `utcp.dev/runtime-node=local-asterisk-ari`).
+`kubectl apply --dry-run=server` confirmed the immutable-selector conflict (Option
+C), so performed `kubectl replace --force`: the conflicting Deployment was deleted
+and recreated (new Deployment UID `94546f77…`, new Pod `asterisk-ari-69bcc8f79f-tmmxw`
+UID `030c033c…`). Rollout completed 1/1.
+
+## Durable selector and Pod template (proven)
+
+The new Deployment selector, Pod template, **and** the new Pod all carry
+`utcp.dev/runtime-node=local-asterisk-ari` — the label now derives from the
+Deployment template, not a manual `kubectl label`. A future Pod recreation will
+inherit it automatically.
+
+## Node-A Service isolation (durable, proven)
+
+Without any manual pod labeling, the node-A Service EndpointSlice selects only the
+new node-A Pod (`asterisk-ari-69bcc8f79f-tmmxw`); node-B Service selects only the
+node-B Pod. Neither Service crosses to the other node.
+
+## Node-A runtime recovery (proven)
+
+No listener restart. Node A returned to `observed_state=ready` with its lease
+claimed within one sweep; RuntimeNode id/slug unchanged (`1d15ca88…`/
+`local-asterisk-ari`), `kubernetes_workload.deployment=asterisk-ari` intact,
+desired `active`, credential/endpoints unchanged, Stasis app `utcp-t0-observation`
+active on the new Pod, ARI auth 200, a fresh event epoch opened. Node B stayed
+active/ready; the 76 historical bindings were untouched; **zero failover/fence
+operations were created**.
+
+## Fencing activation — blocked by a committed-manifest namespace defect
+
+RBAC applied cleanly and its effective permissions were exactly correct
+(impersonating `system:serviceaccount:utcp-runtime:utcp-runtime-fencer`): **allowed**
+`get/list deployments`, `get/patch deployments --subresource=scale`, `get/list
+pods` in `utcp-runtime`; **denied** `patch deployments` (full), `update
+deployments --subresource=scale`, `get secrets`, `delete pods`, `update services`,
+and any `utcp-platform` access. No ClusterRole; SA `automountServiceAccountToken:false`.
+
+The **worker Deployment failed**: `CreateContainerConfigError — configmap
+"utcp-application-config" not found`. The committed `components/runtime-fencing`
+places the worker **and** its ServiceAccount in `utcp-runtime`, but the worker's
+`envFrom` references `utcp-application-config` (ConfigMap) and
+`utcp-local-data-credentials` (Secret) — which exist **only in `utcp-platform`**
+(ConfigMaps/Secrets are namespace-scoped). No overlay wires the component into
+`utcp-platform`. So the worker cannot obtain its DB/app configuration and cannot
+start. This is a **genuine repository manifest defect**, not a live-environment
+issue.
+
+Per the rollback contract, the fencing resources were deleted in order (worker →
+RoleBinding → Role → ServiceAccount). Final state: fencing fully absent, zero fence
+operations ever created, both nodes active/ready, both Services isolated, node-A
+durable recreation preserved.
+
+## Required correction (bounded, for Codex)
+
+The fence worker must run where its app config/secret live (`utcp-platform`, with
+the sibling workers), while the fencer Role stays namespaced to `utcp-runtime`
+(the Asterisk Deployments it scales). Correct cross-namespace shape:
+
+- `ServiceAccount/utcp-runtime-fencer` → **`utcp-platform`** (Pod SAs must be in
+  the Pod's namespace), `automountServiceAccountToken:false`.
+- Worker `Deployment/utcp-runtime-fence-worker` → **`utcp-platform`**, keeping the
+  projected token + `kube-root-ca.crt` and the `utcp-platform` config/secret
+  `envFrom`.
+- `Role/utcp-runtime-fencer` → stays in **`utcp-runtime`** (unchanged rules).
+- `RoleBinding/utcp-runtime-fencer` → stays in **`utcp-runtime`**, `roleRef` the
+  `utcp-runtime` Role, `subjects` the `utcp-platform` ServiceAccount (RoleBindings
+  may reference cross-namespace SA subjects). This grants the platform-resident
+  worker exactly `deployments`(get/list) + `deployments/scale`(get/patch) +
+  `pods`(get/list) in `utcp-runtime` and nothing else.
+
+This keeps the token isolated to the fence worker, preserves the minimal RBAC, and
+resolves the config dependency. It is a bounded manifest change (4 objects) plus
+the image-transform wiring for a live apply, and any fencing-component config-check
+must assert the new namespace split.
+
+## Ready-to-paste next prompt (T5-A13)
+
+```
+# T5-A13 — Correct fencing-worker namespace and re-activate (repository fix + live activation)
+
+Repository fix then checkpointed live activation at HEAD after T5-A12. Keep
+UTCP_PHASE=T1. Stop before any scale-to-zero or live failover.
+
+Problem (docs/evidence/t2/multi-node-failover-readiness.md T5-A12): the committed
+infrastructure/kubernetes/components/runtime-fencing worker + ServiceAccount are in
+utcp-runtime, but the worker's envFrom (utcp-application-config ConfigMap,
+utcp-local-data-credentials Secret) exist only in utcp-platform, so the worker
+fails with CreateContainerConfigError and cannot start.
+
+1. Repository correction (components/runtime-fencing):
+   - move ServiceAccount/utcp-runtime-fencer to namespace utcp-platform
+     (automountServiceAccountToken:false).
+   - move Deployment/utcp-runtime-fence-worker to namespace utcp-platform, keeping
+     the projected serviceAccountToken volume (audience kubernetes.default.svc,
+     3600s), kube-root-ca.crt, envFrom utcp-application-config + utcp-local-data-credentials,
+     command telephony-infrastructure-worker, and the image (base name; overlays
+     apply the registry transform).
+   - keep Role/utcp-runtime-fencer in utcp-runtime (rules unchanged: deployments
+     get/list, deployments/scale get/patch, pods get/list).
+   - keep RoleBinding/utcp-runtime-fencer in utcp-runtime; set its subjects to the
+     utcp-platform ServiceAccount (cross-namespace subject), roleRef unchanged.
+   - update any fencing config-check / topology validation to assert the platform
+     worker + SA and the utcp-runtime Role/RoleBinding cross-namespace subject.
+   - add/adjust focused tests as needed. Do NOT add a feature gate or allowlist.
+
+2. Verification: make repository-hygiene && make workflow-check && make secret-scan
+   && the four config-checks && the focused test suites && make test && make check
+   && make build && git diff --check. Commit: feat(t5): place fencing worker in the
+   platform namespace with cross-namespace fence RBAC. Do not push.
+
+3. Live activation (only after the fix is committed; reconfirm zero open
+   conferences, zero fence ops, both nodes ready):
+   - render components/runtime-fencing with the registry image transform;
+     server-side dry-run.
+   - apply SA (utcp-platform) + Role + RoleBinding (utcp-runtime); prove effective
+     perms by impersonation (allowed: deployments get/list, deployments
+     --subresource=scale get/patch, pods get/list in utcp-runtime; denied: full
+     deployment patch, secrets, pod delete, service update, cross-namespace).
+   - apply the worker Deployment (utcp-platform); wait Ready; prove only it mounts
+     the projected token (automount=false elsewhere); command
+     telephony-infrastructure-worker.
+   - non-destructive client proof: add/run a read-only runtime-engine:infrastructure-probe
+     {--once} (no scale/target/force args) that resolves a healthy RuntimeNode's
+     workload and calls HttpKubernetesWorkloadClient getDeployment + listOwnedPods,
+     proving API connectivity, CA, token reread, Deployment GET, Pod LIST, namespace
+     restriction; never scaleDeployment().
+   - prove generic command-worker still excludes fence ops and the infra worker
+     includes only fence ops; confirm zero scale, zero pod deletions, zero fence
+     operations created, both nodes ready.
+   - STOP before destructive failover. Update the evidence doc; one scoped commit;
+     do not push.
+
+Rollback per object: delete worker -> RoleBinding -> Role -> ServiceAccount; do not
+alter RuntimeNodes/RuntimeBindings.
+```
+
+## T5-A12 rollback performed
+
+Fencing resources only: `Deployment/utcp-runtime-fence-worker`,
+`RoleBinding/utcp-runtime-fencer`, `Role/utcp-runtime-fencer`,
+`ServiceAccount/utcp-runtime-fencer` (all in `utcp-runtime`) were deleted after the
+worker failed to start. Node A (durable recreation), node B, RuntimeNodes,
+credentials, and RuntimeBindings were not touched by rollback.
