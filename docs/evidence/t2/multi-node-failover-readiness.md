@@ -2188,12 +2188,12 @@ everywhere, projected-token GA, scale subresource, server-side dry-run.
 
 ## T5-A5 missing implementation
 
-The mutation-time replacement-before-fence guard; the production
-`HttpKubernetesWorkloadClient` (bounded REST, per-request token reread, CA TLS);
-the dedicated infrastructure worker (operation-type-filtered claim) + its
-Deployment with a projected token; the narrow `utcp-runtime` fence Role/SA/binding;
-Kustomize component parameterization for `asterisk-ari-a/-b`; node-B registration
-payload generalization; the later live RBAC/token/scale proof.
+The production `HttpKubernetesWorkloadClient` (bounded REST, per-request token
+reread, CA TLS); the dedicated infrastructure worker (operation-type-filtered
+claim) + its Deployment with a projected token; the narrow `utcp-runtime` fence
+Role/SA/binding; Kustomize component parameterization for `asterisk-ari-a/-b`;
+node-B registration payload generalization; the later live RBAC/token/scale
+proof.
 
 ## T5-A5 implementation-readiness decision
 
@@ -2218,6 +2218,41 @@ call it in `RuntimeFenceOperationHandler::execute` immediately before
 false (no scale, no evidence). This lands while the client is still
 `Unavailable`, so it is inert in production but fully unit-tested; it is the
 precondition for the later client/RBAC/worker and node-B slices.
+
+## T5-A5 implemented repository guard
+
+The repository now enforces the destructive-mutation precondition inside
+`RuntimeFenceOperationHandler`, immediately before infrastructure adapter
+resolution and `fence()` invocation. The handler first validates that the fence
+operation still targets the current open Conference, active former binding,
+former RuntimeNode, and configuration generation. It then calls
+`TelephonyDomainService::hasDistinctEligibleReplacement(...)`.
+
+The query reuses the canonical deterministic RuntimeNode selector and returns a
+boolean only. A replacement must be in the same tenant, have `desired_state =
+active`, have `observed_state = ready`, carry both `conference.lifecycle` and
+`conference.participation`, and differ from the former RuntimeNode. Draining,
+disabled, degraded, unavailable, stale, wrong-tenant, same-node, and
+incomplete-capability candidates do not authorize fencing.
+
+When the check fails, the operation returns retryable
+`no_replacement_available`. The Kubernetes adapter is not called, no scale
+request is attempted, no `conference.runtime_fence_terminated` evidence is
+emitted, the existing RuntimeBinding remains active, and the Conference
+configuration generation is unchanged. Later sweeps classify the condition as
+`no_replacement` and can retry automatically once another RuntimeNode becomes
+ready.
+
+The replacement ID remains non-authoritative: it is not accepted in operation
+payloads, is not sent to the infrastructure adapter, and is not persisted by this
+guard. Final replacement authority remains inside
+`failoverRebindConferenceAfterFence`, which reselects and validates a replacement
+transactionally after valid absence or external-fence evidence.
+
+This completes only the repository-side single-node safety guard. The production
+Kubernetes client, dedicated infrastructure worker, RBAC, projected token,
+RuntimeNode B, live scale-to-zero proof, and two-node failover acceptance remain
+pending.
 
 ## Ready-to-paste Codex prompt (T5-A5)
 

@@ -18,6 +18,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 final class TelephonyDomainService
 {
@@ -411,10 +412,7 @@ final class TelephonyDomainService
                 }
             }
 
-            $requiredCapabilities = [
-                (string) config('telephony_domain.runtime_capabilities.conference_lifecycle', 'conference.lifecycle'),
-                (string) config('telephony_domain.runtime_capabilities.conference_participation', 'conference.participation'),
-            ];
+            $requiredCapabilities = $this->conferenceRuntimeCapabilities();
             $replacementDesiredStates = $this->normalizedStates($options['replacement_desired_states'] ?? null) ?? ['active', 'draining'];
             $replacementRuntimeNodeId = $this->selectRuntimeNodeForConference(
                 $tenantId,
@@ -494,6 +492,35 @@ final class TelephonyDomainService
         return $this->failoverRebindConference($context, $tenantId, $conferenceId, $reason, array_merge($options, [
             'required_fence_operation_id' => $fenceOperationId,
         ]));
+    }
+
+    public function hasDistinctEligibleReplacement(string $tenantId, string $conferenceId, string $formerRuntimeNodeId): bool
+    {
+        $conference = DB::table('conferences')
+            ->where('id', $conferenceId)
+            ->where('tenant_id', $tenantId)
+            ->first();
+
+        if ($conference === null) {
+            return false;
+        }
+
+        try {
+            $replacementRuntimeNodeId = $this->selectRuntimeNodeForConference(
+                $tenantId,
+                $this->conferenceRuntimeCapabilities(),
+                $formerRuntimeNodeId,
+                ['active'],
+            );
+        } catch (HttpExceptionInterface $exception) {
+            if ($exception->getStatusCode() === 422) {
+                return false;
+            }
+
+            throw $exception;
+        }
+
+        return $replacementRuntimeNodeId !== $formerRuntimeNodeId;
     }
 
     /**
@@ -787,6 +814,17 @@ final class TelephonyDomainService
         abort_unless($selected !== null, 422, 'No eligible runtime node is available for conference execution.');
 
         return (string) $selected->id;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conferenceRuntimeCapabilities(): array
+    {
+        return [
+            (string) config('telephony_domain.runtime_capabilities.conference_lifecycle', 'conference.lifecycle'),
+            (string) config('telephony_domain.runtime_capabilities.conference_participation', 'conference.participation'),
+        ];
     }
 
     /**

@@ -333,6 +333,7 @@ final class RuntimeFencingCoordinator
         return match ((string) $operation->last_failure_code) {
             'fence_in_progress' => ['status' => 'runtime_fence_in_progress', 'operation_id' => (string) $operation->id],
             'target_recovered' => ['status' => 'target_recovered', 'operation_id' => (string) $operation->id],
+            'no_replacement_available' => ['status' => 'no_replacement', 'operation_id' => (string) $operation->id],
             'unavailable_to_control' => ['status' => 'external_runtime_unavailable', 'operation_id' => (string) $operation->id],
             default => ['status' => 'runtime_fence_waiting', 'operation_id' => (string) $operation->id],
         };
@@ -346,6 +347,7 @@ final class RuntimeFencingCoordinator
         return match ((string) $operation->last_failure_code) {
             'target_mismatch' => ['status' => 'target_mismatch', 'operation_id' => (string) $operation->id],
             'permission_denied' => ['status' => 'permission_denied', 'operation_id' => (string) $operation->id],
+            'no_replacement_available' => ['status' => 'no_replacement', 'operation_id' => (string) $operation->id],
             default => ['status' => 'runtime_fence_failed', 'operation_id' => (string) $operation->id],
         };
     }

@@ -24,8 +24,10 @@ grep -q "UTCPTelephonyConferenceReconciliationStuck" infrastructure/kubernetes/o
 grep -q "UTCPTelephonyExpiredActiveSessions" infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml
 grep -q "conference_runtime_bindings_one_active" apps/api/database/migrations/2026_07_15_090000_create_telephony_session_conference_domain_tables.php
 grep -q "failoverRebindConference" apps/api/app/TelephonyDomain/TelephonyDomainService.php
+grep -q "hasDistinctEligibleReplacement" apps/api/app/TelephonyDomain/TelephonyDomainService.php
 grep -q "selectRuntimeNodeForConference" apps/api/app/TelephonyDomain/TelephonyDomainService.php
 grep -q "excludeRuntimeNodeId" apps/api/app/TelephonyDomain/TelephonyDomainService.php
+grep -q "\\['active'\\]" apps/api/app/TelephonyDomain/TelephonyDomainService.php
 grep -q "runtime_binding_replaced" apps/api/app/TelephonyDomain/TelephonyDomainService.php
 grep -q "bound_runtime_node_ready" apps/api/app/TelephonyDomain/TelephonyDomainService.php
 grep -q "where('observed_state', 'ready')" apps/api/app/TelephonyDomain/TelephonyDomainService.php
@@ -36,8 +38,12 @@ grep -q "failoverRebindConferenceAfterFence" apps/api/app/TelephonyDomain/Failov
 grep -q "required_fence_operation_id" apps/api/app/TelephonyDomain/TelephonyDomainService.php
 grep -q "conference.runtime_fence_verified" apps/api/app/RuntimeAdapters/Asterisk/AsteriskRuntimeAdapter.php
 grep -q "conference.runtime_fence_terminated" apps/api/app/Infrastructure/RuntimeFencing/RuntimeFenceOperationHandler.php
+grep -q "operationAuthorityCurrent" apps/api/app/Infrastructure/RuntimeFencing/RuntimeFenceOperationHandler.php
+grep -q "no_replacement_available" apps/api/app/Infrastructure/RuntimeFencing/RuntimeFenceOperationHandler.php
+grep -q "hasDistinctEligibleReplacement" apps/api/app/Infrastructure/RuntimeFencing/RuntimeFenceOperationHandler.php
 grep -q "absent_verified" apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php
 grep -q "external_runtime_fenced" apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php
+grep -q "no_replacement_available" apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php
 grep -q "runtime.node.runtime.fence" apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php
 grep -q "runtime.node.runtime.fence" apps/api/app/Infrastructure/RuntimeFencing/RuntimeFenceOperationHandler.php
 grep -q "class InfrastructureAdapterRegistry" apps/api/app/Infrastructure/RuntimeFencing/InfrastructureAdapterRegistry.php
@@ -91,6 +97,18 @@ fi
 
 if rg -n "failoverRebindConference\\(" apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php | grep -v "failoverRebindConferenceAfterFence"; then
   printf 'C5 runtime fencing coordinator bypasses fence evidence validation.\n' >&2
+  exit 1
+fi
+
+handler_guard_line="$(rg -n "hasDistinctEligibleReplacement" apps/api/app/Infrastructure/RuntimeFencing/RuntimeFenceOperationHandler.php | cut -d: -f1 | head -n1)"
+handler_fence_line="$(rg -n -- "->fence\\(" apps/api/app/Infrastructure/RuntimeFencing/RuntimeFenceOperationHandler.php | cut -d: -f1 | head -n1)"
+if [ -z "$handler_guard_line" ] || [ -z "$handler_fence_line" ] || [ "$handler_guard_line" -ge "$handler_fence_line" ]; then
+  printf 'C5 runtime fence handler does not check replacement availability before fence mutation.\n' >&2
+  exit 1
+fi
+
+if rg -n "replacement_.*node_id|replacement_node|replacementRuntimeNodeId" apps/api/app/Infrastructure/RuntimeFencing apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php; then
+  printf 'C5 runtime fencing operation or coordinator carries a replacement RuntimeNode identity outside the domain authority.\n' >&2
   exit 1
 fi
 

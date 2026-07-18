@@ -5,12 +5,14 @@ namespace App\Infrastructure\RuntimeFencing;
 use App\ControlPlane\RuntimeOperations\FailureClass;
 use App\RuntimeEngine\Commands\RuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeOperationHandler;
+use App\TelephonyDomain\TelephonyDomainService;
 use Illuminate\Support\Facades\DB;
 
 final class RuntimeFenceOperationHandler implements RuntimeOperationHandler
 {
     public function __construct(
         private readonly InfrastructureAdapterRegistry $adapters,
+        private readonly TelephonyDomainService $domain,
     ) {}
 
     public function operationType(): string
@@ -47,6 +49,18 @@ final class RuntimeFenceOperationHandler implements RuntimeOperationHandler
             return $this->failure(FailureClass::InvalidRequest, 'runtime_fence_node_mismatch', 'runtime fence target node is invalid');
         }
 
+        if (! $this->operationAuthorityCurrent((string) ($operation['tenant_id'] ?? ''), $payload)) {
+            return $this->failure(FailureClass::InvalidRequest, 'runtime_fence_authority_stale', 'runtime fence operation authority context is stale');
+        }
+
+        if (! $this->domain->hasDistinctEligibleReplacement(
+            (string) ($operation['tenant_id'] ?? ''),
+            (string) $payload['conference_id'],
+            (string) $payload['former_runtime_node_id'],
+        )) {
+            return $this->failure(FailureClass::RuntimeUnavailable, 'no_replacement_available', 'no distinct eligible replacement runtime node is available for runtime fencing');
+        }
+
         $infra = $this->adapters->get('kubernetes');
         if ($infra === null) {
             return $this->failure(FailureClass::RuntimeUnavailable, 'unavailable_to_control', 'infrastructure fencing adapter is unavailable');
@@ -74,11 +88,40 @@ final class RuntimeFenceOperationHandler implements RuntimeOperationHandler
         return match ($status) {
             'fence_in_progress' => $this->failure(FailureClass::RuntimeUnavailable, 'fence_in_progress', 'runtime fence termination is still in progress'),
             'target_recovered' => $this->failure(FailureClass::RuntimeUnavailable, 'target_recovered', 'runtime node recovered before fencing mutation'),
+            'no_replacement_available' => $this->failure(FailureClass::RuntimeUnavailable, 'no_replacement_available', 'no distinct eligible replacement runtime node is available for runtime fencing'),
             'unavailable_to_control' => $this->failure(FailureClass::RuntimeUnavailable, 'unavailable_to_control', 'infrastructure control plane is unavailable'),
             'permission_denied' => $this->failure(FailureClass::AuthorizationFailed, 'permission_denied', 'infrastructure control plane denied the fencing mutation'),
             'target_mismatch' => $this->failure(FailureClass::InvalidRequest, 'target_mismatch', 'runtime fence target did not match trusted RuntimeNode metadata'),
             default => $this->failure(FailureClass::InternalError, 'runtime_fence_failed', 'runtime fence operation failed'),
         };
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function operationAuthorityCurrent(string $tenantId, array $payload): bool
+    {
+        $conference = DB::table('conferences')
+            ->where('id', (string) $payload['conference_id'])
+            ->where('tenant_id', $tenantId)
+            ->first();
+        if ($conference === null
+            || (string) $conference->desired_state !== 'open'
+            || (string) $conference->runtime_node_id !== (string) $payload['former_runtime_node_id']
+            || (int) $conference->configuration_generation !== (int) $payload['configuration_generation']
+        ) {
+            return false;
+        }
+
+        $binding = DB::table('conference_runtime_bindings')
+            ->where('id', (string) $payload['former_runtime_binding_id'])
+            ->where('tenant_id', $tenantId)
+            ->where('conference_id', (string) $payload['conference_id'])
+            ->where('runtime_node_id', (string) $payload['former_runtime_node_id'])
+            ->where('status', 'active')
+            ->first();
+
+        return $binding !== null;
     }
 
     /**

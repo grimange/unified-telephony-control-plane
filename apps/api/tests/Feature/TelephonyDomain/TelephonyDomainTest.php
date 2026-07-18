@@ -422,6 +422,51 @@ final class TelephonyDomainTest extends TestCase
         $this->assertSame($nodeA, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->value('runtime_node_id'));
     }
 
+    public function test_distinct_replacement_query_returns_false_with_only_former_node(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('replacement-query-single');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'replacement-query-single');
+
+        $this->assertFalse(app(TelephonyDomainService::class)->hasDistinctEligibleReplacement($tenantId, $conference['id'], $nodeA));
+    }
+
+    public function test_distinct_replacement_query_requires_active_ready_dual_capability_node(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('replacement-query-true');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'replacement-query-true');
+        $this->runtimeNode($tenantId, 'replacement-query-b');
+
+        $this->assertTrue(app(TelephonyDomainService::class)->hasDistinctEligibleReplacement($tenantId, $conference['id'], $nodeA));
+    }
+
+    public function test_distinct_replacement_query_rejects_ineligible_candidates(): void
+    {
+        $cases = [
+            'draining' => ['ready', 'draining', ['conference.lifecycle', 'conference.participation']],
+            'disabled' => ['ready', 'disabled', ['conference.lifecycle', 'conference.participation']],
+            'degraded' => ['degraded', 'active', ['conference.lifecycle', 'conference.participation']],
+            'unavailable' => ['unavailable', 'active', ['conference.lifecycle', 'conference.participation']],
+            'stale' => ['stale', 'active', ['conference.lifecycle', 'conference.participation']],
+            'missing-lifecycle' => ['ready', 'active', ['conference.participation']],
+            'missing-participation' => ['ready', 'active', ['conference.lifecycle']],
+        ];
+
+        foreach ($cases as $slug => [$observedState, $desiredState, $capabilities]) {
+            [$admin, , $tenantId, $nodeA] = $this->fixture('replacement-query-'.$slug);
+            $conference = $this->openConference($admin, $tenantId, $nodeA, 'replacement-query-'.$slug);
+            $this->runtimeNode($tenantId, 'replacement-query-'.$slug.'-b', $observedState, $desiredState, $capabilities);
+
+            $this->assertFalse(app(TelephonyDomainService::class)->hasDistinctEligibleReplacement($tenantId, $conference['id'], $nodeA), $slug);
+        }
+
+        [$adminA, , $tenantA, $nodeA] = $this->fixture('replacement-query-wrong-tenant-a');
+        [, , $tenantB] = $this->fixture('replacement-query-wrong-tenant-b');
+        $conference = $this->openConference($adminA, $tenantA, $nodeA, 'replacement-query-wrong-tenant');
+        $this->runtimeNode($tenantB, 'replacement-query-wrong-tenant-b');
+
+        $this->assertFalse(app(TelephonyDomainService::class)->hasDistinctEligibleReplacement($tenantA, $conference['id'], $nodeA), 'wrong-tenant');
+    }
+
     public function test_rebind_transaction_rolls_back_if_replacement_binding_insert_fails(): void
     {
         [$admin, , $tenantId, $nodeA] = $this->fixture('rebind-rollback');
@@ -745,6 +790,41 @@ final class TelephonyDomainTest extends TestCase
         $this->assertSame(1, $second['runtime_fence_waiting']);
         $this->assertSame(1, DB::table('runtime_operations')->where('operation_type', 'runtime.node.runtime.fence')->where('aggregate_id', $conference['id'])->count());
         $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+    }
+
+    public function test_coordinator_maps_runtime_fence_no_replacement_without_fence_evidence_or_rebind(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-runtime-fence-no-replacement');
+        $nodeB = $this->runtimeNode($tenantId, 'coordinator-runtime-fence-no-replacement-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-runtime-fence-no-replacement');
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-runtime-fence-no-replacement-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'stale', 'updated_at' => now()]);
+
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-runtime-fence-no-replacement-first', 10);
+        $this->completeFenceOperationForConference($tenantId, $conference['id'], 'present');
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-runtime-fence-no-replacement-second', 10);
+        DB::table('runtime_nodes')->where('id', $nodeB)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+        DB::table('runtime_operations')
+            ->where('operation_type', 'runtime.node.runtime.fence')
+            ->where('aggregate_id', $conference['id'])
+            ->update([
+                'status' => 'retry_scheduled',
+                'last_failure_class' => 'runtime_unavailable',
+                'last_failure_code' => 'no_replacement_available',
+                'available_at' => now()->addMinute(),
+                'updated_at' => now(),
+            ]);
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-runtime-fence-no-replacement-third', 10);
+
+        $this->assertSame(1, $summary['no_replacement']);
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->assertSame((int) $conference['configuration_generation'], (int) DB::table('conferences')->where('id', $conference['id'])->value('configuration_generation'));
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertDatabaseMissing('control_plane_outbox_messages', [
+            'aggregate_id' => $conference['id'],
+            'event_type' => 'conference.runtime_fence_terminated',
+        ]);
     }
 
     public function test_stale_external_runtime_fence_binding_evidence_is_rejected(): void
