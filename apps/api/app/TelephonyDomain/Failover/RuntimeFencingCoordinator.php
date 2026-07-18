@@ -106,10 +106,14 @@ final class RuntimeFencingCoordinator
                 return ['status' => 'verification_requested'];
             }
 
-            return $this->classifyExistingOperation($operation);
+            return $this->classifyExistingVerificationOperation($operation, $conference, $binding, $context);
         });
 
-        if (($gate['status'] ?? null) !== 'absent_verified') {
+        if (in_array(($gate['status'] ?? null), ['former_runtime_present', 'former_runtime_unavailable'], true)) {
+            $gate = $this->evaluateExternalFence($context, $candidate, $gate, $graceSeconds);
+        }
+
+        if (! in_array(($gate['status'] ?? null), ['absent_verified', 'external_runtime_fenced'], true)) {
             return $gate;
         }
 
@@ -119,7 +123,7 @@ final class RuntimeFencingCoordinator
                 (string) $candidate->tenant_id,
                 (string) $candidate->conference_id,
                 (string) $gate['operation_id'],
-                'former_runtime_absent_verified',
+                ($gate['status'] ?? null) === 'external_runtime_fenced' ? 'external_runtime_fenced' : 'former_runtime_absent_verified',
                 [
                     'expected_binding_id' => (string) $candidate->binding_id,
                     'expected_runtime_node_id' => (string) $candidate->runtime_node_id,
@@ -150,7 +154,8 @@ final class RuntimeFencingCoordinator
             'replacement_runtime_node_not_distinct' => ['status' => 'no_replacement', 'reason' => (string) $result['reason']],
             'fence_evidence_stale',
             'fence_evidence_missing',
-            'fence_evidence_not_absent' => ['status' => 'fence_evidence_stale', 'reason' => (string) $result['reason']],
+            'fence_evidence_not_absent',
+            'fence_evidence_not_authoritative' => ['status' => 'fence_evidence_stale', 'reason' => (string) $result['reason']],
             'active_binding_changed' => ['status' => 'concurrent_conflict', 'reason' => 'active_binding_changed'],
             'conference_not_open',
             'active_binding_missing',
@@ -171,16 +176,28 @@ final class RuntimeFencingCoordinator
         return IdempotencyKey::fromString('runtime.node.verify_conference_absent:'.$authorityDigest);
     }
 
+    private function runtimeFenceIdempotencyKey(string $conferenceId, string $runtimeNodeId, string $bindingId, int $generation): IdempotencyKey
+    {
+        $authorityDigest = hash('sha256', implode(':', [
+            $conferenceId,
+            $runtimeNodeId,
+            $bindingId,
+            (string) $generation,
+        ]));
+
+        return IdempotencyKey::fromString('runtime.node.runtime.fence:'.$authorityDigest);
+    }
+
     /**
      * @return array<string, mixed>
      */
-    private function classifyExistingOperation(object $operation): array
+    private function classifyExistingVerificationOperation(object $operation, object $conference, object $binding, ExecutionContext $context): array
     {
         return match ((string) $operation->status) {
             OperationStatus::Pending->value,
             OperationStatus::Leased->value,
             OperationStatus::Running->value => ['status' => 'verification_waiting', 'operation_id' => (string) $operation->id],
-            OperationStatus::RetryScheduled->value => ['status' => 'former_runtime_unavailable', 'operation_id' => (string) $operation->id],
+            OperationStatus::RetryScheduled->value => $this->requestRuntimeFence($context, $conference, $binding, (string) $operation->id, 'verification_unavailable'),
             OperationStatus::TerminalFailed->value => ['status' => 'verification_failed', 'operation_id' => (string) $operation->id],
             OperationStatus::Succeeded->value => $this->classifySucceededOperation($operation),
             default => ['status' => 'verification_failed', 'operation_id' => (string) $operation->id],
@@ -199,21 +216,166 @@ final class RuntimeFencingCoordinator
 
         return match ((string) ($evidence['verification_result'] ?? '')) {
             'absent' => ['status' => 'absent_verified', 'operation_id' => (string) $operation->id],
-            'present' => ['status' => 'former_runtime_present', 'operation_id' => (string) $operation->id],
+            'present' => ['status' => 'former_runtime_present', 'operation_id' => (string) $operation->id, 'reason' => 'former_runtime_present'],
             default => ['status' => 'verification_failed', 'operation_id' => (string) $operation->id, 'reason' => 'verification_result_invalid'],
         };
     }
 
     /**
+     * @param  array<string, mixed>  $verificationGate
+     * @return array<string, mixed>
+     */
+    private function evaluateExternalFence(ExecutionContext $context, object $candidate, array $verificationGate, int $graceSeconds): array
+    {
+        return DB::transaction(function () use ($context, $candidate, $verificationGate, $graceSeconds): array {
+            $conference = DB::table('conferences')
+                ->where('id', (string) $candidate->conference_id)
+                ->where('tenant_id', (string) $candidate->tenant_id)
+                ->lockForUpdate()
+                ->first();
+            if ($conference === null || (string) $conference->desired_state !== 'open') {
+                return ['status' => 'terminal_skip', 'reason' => 'conference_not_open'];
+            }
+
+            $binding = DB::table('conference_runtime_bindings')
+                ->where('id', (string) $candidate->binding_id)
+                ->where('tenant_id', (string) $candidate->tenant_id)
+                ->where('conference_id', (string) $candidate->conference_id)
+                ->where('status', 'active')
+                ->lockForUpdate()
+                ->first();
+            if ($binding === null) {
+                return ['status' => 'terminal_skip', 'reason' => 'active_binding_missing'];
+            }
+            if ((string) $binding->runtime_node_id !== (string) $candidate->runtime_node_id
+                || (string) $conference->runtime_node_id !== (string) $binding->runtime_node_id) {
+                return ['status' => 'concurrent_conflict', 'reason' => 'active_binding_changed'];
+            }
+
+            $node = DB::table('runtime_nodes')
+                ->where('id', (string) $binding->runtime_node_id)
+                ->where('tenant_id', (string) $candidate->tenant_id)
+                ->lockForUpdate()
+                ->first();
+            if ($node === null) {
+                return ['status' => 'terminal_skip', 'reason' => 'bound_runtime_node_missing'];
+            }
+            if (! in_array((string) $node->observed_state, self::QUALIFYING_BOUND_STATES, true)) {
+                return ['status' => 'recovered_before_cutoff', 'reason' => (string) $node->observed_state === 'ready' ? 'bound_runtime_node_ready' : 'bound_runtime_node_not_eligible'];
+            }
+            if (! $this->runtimeReadyObservationOlderThan((string) $binding->runtime_node_id, $graceSeconds)) {
+                return ['status' => 'recovered_before_cutoff', 'reason' => 'bound_runtime_node_recently_ready'];
+            }
+
+            return $this->requestRuntimeFence($context, $conference, $binding, (string) ($verificationGate['operation_id'] ?? ''), (string) ($verificationGate['reason'] ?? 'former_runtime_unavailable'));
+        });
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function requestRuntimeFence(ExecutionContext $context, object $conference, object $binding, string $verificationOperationId, string $reason): array
+    {
+        $operationType = (string) config('telephony_domain.operation_types.runtime_fence', 'runtime.node.runtime.fence');
+        $key = $this->runtimeFenceIdempotencyKey((string) $conference->id, (string) $binding->runtime_node_id, (string) $binding->id, (int) $conference->configuration_generation);
+        $existingId = $this->operations->findIdempotent($operationType, $key);
+        if ($existingId === null) {
+            $operationId = $this->operations->create(
+                $operationType,
+                'conference',
+                (string) $conference->id,
+                [
+                    'conference_id' => (string) $conference->id,
+                    'former_runtime_binding_id' => (string) $binding->id,
+                    'former_runtime_node_id' => (string) $binding->runtime_node_id,
+                    'runtime_node_id' => (string) $binding->runtime_node_id,
+                    'configuration_generation' => (int) $conference->configuration_generation,
+                    'verification_operation_id' => $verificationOperationId,
+                    'fence_reason' => mb_substr($reason, 0, 120),
+                ],
+                $context,
+                $key,
+                runtimeNodeId: (string) $binding->runtime_node_id,
+            );
+
+            return ['status' => 'runtime_fence_requested', 'operation_id' => $operationId, 'reason' => $reason];
+        }
+
+        $operation = DB::table('runtime_operations')->where('id', $existingId)->lockForUpdate()->first();
+        if ($operation === null) {
+            return ['status' => 'runtime_fence_requested', 'reason' => $reason];
+        }
+
+        return $this->classifyExistingRuntimeFenceOperation($operation);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function classifyExistingRuntimeFenceOperation(object $operation): array
+    {
+        return match ((string) $operation->status) {
+            OperationStatus::Pending->value,
+            OperationStatus::Leased->value,
+            OperationStatus::Running->value => ['status' => 'runtime_fence_waiting', 'operation_id' => (string) $operation->id],
+            OperationStatus::RetryScheduled->value => $this->classifyRetryingRuntimeFenceOperation($operation),
+            OperationStatus::TerminalFailed->value => $this->classifyFailedRuntimeFenceOperation($operation),
+            OperationStatus::Succeeded->value => $this->classifySucceededRuntimeFenceOperation($operation),
+            default => ['status' => 'runtime_fence_failed', 'operation_id' => (string) $operation->id],
+        };
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function classifyRetryingRuntimeFenceOperation(object $operation): array
+    {
+        return match ((string) $operation->last_failure_code) {
+            'fence_in_progress' => ['status' => 'runtime_fence_in_progress', 'operation_id' => (string) $operation->id],
+            'target_recovered' => ['status' => 'target_recovered', 'operation_id' => (string) $operation->id],
+            'unavailable_to_control' => ['status' => 'external_runtime_unavailable', 'operation_id' => (string) $operation->id],
+            default => ['status' => 'runtime_fence_waiting', 'operation_id' => (string) $operation->id],
+        };
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function classifyFailedRuntimeFenceOperation(object $operation): array
+    {
+        return match ((string) $operation->last_failure_code) {
+            'target_mismatch' => ['status' => 'target_mismatch', 'operation_id' => (string) $operation->id],
+            'permission_denied' => ['status' => 'permission_denied', 'operation_id' => (string) $operation->id],
+            default => ['status' => 'runtime_fence_failed', 'operation_id' => (string) $operation->id],
+        };
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function classifySucceededRuntimeFenceOperation(object $operation): array
+    {
+        $evidence = $this->completedFenceEvidencePayload((string) $operation->tenant_id, (string) $operation->aggregate_id, (string) $operation->id, 'conference.runtime_fence_terminated');
+        if ($evidence === null) {
+            return ['status' => 'runtime_fence_failed', 'operation_id' => (string) $operation->id, 'reason' => 'runtime_fence_evidence_missing'];
+        }
+        if (in_array((string) ($evidence['fence_result'] ?? ''), ['fenced', 'already_fenced'], true)) {
+            return ['status' => 'external_runtime_fenced', 'operation_id' => (string) $operation->id];
+        }
+
+        return ['status' => 'runtime_fence_failed', 'operation_id' => (string) $operation->id, 'reason' => 'runtime_fence_result_invalid'];
+    }
+
+    /**
      * @return array<string, mixed>|null
      */
-    private function completedFenceEvidencePayload(string $tenantId, string $conferenceId, string $operationId): ?array
+    private function completedFenceEvidencePayload(string $tenantId, string $conferenceId, string $operationId, string $eventType = 'conference.runtime_fence_verified'): ?array
     {
         $rows = DB::table('control_plane_outbox_messages')
             ->where('tenant_id', $tenantId)
             ->where('aggregate_type', 'conference')
             ->where('aggregate_id', $conferenceId)
-            ->where('event_type', 'conference.runtime_fence_verified')
+            ->where('event_type', $eventType)
             ->orderByDesc('created_at')
             ->limit(25)
             ->get();

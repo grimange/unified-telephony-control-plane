@@ -826,7 +826,6 @@ final class TelephonyDomainService
             ->first();
         if ($operation === null
             || (string) $operation->tenant_id !== $tenantId
-            || (string) $operation->operation_type !== (string) config('telephony_domain.operation_types.verify_conference_absent', 'runtime.node.verify_conference_absent')
             || (string) $operation->aggregate_type !== 'conference'
             || (string) $operation->aggregate_id !== $conferenceId
             || (string) $operation->runtime_node_id !== (string) $activeBinding->runtime_node_id
@@ -835,6 +834,13 @@ final class TelephonyDomainService
         }
         if ((string) $operation->status !== OperationStatus::Succeeded->value) {
             return ['status' => 'noop', 'reason' => 'fence_evidence_missing'];
+        }
+
+        $operationType = (string) $operation->operation_type;
+        $verifiedAbsenceType = (string) config('telephony_domain.operation_types.verify_conference_absent', 'runtime.node.verify_conference_absent');
+        $externalFenceType = (string) config('telephony_domain.operation_types.runtime_fence', 'runtime.node.runtime.fence');
+        if (! in_array($operationType, [$verifiedAbsenceType, $externalFenceType], true)) {
+            return ['status' => 'noop', 'reason' => 'fence_evidence_not_authoritative'];
         }
 
         $payload = $this->decodeJsonObject($operation->payload);
@@ -846,7 +852,7 @@ final class TelephonyDomainService
             return ['status' => 'noop', 'reason' => 'fence_evidence_stale'];
         }
 
-        $evidence = $this->completedFenceEvidencePayload($tenantId, $conferenceId, $operationId);
+        $evidence = $this->completedFenceEvidencePayload($tenantId, $conferenceId, $operationId, $operationType);
         if ($evidence === null) {
             return ['status' => 'noop', 'reason' => 'fence_evidence_missing'];
         }
@@ -857,23 +863,29 @@ final class TelephonyDomainService
         ) {
             return ['status' => 'noop', 'reason' => 'fence_evidence_stale'];
         }
-        if ((string) ($evidence['verification_result'] ?? '') !== 'absent') {
-            return ['status' => 'noop', 'reason' => 'fence_evidence_not_absent'];
+        if ($operationType === $verifiedAbsenceType && (string) ($evidence['verification_result'] ?? '') === 'absent') {
+            return null;
+        }
+        if ($operationType === $externalFenceType && in_array((string) ($evidence['fence_result'] ?? ''), ['fenced', 'already_fenced'], true)) {
+            return null;
         }
 
-        return null;
+        return ['status' => 'noop', 'reason' => 'fence_evidence_not_authoritative'];
     }
 
     /**
      * @return array<string, mixed>|null
      */
-    private function completedFenceEvidencePayload(string $tenantId, string $conferenceId, string $operationId): ?array
+    private function completedFenceEvidencePayload(string $tenantId, string $conferenceId, string $operationId, ?string $operationType = null): ?array
     {
+        $eventType = $operationType === (string) config('telephony_domain.operation_types.runtime_fence', 'runtime.node.runtime.fence')
+            ? 'conference.runtime_fence_terminated'
+            : 'conference.runtime_fence_verified';
         $rows = DB::table('control_plane_outbox_messages')
             ->where('tenant_id', $tenantId)
             ->where('aggregate_type', 'conference')
             ->where('aggregate_id', $conferenceId)
-            ->where('event_type', 'conference.runtime_fence_verified')
+            ->where('event_type', $eventType)
             ->orderByDesc('created_at')
             ->limit(25)
             ->get();

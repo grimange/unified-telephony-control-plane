@@ -2,6 +2,11 @@
 
 namespace App\Providers;
 
+use App\Infrastructure\RuntimeFencing\InfrastructureAdapterRegistry;
+use App\Infrastructure\RuntimeFencing\KubernetesRuntimeFenceAdapter;
+use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClient;
+use App\Infrastructure\RuntimeFencing\RuntimeFenceOperationHandler;
+use App\Infrastructure\RuntimeFencing\UnavailableKubernetesWorkloadClient;
 use App\RuntimeAdapters\Asterisk\AsteriskAdapterConfigurationHandler;
 use App\RuntimeAdapters\Asterisk\AsteriskAriEventNormalizer;
 use App\RuntimeAdapters\Asterisk\AsteriskCatalog;
@@ -37,6 +42,10 @@ class AppServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->app->bind(ReadinessChecker::class, ConfiguredReadinessChecker::class);
+        $this->app->bind(KubernetesWorkloadClient::class, UnavailableKubernetesWorkloadClient::class);
+        $this->app->singleton(InfrastructureAdapterRegistry::class, fn ($app): InfrastructureAdapterRegistry => new InfrastructureAdapterRegistry([
+            $app->make(KubernetesRuntimeFenceAdapter::class),
+        ]));
         $this->app->singleton(RuntimeAdapterRegistry::class, fn ($app): RuntimeAdapterRegistry => new RuntimeAdapterRegistry([
             $app->make(SimulatorRuntimeAdapter::class),
             $app->make(AsteriskRuntimeAdapter::class),
@@ -49,6 +58,7 @@ class AppServiceProvider extends ServiceProvider
             new ConferenceOperationHandler((string) config('telephony_domain.operation_types.participant_ensure'), (string) config('telephony_domain.runtime_capabilities.conference_participation')),
             new ConferenceOperationHandler((string) config('telephony_domain.operation_types.participant_remove'), (string) config('telephony_domain.runtime_capabilities.conference_participation')),
             new ConferenceOperationHandler((string) config('telephony_domain.operation_types.verify_conference_absent'), (string) config('telephony_domain.runtime_capabilities.conference_lifecycle')),
+            $app->make(RuntimeFenceOperationHandler::class),
         ]));
         $this->app->singleton(EventNormalizerRegistry::class, function ($app): EventNormalizerRegistry {
             $catalog = $app->make(SimulatorCatalog::class);

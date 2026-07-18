@@ -6,17 +6,20 @@ metadata:
   labels:
     app.kubernetes.io/part-of: utcp
     app.kubernetes.io/component: asterisk-ari
+    utcp.dev/runtime-node: local-asterisk-ari
 spec:
   replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/part-of: utcp
       app.kubernetes.io/component: asterisk-ari
+      utcp.dev/runtime-node: local-asterisk-ari
   template:
     metadata:
       labels:
         app.kubernetes.io/part-of: utcp
         app.kubernetes.io/component: asterisk-ari
+        utcp.dev/runtime-node: local-asterisk-ari
         utcp.io/network-role: asterisk-ari
     spec:
       serviceAccountName: utcp-runtime-asterisk

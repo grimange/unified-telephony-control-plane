@@ -1811,3 +1811,73 @@ node B → reconstruct exactly one bridge/participant on B; node A's scaled-to-z
 workload restored later re-registers without reclaiming; both-node orphan
 inspection clean; replica counts restored. Kamailio signaling cutoff proven in its
 own later slice once SIP call routing exists.
+
+## T5-A4 repository implementation note
+
+T5-A4 adds the generic `runtime.node.runtime.fence` operation and keeps it behind
+the existing durable operation engine. Operation identity is bound to the
+Conference, former RuntimeNode, former active RuntimeBinding, and Conference
+configuration generation, matching the authority context used by
+`runtime.node.verify_conference_absent`.
+
+RuntimeNode workload identity is read only from persisted
+`runtime_nodes.labels.kubernetes_workload` metadata:
+
+```json
+{
+  "kubernetes_workload": {
+    "namespace": "utcp-runtime",
+    "deployment": "asterisk-ari-a"
+  }
+}
+```
+
+The resolver accepts only non-empty DNS-compatible namespace and Deployment names,
+requires the canonical runtime namespace, performs no endpoint-host inference, and
+has no fallback to the current single-node Deployment or Pod discovery.
+
+Infrastructure fencing is now a separate runtime-neutral adapter boundary. The
+Kubernetes adapter uses an injected `KubernetesWorkloadClient`; the repository
+binding fails closed without configured Kubernetes credentials. Focused tests use a
+fake client, and production code contains no shell or `kubectl` execution path.
+
+Before mutation, the adapter fetches the exact Deployment from the trusted
+RuntimeNode workload reference and validates UTCP ownership labels:
+
+- `app.kubernetes.io/part-of = utcp`
+- `app.kubernetes.io/component = asterisk-ari`
+- `utcp.dev/runtime-node = <RuntimeNode slug>`
+
+Mismatch, relabeling, missing ownership, or an operation target that does not
+match the former RuntimeNode returns `target_mismatch` and does not patch scale.
+
+The only Kubernetes mutation represented in this slice is Deployment
+scale-to-zero through the injected client. Pods are never deleted directly, Service
+selectors are not changed, RuntimeNode desired/observed state is not changed, and
+bindings remain writable only by `TelephonyDomainService`.
+
+The authoritative termination predicate for `fenced` or `already_fenced` requires:
+
+- Deployment desired replicas is zero.
+- Deployment status replicas is zero or omitted.
+- Deployment available replicas is zero or omitted.
+- No Pod owned by that Deployment remains.
+
+EndpointSlice emptiness and old Pod UID disappearance are supporting signals only;
+they cannot prove fencing while any owned Pod remains. API unavailability,
+permission denial, target mismatch, and in-progress termination block rebind.
+
+`RuntimeFencingCoordinator` now escalates `present` and unreachable former-runtime
+absence-verification outcomes to one idempotent `runtime.node.runtime.fence`
+operation. `fenced` and `already_fenced` produce bounded
+`conference.runtime_fence_terminated` evidence. `failoverRebindConferenceAfterFence`
+authorizes rebind only from current `verified_absence` evidence or current
+`external_runtime_fenced` evidence, and validates the evidence type, operation
+status, current binding, former RuntimeNode, Conference generation, open desired
+state, sustained failover eligibility, and distinct replacement eligibility inside
+the serialized authority-cutoff transaction.
+
+This remains repository proof only. Namespaced Kubernetes fencing RBAC, dedicated
+worker identity and token mount, live Deployment scale-to-zero proof, second-node
+manifests, second RuntimeNode registration, replacement reconstruction proof, and
+live two-node failover acceptance remain pending.

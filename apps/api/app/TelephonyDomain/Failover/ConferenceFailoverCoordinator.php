@@ -50,7 +50,7 @@ final class ConferenceFailoverCoordinator
                 );
                 $classification = $this->classifyResult($result);
                 $summary[$classification]++;
-                if ($classification !== 'verification_waiting') {
+                if (! in_array($classification, ['verification_waiting', 'runtime_fence_waiting', 'runtime_fence_in_progress', 'external_runtime_unavailable'], true)) {
                     $this->recordOutcome($context, $candidate, $classification, (string) ($result['reason'] ?? $result['status'] ?? 'unknown'));
                 }
             } catch (Throwable $exception) {
@@ -137,6 +137,15 @@ final class ConferenceFailoverCoordinator
             'verification_waiting',
             'former_runtime_present',
             'former_runtime_unavailable',
+            'runtime_fence_requested',
+            'runtime_fence_waiting',
+            'runtime_fence_in_progress',
+            'external_runtime_unavailable',
+            'external_runtime_fenced',
+            'target_recovered',
+            'target_mismatch',
+            'permission_denied',
+            'runtime_fence_failed',
             'verification_failed',
             'fence_evidence_stale',
             'rebound',
@@ -178,6 +187,15 @@ final class ConferenceFailoverCoordinator
             'verification_waiting' => 0,
             'former_runtime_present' => 0,
             'former_runtime_unavailable' => 0,
+            'runtime_fence_requested' => 0,
+            'runtime_fence_waiting' => 0,
+            'runtime_fence_in_progress' => 0,
+            'external_runtime_unavailable' => 0,
+            'external_runtime_fenced' => 0,
+            'target_recovered' => 0,
+            'target_mismatch' => 0,
+            'permission_denied' => 0,
+            'runtime_fence_failed' => 0,
             'verification_failed' => 0,
             'fence_evidence_stale' => 0,
             'rebound' => 0,

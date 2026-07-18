@@ -18,6 +18,7 @@ return [
         'participant_ensure' => 'conference.participant.ensure',
         'participant_remove' => 'conference.participant.remove',
         'verify_conference_absent' => 'runtime.node.verify_conference_absent',
+        'runtime_fence' => 'runtime.node.runtime.fence',
     ],
 
     'runtime_capabilities' => [

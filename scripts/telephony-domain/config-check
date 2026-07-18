@@ -13,7 +13,11 @@ grep -q "telephony.sessions.create_own" apps/api/config/identity.php
 grep -q "conference.ensure" apps/api/config/telephony_domain.php
 grep -q "conference.participant.ensure" apps/api/config/telephony_domain.php
 grep -q "runtime.node.verify_conference_absent" apps/api/config/telephony_domain.php
+grep -q "runtime.node.runtime.fence" apps/api/config/telephony_domain.php
 grep -q "verify_conference_absent" apps/api/app/Providers/AppServiceProvider.php
+grep -q "RuntimeFenceOperationHandler" apps/api/app/Providers/AppServiceProvider.php
+grep -q "InfrastructureAdapterRegistry" apps/api/app/Providers/AppServiceProvider.php
+grep -q "KubernetesRuntimeFenceAdapter" apps/api/app/Providers/AppServiceProvider.php
 grep -q "telephony_sessions_total" apps/api/app/Http/Controllers/Platform/MetricsController.php
 grep -q "conference_participant_reconciliation_total" apps/api/app/Http/Controllers/Platform/MetricsController.php
 grep -q "UTCPTelephonyConferenceReconciliationStuck" infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml
@@ -31,7 +35,24 @@ grep -q "class RuntimeFencingCoordinator" apps/api/app/TelephonyDomain/Failover/
 grep -q "failoverRebindConferenceAfterFence" apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php
 grep -q "required_fence_operation_id" apps/api/app/TelephonyDomain/TelephonyDomainService.php
 grep -q "conference.runtime_fence_verified" apps/api/app/RuntimeAdapters/Asterisk/AsteriskRuntimeAdapter.php
+grep -q "conference.runtime_fence_terminated" apps/api/app/Infrastructure/RuntimeFencing/RuntimeFenceOperationHandler.php
 grep -q "absent_verified" apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php
+grep -q "external_runtime_fenced" apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php
+grep -q "runtime.node.runtime.fence" apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php
+grep -q "runtime.node.runtime.fence" apps/api/app/Infrastructure/RuntimeFencing/RuntimeFenceOperationHandler.php
+grep -q "class InfrastructureAdapterRegistry" apps/api/app/Infrastructure/RuntimeFencing/InfrastructureAdapterRegistry.php
+grep -q "interface KubernetesWorkloadClient" apps/api/app/Infrastructure/RuntimeFencing/KubernetesWorkloadClient.php
+grep -q "class KubernetesRuntimeFenceAdapter" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
+grep -q "kubernetes_workload" apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeWorkloadIdentityResolver.php
+grep -q "utcp-runtime" apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeWorkloadIdentityResolver.php
+grep -q "app.kubernetes.io/part-of" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
+grep -q "app.kubernetes.io/component" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
+grep -q "utcp.dev/runtime-node" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
+grep -q "scaleDeployment" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
+grep -q "listOwnedPods" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
+grep -q "owned_pods_remaining" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
+grep -q "UnavailableKubernetesWorkloadClient" apps/api/app/Providers/AppServiceProvider.php
+grep -q "'fenced', 'already_fenced'" apps/api/app/TelephonyDomain/TelephonyDomainService.php
 grep -q "stale_observation_seconds" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php
 grep -q "for update skip locked" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php
 grep -q "whereIn('runtime_nodes.observed_state', self::QUALIFYING_BOUND_STATES)" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php
@@ -46,6 +67,7 @@ php -l apps/api/app/TelephonyDomain/Reconciliation/ConferenceReconciler.php >/de
 php -l apps/api/app/TelephonyDomain/Reconciliation/ConferenceParticipantReconciler.php >/dev/null
 php -l apps/api/app/TelephonyDomain/Runtime/ConferenceOperationHandler.php >/dev/null
 php -l apps/api/database/migrations/2026_07_15_090000_create_telephony_session_conference_domain_tables.php >/dev/null
+find apps/api/app/Infrastructure/RuntimeFencing -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
 
 if rg -n "sip|webrtc|ari|esl|kamailio|rtpengine|asterisk|freeswitch|media" apps/api/app/TelephonyDomain apps/api/routes/web.php -g '!apps/api/app/TelephonyDomain/Signaling/**'; then
   printf 'C5 domain or route surface contains forbidden vendor/media vocabulary.\n' >&2
@@ -57,13 +79,33 @@ if rg -n "adapter->execute|runtime_operations.*insert" apps/api/app/Http/Control
   exit 1
 fi
 
-if rg -n "AsteriskAriClient|RuntimeAdapter|adapter_key.*asterisk|runtime_node_id.*allowlist|UTCP_.*(FAILOVER|REBIN[D]|RUNTIME_NODE|ALLOWLIST)" apps/api/app/TelephonyDomain/TelephonyDomainService.php apps/api/app/TelephonyDomain/Failover apps/api/app/Http/Controllers/TelephonyDomain apps/api/routes/web.php; then
+if rg -n "AsteriskAriClient|RuntimeAdapter|adapter_key.*asterisk|runtime_node_id.*allowlist|UTCP_.*(FAILOVER|REBIN[D]|FENCE|RUNTIME_NODE|ALLOWLIST)" apps/api/app/TelephonyDomain/TelephonyDomainService.php apps/api/app/TelephonyDomain/Failover apps/api/app/Http/Controllers/TelephonyDomain apps/api/routes/web.php; then
   printf 'C5 controller/service boundary contains a vendor branch, allowlist, or environment-gated rebind path.\n' >&2
   exit 1
 fi
 
 if rg -n "failoverRebindConference\\(" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php; then
   printf 'C5 failover coordinator bypasses former-runtime absence verification.\n' >&2
+  exit 1
+fi
+
+if rg -n "failoverRebindConference\\(" apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php | grep -v "failoverRebindConferenceAfterFence"; then
+  printf 'C5 runtime fencing coordinator bypasses fence evidence validation.\n' >&2
+  exit 1
+fi
+
+if rg -n "kubectl|shell_exec|exec\\(|proc_open|passthru|system\\(" apps/api/app/Infrastructure/RuntimeFencing; then
+  printf 'C5 infrastructure fencing uses shell or kubectl execution.\n' >&2
+  exit 1
+fi
+
+if rg -n "delete.*Pod|pod.*delete|deleteCollection|pods/.*/delete" apps/api/app/Infrastructure/RuntimeFencing; then
+  printf 'C5 infrastructure fencing contains a direct Pod deletion path.\n' >&2
+  exit 1
+fi
+
+if rg -n "Http::|curl_init|Kubernetes|KubernetesWorkloadClient|scaleDeployment" apps/api/app/TelephonyDomain apps/api/app/RuntimeAdapters/Asterisk | grep -v "RuntimeFencingCoordinator.php"; then
+  printf 'C5 domain or runtime adapter contains direct Kubernetes infrastructure access.\n' >&2
   exit 1
 fi
 
@@ -98,15 +140,19 @@ if php artisan route:list | grep -Ei "failover|rebind"; then
   printf 'C5 route surface exposes a forbidden manual failover or rebind route.\n' >&2
   exit 1
 fi
+if rg -n "runtime.node.runtime.fence|runtime_fence|RuntimeFenceOperationHandler" routes app/Http; then
+  printf 'C5 route or controller surface exposes a forbidden manual runtime fence path.\n' >&2
+  exit 1
+fi
 if rg -n "failover|rebind" routes/console.php | grep -v "failover-coordinator" | grep -v "ConferenceFailoverCoordinator" | grep -v "telephony_domain_failover_" | grep -v "automatic conference failover coordinator"; then
   printf 'C5 console or application surface exposes a forbidden manual failover or rebind command outside the scheduled coordinator.\n' >&2
   exit 1
 fi
-if rg -n -- "--(conference|runtime-node|replacement|force|grace|bypass)" routes/console.php app/TelephonyDomain/Failover; then
+if rg -n -- "--(conference|runtime-node|replacement|force|grace|bypass|fence)" routes/console.php app/TelephonyDomain/Failover app/Infrastructure/RuntimeFencing; then
   printf 'C5 failover coordinator exposes forbidden targeted/manual/bypass options.\n' >&2
   exit 1
 fi
-if rg -n "UTCP_.*FAILOVER|FAILOVER_.*UTCP|failover_grace|allowlist|allowed_runtime" config routes/console.php app/TelephonyDomain/Failover; then
+if rg -n "env\\([^)]*(FAILOVER|FENCE|KUBERNETES|RUNTIME_NODE|ALLOWLIST)|UTCP_.*(FAILOVER|FENCE|KUBERNETES|RUNTIME_NODE|ALLOWLIST)|(FAILOVER|FENCE|KUBERNETES)_.*UTCP|failover_grace|allowlist|allowed_runtime" config routes/console.php app/TelephonyDomain/Failover app/Infrastructure/RuntimeFencing; then
   printf 'C5 failover coordinator contains forbidden environment gate or allowlist.\n' >&2
   exit 1
 fi
