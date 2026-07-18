@@ -13,6 +13,7 @@ use App\RuntimeEngine\Projection\ProjectionService;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use App\RuntimeEngine\Reconciliation\ReconciliationWorker;
 use App\Simulator\SimulatorEventSourceWorker;
+use App\TelephonyDomain\Failover\ConferenceFailoverCoordinator;
 use App\TelephonyDomain\Signaling\KamailioRegistrationObserver;
 use App\TelephonyDomain\Signaling\KamailioRegistrationPollHealthRepository;
 use App\TelephonyDomain\TelephonyDomainService;
@@ -701,6 +702,20 @@ Artisan::command('telephony-domain:ensure-targets', function (ReconciliationRepo
     return 0;
 })->purpose('Ensure conference and participant reconciliation targets without manual execution authority.');
 
+Artisan::command('telephony-domain:failover-coordinator {--once : Run one bounded failover coordinator sweep and exit}', function (ConferenceFailoverCoordinator $coordinator): int {
+    do {
+        $summary = $coordinator->sweepOnce(gethostname().':telephony-domain-failover-coordinator:'.getmypid(), (int) config('runtime_engine.batch_size', 10));
+        foreach ($summary as $key => $value) {
+            $this->line('telephony_domain_failover_'.$key.'='.$value);
+        }
+        if (! $this->option('once')) {
+            sleep((int) config('runtime_engine.poll_seconds', 5));
+        }
+    } while (! $this->option('once'));
+
+    return 0;
+})->purpose('Run the automatic conference failover coordinator without manual target selection.');
+
 Artisan::command('telephony-domain:status', function (): int {
     foreach (['telephony_sessions', 'conferences', 'conference_participants'] as $table) {
         if (! Schema::hasTable($table)) {
@@ -793,3 +808,4 @@ Schedule::command('simulator:event-source --once')->everyMinute()->withoutOverla
 Schedule::command('asterisk-ari:ensure-targets')->everyMinute()->withoutOverlapping();
 Schedule::command('telephony-domain:expire-sessions')->everyMinute()->withoutOverlapping();
 Schedule::command('telephony-domain:ensure-targets')->everyMinute()->withoutOverlapping();
+Schedule::command('telephony-domain:failover-coordinator --once')->everyMinute()->withoutOverlapping();

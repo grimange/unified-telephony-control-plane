@@ -24,8 +24,16 @@ grep -q "runtime_binding_replaced" apps/api/app/TelephonyDomain/TelephonyDomainS
 grep -q "bound_runtime_node_ready" apps/api/app/TelephonyDomain/TelephonyDomainService.php
 grep -q "where('observed_state', 'ready')" apps/api/app/TelephonyDomain/TelephonyDomainService.php
 grep -q "wakeTarget" apps/api/app/TelephonyDomain/TelephonyDomainService.php
+grep -q "class ConferenceFailoverCoordinator" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php
+grep -q "stale_observation_seconds" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php
+grep -q "for update skip locked" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php
+grep -q "whereIn('runtime_nodes.observed_state', self::QUALIFYING_BOUND_STATES)" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php
+grep -q "'replacement_desired_states' => self::AUTOMATIC_REPLACEMENT_DESIRED_STATES" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php
+grep -q "telephony-domain:failover-coordinator {--once" apps/api/routes/console.php
+grep -q "Schedule::command('telephony-domain:failover-coordinator --once')->everyMinute()->withoutOverlapping()" apps/api/routes/console.php
 
 php -l apps/api/app/TelephonyDomain/TelephonyDomainService.php >/dev/null
+php -l apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php >/dev/null
 php -l apps/api/app/TelephonyDomain/Reconciliation/ConferenceReconciler.php >/dev/null
 php -l apps/api/app/TelephonyDomain/Reconciliation/ConferenceParticipantReconciler.php >/dev/null
 php -l apps/api/app/TelephonyDomain/Runtime/ConferenceOperationHandler.php >/dev/null
@@ -41,12 +49,12 @@ if rg -n "adapter->execute|runtime_operations.*insert" apps/api/app/Http/Control
   exit 1
 fi
 
-if rg -n "AsteriskAriClient|RuntimeAdapter|adapter_key.*asterisk|runtime_node_id.*allowlist|UTCP_.*(FAILOVER|REBIN[D]|RUNTIME_NODE|ALLOWLIST)" apps/api/app/TelephonyDomain/TelephonyDomainService.php apps/api/app/Http/Controllers/TelephonyDomain apps/api/routes/web.php; then
+if rg -n "AsteriskAriClient|RuntimeAdapter|adapter_key.*asterisk|runtime_node_id.*allowlist|UTCP_.*(FAILOVER|REBIN[D]|RUNTIME_NODE|ALLOWLIST)" apps/api/app/TelephonyDomain/TelephonyDomainService.php apps/api/app/TelephonyDomain/Failover apps/api/app/Http/Controllers/TelephonyDomain apps/api/routes/web.php; then
   printf 'C5 controller/service boundary contains a vendor branch, allowlist, or environment-gated rebind path.\n' >&2
   exit 1
 fi
 
-if rg -n "update\\([^\\n]*observed_state|->update\\(\\[[^]]*observed_state" apps/api/app/Http/Controllers/TelephonyDomain apps/api/app/TelephonyDomain/TelephonyDomainService.php; then
+if rg -n "update\\([^\\n]*observed_state|->update\\(\\[[^]]*observed_state" apps/api/app/Http/Controllers/TelephonyDomain apps/api/app/TelephonyDomain/TelephonyDomainService.php apps/api/app/TelephonyDomain/Failover; then
   printf 'C5 controller/service boundary contains direct observed-state mutation.\n' >&2
   exit 1
 fi
@@ -72,8 +80,20 @@ if php artisan route:list | grep -Ei "failover|rebind"; then
   printf 'C5 route surface exposes a forbidden manual failover or rebind route.\n' >&2
   exit 1
 fi
-if rg -n "failover|rebind" routes/console.php; then
-  printf 'C5 console or application surface exposes a forbidden manual failover or rebind command outside the canonical service.\n' >&2
+if rg -n "failover|rebind" routes/console.php | grep -v "failover-coordinator" | grep -v "ConferenceFailoverCoordinator" | grep -v "telephony_domain_failover_" | grep -v "automatic conference failover coordinator"; then
+  printf 'C5 console or application surface exposes a forbidden manual failover or rebind command outside the scheduled coordinator.\n' >&2
+  exit 1
+fi
+if rg -n -- "--(conference|runtime-node|replacement|force|grace|bypass)" routes/console.php app/TelephonyDomain/Failover; then
+  printf 'C5 failover coordinator exposes forbidden targeted/manual/bypass options.\n' >&2
+  exit 1
+fi
+if rg -n "UTCP_.*FAILOVER|FAILOVER_.*UTCP|failover_grace|allowlist|allowed_runtime" config routes/console.php app/TelephonyDomain/Failover; then
+  printf 'C5 failover coordinator contains forbidden environment gate or allowlist.\n' >&2
+  exit 1
+fi
+if rg -n "table\\('conference_runtime_bindings'\\)->(insert|update|delete)|conference_runtime_bindings'\\)->where.*->update" app/TelephonyDomain/Failover app/Http/Controllers/TelephonyDomain; then
+  printf 'C5 failover coordinator writes bindings outside the canonical domain service.\n' >&2
   exit 1
 fi
 if [ -d app/Console ] && find app/Console -type f -name '*.php' -print0 | xargs -0 rg -n "failover|rebind"; then

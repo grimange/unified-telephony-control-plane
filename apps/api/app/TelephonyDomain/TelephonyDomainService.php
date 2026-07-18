@@ -330,11 +330,18 @@ final class TelephonyDomainService
     }
 
     /**
+     * @param  array{
+     *     expected_binding_id?:string,
+     *     expected_runtime_node_id?:string,
+     *     qualifying_bound_states?:list<string>,
+     *     replacement_desired_states?:list<string>,
+     *     ready_observation_grace_seconds?:int
+     * }  $options
      * @return array<string, mixed>
      */
-    public function failoverRebindConference(ExecutionContext $context, string $tenantId, string $conferenceId, string $reason = 'runtime_node_unavailable'): array
+    public function failoverRebindConference(ExecutionContext $context, string $tenantId, string $conferenceId, string $reason = 'runtime_node_unavailable', array $options = []): array
     {
-        return DB::transaction(function () use ($context, $tenantId, $conferenceId, $reason): array {
+        return DB::transaction(function () use ($context, $tenantId, $conferenceId, $reason, $options): array {
             $conference = DB::table('conferences')
                 ->where('id', $conferenceId)
                 ->where('tenant_id', $tenantId)
@@ -355,6 +362,12 @@ final class TelephonyDomainService
             if ($activeBinding === null) {
                 return ['status' => 'noop', 'reason' => 'active_binding_missing'];
             }
+            if (($options['expected_binding_id'] ?? null) !== null && (string) $activeBinding->id !== (string) $options['expected_binding_id']) {
+                return ['status' => 'noop', 'reason' => 'active_binding_changed'];
+            }
+            if (($options['expected_runtime_node_id'] ?? null) !== null && (string) $activeBinding->runtime_node_id !== (string) $options['expected_runtime_node_id']) {
+                return ['status' => 'noop', 'reason' => 'active_binding_changed'];
+            }
 
             $boundNode = DB::table('runtime_nodes')
                 ->where('id', $activeBinding->runtime_node_id)
@@ -364,26 +377,42 @@ final class TelephonyDomainService
             if ($boundNode === null) {
                 return ['status' => 'noop', 'reason' => 'bound_runtime_node_missing'];
             }
-            if ((string) $boundNode->observed_state === 'ready') {
+            $qualifyingBoundStates = $this->normalizedStates($options['qualifying_bound_states'] ?? null);
+            if ($qualifyingBoundStates !== null) {
+                if (! in_array((string) $boundNode->observed_state, $qualifyingBoundStates, true)) {
+                    return [
+                        'status' => 'noop',
+                        'reason' => (string) $boundNode->observed_state === 'ready'
+                            ? 'bound_runtime_node_ready'
+                            : 'bound_runtime_node_not_eligible',
+                    ];
+                }
+            } elseif ((string) $boundNode->observed_state === 'ready') {
                 return ['status' => 'noop', 'reason' => 'bound_runtime_node_ready'];
             }
+            if (($options['ready_observation_grace_seconds'] ?? null) !== null && ! $this->runtimeReadyObservationOlderThan(
+                (string) $activeBinding->runtime_node_id,
+                max(1, (int) $options['ready_observation_grace_seconds']),
+            )) {
+                return ['status' => 'noop', 'reason' => 'bound_runtime_node_recently_ready'];
+            }
 
+            $requiredCapabilities = [
+                (string) config('telephony_domain.runtime_capabilities.conference_lifecycle', 'conference.lifecycle'),
+                (string) config('telephony_domain.runtime_capabilities.conference_participation', 'conference.participation'),
+            ];
+            $replacementDesiredStates = $this->normalizedStates($options['replacement_desired_states'] ?? null) ?? ['active', 'draining'];
             $replacementRuntimeNodeId = $this->selectRuntimeNodeForConference(
                 $tenantId,
-                [
-                    (string) config('telephony_domain.runtime_capabilities.conference_lifecycle', 'conference.lifecycle'),
-                    (string) config('telephony_domain.runtime_capabilities.conference_participation', 'conference.participation'),
-                ],
+                $requiredCapabilities,
                 (string) $activeBinding->runtime_node_id,
+                $replacementDesiredStates,
             );
 
             if ($replacementRuntimeNodeId === (string) $activeBinding->runtime_node_id) {
                 return ['status' => 'noop', 'reason' => 'replacement_runtime_node_not_distinct'];
             }
-            $this->assertRuntimeNodeEligibleForConferenceRebind($tenantId, $replacementRuntimeNodeId, [
-                (string) config('telephony_domain.runtime_capabilities.conference_lifecycle', 'conference.lifecycle'),
-                (string) config('telephony_domain.runtime_capabilities.conference_participation', 'conference.participation'),
-            ]);
+            $this->assertRuntimeNodeEligibleForConferenceRebind($tenantId, $replacementRuntimeNodeId, $requiredCapabilities, $replacementDesiredStates);
 
             DB::table('conference_runtime_bindings')->where('id', $activeBinding->id)->update([
                 'status' => 'retired',
@@ -681,8 +710,9 @@ final class TelephonyDomainService
 
     /**
      * @param  list<string>  $capabilities
+     * @param  list<string>  $desiredStates
      */
-    private function assertRuntimeNodeEligibleForConferenceRebind(string $tenantId, string $runtimeNodeId, array $capabilities): void
+    private function assertRuntimeNodeEligibleForConferenceRebind(string $tenantId, string $runtimeNodeId, array $capabilities, array $desiredStates = ['active', 'draining']): void
     {
         $node = DB::table('runtime_nodes')
             ->where('id', $runtimeNodeId)
@@ -690,7 +720,7 @@ final class TelephonyDomainService
             ->lockForUpdate()
             ->first();
         abort_unless($node !== null, 404, 'Runtime node not found.');
-        abort_unless(in_array($node->desired_state, ['active', 'draining'], true), 422, 'Runtime node desired state does not permit execution.');
+        abort_unless(in_array($node->desired_state, $desiredStates, true), 422, 'Runtime node desired state does not permit execution.');
         abort_unless((string) $node->observed_state === 'ready', 422, 'Runtime node is not ready for conference execution.');
         foreach ($capabilities as $capability) {
             abort_unless(DB::table('runtime_node_capabilities')->where('runtime_node_id', $runtimeNodeId)->where('capability_key', $capability)->exists(), 422, 'Runtime node lacks required conference capability.');
@@ -699,13 +729,14 @@ final class TelephonyDomainService
 
     /**
      * @param  string|list<string>  $capabilities
+     * @param  list<string>  $desiredStates
      */
-    private function selectRuntimeNodeForConference(string $tenantId, string|array $capabilities, ?string $excludeRuntimeNodeId = null): string
+    private function selectRuntimeNodeForConference(string $tenantId, string|array $capabilities, ?string $excludeRuntimeNodeId = null, array $desiredStates = ['active', 'draining']): string
     {
         $requiredCapabilities = is_array($capabilities) ? array_values(array_unique($capabilities)) : [$capabilities];
         $node = DB::table('runtime_nodes')
             ->where('tenant_id', $tenantId)
-            ->whereIn('desired_state', ['active', 'draining'])
+            ->whereIn('desired_state', $desiredStates)
             ->where('observed_state', 'ready')
             ->when($excludeRuntimeNodeId !== null, fn ($query) => $query->where('id', '<>', $excludeRuntimeNodeId))
             ->orderBy('runtime_family')
@@ -725,6 +756,32 @@ final class TelephonyDomainService
         abort_unless($selected !== null, 422, 'No eligible runtime node is available for conference execution.');
 
         return (string) $selected->id;
+    }
+
+    /**
+     * @param  list<string>|null  $states
+     * @return list<string>|null
+     */
+    private function normalizedStates(?array $states): ?array
+    {
+        if ($states === null) {
+            return null;
+        }
+
+        return array_values(array_unique(array_filter(array_map(
+            fn (mixed $state): string => trim((string) $state),
+            $states,
+        ))));
+    }
+
+    private function runtimeReadyObservationOlderThan(string $runtimeNodeId, int $graceSeconds): bool
+    {
+        $latestReady = DB::table('runtime_observations')
+            ->where('runtime_node_id', $runtimeNodeId)
+            ->where('observed_state', 'ready')
+            ->max('received_at');
+
+        return is_string($latestReady) && Carbon::parse($latestReady)->lessThanOrEqualTo(now()->subSeconds($graceSeconds));
     }
 
     private function writeBinding(string $tenantId, string $conferenceId, string $runtimeNodeId, ?string $userId): void

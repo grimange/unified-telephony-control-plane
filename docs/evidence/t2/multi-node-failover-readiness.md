@@ -369,12 +369,12 @@ duplicate bridge/channel; final cleanup on both nodes; replica counts restored.
 
 ---
 
-# T5-A2 — Automatic Failover Coordinator Readiness and Eligibility Policy
+# T5-A2 — Automatic Failover Coordinator Sweep
 
-Evidence-only audit at commit `52ed85a`, `UTCP_PHASE=T1`, 2026-07-18. Defines
-the bounded contract for the component that will automatically invoke
-`failoverRebindConference()` (T5-A1). No coordinator implemented; no live
-failover; no second node.
+Repository implementation at `UTCP_PHASE=T1`, 2026-07-18. Implements the bounded
+automatic coordinator that evaluates sustained bound-RuntimeNode unavailability
+and invokes `failoverRebindConference()` (T5-A1). No live failover proof, second
+RuntimeNode deployment, or automatic failback is included.
 
 ## Canonical RuntimeNode health evidence
 
@@ -459,20 +459,24 @@ first slice. A single `runtime_nodes.ready_since`/`unavailable_since` column is 
 
 ## Coordinator ownership
 
-**Periodic scheduler sweep** — a new `telephony-domain:failover-coordinator
-{--once}` Artisan command following the exact existing worker convention
-(`do { workOnce(); sleep(poll) } while (!--once)`), registered as
+**Periodic scheduler sweep** — `ConferenceFailoverCoordinator` is exposed only
+through `telephony-domain:failover-coordinator {--once}`. The command follows the
+existing worker convention (`do { workOnce(); sleep(poll) } while (!--once)`) and
+is registered as
 `Schedule::command('telephony-domain:failover-coordinator --once')->everyMinute()->withoutOverlapping()`
-alongside the existing `telephony-domain:*` sweeps (console.php:794–795). This
-boundary is adapter-neutral, PostgreSQL-authoritative, restart-safe, idempotent
-(the primitive is safe to re-invoke), does not scan on every ARI event, and adds
-no second management surface. It is **not** folded into the per-target
-reconciliation worker (the coordinator sweeps conferences by bound-node health, a
-different shape than per-target reconciliation) and introduces no new
-management API. Rejected alternatives: RuntimeNode transition-driven wake (would
-scan on ARI events; premature); dedicated new Deployment (unnecessary infra for a
-per-minute sweep — the existing `scheduler` Deployment already runs the
-`--once` cadence).
+alongside the existing `telephony-domain:*` sweeps. The coordinator identifies
+eligibility; `TelephonyDomainService` atomically cuts off former runtime
+authority. No Conference ID, RuntimeNode ID, forced replacement, grace bypass, or
+operator-facing failover option exists.
+
+This boundary is adapter-neutral, PostgreSQL-authoritative, restart-safe,
+idempotent (the primitive is safe to re-invoke), does not scan on every ARI
+event, and adds no second management surface. It is **not** folded into the
+per-target reconciliation worker (the coordinator sweeps conferences by
+bound-node health, a different shape than per-target reconciliation). Rejected
+alternatives: RuntimeNode transition-driven wake (would scan on ARI events;
+premature); dedicated new Deployment (unnecessary infra for a per-minute sweep —
+the existing `scheduler` Deployment already runs the `--once` cadence).
 
 ## Candidate Conference query
 
@@ -485,6 +489,11 @@ conferences c  (desired_state = 'open')
   join runtime_nodes n
     on n.id = b.runtime_node_id and n.tenant_id = c.tenant_id
 where n.observed_state in ('unavailable','stale')      -- qualifying, not degraded/connecting
+  and exists (                                          -- at least one durable ready boundary
+        select 1 from runtime_observations o
+        where o.runtime_node_id = n.id
+          and o.observed_state = 'ready'
+          and o.received_at <= now() - interval '300 seconds')
   and not exists (                                      -- sustained: no ready obs within grace
         select 1 from runtime_observations o
         where o.runtime_node_id = n.id
@@ -514,10 +523,13 @@ limit :batch
 
 Reuse `FOR UPDATE ... SKIP LOCKED` on the candidate query — no new lock service,
 advisory lock, or claim table. Two sweeps cannot select the same conference row
-concurrently; the T5-A1 primitive's `lockForUpdate` on the conference, active
-binding, and both nodes is the final serialization, so even a race across the
-skip-locked window collapses to one authoritative rebind (the loser sees
-`bound_runtime_node_ready` or `replacement_runtime_node_not_distinct`).
+concurrently. The T5-A1 primitive now also accepts the coordinator's expected
+binding/runtime IDs, qualifying bound states, `active`-only replacement desired
+states, and ready-observation grace. It revalidates those facts under its own
+`lockForUpdate` authority transaction before retiring the former binding, so a
+race across the skip-locked window collapses to one authoritative rebind. The
+loser sees `active_binding_changed`, `bound_runtime_node_ready`, or
+`bound_runtime_node_not_eligible`.
 
 - **Claim identity:** the sweep transaction's row lock (no persisted claim owner
   needed for a per-minute idempotent sweep).
@@ -528,16 +540,26 @@ skip-locked window collapses to one authoritative rebind (the loser sees
 ## Rebind invocation
 
 Per surviving candidate, call
-`failoverRebindConference($context, tenantId, conferenceId, 'runtime_node_unavailable')`
-inside the sweep, wrapped in `try/catch` for `HttpException` (the primitive
-aborts, not returns, on the no-replacement and race paths).
+`failoverRebindConference($context, tenantId, conferenceId, 'automatic_runtime_node_unavailable', options)`
+with:
+
+- `expected_binding_id` and `expected_runtime_node_id` from the candidate row.
+- `qualifying_bound_states = ['unavailable', 'stale']`.
+- `replacement_desired_states = ['active']` so draining replacements are
+  excluded for failover placement.
+- `ready_observation_grace_seconds = runtime_engine.stale_observation_seconds`.
+
+The primitive performs the strict under-lock revalidation and the authority
+cutoff in one serialized database operation. The coordinator wraps
+`HttpException` results so no-replacement and race outcomes do not fail the
+entire sweep.
 
 ## Result and retry handling
 
 | Result | Retry | Interval | Reset grace | Audit/metric | Reconcile woken |
 |---|---|---|---|---|---|
-| `status=rebound` | done | — | n/a (node changed) | primitive already emits `conference.runtime_binding_replaced` audit+outbox; coordinator adds an attempt/outcome signal | yes (primitive wakes conf+participants) |
-| `noop:bound_runtime_node_ready` | none | next sweep | yes (recovered) | eligibility-cleared signal | n/a |
+| `status=rebound` | done | — | n/a (node changed) | primitive emits `conference.runtime_binding_replaced`; coordinator emits `conference.failover_coordinator.rebound` | yes (primitive wakes conf+participants) |
+| `noop:bound_runtime_node_ready` / `bound_runtime_node_not_eligible` / `bound_runtime_node_recently_ready` | none | next sweep | yes (recovered or no longer qualifying) | `conference.failover_coordinator.recovered_before_cutoff` | n/a |
 | `noop:replacement_runtime_node_not_distinct` | retry | next sweep (≥grace persists) | no | `no_replacement` signal | no |
 | `noop:conference_not_open` / `active_binding_missing` / `bound_runtime_node_missing` | none | — | n/a | terminal-skip signal | no |
 | **thrown 422** "No eligible runtime node…" (selection) | retry | next sweep | no | `no_replacement` signal | no |
@@ -551,18 +573,16 @@ The coordinator never dispatches bridge/participant operations — the primitive
 ## Replacement eligibility
 
 Resolved by the existing `selectRuntimeNodeForConference(...excludeRuntimeNodeId)`
-+ `assertRuntimeNodeEligibleForConferenceRebind` — requires the replacement
-`observed_state='ready'`, `desired_state IN (active,draining)`, and **both**
-`conference.lifecycle` and `conference.participation` capabilities, excluding the
-current node, ordered `runtime_family, adapter_key, id`.
++ `assertRuntimeNodeEligibleForConferenceRebind` path — requires the replacement
+`observed_state='ready'`, the configured replacement desired-state set, and
+**both** `conference.lifecycle` and `conference.participation` capabilities,
+excluding the current node, ordered `runtime_family, adapter_key, id`.
 
-**Draining-node policy:** the selector currently *permits* `desired_state='draining'`
-as a replacement. Semantically `draining` means "retain existing work, accept no
-new placement," so a failover — which is *new placement onto* the node — should
-**exclude draining replacements**. This is a one-line policy tightening the
-coordinator slice should apply *through the canonical selector contract* (pass a
-placement-mode that filters to `active` only for failover), not by a second
-selector. It is not a correctness blocker but is the correct T5 policy and cheap.
+**Draining-node policy:** initial placement still follows the prior selector
+contract, but automatic failover passes `replacement_desired_states=['active']`.
+Semantically `draining` means "retain existing work, accept no new placement," so
+a failover — which is new placement onto the node — excludes draining
+replacements through the canonical selector rather than a second selector.
 
 **Capacity/priority:** `placement_priority`/`capacity_weight` remain unused;
 deterministic `id` ordering is acceptable for the first bounded slice — lack of
@@ -602,14 +622,15 @@ replacement reconstruction come first; best-effort cleanup of the former node's
 orphaned bridge/channels is a separate later slice and must not block
 availability.
 
-## Observability requirements
+## Coordinator audit evidence
 
 The primitive already emits `conference.runtime_binding_replaced` (audit +
-outbox, bounded payload). The coordinator needs, at minimum, distinguishable
-signals (later as low-cardinality metrics — **no** tenant/conference/node/binding
-identifiers in labels) for: eligibility detected, attempt started, rebound,
-bound-node-recovered-before-cutoff, no-replacement-available, conflict, failure.
-None implemented in this audit; enumerated only.
+outbox, bounded payload). The coordinator emits bounded audit/outbox signals for
+`eligible`, `rebound`, `recovered_before_cutoff`, `no_replacement`,
+`concurrent_conflict`, and `failed`. These rows are written only for candidate
+Conferences that pass the SQL eligibility filter, so non-qualifying Conferences
+do not produce per-minute audit noise. Metrics remain a later observability
+slice.
 
 ## Schema assessment
 

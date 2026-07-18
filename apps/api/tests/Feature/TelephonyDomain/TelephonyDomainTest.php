@@ -6,10 +6,13 @@ use App\ControlPlane\Shared\ExecutionContext;
 use App\Identity\IdentityIds;
 use App\Models\User;
 use App\RuntimeEngine\Commands\CommandWorker;
+use App\RuntimeEngine\EngineIds;
 use App\RuntimeEngine\Events\EventNormalizerWorker;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use App\RuntimeEngine\Reconciliation\ReconciliationWorker;
+use App\RuntimeEngine\Sources\EventSourceRepository;
 use App\Simulator\SimulatorEventSourceWorker;
+use App\TelephonyDomain\Failover\ConferenceFailoverCoordinator;
 use App\TelephonyDomain\TelephonyDomainService;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -475,6 +478,162 @@ final class TelephonyDomainTest extends TestCase
         $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('runtime_node_id', $nodeB)->where('status', 'active')->count());
     }
 
+    public function test_failover_coordinator_rebinds_sustained_unavailable_open_conference_and_wakes_reconciliation(): void
+    {
+        [$admin, $member, $tenantId, $nodeA] = $this->fixture('coordinator-success');
+        $nodeB = $this->runtimeNode($tenantId, 'coordinator-success-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-success');
+        $participant = $this->admitParticipantFor($member, $tenantId, $conference['id']);
+        DB::table('runtime_reconciliation_states')->where('target_id', $conference['id'])->update(['status' => 'converged', 'next_check_at' => now()->addHour()]);
+        DB::table('runtime_reconciliation_states')->where('target_id', $participant['id'])->update(['status' => 'converged', 'next_check_at' => now()->addHour()]);
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(301), 'coordinator-success-old-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-success-worker', 10);
+
+        $updated = DB::table('conferences')->where('id', $conference['id'])->first();
+        $this->assertSame(1, $summary['candidates']);
+        $this->assertSame(1, $summary['eligible']);
+        $this->assertSame(1, $summary['rebound']);
+        $this->assertSame($nodeB, $updated->runtime_node_id);
+        $this->assertSame((int) $conference['configuration_generation'] + 1, (int) $updated->configuration_generation);
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertDatabaseHas('conference_runtime_bindings', ['conference_id' => $conference['id'], 'runtime_node_id' => $nodeA, 'status' => 'retired']);
+        $this->assertDatabaseHas('conference_runtime_bindings', ['conference_id' => $conference['id'], 'runtime_node_id' => $nodeB, 'status' => 'active']);
+        $this->assertDatabaseHas('runtime_reconciliation_states', [
+            'target_type' => 'conference',
+            'target_id' => $conference['id'],
+            'status' => 'waiting',
+            'desired_generation' => (int) $updated->configuration_generation,
+        ]);
+        $this->assertDatabaseHas('runtime_reconciliation_states', [
+            'target_type' => 'conference_participant',
+            'target_id' => $participant['id'],
+            'status' => 'waiting',
+            'desired_generation' => ((int) $updated->configuration_generation * 2),
+        ]);
+        $this->assertDatabaseHas('control_plane_audit_records', ['action' => 'conference.failover_coordinator.eligible']);
+        $this->assertDatabaseHas('control_plane_audit_records', ['action' => 'conference.failover_coordinator.rebound']);
+        $this->assertDatabaseHas('control_plane_audit_records', ['action' => 'conference.runtime_binding_replaced']);
+    }
+
+    public function test_failover_coordinator_does_not_rebind_unavailable_node_within_grace(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-grace');
+        $this->runtimeNode($tenantId, 'coordinator-grace-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-grace');
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(299), 'coordinator-grace-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-grace-worker', 10);
+
+        $this->assertSame(0, $summary['candidates']);
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->assertSame((int) $conference['configuration_generation'], (int) DB::table('conferences')->where('id', $conference['id'])->value('configuration_generation'));
+    }
+
+    public function test_failover_coordinator_excludes_degraded_and_connecting_bound_nodes(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-degraded');
+        $this->runtimeNode($tenantId, 'coordinator-degraded-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-degraded');
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-degraded-ready');
+
+        foreach (['degraded', 'connecting'] as $state) {
+            DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => $state, 'updated_at' => now()]);
+            $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-'.$state.'-worker', 10);
+            $this->assertSame(0, $summary['candidates']);
+            $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        }
+    }
+
+    public function test_failover_coordinator_maps_no_replacement_safely_and_continues_sweep(): void
+    {
+        [$adminA, , $tenantA, $nodeA] = $this->fixture('coordinator-no-replacement-a');
+        $conferenceA = $this->openConference($adminA, $tenantA, $nodeA, 'coordinator-no-replacement-a');
+        $this->readyObservation($tenantA, $nodeA, now()->subSeconds(600), 'coordinator-no-replacement-ready-a');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'stale', 'updated_at' => now()]);
+
+        [$adminB, , $tenantB, $nodeB] = $this->fixture('coordinator-no-replacement-b');
+        $replacementB = $this->runtimeNode($tenantB, 'coordinator-no-replacement-b2');
+        $conferenceB = $this->openConference($adminB, $tenantB, $nodeB, 'coordinator-no-replacement-b');
+        $this->readyObservation($tenantB, $nodeB, now()->subSeconds(600), 'coordinator-no-replacement-ready-b');
+        DB::table('runtime_nodes')->where('id', $nodeB)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-replacement-worker', 10);
+
+        $this->assertSame(2, $summary['candidates']);
+        $this->assertSame(1, $summary['no_replacement']);
+        $this->assertSame(1, $summary['rebound']);
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $conferenceA['id'])->value('runtime_node_id'));
+        $this->assertSame($replacementB, DB::table('conferences')->where('id', $conferenceB['id'])->value('runtime_node_id'));
+        $this->assertDatabaseHas('control_plane_audit_records', ['action' => 'conference.failover_coordinator.no_replacement']);
+    }
+
+    public function test_failover_coordinator_second_sweep_is_idempotent_after_rebind(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-idempotent');
+        $nodeB = $this->runtimeNode($tenantId, 'coordinator-idempotent-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-idempotent');
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-idempotent-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        $first = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-idempotent-first', 10);
+        $generationAfterFirst = (int) DB::table('conferences')->where('id', $conference['id'])->value('configuration_generation');
+        $second = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-idempotent-second', 10);
+
+        $this->assertSame(1, $first['rebound']);
+        $this->assertSame(0, $second['candidates']);
+        $this->assertSame($nodeB, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->assertSame($generationAfterFirst, (int) DB::table('conferences')->where('id', $conference['id'])->value('configuration_generation'));
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+    }
+
+    public function test_failover_coordinator_revalidates_ready_recovery_before_cutoff(): void
+    {
+        $this->assertFailoverCoordinatorRevalidatesRecoveredStateBeforeCutoff('ready');
+    }
+
+    public function test_failover_coordinator_revalidates_degraded_recovery_before_cutoff(): void
+    {
+        $this->assertFailoverCoordinatorRevalidatesRecoveredStateBeforeCutoff('degraded');
+    }
+
+    public function test_failover_coordinator_excludes_draining_replacements(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-draining');
+        $nodeB = $this->runtimeNode($tenantId, 'coordinator-draining-b', 'ready', 'draining');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-draining');
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-draining-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'stale', 'updated_at' => now()]);
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-draining-worker', 10);
+
+        $this->assertSame(1, $summary['candidates']);
+        $this->assertSame(1, $summary['no_replacement']);
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->assertDatabaseMissing('conference_runtime_bindings', [
+            'conference_id' => $conference['id'],
+            'runtime_node_id' => $nodeB,
+            'status' => 'active',
+        ]);
+    }
+
+    public function test_failover_coordinator_command_and_scheduler_registration_are_bounded(): void
+    {
+        $this->artisan('telephony-domain:failover-coordinator', ['--once' => true])
+            ->expectsOutput('telephony_domain_failover_candidates=0')
+            ->assertExitCode(0);
+
+        $console = file_get_contents(base_path('routes/console.php'));
+        $this->assertIsString($console);
+        $this->assertStringContainsString('telephony-domain:failover-coordinator {--once', $console);
+        $this->assertStringContainsString("Schedule::command('telephony-domain:failover-coordinator --once')->everyMinute()->withoutOverlapping()", $console);
+        $this->assertStringNotContainsString('--conference', $console);
+        $this->assertStringNotContainsString('--runtime-node', $console);
+        $this->assertStringNotContainsString('--replacement', $console);
+    }
+
     /**
      * @return array{0:User,1:User,2:string,3:string}
      */
@@ -584,6 +743,31 @@ final class TelephonyDomainTest extends TestCase
         return $nodeId;
     }
 
+    private function assertFailoverCoordinatorRevalidatesRecoveredStateBeforeCutoff(string $recoveredState): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-recovered-'.$recoveredState);
+        $this->runtimeNode($tenantId, 'coordinator-recovered-'.$recoveredState.'-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-recovered-'.$recoveredState);
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-recovered-'.$recoveredState.'-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+        $changed = false;
+        DB::listen(function (object $query) use (&$changed, $nodeA, $recoveredState): void {
+            if ($changed || ! str_contains($query->sql, 'conference_runtime_bindings') || ! str_contains($query->sql, 'runtime_observations')) {
+                return;
+            }
+            $changed = true;
+            DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => $recoveredState, 'updated_at' => now()]);
+        });
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-recovered-'.$recoveredState, 10);
+
+        $this->assertTrue($changed);
+        $this->assertSame(1, $summary['candidates']);
+        $this->assertSame(1, $summary['recovered_before_cutoff']);
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->assertSame((int) $conference['configuration_generation'], (int) DB::table('conferences')->where('id', $conference['id'])->value('configuration_generation'));
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -617,6 +801,64 @@ final class TelephonyDomainTest extends TestCase
             ->postJson("/api/v1/conferences/{$conferenceId}/participants/self")
             ->assertCreated()
             ->json('participant');
+    }
+
+    private function readyObservation(string $tenantId, string $runtimeNodeId, mixed $receivedAt, string $externalKey): void
+    {
+        $source = app(EventSourceRepository::class)->ensureRuntimeNodeSource($tenantId, $runtimeNodeId, 'simulator-deterministic');
+        $epochId = EngineIds::new();
+        $receiptId = EngineIds::new();
+        DB::table('runtime_event_connection_epochs')->insert([
+            'id' => $epochId,
+            'event_source_id' => $source->id,
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $runtimeNodeId,
+            'adapter_key' => 'simulator-deterministic',
+            'status' => 'closed',
+            'owner' => 'coordinator-test',
+            'fencing_token' => EngineIds::token(),
+            'opened_at' => $receivedAt,
+            'closed_at' => $receivedAt,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('runtime_event_receipts')->insert([
+            'id' => $receiptId,
+            'event_source_id' => $source->id,
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $runtimeNodeId,
+            'adapter_key' => 'simulator-deterministic',
+            'connection_epoch_id' => $epochId,
+            'external_event_key' => $externalKey,
+            'event_type' => 'test.runtime.ready',
+            'event_version' => 1,
+            'payload_hash' => hash('sha256', $externalKey),
+            'sanitized_payload' => json_encode(['state' => 'ready'], JSON_THROW_ON_ERROR),
+            'occurred_at' => $receivedAt,
+            'received_at' => $receivedAt,
+            'status' => 'processed',
+            'available_at' => $receivedAt,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('runtime_observations')->insert([
+            'id' => EngineIds::new(),
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $runtimeNodeId,
+            'observation_type' => 'runtime.node.readiness',
+            'observation_version' => 1,
+            'subject_type' => 'runtime_node',
+            'subject_id' => $runtimeNodeId,
+            'observed_state' => 'ready',
+            'source_event_id' => $receiptId,
+            'source_connection_epoch' => $epochId,
+            'configuration_version' => 1,
+            'observed_at' => $receivedAt,
+            'received_at' => $receivedAt,
+            'payload' => json_encode(['state' => 'ready'], JSON_THROW_ON_ERROR),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 
     private function user(string $email): User
