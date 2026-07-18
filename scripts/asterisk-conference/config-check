@@ -50,6 +50,8 @@ grep -q "proof_originate_timeout_seconds" apps/api/config/asterisk_ari.php || fa
 grep -q "proof_originate_timeout_seconds" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "Asterisk proof channel originate timeout is not configuration-bound"
 grep -q "participant_attach_attempts" apps/api/config/asterisk_ari.php || fail "missing bounded participant attach retry configuration"
 grep -q "participantAttachedToBridge" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "participant ensure must verify bridge membership before success"
+grep -q "conference_not_open_for_participant_ensure" apps/api/app/TelephonyDomain/Reconciliation/ConferenceParticipantReconciler.php || fail "participant ensure is not suppressed when the parent conference is not open"
+grep -q "conference->desired_state !== 'open'" apps/api/app/TelephonyDomain/Reconciliation/ConferenceParticipantReconciler.php || fail "participant reconciler does not check parent conference desired state before ensure"
 grep -q "scripts/kubernetes/lib" scripts/asterisk-conference/status || fail "conference status does not use Kubernetes status helper"
 grep -q "kube -n.*exec" scripts/asterisk-conference/status || fail "conference status does not execute in the deployed application context"
 grep -q "scripts/kubernetes/lib" scripts/asterisk-conference/recovery-status || fail "conference recovery status does not use Kubernetes status helper"

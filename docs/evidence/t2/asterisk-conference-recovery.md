@@ -351,13 +351,18 @@ completions count as plain `succeeded` in
 `utcp_conference_recovery_operations_total`, so churn is invisible to
 metrics).
 
-**Selected correction (bounded, not yet implemented):** (a) drain all
-immediately available frames per listener cycle (loop `readEvent` until null
-within the existing cycle, keeping heartbeat cadence unchanged); (b) in the
-participant reconciler's admitted branch, when the bound conference's desired
-state is not `open`, return `waiting` instead of dispatching an ensure the
-adapter is guaranteed to fence. Both use existing contracts; neither adds
-tuning gates or new authorities.
+**Selected correction (implemented in T2-B11 source/tests, live proof
+pending):** The listener now drains immediately available frames per claimed
+connection by looping `readEvent` until it returns `null` or reaches the
+deterministic per-connection `max_events_per_cycle` cap. The outer
+`poll_seconds=5` cadence, heartbeat cadence, lease fencing, event ordering,
+and reconnect/teardown path remain unchanged. The participant reconciler now
+suppresses `conference.participant.ensure` while the parent Conference
+desired state is not `open`, returning
+`waiting(conference_not_open_for_participant_ensure)` instead of creating an
+operation the adapter stale-generation fence is guaranteed to reject. Adapter
+generation fencing remains defense in depth; live latency and stale-ensure
+churn verification remains pending for Claude Code.
 
 ## 11. Remaining gaps (not closed by these corridors)
 - Listener event drain and stale-ensure churn: isolated in §10 with a

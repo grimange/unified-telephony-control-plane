@@ -54,6 +54,22 @@ php -l apps/api/app/RuntimeEngine/Listeners/RuntimeListenerLeaseRepository.php >
 php -l apps/api/config/asterisk_ari.php >/dev/null
 php -l apps/api/routes/console.php >/dev/null
 
+max_events_per_cycle="$(sed -n "s/^[[:space:]]*'max_events_per_cycle'[[:space:]]*=>[[:space:]]*\\([0-9][0-9]*\\),[[:space:]]*$/\\1/p" apps/api/config/asterisk_ari.php)"
+[ -n "$max_events_per_cycle" ] || fail "missing deterministic ARI max_events_per_cycle configuration"
+[ "$max_events_per_cycle" -ge 1 ] && [ "$max_events_per_cycle" -le 1000 ] || fail "ARI max_events_per_cycle must be positive and bounded"
+grep -q "maxEventsPerCycle" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriEventListener.php || fail "listener does not use the configured per-cycle drain cap"
+grep -q "readEvent" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriEventListener.php || fail "listener does not read queued ARI events"
+grep -q 'if ($event === null)' apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriEventListener.php || fail "listener drain does not terminate on empty queue"
+if rg -n "UTCP_ASTERISK_ARI_MAX_EVENTS_PER_CYCLE|max_events_per_cycle.*env\\(" apps/api/config apps/api/app infrastructure scripts | rg -v '^scripts/asterisk-ari/config-check:'; then
+  fail "ARI max_events_per_cycle must not be controlled by an environment feature gate"
+fi
+if rg -n "sleep\\(" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriEventListener.php; then
+  fail "listener drain must not sleep inside the work cycle"
+fi
+if rg -n "drain.*ari|ari.*drain|events:drain|drain-events" apps/api/app apps/api/routes scripts | rg -v '^scripts/asterisk-ari/config-check:'; then
+  fail "manual ARI drain control is present"
+fi
+
 grep -Eq '^UTCP_PHASE=C5$|^UTCP_PHASE=T[01]$' versions.env || fail "unexpected phase marker for T0 corridor"
 grep -q "adapter_key.*asterisk-ari" apps/api/config/runtime_registry.php || fail "missing asterisk-ari registry metadata"
 grep -q "runtime_family.*asterisk" apps/api/config/runtime_registry.php || fail "missing asterisk runtime family metadata"

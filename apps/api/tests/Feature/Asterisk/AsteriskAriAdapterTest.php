@@ -2,12 +2,14 @@
 
 namespace Tests\Feature\Asterisk;
 
+use App\ControlPlane\RuntimeOperations\FailureClass;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\PayloadSafety;
 use App\Identity\IdentityIds;
 use App\RuntimeAdapters\Asterisk\AsteriskAriClient;
 use App\RuntimeAdapters\Asterisk\AsteriskAriEventListener;
 use App\RuntimeAdapters\Asterisk\AsteriskAriEventNormalizer;
+use App\RuntimeAdapters\Asterisk\AsteriskAriException;
 use App\RuntimeAdapters\Asterisk\AsteriskAriProfileService;
 use App\RuntimeAdapters\Asterisk\AsteriskAriReconnectBackoff;
 use App\RuntimeAdapters\Asterisk\AsteriskCatalog;
@@ -22,6 +24,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use ReflectionProperty;
+use RuntimeException;
 use Tests\TestCase;
 
 final class AsteriskAriAdapterTest extends TestCase
@@ -665,6 +668,177 @@ final class AsteriskAriAdapterTest extends TestCase
             ->count(), 'the subscription loss must be recorded as a failure receipt');
     }
 
+    public function test_listener_drains_multiple_queued_frames_in_one_cycle_and_wakes_recovery(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        [, $participantId] = $this->conferenceFixture($tenantId, $nodeId);
+        config()->set('asterisk_ari.max_events_per_cycle', 10);
+
+        $stream = fopen('php://temp', 'rb');
+        $catalog = new AsteriskCatalog;
+        $eventsByStream = [
+            (string) get_resource_id($stream) => [
+                $this->ariEvent('BridgeCreated', 'first'),
+                $this->ariEvent('ChannelDestroyed', 'second', channelId: (new AsteriskAriClient($catalog, app(AsteriskAriProfileService::class)))->participantChannelId($participantId)),
+                $this->ariEvent('StasisEnd', 'third'),
+            ],
+        ];
+        $client = $this->queuedEventClient($eventsByStream);
+        $leases = new RuntimeListenerLeaseRepository;
+        $receipts = new RuntimeEventReceiptRepository;
+        $listener = new AsteriskAriEventListener($catalog, $client, app(AsteriskAriProfileService::class), $leases, $receipts, new ReconciliationRepository);
+        $this->attachListenerConnection($listener, $leases, $receipts, $tenantId, $nodeId, 'listener-drain', $stream);
+
+        $listener->workOnce('listener-drain');
+
+        $received = DB::table('runtime_event_receipts')
+            ->where('runtime_node_id', $nodeId)
+            ->where('external_event_key', 'like', 'ari:%')
+            ->orderBy('occurred_at')
+            ->pluck('event_type')
+            ->all();
+
+        $this->assertSame([
+            $catalog->eventType('bridge_created'),
+            $catalog->eventType('channel_destroyed'),
+            $catalog->eventType('stasis_end'),
+        ], $received);
+        $this->assertSame('waiting', DB::table('runtime_reconciliation_states')->where('target_id', $participantId)->value('status'));
+        $this->assertSame(4, $client->readAttempts, 'three frames plus the empty queue check must be attempted without an outer sleep');
+    }
+
+    public function test_listener_stops_draining_immediately_on_empty_queue(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        config()->set('asterisk_ari.max_events_per_cycle', 10);
+
+        $stream = fopen('php://temp', 'rb');
+        $catalog = new AsteriskCatalog;
+        $client = $this->queuedEventClient([(string) get_resource_id($stream) => []]);
+        $leases = new RuntimeListenerLeaseRepository;
+        $receipts = new RuntimeEventReceiptRepository;
+        $listener = new AsteriskAriEventListener($catalog, $client, app(AsteriskAriProfileService::class), $leases, $receipts, new ReconciliationRepository);
+        $this->attachListenerConnection($listener, $leases, $receipts, $tenantId, $nodeId, 'listener-empty', $stream);
+
+        $listener->workOnce('listener-empty');
+
+        $this->assertSame(1, $client->readAttempts);
+        $this->assertSame(0, DB::table('runtime_event_receipts')->where('runtime_node_id', $nodeId)->where('external_event_key', 'like', 'ari:%')->count());
+    }
+
+    public function test_listener_enforces_configured_frame_cap_and_retains_remaining_frames_for_next_cycle(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        config()->set('asterisk_ari.max_events_per_cycle', 2);
+
+        $stream = fopen('php://temp', 'rb');
+        $catalog = new AsteriskCatalog;
+        $client = $this->queuedEventClient([
+            (string) get_resource_id($stream) => [
+                $this->ariEvent('BridgeCreated', 'one'),
+                $this->ariEvent('BridgeDestroyed', 'two'),
+                $this->ariEvent('StasisEnd', 'three'),
+            ],
+        ]);
+        $leases = new RuntimeListenerLeaseRepository;
+        $receipts = new RuntimeEventReceiptRepository;
+        $listener = new AsteriskAriEventListener($catalog, $client, app(AsteriskAriProfileService::class), $leases, $receipts, new ReconciliationRepository);
+        $this->attachListenerConnection($listener, $leases, $receipts, $tenantId, $nodeId, 'listener-cap', $stream);
+
+        $listener->workOnce('listener-cap');
+        $this->assertSame(2, DB::table('runtime_event_receipts')->where('runtime_node_id', $nodeId)->where('external_event_key', 'like', 'ari:%')->count());
+        $this->assertCount(1, $client->eventsByStream[(string) get_resource_id($stream)]);
+
+        $listener->workOnce('listener-cap');
+        $this->assertSame(3, DB::table('runtime_event_receipts')->where('runtime_node_id', $nodeId)->where('external_event_key', 'like', 'ari:%')->count());
+        $this->assertSame([], $client->eventsByStream[(string) get_resource_id($stream)]);
+    }
+
+    public function test_listener_exception_during_drain_uses_existing_teardown_and_retry_path(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        config()->set('asterisk_ari.max_events_per_cycle', 10);
+
+        $stream = fopen('php://temp', 'rb');
+        $catalog = new AsteriskCatalog;
+        $client = $this->queuedEventClient([
+            (string) get_resource_id($stream) => [
+                $this->ariEvent('BridgeCreated', 'first'),
+                $this->ariEvent('BridgeDestroyed', 'second'),
+                $this->ariEvent('StasisEnd', 'not-processed'),
+            ],
+        ], throwOnAttempt: 3);
+        $leases = new RuntimeListenerLeaseRepository;
+        $receipts = new RuntimeEventReceiptRepository;
+        $listener = new AsteriskAriEventListener($catalog, $client, app(AsteriskAriProfileService::class), $leases, $receipts, new ReconciliationRepository);
+        $lease = $this->attachListenerConnection($listener, $leases, $receipts, $tenantId, $nodeId, 'listener-exception', $stream);
+        $connections = new ReflectionProperty($listener, 'connections');
+
+        $listener->workOnce('listener-exception');
+
+        $this->assertSame(2, DB::table('runtime_event_receipts')->where('runtime_node_id', $nodeId)->where('external_event_key', 'like', 'ari:%')->count());
+        $this->assertSame(1, DB::table('runtime_event_receipts')->where('runtime_node_id', $nodeId)->where('external_event_key', 'like', 'failure:%:ari_test_drain_failure')->count());
+        $this->assertSame([], $connections->getValue($listener));
+        $this->assertTrue($client->webSocketClosed);
+        $this->assertSame('released', DB::table('runtime_listener_leases')->where('id', (string) $lease->id)->value('status'));
+    }
+
+    public function test_listener_applies_frame_cap_per_connection_without_starving_the_next_connection(): void
+    {
+        [$tenantA, $nodeA] = $this->runtimeNode();
+        [$tenantB, $nodeB] = $this->runtimeNode();
+        $this->configureAriNode($tenantA, $nodeA);
+        $this->configureAriNode($tenantB, $nodeB);
+        config()->set('asterisk_ari.max_events_per_cycle', 2);
+
+        $streamA = fopen('php://temp', 'rb');
+        $streamB = fopen('php://temp', 'rb');
+        $catalog = new AsteriskCatalog;
+        $client = $this->queuedEventClient([
+            (string) get_resource_id($streamA) => [
+                $this->ariEvent('BridgeCreated', 'a-one'),
+                $this->ariEvent('BridgeDestroyed', 'a-two'),
+                $this->ariEvent('StasisEnd', 'a-three'),
+            ],
+            (string) get_resource_id($streamB) => [
+                $this->ariEvent('BridgeCreated', 'b-one'),
+            ],
+        ]);
+        $leases = new RuntimeListenerLeaseRepository;
+        $receipts = new RuntimeEventReceiptRepository;
+        $listener = new AsteriskAriEventListener($catalog, $client, app(AsteriskAriProfileService::class), $leases, $receipts, new ReconciliationRepository);
+        $this->attachListenerConnection($listener, $leases, $receipts, $tenantA, $nodeA, 'listener-fair', $streamA);
+        $this->attachListenerConnection($listener, $leases, $receipts, $tenantB, $nodeB, 'listener-fair', $streamB);
+
+        $listener->workOnce('listener-fair');
+
+        $this->assertSame(2, DB::table('runtime_event_receipts')->where('runtime_node_id', $nodeA)->where('external_event_key', 'like', 'ari:%')->count());
+        $this->assertSame(1, DB::table('runtime_event_receipts')->where('runtime_node_id', $nodeB)->where('external_event_key', 'like', 'ari:%')->count());
+        $this->assertCount(1, $client->eventsByStream[(string) get_resource_id($streamA)]);
+    }
+
+    public function test_listener_rejects_invalid_frame_cap_configuration(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        config()->set('asterisk_ari.max_events_per_cycle', 0);
+
+        $stream = fopen('php://temp', 'rb');
+        $catalog = new AsteriskCatalog;
+        $client = $this->queuedEventClient([(string) get_resource_id($stream) => []]);
+        $leases = new RuntimeListenerLeaseRepository;
+        $receipts = new RuntimeEventReceiptRepository;
+        $listener = new AsteriskAriEventListener($catalog, $client, app(AsteriskAriProfileService::class), $leases, $receipts, new ReconciliationRepository);
+        $this->attachListenerConnection($listener, $leases, $receipts, $tenantId, $nodeId, 'listener-invalid-config', $stream);
+
+        $this->expectException(RuntimeException::class);
+        $listener->workOnce('listener-invalid-config');
+    }
+
     public function test_asterisk_runtime_payloads_do_not_use_sensitive_key_names(): void
     {
         $payload = PayloadSafety::assertSafe([
@@ -688,7 +862,7 @@ final class AsteriskAriAdapterTest extends TestCase
         $nodeId = IdentityIds::new();
         DB::table('tenants')->insert([
             'id' => $tenantId,
-            'slug' => 'asterisk-tenant',
+            'slug' => 'asterisk-tenant-'.substr($tenantId, 0, 8),
             'display_name' => 'Asterisk Tenant',
             'status' => 'active',
             'created_at' => now(),
@@ -698,7 +872,7 @@ final class AsteriskAriAdapterTest extends TestCase
             'id' => $nodeId,
             'tenant_id' => $tenantId,
             'name' => 'Asterisk ARI',
-            'slug' => 'asterisk-ari',
+            'slug' => 'asterisk-ari-'.substr($nodeId, 0, 8),
             'runtime_family' => 'asterisk',
             'adapter_key' => 'asterisk-ari',
             'desired_state' => 'active',
@@ -767,5 +941,182 @@ final class AsteriskAriAdapterTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    /**
+     * @param  array<string, list<array<string, mixed>>>  $eventsByStream
+     */
+    private function queuedEventClient(array $eventsByStream, ?int $throwOnAttempt = null): AsteriskAriClient
+    {
+        return new class(new AsteriskCatalog, app(AsteriskAriProfileService::class), $eventsByStream, $throwOnAttempt) extends AsteriskAriClient
+        {
+            /** @var array<string, list<array<string, mixed>>> */
+            public array $eventsByStream;
+
+            public int $readAttempts = 0;
+
+            public bool $webSocketClosed = false;
+
+            /**
+             * @param  array<string, list<array<string, mixed>>>  $eventsByStream
+             */
+            public function __construct(AsteriskCatalog $catalog, AsteriskAriProfileService $profiles, array $eventsByStream, private readonly ?int $throwOnAttempt)
+            {
+                parent::__construct($catalog, $profiles);
+                $this->eventsByStream = $eventsByStream;
+            }
+
+            public function readEvent(mixed $stream): ?array
+            {
+                $this->readAttempts++;
+                if ($this->throwOnAttempt !== null && $this->readAttempts === $this->throwOnAttempt) {
+                    throw new AsteriskAriException(FailureClass::RuntimeUnavailable, 'ari_test_drain_failure', 'test drain failure', true);
+                }
+
+                $streamId = is_resource($stream) ? (string) get_resource_id($stream) : '';
+                if (! array_key_exists($streamId, $this->eventsByStream)) {
+                    return null;
+                }
+
+                return array_shift($this->eventsByStream[$streamId]);
+            }
+
+            public function closeWebSocket(mixed $stream): void
+            {
+                $this->webSocketClosed = true;
+            }
+        };
+    }
+
+    private function attachListenerConnection(
+        AsteriskAriEventListener $listener,
+        RuntimeListenerLeaseRepository $leases,
+        RuntimeEventReceiptRepository $receipts,
+        string $tenantId,
+        string $nodeId,
+        string $workerId,
+        mixed $stream,
+    ): object {
+        $catalog = new AsteriskCatalog;
+        $lease = $leases->claim($tenantId, $nodeId, $catalog->listenerKind(), $workerId, 45);
+        $this->assertNotNull($lease);
+        $epochId = $receipts->openEpoch($tenantId, $nodeId, $catalog->adapterKey(), $workerId);
+
+        $connections = new ReflectionProperty($listener, 'connections');
+        $current = $connections->getValue($listener);
+        $current[$nodeId] = [
+            'tenant_id' => $tenantId,
+            'stream' => $stream,
+            'lease_id' => (string) $lease->id,
+            'fencing_token' => (string) $lease->fencing_token,
+            'epoch_id' => $epochId,
+            'configuration_version' => 1,
+            'credential_version' => 1,
+            'worker_id' => $workerId,
+            'heartbeat_interval_ms' => 30000,
+            'next_health_check_at' => microtime(true) + 3600,
+        ];
+        $connections->setValue($listener, $current);
+
+        return $lease;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function ariEvent(string $type, string $label, ?string $channelId = null): array
+    {
+        $second = match ($label) {
+            'first', 'one', 'a-one', 'b-one' => '01',
+            'second', 'two', 'a-two' => '02',
+            'third', 'three', 'a-three', 'not-processed' => '03',
+            default => '00',
+        };
+        $event = [
+            'type' => $type,
+            'timestamp' => '2026-07-18T00:00:'.$second.'Z',
+            'bridge' => [
+                'id' => 'utcp-conf-'.$label,
+                'name' => 'UTCP conference '.$label,
+            ],
+        ];
+        if ($channelId !== null) {
+            $event['channel'] = [
+                'id' => $channelId,
+                'name' => 'UTCP participant '.$label,
+            ];
+        }
+
+        return $event;
+    }
+
+    /**
+     * @return array{0:string,1:string}
+     */
+    private function conferenceFixture(string $tenantId, string $nodeId): array
+    {
+        $userId = IdentityIds::new();
+        $sessionId = IdentityIds::new();
+        $conferenceId = IdentityIds::new();
+        $participantId = IdentityIds::new();
+        DB::table('users')->insert([
+            'id' => $userId,
+            'email' => 'listener-participant@example.test',
+            'normalized_email' => 'listener-participant@example.test',
+            'display_name' => 'Listener Participant',
+            'password' => 'not-a-real-hash',
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('telephony_sessions')->insert([
+            'id' => $sessionId,
+            'tenant_id' => $tenantId,
+            'user_id' => $userId,
+            'status' => 'active',
+            'issued_at' => now(),
+            'expires_at' => now()->addMinutes(10),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('conferences')->insert([
+            'id' => $conferenceId,
+            'tenant_id' => $tenantId,
+            'slug' => 'listener-conference',
+            'display_name' => 'Listener Conference',
+            'runtime_node_id' => $nodeId,
+            'desired_state' => 'open',
+            'observed_state' => 'ready',
+            'configuration_generation' => 1,
+            'created_by' => $userId,
+            'updated_by' => $userId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('conference_runtime_bindings')->insert([
+            'id' => IdentityIds::new(),
+            'tenant_id' => $tenantId,
+            'conference_id' => $conferenceId,
+            'runtime_node_id' => $nodeId,
+            'status' => 'active',
+            'bound_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('conference_participants')->insert([
+            'id' => $participantId,
+            'tenant_id' => $tenantId,
+            'conference_id' => $conferenceId,
+            'telephony_session_id' => $sessionId,
+            'user_id' => $userId,
+            'role' => 'participant',
+            'desired_state' => 'admitted',
+            'observed_state' => 'joined',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        (new ReconciliationRepository)->ensureTarget($tenantId, 'conference_participant', $participantId, 2, 300);
+
+        return [$conferenceId, $participantId];
     }
 }

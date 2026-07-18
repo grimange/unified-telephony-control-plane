@@ -8,6 +8,7 @@ use App\RuntimeEngine\Listeners\RuntimeListenerLeaseRepository;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
 use Throwable;
 
 final class AsteriskAriEventListener
@@ -109,34 +110,13 @@ final class AsteriskAriEventListener
             }
 
             try {
-                $event = $this->client->readEvent($conn['stream']);
-                if ($event !== null) {
-                    $type = is_string($event['type'] ?? null) ? $event['type'] : 'unknown';
-                    $payload = [
-                        'runtime_node_id' => (string) $node->id,
-                        'configuration_generation' => (int) $node->configuration_version,
-                        'ari_event_type' => $type,
-                        'occurred_at' => is_string($event['timestamp'] ?? null) ? $event['timestamp'] : now()->toISOString(),
-                    ];
-                    $bridge = is_array($event['bridge'] ?? null) ? $event['bridge'] : null;
-                    $channel = is_array($event['channel'] ?? null) ? $event['channel'] : null;
-                    if ($bridge !== null) {
-                        $payload['bridge_id'] = is_string($bridge['id'] ?? null) ? $bridge['id'] : null;
-                        $payload['bridge_name'] = is_string($bridge['name'] ?? null) ? $bridge['name'] : null;
-                    }
-                    if ($channel !== null) {
-                        $payload['channel_id'] = is_string($channel['id'] ?? null) ? $channel['id'] : null;
-                        $payload['channel_name'] = is_string($channel['name'] ?? null) ? $channel['name'] : null;
+                for ($eventsRead = 0, $maxEvents = $this->maxEventsPerCycle(); $eventsRead < $maxEvents; $eventsRead++) {
+                    $event = $this->client->readEvent($conn['stream']);
+                    if ($event === null) {
+                        break;
                     }
 
-                    $this->ingest(
-                        $node,
-                        $conn['epoch_id'],
-                        'ari:'.hash('sha256', json_encode($event, JSON_THROW_ON_ERROR)),
-                        $this->catalog->eventType($this->catalogEventKey($type)),
-                        $payload,
-                    );
-                    $this->wakeConferenceRecoveryFromAriEvent($node, $type, $payload);
+                    $this->ingestAriEvent($node, $conn['epoch_id'], $event);
                 }
             } catch (AsteriskAriException $exception) {
                 $this->ingestFailure($node, $conn['epoch_id'], $conn['fencing_token'], $exception);
@@ -182,6 +162,49 @@ final class AsteriskAriEventListener
         }
 
         return $processed;
+    }
+
+    /**
+     * @param  array<string, mixed>  $event
+     */
+    private function ingestAriEvent(object $node, string $epochId, array $event): void
+    {
+        $type = is_string($event['type'] ?? null) ? $event['type'] : 'unknown';
+        $payload = [
+            'runtime_node_id' => (string) $node->id,
+            'configuration_generation' => (int) $node->configuration_version,
+            'ari_event_type' => $type,
+            'occurred_at' => is_string($event['timestamp'] ?? null) ? $event['timestamp'] : now()->toISOString(),
+        ];
+        $bridge = is_array($event['bridge'] ?? null) ? $event['bridge'] : null;
+        $channel = is_array($event['channel'] ?? null) ? $event['channel'] : null;
+        if ($bridge !== null) {
+            $payload['bridge_id'] = is_string($bridge['id'] ?? null) ? $bridge['id'] : null;
+            $payload['bridge_name'] = is_string($bridge['name'] ?? null) ? $bridge['name'] : null;
+        }
+        if ($channel !== null) {
+            $payload['channel_id'] = is_string($channel['id'] ?? null) ? $channel['id'] : null;
+            $payload['channel_name'] = is_string($channel['name'] ?? null) ? $channel['name'] : null;
+        }
+
+        $this->ingest(
+            $node,
+            $epochId,
+            'ari:'.hash('sha256', json_encode($event, JSON_THROW_ON_ERROR)),
+            $this->catalog->eventType($this->catalogEventKey($type)),
+            $payload,
+        );
+        $this->wakeConferenceRecoveryFromAriEvent($node, $type, $payload);
+    }
+
+    private function maxEventsPerCycle(): int
+    {
+        $value = config('asterisk_ari.max_events_per_cycle', 50);
+        if (! is_int($value) || $value < 1 || $value > 1000) {
+            throw new RuntimeException('Invalid Asterisk ARI max events per cycle.');
+        }
+
+        return $value;
     }
 
     private function openConnection(object $node, object $lease, string $workerId): void

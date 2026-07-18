@@ -78,6 +78,12 @@ Projected participant `left` is runtime evidence, not proof that an Asterisk cha
 
 T2-B source-level repository work keeps `UTCP_PHASE=T1`. Live acceptance of listener restart, event-gap recovery, Asterisk restart reconstruction, retryable partial failure, close-before-remove participant cleanup, recovery alert fire/resolve, and final orphan cleanup remains a separate Claude Code corridor.
 
+## T2-B11 Listener Drain and Ensure Suppression
+
+The ARI event listener drains immediately available WebSocket frames in one `workOnce` cycle for each claimed connection. The drain stops as soon as `readEvent()` returns `null` and is capped by the deterministic repository configuration `max_events_per_cycle` so one busy connection cannot monopolize the listener indefinitely. The five-second outer poll cadence, heartbeat cadence, lease behavior, and reconnect/teardown path remain unchanged.
+
+Participant ensure remains valid only while the parent Conference desired state is `open`. If an admitted participant is reconciled after the Conference has moved to `draining`, `closed`, or any other non-open desired state, the reconciler waits with `conference_not_open_for_participant_ensure` and does not create a stale ensure operation. The adapter generation fence remains in place as defense in depth. Live proof that ARI burst latency and stale participant-ensure churn are eliminated remains pending for Claude Code.
+
 ## Asterisk 20 Local Channel Readiness
 
 The Asterisk 20 image uses the pinned `andrius/asterisk:20` digest already recorded by the repository. Local channel support is core-resident in this supported Asterisk version, so `chan_local.so` must not be configured, compiled, or added as a compatibility fallback. The conference proof fixture continues to prove Local-channel use through the `Local/participant@utcp-conference-proof/n` dial string.

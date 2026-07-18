@@ -77,6 +77,74 @@ final class AsteriskConferenceRecoveryTest extends TestCase
         $this->assertSame($nodeId, $result->runtimeNodeId);
     }
 
+    public function test_admitted_participant_waits_without_operation_when_parent_conference_is_closed(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [, $participantId] = $this->conferenceFixture($tenantId, $nodeId, conferenceDesiredState: 'closed', participantDesiredState: 'admitted', observedConferenceState: 'closed', observedParticipantState: 'left');
+        $inspectionCalls = (object) ['count' => 0];
+        $reconciler = new ConferenceParticipantReconciler($this->inspectionServiceCounting($inspectionCalls));
+
+        $result = $reconciler->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $participantId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('waiting', $result->status);
+        $this->assertSame('conference_not_open_for_participant_ensure', $result->reasonCode);
+        $this->assertNull($result->operationType);
+        $this->assertSame(0, $inspectionCalls->count);
+
+        $repository = new ReconciliationRepository;
+        $stateId = $repository->ensureTarget($tenantId, 'conference_participant', $participantId, 2);
+        $worker = new ReconciliationWorker(
+            $repository,
+            new ReconcilerRegistry([$reconciler]),
+            new RuntimeOperationRepository,
+        );
+
+        $this->assertSame(1, $worker->workOnce('participant-closed-parent', batchSize: 1));
+
+        $state = DB::table('runtime_reconciliation_states')->where('id', $stateId)->first();
+        $this->assertSame('waiting', $state->status);
+        $this->assertSame(0, $inspectionCalls->count);
+        $this->assertDatabaseCount('runtime_operations', 0);
+    }
+
+    public function test_admitted_participant_waits_without_operation_when_parent_conference_is_draining(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [, $participantId] = $this->conferenceFixture($tenantId, $nodeId, conferenceDesiredState: 'draining', participantDesiredState: 'admitted', observedConferenceState: 'ready', observedParticipantState: 'joined');
+        $inspectionCalls = (object) ['count' => 0];
+        $reconciler = new ConferenceParticipantReconciler($this->inspectionServiceCounting($inspectionCalls));
+
+        $result = $reconciler->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $participantId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('waiting', $result->status);
+        $this->assertSame('conference_not_open_for_participant_ensure', $result->reasonCode);
+        $this->assertNull($result->operationType);
+        $this->assertSame(0, $inspectionCalls->count);
+
+        $repository = new ReconciliationRepository;
+        $stateId = $repository->ensureTarget($tenantId, 'conference_participant', $participantId, 2);
+        $worker = new ReconciliationWorker(
+            $repository,
+            new ReconcilerRegistry([$reconciler]),
+            new RuntimeOperationRepository,
+        );
+
+        $this->assertSame(1, $worker->workOnce('participant-draining-parent', batchSize: 1));
+
+        $state = DB::table('runtime_reconciliation_states')->where('id', $stateId)->first();
+        $this->assertSame('waiting', $state->status);
+        $this->assertSame(0, $inspectionCalls->count);
+        $this->assertDatabaseCount('runtime_operations', 0);
+    }
+
     public function test_closed_conference_with_runtime_bridge_present_requires_close_operation(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode();
@@ -1083,6 +1151,38 @@ final class AsteriskConferenceRecoveryTest extends TestCase
                         ];
                     }
 
+                    return true;
+                }
+            },
+        ]));
+    }
+
+    private function inspectionServiceCounting(object $inspectionCalls): RuntimeConferenceInspectionService
+    {
+        return new RuntimeConferenceInspectionService(new RuntimeAdapterRegistry([
+            new class($inspectionCalls) implements RuntimeAdapter, RuntimeConferenceInspectionAdapter
+            {
+                public function __construct(private readonly object $inspectionCalls) {}
+
+                public function adapterKey(): string
+                {
+                    return 'asterisk-ari';
+                }
+
+                public function execute(array $operation): array
+                {
+                    return ['status' => 'unsupported'];
+                }
+
+                public function inspectConferenceRuntime(string $tenantId, string $runtimeNodeId, string $conferenceId, ?string $participantId = null): RuntimeConferenceInspectionResult
+                {
+                    $this->inspectionCalls->count++;
+
+                    return RuntimeConferenceInspectionResult::observed(true, false, false);
+                }
+
+                public function recordConferenceRuntimeInspectionEvidence(string $tenantId, string $runtimeNodeId, string $conferenceId, ?string $participantId = null): bool
+                {
                     return true;
                 }
             },

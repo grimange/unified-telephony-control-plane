@@ -19,6 +19,7 @@ return [
     'lease_seconds' => (int) env('UTCP_ASTERISK_ARI_LEASE_SECONDS', 45),
     'batch_size' => (int) env('UTCP_ASTERISK_ARI_BATCH_SIZE', 5),
     'poll_seconds' => (int) env('UTCP_ASTERISK_ARI_POLL_SECONDS', 5),
+    'max_events_per_cycle' => 50,
     'max_payload_bytes' => (int) env('UTCP_ASTERISK_ARI_MAX_PAYLOAD_BYTES', 32768),
     'event_types' => [
         'connection_opened' => 'asterisk.ari.connection.opened',
