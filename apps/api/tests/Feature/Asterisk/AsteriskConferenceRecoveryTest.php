@@ -2,7 +2,10 @@
 
 namespace Tests\Feature\Asterisk;
 
+use App\ControlPlane\Messaging\EventEnvelope;
+use App\ControlPlane\Messaging\OutboxRepository;
 use App\ControlPlane\RuntimeOperations\FailureClass;
+use App\ControlPlane\RuntimeOperations\OperationStatus;
 use App\ControlPlane\RuntimeOperations\RuntimeOperationRepository;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\Identity\IdentityIds;
@@ -27,6 +30,7 @@ use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use App\RuntimeEngine\Reconciliation\ReconciliationWorker;
 use App\TelephonyDomain\Reconciliation\ConferenceParticipantReconciler;
 use App\TelephonyDomain\Reconciliation\ConferenceReconciler;
+use App\TelephonyDomain\TelephonyDomainService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use ReflectionMethod;
@@ -963,6 +967,129 @@ final class AsteriskConferenceRecoveryTest extends TestCase
         $this->assertTrue($participantRemove['event_payload']['stale_operation']);
     }
 
+    public function test_old_node_operation_is_stale_after_atomic_runtime_binding_replacement(): void
+    {
+        [$tenantId, $nodeA] = $this->runtimeNode();
+        $nodeB = $this->runtimeNodeForTenant($tenantId, 'asterisk-ari-replacement');
+        [$conferenceId] = $this->conferenceFixture($tenantId, $nodeA);
+        $operations = new RuntimeOperationRepository;
+        $operationId = $operations->create(
+            'conference.ensure',
+            'conference',
+            $conferenceId,
+            [
+                'conference_id' => $conferenceId,
+                'configuration_generation' => 1,
+            ],
+            ExecutionContext::system(tenantId: $tenantId, reason: 'old node operation fence test'),
+            runtimeNodeId: $nodeA,
+        );
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        $rebind = app(TelephonyDomainService::class)->failoverRebindConference(
+            ExecutionContext::system(tenantId: $tenantId, reason: 'old node operation fence rebind'),
+            $tenantId,
+            $conferenceId,
+        );
+
+        $operation = (array) DB::table('runtime_operations')->where('id', $operationId)->first();
+        $operation['payload'] = json_decode((string) $operation['payload'], true, flags: JSON_THROW_ON_ERROR);
+        $client = new class(new AsteriskCatalog, app(AsteriskAriProfileService::class)) extends AsteriskAriClient
+        {
+            public int $ensureConferenceBridgeCalls = 0;
+
+            public function ensureConferenceBridge(string $tenantId, string $runtimeNodeId, string $conferenceId, int $configurationGeneration): array
+            {
+                $this->ensureConferenceBridgeCalls++;
+
+                return [
+                    'runtime_node_id' => $runtimeNodeId,
+                    'bridge_id' => 'should-not-mutate',
+                    'configuration_generation' => $configurationGeneration,
+                    'already_existed' => false,
+                ];
+            }
+        };
+
+        $result = (new AsteriskRuntimeAdapter(new AsteriskCatalog, $client))->execute($operation);
+
+        $this->assertSame('rebound', $rebind['status']);
+        $this->assertSame($nodeA, $operation['runtime_node_id']);
+        $this->assertSame($nodeB, DB::table('conference_runtime_bindings')->where('conference_id', $conferenceId)->where('status', 'active')->value('runtime_node_id'));
+        $this->assertGreaterThan((int) $operation['payload']['configuration_generation'], (int) DB::table('conferences')->where('id', $conferenceId)->value('configuration_generation'));
+        $this->assertSame('completed', $result['status']);
+        $this->assertSame('runtime_operation.asterisk_conference_stale', $result['event_type']);
+        $this->assertTrue($result['event_payload']['stale_operation']);
+        $this->assertSame(0, $client->ensureConferenceBridgeCalls);
+        $claim = $operations->claimAvailable('old-node-stale-completion')[0];
+        $operations->markRunning($operationId, $claim->leaseToken);
+        $operations->complete($operationId, $claim->leaseToken, EventEnvelope::forAggregate(
+            $result['event_type'],
+            1,
+            'conference',
+            $conferenceId,
+            $result['event_payload'],
+            ExecutionContext::system(tenantId: $tenantId, reason: 'old node stale completion'),
+        ), new OutboxRepository);
+        $this->assertSame(OperationStatus::Succeeded->value, DB::table('runtime_operations')->where('id', $operationId)->value('status'));
+        $this->assertSame($nodeB, DB::table('conferences')->where('id', $conferenceId)->value('runtime_node_id'));
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conferenceId)->where('status', 'active')->count());
+    }
+
+    public function test_delayed_old_node_conference_and_participant_events_do_not_project_after_rebind(): void
+    {
+        [$tenantId, $nodeA] = $this->runtimeNode();
+        $nodeB = $this->runtimeNodeForTenant($tenantId, 'asterisk-ari-event-replacement');
+        [$conferenceId, $participantId] = $this->conferenceFixture($tenantId, $nodeA, observedConferenceState: 'unobserved', observedParticipantState: 'unobserved');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+        app(TelephonyDomainService::class)->failoverRebindConference(
+            ExecutionContext::system(tenantId: $tenantId, reason: 'old node event fence rebind'),
+            $tenantId,
+            $conferenceId,
+        );
+
+        $catalog = new AsteriskCatalog;
+        $client = new AsteriskAriClient($catalog, app(AsteriskAriProfileService::class));
+        $receipts = new RuntimeEventReceiptRepository;
+        $epochId = $receipts->openEpoch($tenantId, $nodeA, $catalog->adapterKey(), 'old-node-listener');
+        $bridgeReceipt = $receipts->ingest($tenantId, $nodeA, $catalog->adapterKey(), $epochId, 'old-node-bridge', $catalog->eventType('bridge_created'), 1, [
+            'runtime_node_id' => $nodeA,
+            'configuration_generation' => 1,
+            'bridge_id' => $client->conferenceBridgeId($conferenceId),
+            'occurred_at' => now()->toISOString(),
+        ]);
+        $participantReceipt = $receipts->ingest($tenantId, $nodeA, $catalog->adapterKey(), $epochId, 'old-node-participant', $catalog->eventType('channel_entered_bridge'), 1, [
+            'runtime_node_id' => $nodeA,
+            'configuration_generation' => 1,
+            'bridge_id' => $client->conferenceBridgeId($conferenceId),
+            'channel_id' => $client->participantChannelId($participantId),
+            'occurred_at' => now()->toISOString(),
+        ]);
+
+        $bridgeReceiptRow = DB::table('runtime_event_receipts')->where('id', $bridgeReceipt['id'])->first();
+        $participantReceiptRow = DB::table('runtime_event_receipts')->where('id', $participantReceipt['id'])->first();
+        $bridgeObservations = (new AsteriskAriEventNormalizer($catalog, $catalog->eventType('bridge_created')))->normalize($bridgeReceiptRow, [
+            'bridge_id' => $client->conferenceBridgeId($conferenceId),
+            'occurred_at' => now()->toISOString(),
+        ]);
+        $participantObservations = (new AsteriskAriEventNormalizer($catalog, $catalog->eventType('channel_entered_bridge')))->normalize($participantReceiptRow, [
+            'bridge_id' => $client->conferenceBridgeId($conferenceId),
+            'channel_id' => $client->participantChannelId($participantId),
+            'occurred_at' => now()->toISOString(),
+        ]);
+
+        (new ProjectionService)->apply($bridgeReceiptRow, $bridgeObservations);
+        (new ProjectionService)->apply($participantReceiptRow, $participantObservations);
+
+        $this->assertSame($nodeA, $bridgeReceiptRow->runtime_node_id);
+        $this->assertSame($nodeB, DB::table('conference_runtime_bindings')->where('conference_id', $conferenceId)->where('status', 'active')->value('runtime_node_id'));
+        $this->assertSame([], $bridgeObservations);
+        $this->assertSame([], $participantObservations);
+        $this->assertSame(0, DB::table('runtime_observations')->whereIn('source_event_id', [$bridgeReceipt['id'], $participantReceipt['id']])->count());
+        $this->assertSame('unobserved', DB::table('conferences')->where('id', $conferenceId)->value('observed_state'));
+        $this->assertSame('unobserved', DB::table('conference_participants')->where('id', $participantId)->value('observed_state'));
+    }
+
     /**
      * @return array{0:string,1:string}
      */
@@ -1002,6 +1129,35 @@ final class AsteriskConferenceRecoveryTest extends TestCase
         }
 
         return [$tenantId, $nodeId];
+    }
+
+    private function runtimeNodeForTenant(string $tenantId, string $slug): string
+    {
+        $nodeId = IdentityIds::new();
+        DB::table('runtime_nodes')->insert([
+            'id' => $nodeId,
+            'tenant_id' => $tenantId,
+            'name' => 'Asterisk ARI Replacement',
+            'slug' => $slug,
+            'runtime_family' => 'asterisk',
+            'adapter_key' => 'asterisk-ari',
+            'desired_state' => 'active',
+            'observed_state' => 'ready',
+            'configuration_version' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        foreach (['conference.lifecycle', 'conference.participation'] as $capability) {
+            DB::table('runtime_node_capabilities')->insert([
+                'id' => IdentityIds::new(),
+                'runtime_node_id' => $nodeId,
+                'capability_key' => $capability,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        return $nodeId;
     }
 
     /**

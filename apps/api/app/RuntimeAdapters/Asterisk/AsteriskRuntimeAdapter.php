@@ -336,9 +336,8 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
         $conference = DB::table('conferences')
             ->where('id', $conferenceId)
             ->where('tenant_id', (string) $node->tenant_id)
-            ->where('runtime_node_id', (string) $node->id)
             ->first();
-        if ($conference === null) {
+        if ($conference === null || ((string) $conference->runtime_node_id !== (string) $node->id && $this->operationGeneration($operation) >= (int) $conference->configuration_generation)) {
             throw new AsteriskAriException(FailureClass::InvalidRequest, 'conference_not_bound_to_node', 'Conference is not bound to this Asterisk runtime node.');
         }
 

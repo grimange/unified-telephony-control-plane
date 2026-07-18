@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\TelephonyDomain;
 
+use App\ControlPlane\Shared\ExecutionContext;
 use App\Identity\IdentityIds;
 use App\Models\User;
 use App\RuntimeEngine\Commands\CommandWorker;
@@ -9,9 +10,12 @@ use App\RuntimeEngine\Events\EventNormalizerWorker;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use App\RuntimeEngine\Reconciliation\ReconciliationWorker;
 use App\Simulator\SimulatorEventSourceWorker;
+use App\TelephonyDomain\TelephonyDomainService;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Tests\TestCase;
 
 final class TelephonyDomainTest extends TestCase
@@ -297,6 +301,180 @@ final class TelephonyDomainTest extends TestCase
         );
     }
 
+    public function test_open_conference_runtime_rebind_atomically_retires_former_binding_and_wakes_reconciliation(): void
+    {
+        [$admin, $member, $tenantId, $nodeA] = $this->fixture('rebind-success');
+        $nodeB = $this->runtimeNode($tenantId, 'rebind-success-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'rebind-success');
+        $participant = $this->admitParticipantFor($member, $tenantId, $conference['id']);
+        DB::table('runtime_reconciliation_states')->where('target_id', $conference['id'])->update(['status' => 'converged', 'next_check_at' => now()->addHour()]);
+        DB::table('runtime_reconciliation_states')->where('target_id', $participant['id'])->update(['status' => 'converged', 'next_check_at' => now()->addHour()]);
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        $result = app(TelephonyDomainService::class)->failoverRebindConference(
+            ExecutionContext::system(tenantId: $tenantId, reason: 't5 rebind test'),
+            $tenantId,
+            $conference['id'],
+            'test-unavailable',
+        );
+
+        $updated = DB::table('conferences')->where('id', $conference['id'])->first();
+        $this->assertSame('rebound', $result['status']);
+        $this->assertSame($nodeA, $result['previous_runtime_node_id']);
+        $this->assertSame($nodeB, $result['runtime_node_id']);
+        $this->assertSame($nodeB, $updated->runtime_node_id);
+        $this->assertSame((int) $conference['configuration_generation'] + 1, (int) $updated->configuration_generation);
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertDatabaseHas('conference_runtime_bindings', [
+            'conference_id' => $conference['id'],
+            'runtime_node_id' => $nodeA,
+            'status' => 'retired',
+        ]);
+        $this->assertDatabaseHas('conference_runtime_bindings', [
+            'conference_id' => $conference['id'],
+            'runtime_node_id' => $nodeB,
+            'status' => 'active',
+        ]);
+        $this->assertDatabaseHas('runtime_reconciliation_states', [
+            'target_type' => 'conference',
+            'target_id' => $conference['id'],
+            'status' => 'waiting',
+            'desired_generation' => (int) $updated->configuration_generation,
+        ]);
+        $this->assertDatabaseHas('runtime_reconciliation_states', [
+            'target_type' => 'conference_participant',
+            'target_id' => $participant['id'],
+            'status' => 'waiting',
+            'desired_generation' => ((int) $updated->configuration_generation * 2),
+        ]);
+    }
+
+    public function test_rebind_is_rejected_while_bound_runtime_node_is_still_ready(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('rebind-ready');
+        $nodeB = $this->runtimeNode($tenantId, 'rebind-ready-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'rebind-ready');
+
+        $result = app(TelephonyDomainService::class)->failoverRebindConference(
+            ExecutionContext::system(tenantId: $tenantId, reason: 't5 rebind ready test'),
+            $tenantId,
+            $conference['id'],
+        );
+
+        $this->assertSame(['status' => 'noop', 'reason' => 'bound_runtime_node_ready'], $result);
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->assertSame((int) $conference['configuration_generation'], (int) DB::table('conferences')->where('id', $conference['id'])->value('configuration_generation'));
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertDatabaseMissing('conference_runtime_bindings', [
+            'conference_id' => $conference['id'],
+            'runtime_node_id' => $nodeB,
+            'status' => 'active',
+        ]);
+    }
+
+    public function test_rebind_fails_without_eligible_distinct_replacement_and_preserves_authority(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('rebind-none');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'rebind-none');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        try {
+            app(TelephonyDomainService::class)->failoverRebindConference(
+                ExecutionContext::system(tenantId: $tenantId, reason: 't5 rebind none test'),
+                $tenantId,
+                $conference['id'],
+            );
+            $this->fail('Expected rebind to fail without a distinct eligible replacement.');
+        } catch (HttpExceptionInterface $exception) {
+            $this->assertSame(422, $exception->getStatusCode());
+        }
+
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->assertSame((int) $conference['configuration_generation'], (int) DB::table('conferences')->where('id', $conference['id'])->value('configuration_generation'));
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertDatabaseHas('conference_runtime_bindings', [
+            'conference_id' => $conference['id'],
+            'runtime_node_id' => $nodeA,
+            'status' => 'active',
+        ]);
+    }
+
+    public function test_rebind_selection_cannot_return_the_current_runtime_node(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('rebind-distinct');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'rebind-distinct');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        try {
+            app(TelephonyDomainService::class)->failoverRebindConference(
+                ExecutionContext::system(tenantId: $tenantId, reason: 't5 distinct test'),
+                $tenantId,
+                $conference['id'],
+            );
+            $this->fail('Expected current node exclusion to leave no eligible replacement.');
+        } catch (HttpExceptionInterface $exception) {
+            $this->assertSame(422, $exception->getStatusCode());
+        }
+
+        $this->assertSame($nodeA, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->value('runtime_node_id'));
+    }
+
+    public function test_rebind_transaction_rolls_back_if_replacement_binding_insert_fails(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('rebind-rollback');
+        $this->runtimeNode($tenantId, 'rebind-rollback-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'rebind-rollback');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        DB::statement("create trigger fail_replacement_binding_insert before insert on conference_runtime_bindings when new.status = 'active' begin select raise(abort, 'forced replacement binding failure'); end");
+
+        try {
+            app(TelephonyDomainService::class)->failoverRebindConference(
+                ExecutionContext::system(tenantId: $tenantId, reason: 't5 rollback test'),
+                $tenantId,
+                $conference['id'],
+            );
+            $this->fail('Expected replacement binding insert to fail.');
+        } catch (QueryException) {
+            $this->assertTrue(true);
+        }
+
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->assertSame((int) $conference['configuration_generation'], (int) DB::table('conferences')->where('id', $conference['id'])->value('configuration_generation'));
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertDatabaseHas('conference_runtime_bindings', [
+            'conference_id' => $conference['id'],
+            'runtime_node_id' => $nodeA,
+            'status' => 'active',
+        ]);
+    }
+
+    public function test_serialized_rebind_attempts_produce_one_winner_and_one_safe_loser(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('rebind-serialized');
+        $nodeB = $this->runtimeNode($tenantId, 'rebind-serialized-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'rebind-serialized');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        $first = app(TelephonyDomainService::class)->failoverRebindConference(
+            ExecutionContext::system(tenantId: $tenantId, reason: 't5 first serialized test'),
+            $tenantId,
+            $conference['id'],
+        );
+        $second = app(TelephonyDomainService::class)->failoverRebindConference(
+            ExecutionContext::system(tenantId: $tenantId, reason: 't5 second serialized test'),
+            $tenantId,
+            $conference['id'],
+        );
+
+        $this->assertSame('rebound', $first['status']);
+        $this->assertSame(['status' => 'noop', 'reason' => 'bound_runtime_node_ready'], $second);
+        $this->assertSame($nodeB, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->assertSame((int) $conference['configuration_generation'] + 1, (int) DB::table('conferences')->where('id', $conference['id'])->value('configuration_generation'));
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('runtime_node_id', $nodeB)->where('status', 'active')->count());
+    }
+
     /**
      * @return array{0:User,1:User,2:string,3:string}
      */
@@ -369,6 +547,76 @@ final class TelephonyDomainTest extends TestCase
         ]);
 
         return [$admin, $member, $tenantId, $nodeId];
+    }
+
+    /**
+     * @param  list<string>  $capabilities
+     */
+    private function runtimeNode(string $tenantId, string $slug, string $observedState = 'ready', string $desiredState = 'active', array $capabilities = ['event.stream', 'runtime.configuration', 'runtime.observation', 'conference.lifecycle', 'conference.participation']): string
+    {
+        $nodeId = IdentityIds::new();
+        DB::table('runtime_nodes')->insert([
+            'id' => $nodeId,
+            'tenant_id' => $tenantId,
+            'name' => 'Conference Runtime '.$slug,
+            'slug' => 'conference-runtime-'.$slug,
+            'runtime_family' => 'simulator',
+            'adapter_key' => 'simulator-deterministic',
+            'desired_state' => $desiredState,
+            'observed_state' => $observedState,
+            'configuration_version' => 1,
+            'placement_priority' => 100,
+            'capacity_weight' => 1,
+            'labels' => json_encode(['purpose' => 't5-rebind-test'], JSON_THROW_ON_ERROR),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        foreach ($capabilities as $capability) {
+            DB::table('runtime_node_capabilities')->insert([
+                'id' => IdentityIds::new(),
+                'runtime_node_id' => $nodeId,
+                'capability_key' => $capability,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        return $nodeId;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function openConference(User $admin, string $tenantId, string $nodeId, string $slug): array
+    {
+        $conference = $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson('/api/v1/admin/conferences', [
+                'slug' => $slug,
+                'display_name' => 'T5 Rebind '.$slug,
+                'runtime_node_id' => $nodeId,
+            ])
+            ->assertCreated()
+            ->json('conference');
+
+        return $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/admin/conferences/{$conference['id']}/desired-state", ['desired_state' => 'open'])
+            ->assertOk()
+            ->json('conference');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function admitParticipantFor(User $member, string $tenantId, string $conferenceId): array
+    {
+        $this->actingAs($member)->withSession($this->tenantSession($tenantId))
+            ->postJson('/api/v1/telephony/sessions')
+            ->assertCreated();
+
+        return $this->actingAs($member)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/conferences/{$conferenceId}/participants/self")
+            ->assertCreated()
+            ->json('participant');
     }
 
     private function user(string $email): User

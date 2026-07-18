@@ -332,6 +332,113 @@ final class TelephonyDomainService
     /**
      * @return array<string, mixed>
      */
+    public function failoverRebindConference(ExecutionContext $context, string $tenantId, string $conferenceId, string $reason = 'runtime_node_unavailable'): array
+    {
+        return DB::transaction(function () use ($context, $tenantId, $conferenceId, $reason): array {
+            $conference = DB::table('conferences')
+                ->where('id', $conferenceId)
+                ->where('tenant_id', $tenantId)
+                ->lockForUpdate()
+                ->first();
+            abort_unless($conference !== null, 404, 'Conference not found.');
+
+            if ((string) $conference->desired_state !== 'open') {
+                return ['status' => 'noop', 'reason' => 'conference_not_open'];
+            }
+
+            $activeBinding = DB::table('conference_runtime_bindings')
+                ->where('tenant_id', $tenantId)
+                ->where('conference_id', $conferenceId)
+                ->where('status', 'active')
+                ->lockForUpdate()
+                ->first();
+            if ($activeBinding === null) {
+                return ['status' => 'noop', 'reason' => 'active_binding_missing'];
+            }
+
+            $boundNode = DB::table('runtime_nodes')
+                ->where('id', $activeBinding->runtime_node_id)
+                ->where('tenant_id', $tenantId)
+                ->lockForUpdate()
+                ->first();
+            if ($boundNode === null) {
+                return ['status' => 'noop', 'reason' => 'bound_runtime_node_missing'];
+            }
+            if ((string) $boundNode->observed_state === 'ready') {
+                return ['status' => 'noop', 'reason' => 'bound_runtime_node_ready'];
+            }
+
+            $replacementRuntimeNodeId = $this->selectRuntimeNodeForConference(
+                $tenantId,
+                [
+                    (string) config('telephony_domain.runtime_capabilities.conference_lifecycle', 'conference.lifecycle'),
+                    (string) config('telephony_domain.runtime_capabilities.conference_participation', 'conference.participation'),
+                ],
+                (string) $activeBinding->runtime_node_id,
+            );
+
+            if ($replacementRuntimeNodeId === (string) $activeBinding->runtime_node_id) {
+                return ['status' => 'noop', 'reason' => 'replacement_runtime_node_not_distinct'];
+            }
+            $this->assertRuntimeNodeEligibleForConferenceRebind($tenantId, $replacementRuntimeNodeId, [
+                (string) config('telephony_domain.runtime_capabilities.conference_lifecycle', 'conference.lifecycle'),
+                (string) config('telephony_domain.runtime_capabilities.conference_participation', 'conference.participation'),
+            ]);
+
+            DB::table('conference_runtime_bindings')->where('id', $activeBinding->id)->update([
+                'status' => 'retired',
+                'unbound_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $this->writeBinding($tenantId, $conferenceId, $replacementRuntimeNodeId, $context->actorId ?? $conference->updated_by);
+            DB::table('conferences')->where('id', $conferenceId)->update([
+                'runtime_node_id' => $replacementRuntimeNodeId,
+                'configuration_generation' => DB::raw('configuration_generation + 1'),
+                'updated_by' => $context->actorId,
+                'updated_at' => now(),
+            ]);
+
+            $updated = DB::table('conferences')->where('id', $conferenceId)->first();
+            $generation = (int) $updated->configuration_generation;
+            $this->reconciliation->wakeTarget($tenantId, 'conference', $conferenceId, $generation);
+            DB::table('conference_participants')
+                ->where('tenant_id', $tenantId)
+                ->where('conference_id', $conferenceId)
+                ->where('desired_state', 'admitted')
+                ->pluck('id')
+                ->each(function (string $participantId) use ($tenantId, $updated): void {
+                    $this->reconciliation->wakeTarget(
+                        $tenantId,
+                        'conference_participant',
+                        $participantId,
+                        $this->participantDesiredGeneration($updated, 'admitted'),
+                    );
+                });
+
+            $safePayload = [
+                'tenant_id' => $tenantId,
+                'conference_id' => $conferenceId,
+                'previous_runtime_node_id' => (string) $activeBinding->runtime_node_id,
+                'runtime_node_id' => $replacementRuntimeNodeId,
+                'configuration_generation' => $generation,
+                'reason' => mb_substr($reason, 0, 120),
+            ];
+            $this->audit->append($context, 'conference.runtime_binding_replaced', 'conference', $conferenceId, $safePayload);
+            $this->outbox->append(EventEnvelope::forAggregate('conference.runtime_binding_replaced', 1, 'conference', $conferenceId, $safePayload, $context));
+
+            return [
+                'status' => 'rebound',
+                'reason' => 'runtime_binding_replaced',
+                'previous_runtime_node_id' => (string) $activeBinding->runtime_node_id,
+                'runtime_node_id' => $replacementRuntimeNodeId,
+                'conference' => $this->serializeConference($updated),
+            ];
+        });
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
     public function admitSelf(Request $request, string $tenantId, string $conferenceId, ?IdempotencyKey $key = null): array
     {
         $userId = (string) $request->user()->id;
@@ -572,29 +679,55 @@ final class TelephonyDomainService
         abort_unless(DB::table('runtime_node_capabilities')->where('runtime_node_id', $runtimeNodeId)->where('capability_key', $capability)->exists(), 422, 'Runtime node lacks required conference capability.');
     }
 
-    private function selectRuntimeNodeForConference(string $tenantId, string $capability): string
+    /**
+     * @param  list<string>  $capabilities
+     */
+    private function assertRuntimeNodeEligibleForConferenceRebind(string $tenantId, string $runtimeNodeId, array $capabilities): void
     {
+        $node = DB::table('runtime_nodes')
+            ->where('id', $runtimeNodeId)
+            ->where('tenant_id', $tenantId)
+            ->lockForUpdate()
+            ->first();
+        abort_unless($node !== null, 404, 'Runtime node not found.');
+        abort_unless(in_array($node->desired_state, ['active', 'draining'], true), 422, 'Runtime node desired state does not permit execution.');
+        abort_unless((string) $node->observed_state === 'ready', 422, 'Runtime node is not ready for conference execution.');
+        foreach ($capabilities as $capability) {
+            abort_unless(DB::table('runtime_node_capabilities')->where('runtime_node_id', $runtimeNodeId)->where('capability_key', $capability)->exists(), 422, 'Runtime node lacks required conference capability.');
+        }
+    }
+
+    /**
+     * @param  string|list<string>  $capabilities
+     */
+    private function selectRuntimeNodeForConference(string $tenantId, string|array $capabilities, ?string $excludeRuntimeNodeId = null): string
+    {
+        $requiredCapabilities = is_array($capabilities) ? array_values(array_unique($capabilities)) : [$capabilities];
         $node = DB::table('runtime_nodes')
             ->where('tenant_id', $tenantId)
             ->whereIn('desired_state', ['active', 'draining'])
             ->where('observed_state', 'ready')
-            ->whereExists(function ($query) use ($capability): void {
+            ->when($excludeRuntimeNodeId !== null, fn ($query) => $query->where('id', '<>', $excludeRuntimeNodeId))
+            ->orderBy('runtime_family')
+            ->orderBy('adapter_key')
+            ->orderBy('id');
+        foreach ($requiredCapabilities as $capability) {
+            $node->whereExists(function ($query) use ($capability): void {
                 $query->selectRaw('1')
                     ->from('runtime_node_capabilities')
                     ->whereColumn('runtime_node_capabilities.runtime_node_id', 'runtime_nodes.id')
                     ->where('runtime_node_capabilities.capability_key', $capability);
-            })
-            ->orderBy('runtime_family')
-            ->orderBy('adapter_key')
-            ->orderBy('id')
-            ->first();
+            });
+        }
 
-        abort_unless($node !== null, 422, 'No eligible runtime node is available for conference execution.');
+        $selected = $node->first();
 
-        return (string) $node->id;
+        abort_unless($selected !== null, 422, 'No eligible runtime node is available for conference execution.');
+
+        return (string) $selected->id;
     }
 
-    private function writeBinding(string $tenantId, string $conferenceId, string $runtimeNodeId, string $userId): void
+    private function writeBinding(string $tenantId, string $conferenceId, string $runtimeNodeId, ?string $userId): void
     {
         DB::table('conference_runtime_bindings')->insert([
             'id' => TelephonyDomainIds::new(),

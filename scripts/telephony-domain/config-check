@@ -16,6 +16,14 @@ grep -q "telephony_sessions_total" apps/api/app/Http/Controllers/Platform/Metric
 grep -q "conference_participant_reconciliation_total" apps/api/app/Http/Controllers/Platform/MetricsController.php
 grep -q "UTCPTelephonyConferenceReconciliationStuck" infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml
 grep -q "UTCPTelephonyExpiredActiveSessions" infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml
+grep -q "conference_runtime_bindings_one_active" apps/api/database/migrations/2026_07_15_090000_create_telephony_session_conference_domain_tables.php
+grep -q "failoverRebindConference" apps/api/app/TelephonyDomain/TelephonyDomainService.php
+grep -q "selectRuntimeNodeForConference" apps/api/app/TelephonyDomain/TelephonyDomainService.php
+grep -q "excludeRuntimeNodeId" apps/api/app/TelephonyDomain/TelephonyDomainService.php
+grep -q "runtime_binding_replaced" apps/api/app/TelephonyDomain/TelephonyDomainService.php
+grep -q "bound_runtime_node_ready" apps/api/app/TelephonyDomain/TelephonyDomainService.php
+grep -q "where('observed_state', 'ready')" apps/api/app/TelephonyDomain/TelephonyDomainService.php
+grep -q "wakeTarget" apps/api/app/TelephonyDomain/TelephonyDomainService.php
 
 php -l apps/api/app/TelephonyDomain/TelephonyDomainService.php >/dev/null
 php -l apps/api/app/TelephonyDomain/Reconciliation/ConferenceReconciler.php >/dev/null
@@ -30,6 +38,11 @@ fi
 
 if rg -n "adapter->execute|runtime_operations.*insert" apps/api/app/Http/Controllers/TelephonyDomain apps/api/app/TelephonyDomain/TelephonyDomainService.php; then
   printf 'C5 controller/service boundary contains direct runtime execution or operation insertion.\n' >&2
+  exit 1
+fi
+
+if rg -n "AsteriskAriClient|RuntimeAdapter|adapter_key.*asterisk|runtime_node_id.*allowlist|UTCP_.*(FAILOVER|REBIN[D]|RUNTIME_NODE|ALLOWLIST)" apps/api/app/TelephonyDomain/TelephonyDomainService.php apps/api/app/Http/Controllers/TelephonyDomain apps/api/routes/web.php; then
+  printf 'C5 controller/service boundary contains a vendor branch, allowlist, or environment-gated rebind path.\n' >&2
   exit 1
 fi
 
@@ -53,6 +66,18 @@ php artisan route:list --path=api/v1/conferences >/tmp/utcp-c5-routes.txt
 php artisan route:list --path=api/v1/telephony/sessions >>/tmp/utcp-c5-routes.txt
 if grep -E "reconcile|project|runtime.*execute|sip|media|ari|esl" /tmp/utcp-c5-routes.txt; then
   printf 'C5 route surface exposes forbidden manual/vendor/media route.\n' >&2
+  exit 1
+fi
+if php artisan route:list | grep -Ei "failover|rebind"; then
+  printf 'C5 route surface exposes a forbidden manual failover or rebind route.\n' >&2
+  exit 1
+fi
+if rg -n "failover|rebind" routes/console.php; then
+  printf 'C5 console or application surface exposes a forbidden manual failover or rebind command outside the canonical service.\n' >&2
+  exit 1
+fi
+if [ -d app/Console ] && find app/Console -type f -name '*.php' -print0 | xargs -0 rg -n "failover|rebind"; then
+  printf 'C5 console surface exposes a forbidden manual failover or rebind command.\n' >&2
   exit 1
 fi
 
