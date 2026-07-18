@@ -68,6 +68,14 @@ rg -F "includeOperationTypes: [(string) config('telephony_domain.operation_types
   fail "infrastructure worker does not include only runtime fence operations"
 grep -q "runtime-engine:infrastructure-worker {--once" apps/api/routes/console.php ||
   fail "missing dedicated infrastructure worker command"
+grep -q "runtime-engine:infrastructure-probe {--once" apps/api/routes/console.php ||
+  fail "missing read-only infrastructure probe command"
+if rg -n "scaleDeployment|RuntimeOperationRepository|conference_runtime_bindings|runtime_operations" apps/api/app/Infrastructure/RuntimeFencing/InfrastructureConnectivityProbe.php >/dev/null; then
+  fail "infrastructure probe contains mutation, operation, or binding vocabulary"
+fi
+if rg -n "\{--(namespace|deployment|pod|runtime-node|conference|operation|scale|force)" apps/api/routes/console.php >/dev/null; then
+  fail "infrastructure probe exposes target or mutation options"
+fi
 
 if ! printf '%s\n' 'ari-worker' 'public AriController' 'NullRuntimeAdapter' | rg -n "AriController|EslController|(^|[^[:alnum:]-])ari-worker([^[:alnum:]-]|$)|(^|[^[:alnum:]-])esl-worker([^[:alnum:]-]|$)|freeswitch-esl-events|FakeAsterisk|FakeFreeSwitch|NullRuntimeAdapter|NoopRuntimeAdapter" >/dev/null; then
   fail "legacy runtime vocabulary regression fixture did not match prohibited names"
@@ -98,6 +106,78 @@ if rg -n "tenant_id|runtime_node_id|operation_id|event_id|request_id|user_id" in
 fi
 
 kubectl kustomize infrastructure/kubernetes/base >/dev/null
-kubectl kustomize infrastructure/kubernetes/components/runtime-fencing >/dev/null
+runtime_fencing_render="$(mktemp)"
+kubectl kustomize infrastructure/kubernetes/components/runtime-fencing > "$runtime_fencing_render"
+python3 - "$runtime_fencing_render" <<'PY'
+import sys
+import yaml
+
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as handle:
+    docs = [doc for doc in yaml.safe_load_all(handle) if doc]
+
+def fail(message: str) -> None:
+    print(f"runtime engine config check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+objects = {(doc.get('kind'), doc.get('metadata', {}).get('namespace'), doc.get('metadata', {}).get('name')): doc for doc in docs}
+expected = {
+    ('ServiceAccount', 'utcp-platform', 'utcp-runtime-fencer'),
+    ('Deployment', 'utcp-platform', 'utcp-runtime-fence-worker'),
+    ('Role', 'utcp-runtime', 'utcp-runtime-fencer'),
+    ('RoleBinding', 'utcp-runtime', 'utcp-runtime-fencer'),
+}
+if set(objects) != expected:
+    fail(f"runtime fencing component rendered unexpected objects: {sorted(objects)}")
+if any(doc.get('kind') in {'ClusterRole', 'ClusterRoleBinding'} for doc in docs):
+    fail('runtime fencing component rendered cluster-scoped RBAC')
+
+deployment = objects[('Deployment', 'utcp-platform', 'utcp-runtime-fence-worker')]
+pod_spec = deployment['spec']['template']['spec']
+if pod_spec.get('serviceAccountName') != 'utcp-runtime-fencer':
+    fail('runtime fence worker does not use the fencer ServiceAccount')
+if pod_spec.get('automountServiceAccountToken') is not False:
+    fail('runtime fence worker automounts the default ServiceAccount token')
+containers = pod_spec.get('containers') or []
+if len(containers) != 1:
+    fail('runtime fence worker must render one container')
+worker = containers[0]
+if worker.get('args') != ['telephony-infrastructure-worker']:
+    fail('runtime fence worker command changed unexpectedly')
+env_from = worker.get('envFrom') or []
+config_names = [entry.get('configMapRef', {}).get('name') for entry in env_from if 'configMapRef' in entry]
+secret_names = [entry.get('secretRef', {}).get('name') for entry in env_from if 'secretRef' in entry]
+if config_names != ['utcp-application-config'] or secret_names != ['utcp-local-data-credentials']:
+    fail('runtime fence worker does not reference canonical platform ConfigMap and Secret')
+projected = [
+    volume for volume in pod_spec.get('volumes') or []
+    if volume.get('name') == 'kubernetes-api-credentials' and 'projected' in volume
+]
+if len(projected) != 1:
+    fail('runtime fence worker must mount one explicit projected Kubernetes credential volume')
+sources = projected[0]['projected'].get('sources') or []
+token_sources = [source.get('serviceAccountToken') for source in sources if 'serviceAccountToken' in source]
+if len(token_sources) != 1 or token_sources[0].get('path') != 'token' or token_sources[0].get('expirationSeconds') != 3600:
+    fail('runtime fence worker projected token contract is invalid')
+
+role = objects[('Role', 'utcp-runtime', 'utcp-runtime-fencer')]
+rules = role.get('rules') or []
+expected_rules = [
+    {'apiGroups': ['apps'], 'resources': ['deployments'], 'verbs': ['get', 'list']},
+    {'apiGroups': ['apps'], 'resources': ['deployments/scale'], 'verbs': ['get', 'patch']},
+    {'apiGroups': [''], 'resources': ['pods'], 'verbs': ['get', 'list']},
+]
+if rules != expected_rules:
+    fail('runtime fence Role is not the exact least-privilege rule set')
+
+binding = objects[('RoleBinding', 'utcp-runtime', 'utcp-runtime-fencer')]
+subjects = binding.get('subjects') or []
+if subjects != [{'kind': 'ServiceAccount', 'name': 'utcp-runtime-fencer', 'namespace': 'utcp-platform'}]:
+    fail('runtime fence RoleBinding subject must bind the platform ServiceAccount')
+role_ref = binding.get('roleRef') or {}
+if role_ref.get('kind') != 'Role' or role_ref.get('name') != 'utcp-runtime-fencer':
+    fail('runtime fence RoleBinding roleRef must stay namespaced to the runtime Role')
+PY
+rm -f "$runtime_fencing_render"
 
 printf 'runtime engine config check passed\n'

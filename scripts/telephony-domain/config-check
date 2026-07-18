@@ -52,15 +52,17 @@ grep -q "interface KubernetesWorkloadClient" apps/api/app/Infrastructure/Runtime
 grep -q "class HttpKubernetesWorkloadClient" apps/api/app/Infrastructure/RuntimeFencing/HttpKubernetesWorkloadClient.php
 grep -q "class UnavailableKubernetesWorkloadClient" apps/api/app/Infrastructure/RuntimeFencing/UnavailableKubernetesWorkloadClient.php
 grep -q "class KubernetesRuntimeFenceAdapter" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
+grep -q "class KubernetesRuntimeWorkloadInspector" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeWorkloadInspector.php
 grep -q "RuntimeNodeWorkloadIdentityValidator" apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeWorkloadIdentityResolver.php
 grep -q "class RuntimeNodeWorkloadIdentityValidator" apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeWorkloadIdentityValidator.php
 grep -q "RESERVED_LABEL_KEY = 'kubernetes_workload'" apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeWorkloadIdentityValidator.php
 grep -q "CANONICAL_RUNTIME_NAMESPACE = 'utcp-runtime'" apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeWorkloadIdentityValidator.php
 grep -q "fromLabelValue" apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeWorkloadIdentityValidator.php
 grep -q "RuntimeNodeWorkloadIdentityValidator::RESERVED_LABEL_KEY" apps/api/app/RuntimeRegistry/RuntimeRegistryService.php
-grep -q "app.kubernetes.io/part-of" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
-grep -q "app.kubernetes.io/component" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
-grep -q "utcp.dev/runtime-node" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
+grep -q "KubernetesRuntimeWorkloadInspector" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
+grep -q "app.kubernetes.io/part-of" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeWorkloadInspector.php
+grep -q "app.kubernetes.io/component" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeWorkloadInspector.php
+grep -q "utcp.dev/runtime-node" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeWorkloadInspector.php
 grep -q "scaleDeployment" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
 grep -q "listOwnedPods" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
 grep -q "owned_pods_remaining" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
@@ -70,8 +72,8 @@ grep -q "telephony-infrastructure-worker" infrastructure/docker/api/entrypoint
 grep -q "serviceAccountName: utcp-runtime-fencer" infrastructure/kubernetes/components/runtime-fencing/infrastructure-worker-deployment.yaml
 grep -q "automountServiceAccountToken: false" infrastructure/kubernetes/components/runtime-fencing/infrastructure-worker-deployment.yaml
 grep -q "serviceAccountToken:" infrastructure/kubernetes/components/runtime-fencing/infrastructure-worker-deployment.yaml
-rg -F 'resources: ["deployments/scale"]' infrastructure/kubernetes/components/runtime-fencing/rbac.yaml >/dev/null
-rg -F 'verbs: ["get", "patch"]' infrastructure/kubernetes/components/runtime-fencing/rbac.yaml >/dev/null
+grep -q "deployments/scale" infrastructure/kubernetes/components/runtime-fencing/rbac.yaml
+grep -q "patch" infrastructure/kubernetes/components/runtime-fencing/rbac.yaml
 grep -q "kind: RoleBinding" infrastructure/kubernetes/components/runtime-fencing/rbac.yaml
 grep -q "'fenced', 'already_fenced'" apps/api/app/TelephonyDomain/TelephonyDomainService.php
 grep -q "stale_observation_seconds" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php

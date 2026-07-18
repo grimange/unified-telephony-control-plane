@@ -10,6 +10,7 @@ final class KubernetesRuntimeFenceAdapter implements RuntimeInfrastructureFenceA
     public function __construct(
         private readonly KubernetesWorkloadClient $client,
         private readonly RuntimeNodeWorkloadIdentityResolver $identityResolver,
+        private readonly KubernetesRuntimeWorkloadInspector $inspector,
     ) {}
 
     public function adapterKey(): string
@@ -30,7 +31,7 @@ final class KubernetesRuntimeFenceAdapter implements RuntimeInfrastructureFenceA
             return ['status' => 'failed'];
         }
 
-        if ($deployment === null || ! $this->isOwnedAsteriskDeployment($deployment, $identity, $formerRuntimeNode)) {
+        if ($deployment === null || ! $this->inspector->isOwnedAsteriskDeployment($deployment, $identity, $formerRuntimeNode)) {
             return ['status' => 'target_mismatch'];
         }
 
@@ -38,7 +39,7 @@ final class KubernetesRuntimeFenceAdapter implements RuntimeInfrastructureFenceA
             return ['status' => 'target_recovered'];
         }
 
-        $wasAlreadyZero = $this->desiredReplicas($deployment) === 0;
+        $wasAlreadyZero = $this->inspector->desiredReplicas($deployment) === 0;
         if (! $wasAlreadyZero) {
             try {
                 $this->client->scaleDeployment($identity->namespace, $identity->deployment, 0);
@@ -58,7 +59,7 @@ final class KubernetesRuntimeFenceAdapter implements RuntimeInfrastructureFenceA
             return ['status' => 'failed'];
         }
 
-        if ($current === null || ! $this->isOwnedAsteriskDeployment($current, $identity, $formerRuntimeNode)) {
+        if ($current === null || ! $this->inspector->isOwnedAsteriskDeployment($current, $identity, $formerRuntimeNode)) {
             return ['status' => 'target_mismatch'];
         }
 
@@ -69,8 +70,8 @@ final class KubernetesRuntimeFenceAdapter implements RuntimeInfrastructureFenceA
                     'namespace' => $identity->namespace,
                     'deployment' => $identity->deployment,
                     'desired_replicas' => 0,
-                    'status_replicas' => $this->statusReplicas($current),
-                    'available_replicas' => $this->availableReplicas($current),
+                    'status_replicas' => $this->inspector->statusReplicas($current),
+                    'available_replicas' => $this->inspector->availableReplicas($current),
                     'owned_pods_remaining' => 0,
                 ],
             ];
@@ -81,31 +82,12 @@ final class KubernetesRuntimeFenceAdapter implements RuntimeInfrastructureFenceA
             'details' => [
                 'namespace' => $identity->namespace,
                 'deployment' => $identity->deployment,
-                'desired_replicas' => $this->desiredReplicas($current),
-                'status_replicas' => $this->statusReplicas($current),
-                'available_replicas' => $this->availableReplicas($current),
+                'desired_replicas' => $this->inspector->desiredReplicas($current),
+                'status_replicas' => $this->inspector->statusReplicas($current),
+                'available_replicas' => $this->inspector->availableReplicas($current),
                 'owned_pods_remaining' => count($pods),
             ],
         ];
-    }
-
-    private function isOwnedAsteriskDeployment(array $deployment, RuntimeNodeWorkloadIdentity $identity, object $runtimeNode): bool
-    {
-        $metadata = $deployment['metadata'] ?? [];
-        if (! is_array($metadata)) {
-            return false;
-        }
-        if ((string) ($metadata['namespace'] ?? '') !== $identity->namespace || (string) ($metadata['name'] ?? '') !== $identity->deployment) {
-            return false;
-        }
-        $labels = $metadata['labels'] ?? [];
-        if (! is_array($labels)) {
-            return false;
-        }
-
-        return (string) ($labels['app.kubernetes.io/part-of'] ?? '') === 'utcp'
-            && (string) ($labels['app.kubernetes.io/component'] ?? '') === 'asterisk-ari'
-            && (string) ($labels['utcp.dev/runtime-node'] ?? '') === (string) $runtimeNode->slug;
     }
 
     private function runtimeNodeRecovered(string $runtimeNodeId, string $tenantId): bool
@@ -122,24 +104,9 @@ final class KubernetesRuntimeFenceAdapter implements RuntimeInfrastructureFenceA
      */
     private function terminationPredicateSatisfied(array $deployment, array $pods): bool
     {
-        return $this->desiredReplicas($deployment) === 0
-            && $this->statusReplicas($deployment) === 0
-            && $this->availableReplicas($deployment) === 0
+        return $this->inspector->desiredReplicas($deployment) === 0
+            && $this->inspector->statusReplicas($deployment) === 0
+            && $this->inspector->availableReplicas($deployment) === 0
             && count($pods) === 0;
-    }
-
-    private function desiredReplicas(array $deployment): int
-    {
-        return max(0, (int) data_get($deployment, 'spec.replicas', 1));
-    }
-
-    private function statusReplicas(array $deployment): int
-    {
-        return max(0, (int) data_get($deployment, 'status.replicas', 0));
-    }
-
-    private function availableReplicas(array $deployment): int
-    {
-        return max(0, (int) data_get($deployment, 'status.availableReplicas', 0));
     }
 }

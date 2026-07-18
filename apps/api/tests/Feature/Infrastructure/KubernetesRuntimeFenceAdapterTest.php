@@ -7,6 +7,7 @@ use App\ControlPlane\Shared\ExecutionContext;
 use App\Identity\IdentityIds;
 use App\Infrastructure\RuntimeFencing\InfrastructureAdapterRegistry;
 use App\Infrastructure\RuntimeFencing\KubernetesRuntimeFenceAdapter;
+use App\Infrastructure\RuntimeFencing\KubernetesRuntimeWorkloadInspector;
 use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClient;
 use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClientException;
 use App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentity;
@@ -289,7 +290,7 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
 
     private function adapter(FakeKubernetesWorkloadClient $fake): KubernetesRuntimeFenceAdapter
     {
-        return new KubernetesRuntimeFenceAdapter($fake, app(RuntimeNodeWorkloadIdentityResolver::class));
+        return new KubernetesRuntimeFenceAdapter($fake, app(RuntimeNodeWorkloadIdentityResolver::class), app(KubernetesRuntimeWorkloadInspector::class));
     }
 
     private function bindFakeClient(FakeKubernetesWorkloadClient $fake): void

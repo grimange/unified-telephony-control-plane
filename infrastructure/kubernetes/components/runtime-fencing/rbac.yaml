@@ -30,7 +30,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: utcp-runtime-fencer
-    namespace: utcp-runtime
+    namespace: utcp-platform
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role

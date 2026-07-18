@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: utcp-runtime-fence-worker
-  namespace: utcp-runtime
+  namespace: utcp-platform
   labels:
     app.kubernetes.io/name: utcp
     app.kubernetes.io/part-of: utcp

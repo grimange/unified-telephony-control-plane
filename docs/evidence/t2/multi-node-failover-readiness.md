@@ -3348,7 +3348,47 @@ resolves the config dependency. It is a bounded manifest change (4 objects) plus
 the image-transform wiring for a live apply, and any fencing-component config-check
 must assert the new namespace split.
 
-## Ready-to-paste next prompt (T5-A13)
+## T5-A13 repository correction — namespace split and read-only probe
+
+The fencing component now stages the worker beside the canonical application
+configuration in `utcp-platform`, while leaving Kubernetes mutation authority
+bounded to `utcp-runtime`:
+
+- `Deployment/utcp-runtime-fence-worker` is explicitly namespaced to
+  `utcp-platform`.
+- `ServiceAccount/utcp-runtime-fencer` is explicitly namespaced to
+  `utcp-platform`.
+- `Role/utcp-runtime-fencer` remains in `utcp-runtime` with only
+  `deployments get/list`, `deployments/scale get/patch`, and `pods get/list`.
+- `RoleBinding/utcp-runtime-fencer` remains in `utcp-runtime` and binds the
+  cross-namespace subject
+  `system:serviceaccount:utcp-platform:utcp-runtime-fencer`.
+
+The worker continues to consume `utcp-application-config` and
+`utcp-local-data-credentials` through namespace-local Pod injection in
+`utcp-platform`; no duplicate ConfigMap, duplicate Secret, cross-namespace Secret
+copy, ClusterRole, or ClusterRoleBinding was introduced. The explicit projected
+Kubernetes token remains mounted only into the dedicated fencing worker, with
+`automountServiceAccountToken:false` preserved.
+
+A bounded diagnostic command, `runtime-engine:infrastructure-probe --once`, was
+added for later live activation proof. The probe deterministically selects one
+active and ready RuntimeNode with canonical `kubernetes_workload` metadata,
+resolves it through `RuntimeNodeWorkloadIdentityResolver`, performs only
+`KubernetesWorkloadClient::getDeployment()` and `listOwnedPods()`, validates UTCP
+Deployment ownership and the RuntimeNode-specific label, and emits bounded
+non-secret evidence: RuntimeNode slug, namespace, Deployment name, replica counts,
+and owned-Pod count. It has no target options, creates no runtime operation, does
+not touch RuntimeBindings or observed state, and never calls `scaleDeployment()`.
+
+Repository config checks now assert the split namespace contract, cross-namespace
+RoleBinding subject, exact RBAC rule set, projected-token isolation, fence-only
+worker routing, and the read-only probe boundary. This task did not apply any
+Kubernetes resources, activate the worker, create a runtime-fence operation,
+scale a Deployment, delete Pods, or run failover. Live worker activation and
+Kubernetes-client proof remain pending.
+
+## Historical handoff prompt for the T5-A13 repository correction
 
 ```
 # T5-A13 — Correct fencing-worker namespace and re-activate (repository fix + live activation)

@@ -4,6 +4,7 @@ use App\ControlPlane\Audit\AuditRepository;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\Identity\IdentityIds;
 use App\Identity\UserAccess\ResetUserPasswordService;
+use App\Infrastructure\RuntimeFencing\InfrastructureConnectivityProbe;
 use App\RuntimeAdapters\Asterisk\AsteriskAriEventListener;
 use App\RuntimeAdapters\Asterisk\AsteriskCatalog;
 use App\RuntimeEngine\Commands\CommandWorker;
@@ -337,6 +338,36 @@ Artisan::command('runtime-engine:infrastructure-worker {--once : Process one inf
 
     return 0;
 })->purpose('Run the dedicated runtime infrastructure-operation worker.');
+
+Artisan::command('runtime-engine:infrastructure-probe {--once : Run one read-only Kubernetes infrastructure probe and exit}', function (InfrastructureConnectivityProbe $probe): int {
+    if (! $this->option('once')) {
+        $this->error('The infrastructure probe is a bounded diagnostic and requires --once.');
+
+        return 2;
+    }
+
+    $result = $probe->runOnce();
+    if (($result['status'] ?? null) !== 'ok') {
+        $this->error('infrastructure_probe_status=failed');
+        $this->error('reason='.(string) ($result['reason'] ?? 'failed'));
+
+        return 1;
+    }
+
+    foreach ([
+        'runtime_node_slug',
+        'namespace',
+        'deployment',
+        'desired_replicas',
+        'status_replicas',
+        'available_replicas',
+        'owned_pod_count',
+    ] as $key) {
+        $this->line($key.'='.(string) $result[$key]);
+    }
+
+    return 0;
+})->purpose('Run a read-only Kubernetes connectivity probe for a registered RuntimeNode workload.');
 
 Artisan::command('runtime-engine:event-normalizer {--once : Process one batch and exit}', function (EventNormalizerWorker $worker): int {
     $workerId = gethostname().':normalizer:'.getmypid();
