@@ -1881,3 +1881,430 @@ This remains repository proof only. Namespaced Kubernetes fencing RBAC, dedicate
 worker identity and token mount, live Deployment scale-to-zero proof, second-node
 manifests, second RuntimeNode registration, replacement reconstruction proof, and
 live two-node failover acceptance remain pending.
+
+---
+
+# T5-A5 — Live Kubernetes Fencing Activation, Replacement Safety, and Second-Node Manifest Readiness
+
+Evidence-only audit at commit `98c0489`, `UTCP_PHASE=T1`, 2026-07-18. Defines the
+safe contract to turn the repository-complete fence abstraction into a
+live-capable capability. No live RBAC/token/scale, no second node, no live
+failover.
+
+## Fence-operation execution path
+
+`runtime.node.runtime.fence` row → claimed by `RuntimeOperationRepository::claimAvailable`
+(**global `FOR UPDATE SKIP LOCKED`, no operation-type/queue filter**) → executed
+by `CommandWorker` (`telephony-command-worker` Deployment, plus `scheduler` which
+runs `runtime-engine:command-worker --once` every minute) → `RuntimeFenceOperationHandler`
+(registered in the shared `RuntimeOperationHandlerRegistry`) → `InfrastructureAdapterRegistry->get('kubernetes')`
+→ `KubernetesRuntimeFenceAdapter->fence()` → `KubernetesWorkloadClient` (bound to
+`UnavailableKubernetesWorkloadClient` today → `unavailable_to_control` → no scale,
+no rebind). Answers: the handler runs on **`telephony-command-worker`** (and the
+scheduler's `--once` pass); that worker also processes **all** other runtime
+operations (conference ensure/close, participant ensure/remove, verify-absent,
+node inspect); granting *it* Kubernetes scale authority would broaden the token to
+every unrelated operation; the claim query has **no queue routing**, so today a
+dedicated worker requires either an operation-type claim filter or a separate
+handler registry per worker; a dedicated worker **is required** to keep token
+exposure narrow.
+
+## Selected worker identity
+
+**Option C — a dedicated infrastructure-operation worker Deployment with a
+handler-scoped claim.** Add a `runtime-engine:infrastructure-worker` command whose
+`CommandWorker` claims **only** infrastructure operation types
+(`runtime.node.runtime.fence`) via an operation-type filter on `claimAvailable`,
+running as its own Deployment with the fence ServiceAccount + projected token; and
+**remove** `RuntimeFenceOperationHandler` from the generic worker's registry (or
+have the generic worker skip infrastructure types) so the ordinary
+`telephony-command-worker` never claims a fence operation and never needs the
+token. Operation ownership stays in PostgreSQL (both workers use the same
+`runtime_operations` table + `SKIP LOCKED`; the type filter ensures only the
+infra worker claims fences — no double-claim). The infra worker is an **executor
+of generic operations**, not a management interface. Rejected: A (broadens token
+to all operations), B-without-filter (two workers could claim the same op),
+D/none.
+
+## Kubernetes client contract
+
+**A small bounded Kubernetes REST client on the existing stack** (`guzzlehttp/guzzle`
+and `Illuminate\Http\Client` are already installed — no new SDK dependency). It
+implements only `getDeployment`, `scaleDeployment` (PATCH scale subresource),
+`listOwnedPods` (LIST by validated ownership selector), and optionally LIST
+EndpointSlices. Contract: API server from `KUBERNETES_SERVICE_HOST`/`_PORT`
+(injected — confirmed `10.43.0.1:443`); CA from
+`/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`; **token reread per request**
+from `.../token` (projected tokens rotate ~hourly, kubelet-refreshed); bounded
+connect + request timeouts; TLS **verified against the mounted CA** (never
+disabled); retry classification — 401/403 → `permission_denied` (terminal, alert),
+404 → `target_mismatch` (deployment gone), 409 conflict → retry,
+5xx/timeout/connection → `unavailable_to_control` (retryable); parse Kubernetes
+`Status` objects for `reason`; **sanitized logging** (no token, no full object
+dumps). Credentials are never read from operation payloads.
+
+## In-cluster authentication
+
+Kubernetes/k3d **v1.35.3+k3s1**; projected bound ServiceAccount tokens are GA
+(kubelet fetches a time-bound token via TokenRequest, refreshes before ~1h
+expiry, invalidated on Pod deletion). Contract: keep `automountServiceAccountToken:
+false` **globally**; mount an **explicit projected token volume only into the
+dedicated infrastructure worker** (audience = the API server default, expiry
+~3600 s); the client rereads the token file per request (do not cache across the
+rotation window); CA path as above; service host/port from env. The token is
+**never** mounted into the Web/API, scheduler, Asterisk listener, Asterisk
+runtime, or the generic command worker.
+
+Sources: [Configure Service Accounts for Pods](https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/), [Projected Volumes](https://kubernetes.io/docs/concepts/storage/projected-volumes/), [Using RBAC Authorization](https://kubernetes.io/docs/reference/access-authn-authz/rbac/).
+
+## Kubernetes RBAC
+
+Smallest namespaced Role in `utcp-runtime`, bound to the dedicated fence SA. Exact
+proposed YAML (do **not** apply):
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: utcp-runtime-fencer
+  namespace: utcp-runtime
+  labels: { app.kubernetes.io/part-of: utcp }
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: utcp-runtime-fencer
+  namespace: utcp-runtime
+  labels: { app.kubernetes.io/part-of: utcp }
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: utcp-runtime-fencer
+  namespace: utcp-runtime
+  labels: { app.kubernetes.io/part-of: utcp }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: utcp-runtime-fencer }
+subjects:
+  - { kind: ServiceAccount, name: utcp-runtime-fencer, namespace: utcp-runtime }
+```
+
+`watch` is omitted (the adapter polls, not watches). `resourceNames` is **not**
+applied to `deployments/scale` (RBAC `resourceNames` does not reliably constrain
+subresource patch across versions and would break as node B is added); the
+wrong-workload restriction is instead enforced at the **adapter ownership layer**
+(`KubernetesRuntimeFenceAdapter::isOwnedAsteriskDeployment` requires
+`app.kubernetes.io/part-of=utcp`, `component=asterisk-ari`, and
+`utcp.dev/runtime-node == RuntimeNode.slug`, before *and* after the scale). No
+delete-pods, no full-deployment patch, no create/update, no secrets, no wildcards,
+no cluster roles, no cross-namespace access.
+
+## Current replacement-safety behavior
+
+**Unsafe once the real client is wired.** `RuntimeFencingCoordinator::requestRuntimeFence`
+creates the fence operation, and `RuntimeFenceOperationHandler`/`KubernetesRuntimeFenceAdapter::fence()`
+scale the former Deployment to zero, with **no replacement-existence check at any
+point before the destructive mutation**. Replacement selection happens only later,
+inside `failoverRebindConferenceAfterFence` (`selectRuntimeNodeForConference(...excludeRuntimeNodeId)`
+→ throws 422 if none). Today the sole protection is `UnavailableKubernetesWorkloadClient`
+returning `unavailable_to_control` before any scale — i.e. fencing is disabled by
+capability absence, not by a replacement guard. With one ready Asterisk node
+(current reality), wiring the real client would let a fence **scale node A to zero
+and then fail to find a replacement**, leaving the Conference with a terminated
+runtime and no rebind. This is the mandatory blocker.
+
+## Required replacement-before-fence invariant
+
+**Mandatory: a distinct, active, ready, capability-compatible replacement
+RuntimeNode must exist before the destructive scale mutation, and be revalidated
+immediately before that mutation.** A candidate-query or operation-creation
+precheck alone is insufficient because the replacement's health can change while
+the fence operation waits in the queue. The canonical authority for the
+mutation-time check is the **fence operation execution boundary** — the
+`RuntimeFenceOperationHandler` (delegating to a domain read service), because that
+is the last serialized point UTCP controls before the adapter's irreversible
+scale. Safety default: **no eligible replacement → no scale mutation → no fenced
+evidence → existing binding remains** (the operation returns a retryable
+`no_replacement_available` outcome, not `fenced`).
+
+## Mutation-time replacement revalidation
+
+The handler, immediately before calling `$infra->fence()`, must call a canonical
+domain read (e.g. `TelephonyDomainService::hasDistinctEligibleReplacement(tenantId,
+conferenceId, formerRuntimeNodeId)`) that reselects a distinct
+`active`+`ready`+capability-compatible node under the current snapshot; if none,
+return retryable `no_replacement_available` (blocks scale, blocks rebind, leaves
+the binding). The check lives in the handler (not the adapter — the adapter stays
+Kubernetes-only and domain-agnostic; not only the coordinator — its earlier check
+can go stale in the queue). It uses the same read the rebind transaction uses, so
+they agree. The candidate replacement ID is **not persisted as authority** and
+**not passed to the adapter**: it is a destructive-mutation precondition only; the
+rebind transaction still selects and validates canonically (the replacement ID
+must not become a second binding authority). Stale evidence: if the replacement
+disappears after scale starts but before rebind, `failoverRebindConferenceAfterFence`
+still throws 422 and the fenced (scaled-to-zero) node is simply restored later by
+the restoration policy — the invariant prevents *starting* the scale without a
+replacement, which is the irreversibility that matters.
+
+## Single-node safety
+
+With one node (today), the mutation-time check finds no distinct replacement →
+`no_replacement_available` → no scale, no rebind, binding preserved. This makes
+wiring the real client safe even before node B exists: the guard, not the
+`UnavailableKubernetesWorkloadClient`, becomes the durable protection, so the two
+changes (real client, replacement guard) must land **together** — the client must
+not be enabled without the guard.
+
+## Safe activation order
+
+**Order 3 (repository-first, then node B, then worker authority last).** (1) Land
+both repository changes — the production client **and** the replacement-before-fence
+guard — in one or sequential commits, with the client still bound to
+`Unavailable` by default (capability absence). (2) Deploy node B manifests +
+register RuntimeNode B; prove it observed `ready` (a distinct eligible
+replacement now exists). (3) **Last**, grant the dedicated infra worker the fence
+SA + projected token and bind the real client, which activates live fencing. This
+ordering means that at the moment live fencing becomes possible, a ready
+replacement already exists and the mutation-time guard is in force; enabling the
+real client makes scale-to-zero live immediately through the existing
+scheduler/coordinator (no manual enable switch), and that is safe **only** because
+(a) the guard blocks fencing without a replacement and (b) node B is already
+ready. Deployment ordering + readiness + canonical eligibility provide safety — no
+runtime enable flag is added.
+
+## Parameterized Asterisk manifest model
+
+**Kustomize components** (the repo already uses Kustomize base + local overlay; do
+not introduce Helm). A reusable `components/asterisk-instance` parameterized by
+instance suffix produces, per instance, a distinct: Deployment name
+(`asterisk-ari-a`/`-b`), Service name, Secret (`…-a`/`-b-credentials`), ARI
+endpoint host, RuntimeNode slug, `utcp.dev/runtime-node` label + selector,
+monitoring identity, and registration payload. Shared unchanged: image, baked
+dialplan/module config, readiness/liveness probes, the `utcp-runtime-asterisk`
+runtime ServiceAccount, and the Stasis app name (safe per-process, verified
+T5-A3/A4). The current single instance becomes `…-a` via the component;
+`…-b` is a second component invocation. The `utcp.dev/runtime-node` label +
+per-instance selector (already added to the base Deployment at this HEAD) makes
+each Deployment independently ownership-validatable and scalable without matching
+the other.
+
+## RuntimeNode B registration
+
+Current authority = **authenticated C2 registration API** (the `scripts/asterisk-ari/api-proof`
+flow POSTs to `/api/v1/admin/runtime-nodes` + `/endpoints`, sets credentials, and
+transitions desired state — no manual DB writes, no seeding). Node B follows the
+identical canonical lifecycle: manifests available → authenticated C2 registration
+(RuntimeNode record, endpoints = node B's own Service DNS, distinct ARI
+credentials, `conference.lifecycle`+`participation` capabilities, and the
+`labels.kubernetes_workload = {namespace: utcp-runtime, deployment: asterisk-ari-b}`
+workload reference) → listener claims it (per-node lease/event source — already
+multi-node) → ARI/Stasis readiness proven → observed `ready` → the replacement
+selector may use it. Two credentials = two Secrets + two `runtime_node_credentials`
+rows. A removed workload retires via `desired_state → disabled` through the C2 API.
+The slice generalizes the single-node registration to parameterize node identity;
+it introduces **no manual step**. This same authenticated C2 API is the one a
+future **Provider Node Admin UI** must call — the UI becomes a client of the
+existing registration authority, never a competing registration path (do not
+implement the UI now).
+
+## Provider Node management-authority alignment
+
+RuntimeNode registration, endpoints, credentials, capabilities, desired state, and
+the workload-reference label are all owned by the C2 `/api/v1/admin/runtime-nodes`
+authority in PostgreSQL. The workload-identity label must be set **only** through
+that trusted registration path (never accepted from a public field on a
+conference/failover API), and the fencing adapter only *reads* it. A later Admin UI
+drives the same API; there is no second management surface.
+
+## Non-destructive validation
+
+Without applying anything: `kubectl kustomize` render of base + the new component/
+overlays; **server-side dry-run** (`kubectl apply --dry-run=server -f -`, GA in
+v1.35 — validates against the live API including admission, without persisting) for
+the RBAC, SA, worker Deployment, and node-B manifests; ownership-label assertion
+(each Deployment carries `part-of=utcp`, `component=asterisk-ari`,
+`utcp.dev/runtime-node=<slug>`); RBAC-manifest lint; Service/Secret name-collision
+scan across instances; RuntimeNode registration-payload validation (schema of the
+C2 POST body); worker-Deployment token-volume validation (projected volume present
+only on the infra worker, `automount=false` elsewhere). Do **not** apply RBAC,
+create node B, scale the current Deployment, or rely on client-side dry-run when
+server-side is available. The later bounded **live** proof (RBAC applied, token
+mounted, node B ready, one real scale-to-zero on a disposable target) is a
+separate task.
+
+## T5-A5 failure-scenario assessment
+
+Scale allowed? / Rebind allowed? / behavior:
+
+1. Only node A → **no scale / no rebind** (guard: no replacement); retry, binding
+   preserved. 2. Node B ready before fence op created → scale allowed once
+   revalidated at mutation; rebind after fenced. 3. Node B fails while fence op
+   waits → mutation-time revalidation finds none → **no scale**; retryable
+   `no_replacement_available`. 4. Node B fails immediately before scale → same
+   (revalidation is the last gate) → **no scale**. 5. Node B fails after node A
+   scale begins → scale already committed; rebind 422 → node A restored later by
+   restoration policy; **no split-brain** (node A is terminating). 6. Worker lacks
+   token → `unavailable_to_control` → no scale, retry. 7. Token expired/rotating →
+   client rereads per request; transient 401 → `unavailable_to_control` retry;
+   persistent → `permission_denied`. 8. API unavailable → `unavailable_to_control`,
+   retry, no rebind. 9. get but not scale permission → `permission_denied`,
+   terminal, no scale, alert. 10. Ownership labels mismatch → `target_mismatch`,
+   no scale. 11. Node A Deployment already zero → `already_fenced` (still requires
+   a replacement to rebind). 12. Node A restored before rebind → `target_recovered`
+   / rebind's under-lock ready recheck aborts → no rebind. 13. Node A restored
+   after rebind → no reclaim (binding + generation). 14. Two infra workers claim
+   overlapping ops → `SKIP LOCKED` + idempotency → one claim. 15. Generic workers
+   accidentally get the token → prevented by design (token only on the infra
+   worker; the generic worker no longer claims fence ops). 16. Node B Service/Secret
+   collides with node A → caught by the non-destructive collision scan pre-deploy.
+   17. Registration duplicate RuntimeNode identity → the C2 unique slug/idempotency
+   rejects it. 18. Scheduler active before node B ready → guard blocks fencing
+   until a replacement is ready (no scale). **Rebind is allowed only after
+   `fenced`/`already_fenced` (with a replacement) or `absent_verified`.**
+
+## T5-A5 existing implementation
+
+Full fence abstraction (`runtime.node.runtime.fence`, handler, adapter with
+ownership validation + scale-to-zero + termination predicate, workload-identity
+resolver, evidence, dual-evidence transactional rebind); coordinator escalation
+(`former_runtime_present`/`unavailable` → fence request → `external_runtime_fenced`
+→ rebind); the `utcp.dev/runtime-node` per-instance label + selector on the base
+Deployment; the `UnavailableKubernetesWorkloadClient` default; Guzzle +
+`Illuminate\Http\Client`; live-confirmed injected API env, `automount=false`
+everywhere, projected-token GA, scale subresource, server-side dry-run.
+
+## T5-A5 missing implementation
+
+The mutation-time replacement-before-fence guard; the production
+`HttpKubernetesWorkloadClient` (bounded REST, per-request token reread, CA TLS);
+the dedicated infrastructure worker (operation-type-filtered claim) + its
+Deployment with a projected token; the narrow `utcp-runtime` fence Role/SA/binding;
+Kustomize component parameterization for `asterisk-ari-a/-b`; node-B registration
+payload generalization; the later live RBAC/token/scale proof.
+
+## T5-A5 implementation-readiness decision
+
+**A — one bounded Codex implementation slice is ready.** Worker identity (dedicated
+infra worker), client contract (bounded REST on Guzzle), authentication (projected
+token, per-request reread), exact RBAC, the replacement-before-fence invariant and
+its mutation-time revalidation owner (the handler), activation order (3), manifest
+parameterization (Kustomize component), and registration (C2 API) are all defined,
+and the first slice is repository-testable without any live mutation.
+
+## T5-A5 first bounded implementation slice
+
+**The mutation-time replacement-before-fence guard — repository-only, no client,
+no RBAC, no node B, no live scale.** It is the earliest dependency and the one that
+makes every later activation step safe: without it, wiring the real client is
+unsafe with one node. Add
+`TelephonyDomainService::hasDistinctEligibleReplacement(tenantId, conferenceId,
+formerRuntimeNodeId): bool` (reusing `selectRuntimeNodeForConference` semantics,
+`active`+`ready`+both capabilities, excluding the former node, catching the 422),
+call it in `RuntimeFenceOperationHandler::execute` immediately before
+`$infra->fence()`, and return a retryable `no_replacement_available` failure when
+false (no scale, no evidence). This lands while the client is still
+`Unavailable`, so it is inert in production but fully unit-tested; it is the
+precondition for the later client/RBAC/worker and node-B slices.
+
+## Ready-to-paste Codex prompt (T5-A5)
+
+```
+# T5-A5 — Replacement-before-fence guard at the runtime-fence mutation boundary
+
+Repository-only slice at HEAD 98c0489. Keep UTCP_PHASE=T1. Do NOT add the real
+Kubernetes client, apply RBAC, mount tokens, deploy a second node, scale any
+Deployment, or run live failover.
+
+Problem (docs/evidence/t2/multi-node-failover-readiness.md §T5-A5):
+RuntimeFenceOperationHandler scales the former Asterisk Deployment to zero with NO
+check that a distinct eligible replacement RuntimeNode exists. Replacement is only
+validated later in failoverRebindConferenceAfterFence. Once the real Kubernetes
+client is wired, a single-node fence would terminate node A then fail to rebind,
+leaving the Conference with no runtime. Add a mutation-time guard so the
+destructive scale never starts without a distinct ready replacement.
+
+1. TelephonyDomainService: add
+   hasDistinctEligibleReplacement(string $tenantId, string $conferenceId,
+   string $formerRuntimeNodeId): bool
+   that returns true iff selectRuntimeNodeForConference(tenantId,
+   [conference.lifecycle, conference.participation], excludeRuntimeNodeId:
+   formerRuntimeNodeId, desiredStates: ['active']) yields a distinct
+   observed-ready node; catch the 422 (No eligible runtime node) and return false.
+   Read-only; no locks beyond the query; do NOT persist or return the replacement
+   id (it must not become a binding authority).
+
+2. RuntimeFenceOperationHandler::execute: immediately BEFORE calling
+   $infra->fence($node, $payload), call hasDistinctEligibleReplacement for the
+   operation's tenant, conference_id, and former_runtime_node_id. If false, return
+   a retryable failure with FailureClass::RuntimeUnavailable and failure_code
+   'no_replacement_available' (message: replacement not available for runtime
+   fence) — this blocks the scale mutation and yields no fenced evidence. Do not
+   change the adapter, the coordinator, or failoverRebindConferenceAfterFence.
+
+3. RuntimeFencingCoordinator: map a runtime.node.runtime.fence operation that
+   terminal/retry-fails with 'no_replacement_available' to a 'no_replacement'
+   coordinator outcome (reuse the existing no-replacement classification) so the
+   sweep records it and retries without rebinding.
+
+4. Tests (tests/Feature/Infrastructure/ or TelephonyDomain/):
+   - fence handler with a former node and NO distinct ready replacement present ->
+     execute returns the no_replacement_available failure AND the infrastructure
+     adapter fence() is never invoked (use a spy/fake adapter asserting zero scale
+     calls).
+   - fence handler with a distinct ready replacement present -> execute proceeds to
+     the adapter (fake adapter returns fenced) and completes.
+   - hasDistinctEligibleReplacement true/false cases (distinct ready node exists;
+     only the former node exists; replacement not ready; replacement lacks a
+     capability).
+   - coordinator maps no_replacement_available to no_replacement (no binding
+     change).
+
+5. Update docs/evidence/t2/multi-node-failover-readiness.md §T5-A5 with an
+   "implemented" note: the mutation-time guard is in place; production client,
+   RBAC, dedicated worker/token, node-B manifests, and live proof still pending.
+
+Verification (all must pass):
+  make repository-hygiene && make secret-scan
+  make runtime-engine-config-check && make telephony-domain-config-check
+  make asterisk-ari-config-check && make asterisk-conference-config-check
+  make runtime-engine-test && make telephony-domain-test
+  make asterisk-ari-test && make asterisk-conference-recovery-test
+  make test && make check && make build
+  git diff --check
+
+One scoped commit, e.g.:
+  feat(t5): require a distinct replacement before runtime-fence scale mutation
+Do not push. Do not add the real Kubernetes client, apply RBAC, mount tokens,
+deploy a second node, or run live scale/failover.
+```
+
+## T5-A5 staged acceptance criteria
+
+**Repository acceptance:** the fence handler never invokes the adapter scale when
+no distinct ready replacement exists (returns retryable `no_replacement_available`);
+`hasDistinctEligibleReplacement` uses canonical selection semantics; the coordinator
+maps the outcome to `no_replacement` with no binding change; the replacement id is
+never persisted or passed to the adapter; single-node behaviour is provably safe;
+focused tests green; no client/RBAC/token/node-B/live scale.
+
+**Live acceptance (later, layered, in Order 3):** land the production
+`HttpKubernetesWorkloadClient` + dedicated infra worker + narrow `utcp-runtime`
+RBAC + projected token (client still default-Unavailable until bound); deploy node
+B via the Kustomize component and register RuntimeNode B to observed `ready`; then
+bind the real client and prove one live scale-to-zero fence of a hard-failed node A
+followed by a single rebind + reconstruction on node B, with the guard proven to
+block fencing whenever node B is not ready; both-node orphan inspection clean;
+former node-A workload restored later without reclaiming.
