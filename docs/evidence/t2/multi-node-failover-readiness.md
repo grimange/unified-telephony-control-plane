@@ -2305,10 +2305,74 @@ generation before any RuntimeBinding authority cutoff.
 Safe deployment order remains: deploy and register a distinct ready RuntimeNode
 B first; prove it is eligible; then apply the fencing ServiceAccount/RBAC and
 dedicated worker identity; then run non-destructive connectivity proof before
-any live scale-to-zero acceptance. Parameterized A/B manifests, RuntimeNode B
-registration, real RBAC application, live Kubernetes-client connectivity, live
-scale-to-zero proof, replacement reconstruction proof, former-workload
-restoration policy, and two-node automatic failover acceptance remain pending.
+any live scale-to-zero acceptance. Live RuntimeNode B registration, real RBAC
+application, live Kubernetes-client connectivity, live scale-to-zero proof,
+replacement reconstruction proof, former-workload restoration policy, and
+two-node automatic failover acceptance remain pending.
+
+## T5-A7 staged Asterisk A/B topology artifacts
+
+Repository-only A/B manifests now live under the non-applied overlay
+`infrastructure/kubernetes/overlays/local-two-asterisk/`. The overlay uses the
+reusable `infrastructure/kubernetes/components/asterisk-instance/` model to
+render two isolated Asterisk runtime workloads:
+
+| RuntimeNode | Deployment | Service | Credential Secret reference | Service DNS | Workload identity |
+| --- | --- | --- | --- | --- | --- |
+| `local-asterisk-ari-a` | `asterisk-ari-a` | `asterisk-ari-a` | `utcp-local-asterisk-ari-a-credentials` | `asterisk-ari-a.utcp-runtime.svc.cluster.local:8088` | `utcp-runtime/asterisk-ari-a` |
+| `local-asterisk-ari-b` | `asterisk-ari-b` | `asterisk-ari-b` | `utcp-local-asterisk-ari-b-credentials` | `asterisk-ari-b.utcp-runtime.svc.cluster.local:8088` | `utcp-runtime/asterisk-ari-b` |
+
+Each staged Service selector includes the node-specific
+`utcp.dev/runtime-node` label, so Service A cannot select node B and Service B
+cannot select node A. The same label also gives the Kubernetes runtime-fence
+ownership validator an exact Deployment target per RuntimeNode. The component
+keeps the shared Asterisk image, readiness probe, liveness probe, runtime
+ServiceAccount, security context, ARI port, and Stasis configuration aligned
+with the current single-node runtime.
+
+The active local single-node overlay remains separate and continues to render
+the existing `asterisk-ari` Deployment, `asterisk-ari` Service,
+`utcp-local-asterisk-ari-credentials` Secret reference, Service DNS, selectors,
+image, probes, command, ports, security context, and `local-asterisk-ari`
+RuntimeNode label. The staged A/B overlay is not included by the active overlay,
+and it does not include the runtime-fencing worker component or the fencing
+ServiceAccount token. Asterisk Pods remain infrastructure targets, not
+Kubernetes controllers.
+
+Canonical registration request definitions are staged at
+`infrastructure/runtime-nodes/asterisk-ari/`. They use the existing
+authenticated C2 RuntimeNode API sequence: create the RuntimeNode, add control,
+events, and health endpoints, attach the ARI basic credential from the matching
+Kubernetes Secret context, register capabilities, write the Asterisk ARI
+adapter profile, and set desired state to `active`. The definitions advertise
+only the required Asterisk capabilities for this topology:
+`conference.lifecycle`, `conference.participation`, `event.stream`, and
+`runtime.observation`. They carry trusted workload metadata in the existing
+`labels.kubernetes_workload` shape and do not contain live credential material.
+
+The existing ARI listener remains compatible with the staged topology because
+RuntimeNode A and B are represented as distinct canonical RuntimeNodes with
+distinct endpoints. The listener's per-node claim, lease, and event-source epoch
+model can establish separate ARI WebSocket ownership for each Asterisk process.
+Conference and participant runtime IDs remain node-local Asterisk resources; the
+active RuntimeBinding remains the authority that selects which node's events can
+project.
+
+Validation is centralized in `scripts/asterisk-ari/validate-ab-topology` and is
+called by `scripts/asterisk-ari/config-check`. The validator renders the active
+overlay and the staged A/B overlay, then checks object identity, selector
+isolation, credential separation, endpoint and workload alignment, required
+capabilities, active-overlay preservation, fencing-token isolation, duplicate
+registration rejection, and premature fencing-worker exclusion. Live node-B
+Deployment, live Secret creation, authenticated RuntimeNode-B registration,
+listener observed-ready proof, RBAC application, and failover acceptance remain
+pending.
+
+Repository validation rendered both `infrastructure/kubernetes/overlays/local/runtime`
+and `infrastructure/kubernetes/overlays/local-two-asterisk/`. A non-mutating
+server-side dry-run against `k3d-utcp-local` accepted the staged A/B resources as
+`asterisk-ari-a` and `asterisk-ari-b` Services and Deployments. No resource was
+applied.
 
 ## Ready-to-paste Codex prompt (T5-A5)
 

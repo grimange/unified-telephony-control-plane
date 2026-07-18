@@ -1,0 +1,116 @@
+{
+  "schema": "utcp.runtime-node-registration.v1",
+  "authentication": "api/v1/admin identity.session with active_tenant_id",
+  "runtime_node": {
+    "method": "POST",
+    "path": "/api/v1/admin/runtime-nodes",
+    "idempotency_key": "t5-a7-local-asterisk-ari-b-node",
+    "body": {
+      "name": "Local Asterisk ARI B",
+      "slug": "local-asterisk-ari-b",
+      "runtime_family": "asterisk",
+      "adapter_key": "asterisk-ari",
+      "placement_region": "local",
+      "placement_zone": "dev",
+      "placement_priority": 100,
+      "capacity_weight": 10,
+      "labels": {
+        "kubernetes_workload": {
+          "namespace": "utcp-runtime",
+          "deployment": "asterisk-ari-b"
+        }
+      }
+    }
+  },
+  "endpoints": [
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/runtime-nodes/{runtime_node_id}/endpoints",
+      "idempotency_key": "t5-a7-local-asterisk-ari-b-control-endpoint",
+      "body": {
+        "purpose": "control",
+        "transport": "http",
+        "host": "asterisk-ari-b.utcp-runtime.svc.cluster.local",
+        "port": 8088,
+        "path": "/ari",
+        "tls_mode": "disabled",
+        "priority": 100,
+        "enabled": true
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/runtime-nodes/{runtime_node_id}/endpoints",
+      "idempotency_key": "t5-a7-local-asterisk-ari-b-events-endpoint",
+      "body": {
+        "purpose": "events",
+        "transport": "ws",
+        "host": "asterisk-ari-b.utcp-runtime.svc.cluster.local",
+        "port": 8088,
+        "path": "/ari/events",
+        "tls_mode": "disabled",
+        "priority": 100,
+        "enabled": true
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/admin/runtime-nodes/{runtime_node_id}/endpoints",
+      "idempotency_key": "t5-a7-local-asterisk-ari-b-health-endpoint",
+      "body": {
+        "purpose": "health",
+        "transport": "http",
+        "host": "asterisk-ari-b.utcp-runtime.svc.cluster.local",
+        "port": 8088,
+        "path": "/ari",
+        "tls_mode": "disabled",
+        "priority": 100,
+        "enabled": true
+      }
+    }
+  ],
+  "credential": {
+    "method": "POST",
+    "path": "/api/v1/admin/runtime-nodes/{runtime_node_id}/credentials",
+    "idempotency_key": "t5-a7-local-asterisk-ari-b-credential",
+    "kubernetes_secret": "utcp-local-asterisk-ari-b-credentials",
+    "body": {
+      "credential_type": "ari-basic",
+      "identifier": "${NODE_B_ARI_USERNAME}",
+      "secret": "placeholder-node-b-ari-secret",
+      "expires_at": null
+    }
+  },
+  "capabilities": {
+    "method": "PUT",
+    "path": "/api/v1/admin/runtime-nodes/{runtime_node_id}/capabilities",
+    "body": {
+      "capabilities": [
+        "conference.lifecycle",
+        "conference.participation",
+        "event.stream",
+        "runtime.observation"
+      ]
+    }
+  },
+  "adapter_configuration": {
+    "method": "PUT",
+    "path": "/api/v1/admin/runtime-nodes/{runtime_node_id}/adapter-configuration",
+    "body": {
+      "application_name": "utcp-t0-observation",
+      "connect_timeout_ms": 2000,
+      "request_timeout_ms": 4000,
+      "websocket_handshake_timeout_ms": 4000,
+      "heartbeat_interval_ms": 15000,
+      "reconnect_min_delay_ms": 1000,
+      "reconnect_max_delay_ms": 30000
+    }
+  },
+  "desired_state": {
+    "method": "POST",
+    "path": "/api/v1/admin/runtime-nodes/{runtime_node_id}/desired-state",
+    "body": {
+      "desired_state": "active"
+    }
+  }
+}

@@ -37,9 +37,14 @@ for file in \
   apps/api/app/RuntimeEngine/Commands/GenericRuntimeNodeInspectHandler.php \
   apps/api/app/RuntimeEngine/Listeners/RuntimeListenerLeaseRepository.php \
   infrastructure/docker/asterisk/Dockerfile \
+  infrastructure/kubernetes/components/asterisk-instance/kustomization.yaml \
+  infrastructure/kubernetes/overlays/local-two-asterisk/kustomization.yaml \
   infrastructure/kubernetes/base/platform/asterisk-ari-events-deployment.yaml \
   infrastructure/kubernetes/base/runtime/asterisk-ari-deployment.yaml \
   infrastructure/kubernetes/base/runtime/asterisk-ari-service.yaml \
+  infrastructure/runtime-nodes/asterisk-ari/local-asterisk-ari-a.registration.json \
+  infrastructure/runtime-nodes/asterisk-ari/local-asterisk-ari-b.registration.json \
+  scripts/asterisk-ari/validate-ab-topology \
   infrastructure/kubernetes/security/platform/allow-asterisk-ari-events.yaml \
   infrastructure/kubernetes/security/platform/allow-asterisk-ari-egress.yaml \
   infrastructure/kubernetes/security/runtime/allow-asterisk-ari-ingress.yaml \
@@ -135,6 +140,9 @@ done
 
 check_kustomize_forbidden infrastructure/kubernetes/base/platform "NodePort|LoadBalancer|hostPort|hostNetwork|hostPID|5060|5061|10000|20000" "T0 platform manifests expose forbidden network surface"
 check_kustomize_forbidden infrastructure/kubernetes/base/runtime "NodePort|LoadBalancer|hostPort|hostNetwork|hostPID|5060|5061|10000|20000" "T0 runtime manifests expose forbidden network surface"
+check_kustomize_forbidden infrastructure/kubernetes/overlays/local-two-asterisk "NodePort|LoadBalancer|hostPort|hostNetwork|hostPID|5060|5061|10000|20000" "T5 staged A/B runtime manifests expose forbidden network surface"
 check_kustomize_forbidden infrastructure/kubernetes/security "0\\.0\\.0\\.0/0|::/0|5060|5061|10000|20000" "T0 NetworkPolicy contains broad egress or SIP/RTP ports"
+
+scripts/asterisk-ari/validate-ab-topology >/dev/null
 
 printf 'asterisk_ari_config_check=ok\n'

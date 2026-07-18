@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+ROOT = Path(__file__).resolve().parents[2]
+ACTIVE_OVERLAY = ROOT / "infrastructure/kubernetes/overlays/local/runtime"
+TWO_NODE_OVERLAY = ROOT / "infrastructure/kubernetes/overlays/local-two-asterisk"
+REGISTRATION_DIR = ROOT / "infrastructure/runtime-nodes/asterisk-ari"
+REQUIRED_CAPABILITIES = {
+    "conference.lifecycle",
+    "conference.participation",
+    "event.stream",
+    "runtime.observation",
+}
+
+
+class ValidationError(RuntimeError):
+    pass
+
+
+def fail(message: str) -> None:
+    print(f"asterisk ari A/B topology validation failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def render(path: Path) -> list[dict[str, Any]]:
+    try:
+        rendered = subprocess.check_output(["kubectl", "kustomize", str(path)], cwd=ROOT, text=True)
+    except subprocess.CalledProcessError as exception:
+        raise ValidationError(f"could not render {path.relative_to(ROOT)}: {exception}") from exception
+
+    return [doc for doc in yaml.safe_load_all(rendered) if isinstance(doc, dict)]
+
+
+def load_registration(slug: str) -> dict[str, Any]:
+    path = REGISTRATION_DIR / f"{slug}.registration.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exception:
+        raise ValidationError(f"invalid registration definition {path.relative_to(ROOT)}: {exception}") from exception
+
+
+def by_kind_name(items: list[dict[str, Any]], kind: str, name: str) -> dict[str, Any]:
+    matches = [
+        item
+        for item in items
+        if item.get("kind") == kind and item.get("metadata", {}).get("name") == name
+    ]
+    if len(matches) != 1:
+        raise ValidationError(f"expected exactly one {kind} named {name}, found {len(matches)}")
+
+    return matches[0]
+
+
+def items_by_kind(items: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]:
+    return [item for item in items if item.get("kind") == kind]
+
+
+def container(deployment: dict[str, Any]) -> dict[str, Any]:
+    containers = deployment["spec"]["template"]["spec"].get("containers", [])
+    matches = [item for item in containers if item.get("name") == "asterisk"]
+    if len(matches) != 1:
+        raise ValidationError(f"{deployment['metadata']['name']} must have exactly one asterisk container")
+
+    return matches[0]
+
+
+def secret_ref(deployment: dict[str, Any]) -> str:
+    env_from = container(deployment).get("envFrom", [])
+    names = [
+        item.get("secretRef", {}).get("name")
+        for item in env_from
+        if item.get("secretRef", {}).get("name")
+    ]
+    if len(names) != 1:
+        raise ValidationError(f"{deployment['metadata']['name']} must reference exactly one credential Secret")
+
+    return str(names[0])
+
+
+def endpoint_hosts(registration: dict[str, Any]) -> set[str]:
+    return {
+        str(endpoint["body"]["host"])
+        for endpoint in registration.get("endpoints", [])
+        if endpoint.get("body", {}).get("host")
+    }
+
+
+def first_endpoint_host(registration: dict[str, Any]) -> str:
+    hosts = endpoint_hosts(registration)
+    if len(hosts) != 1:
+        raise ValidationError("each staged RuntimeNode registration must use one node-specific endpoint host")
+
+    return next(iter(hosts))
+
+
+def workload(registration: dict[str, Any]) -> dict[str, str]:
+    labels = registration["runtime_node"]["body"].get("labels", {})
+    metadata = labels.get("kubernetes_workload")
+    if not isinstance(metadata, dict):
+        raise ValidationError("registration is missing kubernetes_workload metadata")
+
+    return {
+        "namespace": str(metadata.get("namespace", "")),
+        "deployment": str(metadata.get("deployment", "")),
+    }
+
+
+def capabilities(registration: dict[str, Any]) -> set[str]:
+    return set(registration["capabilities"]["body"].get("capabilities", []))
+
+
+def validate_active_overlay(active: list[dict[str, Any]]) -> None:
+    deployment = by_kind_name(active, "Deployment", "asterisk-ari")
+    service = by_kind_name(active, "Service", "asterisk-ari")
+    deployment_labels = deployment["metadata"].get("labels", {})
+    pod_spec = deployment["spec"]["template"]["spec"]
+    asterisk = container(deployment)
+
+    expected_selector = {
+        "app.kubernetes.io/part-of": "utcp",
+        "app.kubernetes.io/component": "asterisk-ari",
+    }
+    if deployment_labels.get("utcp.dev/runtime-node") != "local-asterisk-ari":
+        raise ValidationError("active deployment runtime-node label drifted")
+    if service["spec"].get("selector") != expected_selector:
+        raise ValidationError("active single-node Service selector changed")
+    if secret_ref(deployment) != "utcp-local-asterisk-ari-credentials":
+        raise ValidationError("active Asterisk credential Secret reference changed")
+    if pod_spec.get("serviceAccountName") != "utcp-runtime-asterisk":
+        raise ValidationError("active Asterisk ServiceAccount changed")
+    if pod_spec.get("automountServiceAccountToken") is not False:
+        raise ValidationError("active Asterisk Pod must remain token-free")
+    if asterisk.get("image") != "utcp-local-registry:5000/utcp/asterisk-ari:0.1.0-k1-dev":
+        raise ValidationError("active Asterisk image changed")
+    if asterisk.get("ports", [{}])[0].get("containerPort") != 8088:
+        raise ValidationError("active Asterisk ARI port changed")
+    if asterisk.get("readinessProbe", {}).get("exec", {}).get("command") != ["/usr/local/bin/utcp-asterisk-readiness"]:
+        raise ValidationError("active Asterisk readiness probe changed")
+    if asterisk.get("livenessProbe", {}).get("tcpSocket", {}).get("port") != "ari":
+        raise ValidationError("active Asterisk liveness probe changed")
+
+
+def validate_node(
+    items: list[dict[str, Any]],
+    slug: str,
+    deployment_name: str,
+    service_name: str,
+    secret_name: str,
+    registration: dict[str, Any],
+) -> None:
+    deployment = by_kind_name(items, "Deployment", deployment_name)
+    service = by_kind_name(items, "Service", service_name)
+    runtime_label = deployment["metadata"].get("labels", {}).get("utcp.dev/runtime-node")
+    selector = service["spec"].get("selector", {})
+    pod_spec = deployment["spec"]["template"]["spec"]
+
+    if runtime_label != slug:
+        raise ValidationError(f"{deployment_name} runtime-node label does not match {slug}")
+    if deployment["spec"]["selector"]["matchLabels"].get("utcp.dev/runtime-node") != slug:
+        raise ValidationError(f"{deployment_name} selector does not include its RuntimeNode label")
+    if selector.get("utcp.dev/runtime-node") != slug:
+        raise ValidationError(f"{service_name} selector does not include its RuntimeNode label")
+    if selector.get("app.kubernetes.io/component") != "asterisk-ari":
+        raise ValidationError(f"{service_name} selector lost the Asterisk component label")
+    if secret_ref(deployment) != secret_name:
+        raise ValidationError(f"{deployment_name} credential Secret reference mismatch")
+    if pod_spec.get("serviceAccountName") != "utcp-runtime-asterisk":
+        raise ValidationError(f"{deployment_name} must use the runtime Asterisk ServiceAccount")
+    if pod_spec.get("automountServiceAccountToken") is not False:
+        raise ValidationError(f"{deployment_name} must not mount Kubernetes API tokens")
+    if container(deployment).get("image") != "utcp-local-registry:5000/utcp/asterisk-ari:0.1.0-k1-dev":
+        raise ValidationError(f"{deployment_name} image mismatch")
+    if container(deployment).get("readinessProbe", {}).get("exec", {}).get("command") != ["/usr/local/bin/utcp-asterisk-readiness"]:
+        raise ValidationError(f"{deployment_name} readiness probe mismatch")
+
+    body = registration["runtime_node"]["body"]
+    if body.get("slug") != slug:
+        raise ValidationError(f"{slug} registration slug mismatch")
+    if body.get("runtime_family") != "asterisk" or body.get("adapter_key") != "asterisk-ari":
+        raise ValidationError(f"{slug} registration runtime family or adapter key mismatch")
+    if registration["desired_state"]["body"].get("desired_state") != "active":
+        raise ValidationError(f"{slug} registration desired state must be active")
+    if capabilities(registration) != REQUIRED_CAPABILITIES:
+        raise ValidationError(f"{slug} registration capabilities are incomplete or speculative")
+    if workload(registration) != {"namespace": "utcp-runtime", "deployment": deployment_name}:
+        raise ValidationError(f"{slug} workload metadata does not match rendered Deployment")
+    if first_endpoint_host(registration) != f"{service_name}.utcp-runtime.svc.cluster.local":
+        raise ValidationError(f"{slug} endpoint host does not match rendered Service")
+    if registration["credential"].get("kubernetes_secret") != secret_name:
+        raise ValidationError(f"{slug} registration credential reference mismatch")
+    if registration["credential"]["body"].get("credential_type") != "ari-basic":
+        raise ValidationError(f"{slug} registration credential type mismatch")
+
+
+def validate_two_node_overlay(items: list[dict[str, Any]], registrations: dict[str, dict[str, Any]]) -> None:
+    deployments = [item for item in items_by_kind(items, "Deployment") if item["metadata"]["name"].startswith("asterisk-ari")]
+    services = [item for item in items_by_kind(items, "Service") if item["metadata"]["name"].startswith("asterisk-ari")]
+    if {item["metadata"]["name"] for item in deployments} != {"asterisk-ari-a", "asterisk-ari-b"}:
+        raise ValidationError("staged overlay must render exactly asterisk-ari-a and asterisk-ari-b Deployments")
+    if {item["metadata"]["name"] for item in services} != {"asterisk-ari-a", "asterisk-ari-b"}:
+        raise ValidationError("staged overlay must render exactly asterisk-ari-a and asterisk-ari-b Services")
+
+    validate_node(
+        items,
+        "local-asterisk-ari-a",
+        "asterisk-ari-a",
+        "asterisk-ari-a",
+        "utcp-local-asterisk-ari-a-credentials",
+        registrations["local-asterisk-ari-a"],
+    )
+    validate_node(
+        items,
+        "local-asterisk-ari-b",
+        "asterisk-ari-b",
+        "asterisk-ari-b",
+        "utcp-local-asterisk-ari-b-credentials",
+        registrations["local-asterisk-ari-b"],
+    )
+
+    deployment_selectors = {
+        item["metadata"]["name"]: item["spec"]["selector"]["matchLabels"].get("utcp.dev/runtime-node")
+        for item in deployments
+    }
+    service_selectors = {
+        item["metadata"]["name"]: item["spec"]["selector"].get("utcp.dev/runtime-node")
+        for item in services
+    }
+    if len(set(deployment_selectors.values())) != 2 or len(set(service_selectors.values())) != 2:
+        raise ValidationError("staged Asterisk selectors must be node-specific and unique")
+    if service_selectors["asterisk-ari-a"] == deployment_selectors["asterisk-ari-b"]:
+        raise ValidationError("Service A can select node B")
+    if service_selectors["asterisk-ari-b"] == deployment_selectors["asterisk-ari-a"]:
+        raise ValidationError("Service B can select node A")
+
+    secrets = {secret_ref(item) for item in deployments}
+    if secrets != {"utcp-local-asterisk-ari-a-credentials", "utcp-local-asterisk-ari-b-credentials"}:
+        raise ValidationError("staged credential Secret references must be distinct")
+    hosts = {first_endpoint_host(registration) for registration in registrations.values()}
+    if hosts != {
+        "asterisk-ari-a.utcp-runtime.svc.cluster.local",
+        "asterisk-ari-b.utcp-runtime.svc.cluster.local",
+    }:
+        raise ValidationError("staged endpoint hosts must be distinct Service DNS names")
+
+    for deployment in deployments:
+        pod_spec = deployment["spec"]["template"]["spec"]
+        if pod_spec.get("serviceAccountName") == "utcp-runtime-fencer":
+            raise ValidationError("Asterisk Pods must not use the fencing ServiceAccount")
+        volume_names = {volume.get("name") for volume in pod_spec.get("volumes", [])}
+        if "kubernetes-api-credentials" in volume_names:
+            raise ValidationError("Asterisk Pods must not mount the Kubernetes fencing token")
+
+    rendered_names = {(item.get("kind"), item.get("metadata", {}).get("namespace"), item.get("metadata", {}).get("name")) for item in items}
+    if len(rendered_names) != len(items):
+        raise ValidationError("staged overlay contains a duplicate Kubernetes object identity")
+    if any(item.get("metadata", {}).get("name") == "utcp-runtime-fence-worker" for item in items):
+        raise ValidationError("staged A/B overlay must not activate the runtime-fencing worker")
+
+
+def validate_uniqueness(registrations: dict[str, dict[str, Any]]) -> None:
+    slugs = [registration["runtime_node"]["body"]["slug"] for registration in registrations.values()]
+    deployments = [workload(registration)["deployment"] for registration in registrations.values()]
+    hosts = [first_endpoint_host(registration) for registration in registrations.values()]
+    secrets = [registration["credential"]["kubernetes_secret"] for registration in registrations.values()]
+    for label, values in {
+        "slug": slugs,
+        "workload deployment": deployments,
+        "endpoint host": hosts,
+        "credential reference": secrets,
+    }.items():
+        if len(set(values)) != len(values):
+            raise ValidationError(f"duplicate {label} in staged RuntimeNode registrations")
+
+
+def apply_fixture(registrations: dict[str, dict[str, Any]], fixture: str | None) -> None:
+    if fixture is None:
+        return
+    if fixture == "duplicate-slug":
+        registrations["local-asterisk-ari-b"]["runtime_node"]["body"]["slug"] = "local-asterisk-ari-a"
+    elif fixture == "duplicate-endpoint":
+        for endpoint in registrations["local-asterisk-ari-b"]["endpoints"]:
+            endpoint["body"]["host"] = "asterisk-ari-a.utcp-runtime.svc.cluster.local"
+    elif fixture == "duplicate-workload":
+        registrations["local-asterisk-ari-b"]["runtime_node"]["body"]["labels"]["kubernetes_workload"]["deployment"] = "asterisk-ari-a"
+    elif fixture == "duplicate-credential":
+        registrations["local-asterisk-ari-b"]["credential"]["kubernetes_secret"] = "utcp-local-asterisk-ari-a-credentials"
+    else:
+        raise ValidationError(f"unknown validation fixture {fixture}")
+
+
+def main() -> int:
+    fixture = None
+    if len(sys.argv) == 3 and sys.argv[1] == "--fixture":
+        fixture = sys.argv[2]
+    elif len(sys.argv) != 1:
+        fail("usage: validate-ab-topology [--fixture duplicate-slug|duplicate-endpoint|duplicate-workload|duplicate-credential]")
+
+    try:
+        active = render(ACTIVE_OVERLAY)
+        staged = render(TWO_NODE_OVERLAY)
+        registrations = {
+            "local-asterisk-ari-a": load_registration("local-asterisk-ari-a"),
+            "local-asterisk-ari-b": load_registration("local-asterisk-ari-b"),
+        }
+        apply_fixture(registrations, fixture)
+        validate_uniqueness(registrations)
+        validate_active_overlay(active)
+        validate_two_node_overlay(staged, registrations)
+    except ValidationError as exception:
+        fail(str(exception))
+
+    print("asterisk_ari_ab_topology_validation=ok")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

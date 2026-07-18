@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asterisk-ari
+  namespace: utcp-runtime
+  labels:
+    app.kubernetes.io/instance: asterisk-ari-a
+    utcp.dev/runtime-node: local-asterisk-ari-a
+spec:
+  selector:
+    matchLabels:
+      utcp.dev/runtime-node: local-asterisk-ari-a
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: asterisk-ari-a
+        utcp.dev/runtime-node: local-asterisk-ari-a
+    spec:
+      containers:
+        - name: asterisk
+          envFrom:
+            - secretRef:
+                name: utcp-local-asterisk-ari-a-credentials
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: asterisk-ari
+  namespace: utcp-runtime
+  labels:
+    app.kubernetes.io/instance: asterisk-ari-a
+    utcp.dev/runtime-node: local-asterisk-ari-a
+spec:
+  selector:
+    utcp.dev/runtime-node: local-asterisk-ari-a

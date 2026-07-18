@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asterisk-ari
+  namespace: utcp-runtime
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: asterisk-ari
+    app.kubernetes.io/instance: asterisk-ari
+    utcp.dev/runtime-node: local-asterisk-ari
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: utcp
+      app.kubernetes.io/component: asterisk-ari
+      utcp.dev/runtime-node: local-asterisk-ari
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: utcp
+        app.kubernetes.io/component: asterisk-ari
+        app.kubernetes.io/instance: asterisk-ari
+        utcp.dev/runtime-node: local-asterisk-ari
+        utcp.io/network-role: asterisk-ari
+    spec:
+      serviceAccountName: utcp-runtime-asterisk
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: asterisk
+          image: utcp-asterisk-ari
+          imagePullPolicy: Always
+          ports:
+            - name: ari
+              containerPort: 8088
+              protocol: TCP
+          envFrom:
+            - secretRef:
+                name: utcp-local-asterisk-ari-credentials
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          readinessProbe:
+            exec:
+              command:
+                - /usr/local/bin/utcp-asterisk-readiness
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            tcpSocket:
+              port: ari
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 5

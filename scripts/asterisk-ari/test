@@ -7,4 +7,4 @@ cd "$ROOT"
 "$ROOT/scripts/asterisk-ari/config-check" >/dev/null
 
 cd "$ROOT/apps/api"
-php artisan test tests/Feature/Asterisk
+php artisan test tests/Feature/Asterisk tests/Feature/Infrastructure/AsteriskTwoNodeTopologyTest.php

@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: asterisk-ari
+  namespace: utcp-runtime
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: asterisk-ari
+    app.kubernetes.io/instance: asterisk-ari
+    utcp.dev/runtime-node: local-asterisk-ari
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: asterisk-ari
+    utcp.dev/runtime-node: local-asterisk-ari
+  ports:
+    - name: ari
+      protocol: TCP
+      port: 8088
+      targetPort: ari
