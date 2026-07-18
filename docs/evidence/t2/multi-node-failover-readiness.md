@@ -4163,3 +4163,115 @@ occurred. Endpoint-targeted NetworkPolicies remain reconciled live from T5-A19.
 Live worker activation and production Kubernetes-client GET/LIST proof remain
 pending; this repository-only correction does not claim that the production
 client has successfully called Kubernetes.
+
+## T5-A21 — CA fix proven live; production client blocked by rejected token audience
+
+Checkpointed live execution at `UTCP_PHASE=T1` from HEAD `40e313d`. The T5-A20
+CA projection fix works exactly as designed, and the full network + TLS + RBAC
+path is now proven end-to-end from the real worker — but the production probe
+still fails because the k3s API server rejects the committed projected-token
+audience. Per the rollback contract the worker and RBAC were removed; the
+endpoint-targeted NetworkPolicies remain live and current. No fence operation,
+scale, Pod deletion, binding mutation, or failover occurred; both Asterisk Pod
+UIDs are unchanged.
+
+### Baseline and preconditions
+
+Clean tree at `40e313d`; both Asterisk Deployments 1/1 with unchanged Pod UIDs
+(`030c033c-…45dd`, `3b9121dc-…4671e`); Services isolated per node; both
+RuntimeNodes `active|ready` (fresh); both leases claimed/unexpired; one open
+connection epoch per node; zero open conferences; zero bridges/channels on both
+nodes; zero fence/verify/pending operations; fencing resources absent; status
+targets passed. API endpoint rediscovered via canonical helpers:
+`172.24.0.5:6443` (one IP, one port); `KUBERNETES_SERVICE_HOST=10.43.0.1:443`.
+All three endpoint-targeted policies live at `172.24.0.5/32:6443`;
+`check-apiserver-policy-drift` passed; no ClusterIP fallback or broad CIDR
+anywhere; `default-deny` intact; zero pods matched the fencer selector; live
+ordinary-worker apiserver connect refused (errno 111).
+
+### Image currency, render, RBAC
+
+`f8068ba..40e313d` touches no runtime application code; the deployed registry
+image contains both artisan commands, `HttpKubernetesWorkloadClient`, and
+`InfrastructureConnectivityProbe`. Render (registry transform) produced exactly
+the 4 canonical objects with `defaultMode: 288` (0440), `ca.crt` item
+`mode: 292` (0444), token projection unchanged (`path: token`, audience
+`https://kubernetes.default.svc`, 3600s); server-side dry-run passed.
+SA+Role+RoleBinding applied; impersonation matrix again exactly the approved
+boundary (deployments get/list, scale get/patch, pods get/list in
+`utcp-runtime`; everything else denied including create/delete deployments).
+
+### Worker deployment and CA readability (T5-A20 fix VERIFIED)
+
+Worker rolled out 1/1 (same benign single first-second restart from kube-router
+ipset programming lag; clean bootstrap after). Verified in-pod as uid=33:
+
+```text
+..data/token  mode=600 uid=33 gid=0  → token_readable=yes
+..data/ca.crt mode=444 uid=0  gid=0  → ca_readable=yes
+```
+
+### Production probe result and isolation
+
+`php artisan runtime-engine:infrastructure-probe --once` (twice):
+`infrastructure_probe_status=failed reason=permission_denied`. The client maps
+both 401 and 403 to `permission_denied`; direct in-pod requests over the
+identical CA-verified TLS path show the real status:
+
+```text
+/version                 => HTTP/1.1 401 Unauthorized
+GET  deployments/asterisk-ari => HTTP/1.1 401 Unauthorized
+LIST pods                => HTTP/1.1 401 Unauthorized
+projected token aud      => ["https://kubernetes.default.svc"]
+projected token sub      => system:serviceaccount:utcp-platform:utcp-runtime-fencer
+issuer                   => https://kubernetes.default.svc.cluster.local
+```
+
+TLS verification against the projected CA succeeded (the 401 is an HTTP-layer
+response through a verified session); authentication is the sole failure. The
+cluster's accepted audiences, from a default `kubectl create token` for the
+fencer SA: **`["https://kubernetes.default.svc.cluster.local", "k3s"]`**. The
+committed audience `https://kubernetes.default.svc` is not in the set — k3s
+derives its API audience from the issuer, which includes the
+`.cluster.local` suffix.
+
+### Positive control — accepted audience succeeds end-to-end
+
+A bounded 600-second `kubectl create token utcp-runtime-fencer -n utcp-platform
+--audience=https://kubernetes.default.svc.cluster.local` piped via stdin into
+the worker Pod (never printed) over the same CA-verified TLS path:
+
+```text
+/version                            => 200 OK
+GET  deployments/asterisk-ari      => 200 OK  (desired=1, readyReplicas=1)
+LIST pods?labelSelector=utcp.dev/runtime-node=local-asterisk-ari
+                                    => 200 OK  (owned_pod_count=1)
+GET  secrets                        => 403 Forbidden  (RBAC boundary holds)
+```
+
+Every layer — fencer NetworkPolicy, DNS-free endpoint dialing, TLS with the
+projected CA, ServiceAccount identity, narrow RBAC — is proven good. The
+projected-token audience string is the only remaining blocker.
+
+### Rollback performed (per contract)
+
+`Deployment/utcp-runtime-fence-worker` → `RoleBinding` → `Role` →
+`ServiceAccount` deleted; scan confirms zero fencing resources. NetworkPolicies
+retained (drift check passes). Post-rollback: both Asterisk Pods same UIDs and
+Ready, replicas 1/1, zero fence/verify/pending operations,
+`conference_runtime_bindings` unchanged (102 / 2026-07-18 01:20:42+00), leases
+claimed, one open epoch per node, tree clean, `UTCP_PHASE=T1`.
+
+### Required bounded correction (for Codex — T5-A22)
+
+One-line manifest change in
+`infrastructure/kubernetes/components/runtime-fencing/infrastructure-worker-deployment.yaml`:
+set the projected `serviceAccountToken` audience to
+`https://kubernetes.default.svc.cluster.local` (the cluster issuer-derived
+audience proven accepted; keep `path: token`, `expirationSeconds: 3600`, CA
+item mode 0444, defaultMode 0440). Update
+`RuntimeFencingManifestTest`/`scripts/runtime-engine/config-check` audience
+assertions to the corrected value. No RBAC, image, label, NetworkPolicy,
+client, or handler change. Then re-run the T5-A21 activation sequence
+unchanged; the expected outcome is the full production
+`runtime-engine:infrastructure-probe` GET/LIST success.
