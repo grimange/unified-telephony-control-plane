@@ -159,6 +159,8 @@ if pod_security.get('seccompProfile', {}).get('type') != 'RuntimeDefault':
     fail('runtime fence worker must preserve the RuntimeDefault seccomp profile')
 if pod_spec.get('initContainers'):
     fail('runtime fence worker must not add permission-changing init containers')
+if yaml.dump(pod_spec, sort_keys=True).lower().find('chown') != -1 or yaml.dump(pod_spec, sort_keys=True).lower().find('chmod') != -1:
+    fail('runtime fence worker must not add chown/chmod permission workarounds')
 containers = pod_spec.get('containers') or []
 if len(containers) != 1:
     fail('runtime fence worker must render one container')
@@ -172,6 +174,14 @@ if container_security.get('privileged') is True:
     fail('runtime fence worker must not run privileged')
 if container_security.get('capabilities', {}).get('drop') != ['ALL']:
     fail('runtime fence worker must drop all Linux capabilities')
+volume_mounts = worker.get('volumeMounts') or []
+kubernetes_mounts = [mount for mount in volume_mounts if mount.get('name') == 'kubernetes-api-credentials']
+if kubernetes_mounts != [{
+    'name': 'kubernetes-api-credentials',
+    'mountPath': '/var/run/secrets/kubernetes.io/serviceaccount',
+    'readOnly': True,
+}]:
+    fail('runtime fence worker must mount the projected Kubernetes credentials read-only at the production path')
 env_from = worker.get('envFrom') or []
 config_names = [entry.get('configMapRef', {}).get('name') for entry in env_from if 'configMapRef' in entry]
 secret_names = [entry.get('secretRef', {}).get('name') for entry in env_from if 'secretRef' in entry]
@@ -183,10 +193,35 @@ projected = [
 ]
 if len(projected) != 1:
     fail('runtime fence worker must mount one explicit projected Kubernetes credential volume')
+if projected[0]['projected'].get('defaultMode') == 292:
+    fail('runtime fence worker must not broaden the entire projected volume to 0444')
+if projected[0]['projected'].get('defaultMode') != 288:
+    fail('runtime fence worker projected credential volume must retain defaultMode 0440')
 sources = projected[0]['projected'].get('sources') or []
 token_sources = [source.get('serviceAccountToken') for source in sources if 'serviceAccountToken' in source]
 if len(token_sources) != 1 or token_sources[0].get('path') != 'token' or token_sources[0].get('expirationSeconds') != 3600:
     fail('runtime fence worker projected token contract is invalid')
+if token_sources[0].get('audience') != 'https://kubernetes.default.svc':
+    fail('runtime fence worker projected token audience changed unexpectedly')
+if 'mode' in token_sources[0]:
+    fail('runtime fence worker projected token must not have an explicit world-readable mode')
+ca_sources = [source.get('configMap') for source in sources if 'configMap' in source]
+if len(ca_sources) != 1 or ca_sources[0].get('name') != 'kube-root-ca.crt':
+    fail('runtime fence worker must source the Kubernetes CA from ConfigMap/kube-root-ca.crt')
+ca_items = ca_sources[0].get('items') or []
+if ca_items != [{'key': 'ca.crt', 'path': 'ca.crt', 'mode': 292}]:
+    fail(f'runtime fence worker CA item must be ca.crt at ca.crt with mode 0444 only: {ca_items}')
+if sum(1 for source in sources for item in source.get('configMap', {}).get('items', []) if item.get('mode') == 292) != 1:
+    fail('runtime fence worker must apply mode 0444 only to the Kubernetes CA item')
+
+with open('apps/api/config/runtime_engine.php', 'r', encoding='utf-8') as handle:
+    runtime_config = handle.read()
+if "'token_path' => env('KUBERNETES_SERVICEACCOUNT_TOKEN_PATH', '/var/run/secrets/kubernetes.io/serviceaccount/token')" not in runtime_config:
+    fail('runtime engine token path no longer matches the projected token path')
+if "'ca_path' => env('KUBERNETES_SERVICEACCOUNT_CA_PATH', '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt')" not in runtime_config:
+    fail('runtime engine CA path no longer matches the projected CA path')
+if 'insecureSkipVerify' in runtime_config or "'verify' => false" in runtime_config:
+    fail('runtime engine config contains a Kubernetes TLS verification bypass')
 
 role = objects[('Role', 'utcp-runtime', 'utcp-runtime-fencer')]
 rules = role.get('rules') or []

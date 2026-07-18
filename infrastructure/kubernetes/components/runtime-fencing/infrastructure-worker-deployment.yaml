@@ -64,3 +64,4 @@ spec:
                   items:
                     - key: ca.crt
                       path: ca.crt
+                      mode: 0444

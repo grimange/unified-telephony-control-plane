@@ -4094,3 +4094,72 @@ projected `serviceAccountToken` with audience `https://kubernetes.default.svc`.
 No RBAC, image, label, NetworkPolicy, or handler change. After that fix,
 re-run T5-A19's activation sequence unchanged (policies are already
 reconciled live).
+
+## T5-A20 — Projected Kubernetes CA readable by non-root fencing worker (repository correction)
+
+Repository-only correction at `UTCP_PHASE=T1` addresses the T5-A19 live blocker
+without activating the worker and without applying live fencing resources.
+
+### Proven defect
+
+The live T5-A19 activation proved the dedicated fencing worker could reach DNS,
+PostgreSQL, Redis, Laravel bootstrap, the fence-only polling loop, and the
+Kubernetes API network path. The read-only Kubernetes-client probe still failed
+before issuing an API request because
+`HttpKubernetesWorkloadClient::caPath()` requires
+`/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` to be readable. The
+projected ServiceAccount token was readable by UID 33 with credential mode
+`0600`, but the ConfigMap-sourced CA file rendered from `kube-root-ca.crt`
+was `root:root` mode `0440` and unreadable by the UID/GID `33:33` worker.
+
+### Correction
+
+`infrastructure/kubernetes/components/runtime-fencing/infrastructure-worker-deployment.yaml`
+now sets per-item `mode: 0444` only on the `kube-root-ca.crt` ConfigMap item:
+
+- ConfigMap: `kube-root-ca.crt`
+- key: `ca.crt`
+- path: `ca.crt`
+- mode: `0444`
+
+The CA certificate is trust material used to verify the internal Kubernetes API;
+it is not the bearer authentication credential. The ServiceAccount token remains
+a short-lived projected `serviceAccountToken` with path `token`, audience
+`https://kubernetes.default.svc`, expiration `3600`, no explicit item mode, and
+the projected volume default remains `0440`. The credential volume is still
+mounted read-only at `/var/run/secrets/kubernetes.io/serviceaccount`, matching
+the production client defaults for token and CA paths.
+
+### Preserved boundaries
+
+No TLS verification bypass, empty CA fallback, host CA fallback, root execution,
+init container, `chown`, `chmod`, `fsGroup`, duplicate CA ConfigMap, CA Secret,
+second Kubernetes client, feature gate, allowlist, manual activation switch, RBAC
+change, NetworkPolicy change, or operation-routing change was introduced.
+`automountServiceAccountToken: false`, UID/GID `33:33`, `runAsNonRoot: true`,
+dropped capabilities, `allowPrivilegeEscalation: false`, `RuntimeDefault`
+seccomp, cross-namespace RBAC, fencer NetworkPolicy labels, and fence-only
+operation routing remain intact.
+
+### Repository proof
+
+Focused manifest tests and `scripts/runtime-engine/config-check` parse the
+rendered runtime-fencing component and assert the CA projection source, key,
+path, and per-item `0444` mode; unchanged ServiceAccount token projection;
+non-`0444` projected-volume default; read-only mount; production client path
+alignment; UID/GID and hardening; unchanged RBAC; unchanged NetworkPolicy labels;
+and unchanged operation routing.
+
+Non-destructive validation rendered
+`infrastructure/kubernetes/components/runtime-fencing/` and confirmed the worker
+contains CA item mode `0444`, `runAsUser: 33`, `runAsGroup: 33`,
+`runAsNonRoot: true`, and `automountServiceAccountToken: false`. Server-side
+dry-run was performed against `.runtime/kubeconfig/utcp-local.yaml`, context
+`k3d-utcp-local`, for the runtime-fencing component. No Kubernetes resource was
+applied, no RBAC was created, no worker was deployed, no Deployment was scaled,
+no Pod was deleted, no runtime-fence operation was created, and no failover
+occurred. Endpoint-targeted NetworkPolicies remain reconciled live from T5-A19.
+
+Live worker activation and production Kubernetes-client GET/LIST proof remain
+pending; this repository-only correction does not claim that the production
+client has successfully called Kubernetes.
