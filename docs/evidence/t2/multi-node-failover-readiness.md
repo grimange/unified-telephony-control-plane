@@ -2997,3 +2997,260 @@ deployment, live Kubernetes-client connectivity proof, real scale-to-zero proof,
 two-node automatic failover, replacement reconstruction, former-workload
 restoration, Kamailio signaling cutoff (when SIP routing exists), Provider Node
 Admin UI, replacement-node failure handling, metrics, and capacity/placement policy.
+
+---
+
+# T5-A11 — Node-A durable isolation and fencing-activation safety (audit)
+
+Evidence-only audit at commit `571b703`, `UTCP_PHASE=T1`, 2026-07-18. Resolves
+node-A Service-isolation durability and node-A rollout safety, and defines the
+non-destructive fencing-worker activation contract. Nothing mutated.
+
+## Node-A label matrix (live vs repository)
+
+| Object | `utcp.dev/runtime-node=local-asterisk-ari` present? |
+|---|---|
+| **Live** Deployment metadata labels | no |
+| **Live** Deployment `selector.matchLabels` | **no** (2-label: part-of + component) |
+| **Live** Deployment template labels | **no** |
+| **Live** ReplicaSet (`asterisk-ari-874cf868c`) template labels | **no** |
+| **Live** Pod (`…-hqnsk`) labels | **yes** (added manually in T5-A10) |
+| **Live** Service selector | **yes** (patched in T5-A10) |
+| **Committed** base Deployment selector + template | **yes** (3-label) |
+| **Committed** base Service selector | **yes** (fixed in T5-A10) |
+
+## Pod-recreation behavior
+
+**Isolation is NOT durable.** The live Pod carries the runtime-node label only
+because it was manually labeled; the live Deployment/ReplicaSet **templates lack
+it**. If the node-A Pod is recreated (eviction, node drain, liveness failure), the
+replacement is minted from the template **without** the label, so the node-A
+Service (whose selector requires it) would select **zero** pods → node A's ARI
+Service becomes unreachable → node A goes unavailable. The fence adapter's
+ownership check (`part-of=utcp` + `component=asterisk-ari` +
+`utcp.dev/runtime-node==slug`) would also fail against a recreated Pod's
+Deployment (which still lacks the template label).
+
+## Durable correction decision
+
+**C — immutable selector mismatch requires controlled Deployment recreation.** The
+committed base Deployment carries a **3-label immutable `selector.matchLabels`**
+(`part-of, component, utcp.dev/runtime-node`); the live Deployment's selector is
+the 2-label version. A Deployment `.spec.selector` is immutable, so
+`kubectl apply` of the committed manifest fails with an immutable-field error — the
+live Deployment cannot be reconciled in place. The durable fix is a one-time
+`kubectl replace --force` (delete + recreate) of the node-A Deployment from the
+committed manifest, which recreates it with the correct selector **and** template
+label, so all future Pods inherit the label and Service isolation survives
+recreation. This is a **live operation, not a repository change** — the manifests
+are already correct.
+
+## Active RuntimeBinding classification
+
+76 active bindings → 76 distinct conferences → **all `desired_state=closed` /
+`observed_state=closed`**. Category breakdown:
+
+| Category | Count |
+|---|---|
+| open with live runtime resources | 0 |
+| open without runtime resources | 0 |
+| **closed but active binding remains (historical/stale)** | **76** |
+| unknown | 0 |
+
+Every binding is the known "binding not retired on conference close" residue
+(documented earlier). Zero admitted participants, zero open conference operations,
+and **zero open conferences exist anywhere** in the deployment.
+
+## Live bridge and channel inventory
+
+Read-only ARI inspection of node A: **0 bridges, 0 active channels, 0 active
+calls** (3 calls processed historically). No Stasis-controlled or Local channels,
+no orphan runtime resources.
+
+## Binding-to-runtime correlation
+
+Of 76 active bindings: **0** correspond to a live bridge, **0** to a live
+participant channel, **76** have no live Asterisk state. A node-A Pod restart
+would destroy **no material active runtime state**. Reconstruction is not even
+required (nothing to reconstruct), and same-node restart recovery is independently
+proven (T2-B `asterisk_restart_recovery`).
+
+## Node-A rollout safety
+
+**A — node A can be rolled safely now.** It hosts no live bridges/channels, has no
+open conference or admitted participant, no open operations, and the 76 historical
+bindings are untouched by a restart. With **zero open conferences**, the failover
+candidate query (which requires `conferences.desired_state='open'`) can produce no
+candidate, so a transient node-A unavailability during the recreation cannot
+trigger failover — even if the fence worker were already active (which it is not).
+The controlled `kubectl replace --force` durable correction is therefore safe to
+perform now, and should be done **before** fencing activation while there are no
+open conferences.
+
+## Immediate fencing-trigger risk
+
+**None currently.** `ConferenceFailoverCoordinator` sweeps `everyMinute`, requires
+a bound node observed `unavailable`/`stale` with no `ready` observation for
+`stale_observation_seconds=300`, **and** `conferences.desired_state='open'`
+(coordinator line 97). With zero open conferences, no candidate exists. Both nodes
+are `ready` with healthy leases; neither is near the threshold. No
+`verify_conference_absent` or `runtime.node.runtime.fence` operations exist
+(retryable or otherwise), so worker deployment cannot immediately claim a stale
+operation.
+
+## Pending fence operations
+
+Zero `runtime.node.runtime.fence` operations exist (any status). The generic
+`runtime-engine:command-worker` claims with
+`excludeOperationTypes:[runtime.node.runtime.fence]` (console.php:315) and the
+scheduler runs only that worker `--once` — so **fence operations are never claimed
+until the dedicated fence-worker Deployment exists**. The dedicated
+`runtime-engine:infrastructure-worker` claims with
+`includeOperationTypes:[runtime.node.runtime.fence]` (console.php:331) and is **not
+scheduled** — it runs only as the (currently absent) fence-worker Deployment loop.
+
+## Fencing component and RBAC
+
+`components/runtime-fencing` renders 4 objects (ServiceAccount `utcp-runtime-fencer`,
+Role, RoleBinding, Deployment `utcp-runtime-fence-worker`) and passes server-side
+dry-run. Effective Role is exactly: `apps/deployments` get,list;
+`apps/deployments/scale` get,patch; `pods` get,list. **Absent**: secret reads, pod
+deletion, full-Deployment patch, Service mutation, wildcards, ClusterRole,
+cross-namespace access, endpointslices. SA `automountServiceAccountToken:false`;
+the worker Deployment mounts an **explicit projected token** (audience
+`https://kubernetes.default.svc`, 3600 s, mode 0440) **only on itself**, plus the
+`kube-root-ca.crt` CA; command `telephony-infrastructure-worker` (→
+`runtime-engine:infrastructure-worker`); DB/Redis via the platform config/secret.
+**Image note:** the component pins `utcp-api:local` — a live apply needs the
+registry image transform (`utcp-local-registry:5000/utcp/api:0.1.0-k1-dev`), as the
+node-B rollout required.
+
+## Non-destructive Kubernetes-client proof
+
+The production `HttpKubernetesWorkloadClient` exposes only read-only `getDeployment`
+(GET) and `listOwnedPods` (LIST) plus per-request token reread. The safest proof,
+after the worker is deployed, is a **bounded read-only probe** that calls
+`getDeployment('utcp-runtime','asterisk-ari')` and `listOwnedPods` against a
+node's **own healthy** workload and reports success/authz — exercising API
+connectivity, CA validation, token load+reread, Deployment GET authz, Pod LIST
+authz, and namespace restriction, while RBAC absence proves no secret/pod-delete/
+full-patch authority. It must **not** scale, must not target an arbitrary workload,
+and must not synthesize a fence. Since no such command exists, define a bounded
+`runtime-engine:infrastructure-probe {--once}` diagnostic (read-only; no scale;
+resolves only a real RuntimeNode's own workload identity) — retained as a
+permanent read-only diagnostic alongside the other `*-status` commands, never a
+control authority. Alternatively, a temporary probe fixture removed after proof.
+
+## Safe activation order
+
+1. **Durable node-A correction** — `kubectl replace --force` the node-A Deployment
+   from the committed manifest (recreates with the 3-label selector+template).
+   Rollback: re-apply the prior Deployment spec (captured beforehand); node A has no
+   live state to lose.
+2. Prove node A + B ready and **both** Services isolated (EndpointSlice: one own
+   pod each) after recreation. Rollback: none (read-only).
+3. Confirm zero open/pending fence operations, both leases healthy, no node near
+   threshold, zero open conferences. Rollback: none.
+4. Server-side dry-run `components/runtime-fencing` (with the registry image
+   transform). Rollback: none.
+5. Apply ServiceAccount + Role + RoleBinding. Rollback: delete the three RBAC
+   objects.
+6. Apply the fence-worker Deployment (registry image). Rollback: delete the
+   Deployment (fence execution reverts to unavailable/unclaimed).
+7. Prove token + API connectivity read-only (the bounded probe). Rollback: none.
+8. Prove the generic worker still excludes fence ops (no fence claim by
+   `telephony-command-worker`). Rollback: none.
+9. Prove the infra worker claims only fence ops. Rollback: none.
+10. Confirm no Deployment was scaled and no Pod deleted. Rollback: none.
+11. **Stop before destructive failover** — do not create an open conference or
+    scale-to-zero.
+
+## T5-A11 existing implementation
+
+Durable committed manifests (3-label Deployment selector+template, isolated
+Service); dedicated `runtime-engine:infrastructure-worker` (fence-only claim) and
+generic worker fence-exclusion; the `components/runtime-fencing` SA/Role/
+RoleBinding/Deployment with a self-only projected token; `HttpKubernetesWorkloadClient`
+(read-only GET/LIST + scale patch); the failover coordinator's open-conference-gated
+candidate query. Live: both nodes ready+isolated, zero live state, zero open
+conferences, zero fence ops.
+
+## T5-A11 missing implementation
+
+The one-time controlled node-A Deployment recreation (live op, manifests already
+correct); the bounded read-only Kubernetes-client probe command/fixture; then the
+fencing SA/RBAC/worker apply (with registry image transform) and the read-only
+connectivity proof.
+
+## T5-A11 next bounded step
+
+**B — Claude Code can perform a controlled node-A rollout and fencing-worker
+activation.** Node-A rollout impact is understood (zero live state → safe), the 76
+bindings are historical, the durable correction is exact (`kubectl replace --force`
+from the committed manifest), activation preconditions are proven, and rollback is
+defined per checkpoint. No Codex repository change is required — the manifests are
+already correct; only a bounded read-only probe command may optionally be added.
+
+## Ready-to-paste next prompt (T5-A12)
+
+```
+# T5-A12 — Durable node-A recreation and controlled fencing-worker activation (read-only client proof)
+
+Checkpointed live implementation at HEAD 571b703. Keep UTCP_PHASE=T1. Stop before
+any destructive scale-to-zero or live failover. Do not create a proof Conference.
+
+Preconditions to reconfirm (abort if any fails): both asterisk nodes active/ready
+and Services isolated (each EndpointSlice = its own pod); zero open conferences;
+zero runtime.node.runtime.fence operations; fence worker/RBAC absent; UTCP_PHASE=T1.
+
+1. Durable node-A recreation (safe: node A has zero live bridges/channels, zero
+   open conferences, 76 historical closed bindings only):
+   - capture the current live node-A Deployment spec for rollback;
+   - `kubectl replace --force` the node-A Deployment from
+     infrastructure/kubernetes/base/runtime (rendered via the local runtime overlay
+     so the registry image and secret apply), recreating it with the committed
+     3-label selector+template (utcp.dev/runtime-node=local-asterisk-ari);
+   - wait for the new node-A pod Ready; verify its template+pod carry the
+     runtime-node label and the node-A Service EndpointSlice selects only the new
+     node-A pod (durable isolation); verify RuntimeNode local-asterisk-ari returns
+     to observed ready via the listener (no manual reconciliation);
+   - confirm node B untouched and still isolated.
+   Rollback: re-apply the captured prior spec.
+
+2. Optional bounded read-only probe: add runtime-engine:infrastructure-probe
+   {--once} that, for a given healthy RuntimeNode slug, resolves its workload
+   identity and calls HttpKubernetesWorkloadClient getDeployment + listOwnedPods
+   read-only, printing connectivity/authz results. NO scale, NO arbitrary target,
+   NO fence. Permanent read-only diagnostic (like *-status), never control
+   authority.
+
+3. Fencing activation (stop before destructive failover):
+   - server-side dry-run components/runtime-fencing with the registry image
+     transform applied (utcp-local-registry:5000/utcp/api:0.1.0-k1-dev);
+   - apply ServiceAccount + Role + RoleBinding; verify effective RBAC = deployments
+     get/list, deployments/scale get/patch, pods get/list only;
+   - apply the utcp-runtime-fence-worker Deployment; wait Ready; confirm the token
+     is mounted only on it (automount=false elsewhere);
+   - run the read-only probe to prove API connectivity, CA, token reread,
+     Deployment GET, Pod LIST, namespace restriction; prove (RBAC) no secret/
+     pod-delete/full-patch authority;
+   - prove telephony-command-worker still excludes fence ops and the fence worker
+     claims only fence ops; confirm no Deployment scaled, no Pod deleted, both
+     nodes still ready, zero fence operations created.
+   Rollback per object: delete the fence Deployment, then the RBAC/SA.
+
+4. Update docs/evidence/t2/multi-node-failover-readiness.md T5-A11/A12 with the
+   durable recreation result, isolation-after-recreation proof, probe results,
+   fencing activation evidence, and confirmation that no scale/failover occurred.
+   One scoped evidence commit (plus the probe command if added). Do not push.
+
+Verification: make repository-hygiene && make secret-scan && the four config-checks
+&& the four focused test suites && (if code added) make test && make check &&
+make build && git diff --check.
+Do not run: scale-to-zero, live failover, Conference creation, Pod deletion of a
+node hosting live state.
+```
+
+## T5-A11 rollback
+
+None performed (audit only).
