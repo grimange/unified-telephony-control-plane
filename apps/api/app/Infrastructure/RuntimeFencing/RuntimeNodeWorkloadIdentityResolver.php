@@ -2,28 +2,23 @@
 
 namespace App\Infrastructure\RuntimeFencing;
 
+use InvalidArgumentException;
+
 final class RuntimeNodeWorkloadIdentityResolver
 {
-    private const CANONICAL_RUNTIME_NAMESPACE = 'utcp-runtime';
-
     public function resolve(object $runtimeNode): RuntimeNodeWorkloadIdentity
     {
         $labels = $this->decodeLabels($runtimeNode->labels ?? null);
         $workload = $labels['kubernetes_workload'] ?? null;
-        if (! is_array($workload)) {
+        if ($workload === null) {
             throw RuntimeNodeWorkloadIdentityException::targetMismatch('RuntimeNode Kubernetes workload identity is missing.');
         }
 
-        $namespace = trim((string) ($workload['namespace'] ?? ''));
-        $deployment = trim((string) ($workload['deployment'] ?? ''));
-        if (! $this->isDnsLabel($namespace) || ! $this->isDnsLabel($deployment)) {
-            throw RuntimeNodeWorkloadIdentityException::targetMismatch('RuntimeNode Kubernetes workload identity is malformed.');
+        try {
+            return RuntimeNodeWorkloadIdentityValidator::fromLabelValue($workload);
+        } catch (InvalidArgumentException $exception) {
+            throw RuntimeNodeWorkloadIdentityException::targetMismatch($exception->getMessage());
         }
-        if ($namespace !== self::CANONICAL_RUNTIME_NAMESPACE) {
-            throw RuntimeNodeWorkloadIdentityException::targetMismatch('RuntimeNode Kubernetes namespace is not allowed.');
-        }
-
-        return new RuntimeNodeWorkloadIdentity($namespace, $deployment);
     }
 
     /**
@@ -44,12 +39,5 @@ final class RuntimeNodeWorkloadIdentityResolver
         $decoded = json_decode($labels, true);
 
         return is_array($decoded) ? $decoded : [];
-    }
-
-    private function isDnsLabel(string $value): bool
-    {
-        return $value !== ''
-            && strlen($value) <= 63
-            && preg_match('/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/', $value) === 1;
     }
 }

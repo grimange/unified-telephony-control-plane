@@ -52,8 +52,12 @@ grep -q "interface KubernetesWorkloadClient" apps/api/app/Infrastructure/Runtime
 grep -q "class HttpKubernetesWorkloadClient" apps/api/app/Infrastructure/RuntimeFencing/HttpKubernetesWorkloadClient.php
 grep -q "class UnavailableKubernetesWorkloadClient" apps/api/app/Infrastructure/RuntimeFencing/UnavailableKubernetesWorkloadClient.php
 grep -q "class KubernetesRuntimeFenceAdapter" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
-grep -q "kubernetes_workload" apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeWorkloadIdentityResolver.php
-grep -q "utcp-runtime" apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeWorkloadIdentityResolver.php
+grep -q "RuntimeNodeWorkloadIdentityValidator" apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeWorkloadIdentityResolver.php
+grep -q "class RuntimeNodeWorkloadIdentityValidator" apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeWorkloadIdentityValidator.php
+grep -q "RESERVED_LABEL_KEY = 'kubernetes_workload'" apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeWorkloadIdentityValidator.php
+grep -q "CANONICAL_RUNTIME_NAMESPACE = 'utcp-runtime'" apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeWorkloadIdentityValidator.php
+grep -q "fromLabelValue" apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeWorkloadIdentityValidator.php
+grep -q "RuntimeNodeWorkloadIdentityValidator::RESERVED_LABEL_KEY" apps/api/app/RuntimeRegistry/RuntimeRegistryService.php
 grep -q "app.kubernetes.io/part-of" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
 grep -q "app.kubernetes.io/component" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php
 grep -q "utcp.dev/runtime-node" apps/api/app/Infrastructure/RuntimeFencing/KubernetesRuntimeFenceAdapter.php

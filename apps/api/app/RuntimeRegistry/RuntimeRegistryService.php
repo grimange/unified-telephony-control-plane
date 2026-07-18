@@ -9,6 +9,7 @@ use App\ControlPlane\Messaging\EventEnvelope;
 use App\ControlPlane\Messaging\OutboxRepository;
 use App\ControlPlane\Shared\IdempotencyKey;
 use App\Identity\IdentityContext;
+use App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentityValidator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
@@ -533,7 +534,7 @@ final class RuntimeRegistryService
     }
 
     /**
-     * @return array<string, string>
+     * @return array<string, mixed>
      */
     private function validatedLabels(mixed $labels): array
     {
@@ -545,7 +546,19 @@ final class RuntimeRegistryService
         }
         $validated = [];
         foreach ($labels as $key => $value) {
-            if (! is_string($key) || ! is_string($value) || ! preg_match('/^[a-z0-9][a-z0-9._-]{0,62}$/', $key) || strlen($value) > 80) {
+            if (! is_string($key) || ! preg_match('/^[a-z0-9][a-z0-9._-]{0,62}$/', $key)) {
+                throw new InvalidArgumentException('Invalid placement label.');
+            }
+            if ($key === RuntimeNodeWorkloadIdentityValidator::RESERVED_LABEL_KEY) {
+                $identity = RuntimeNodeWorkloadIdentityValidator::fromLabelValue($value);
+                $validated[$key] = [
+                    'namespace' => $identity->namespace,
+                    'deployment' => $identity->deployment,
+                ];
+
+                continue;
+            }
+            if (! is_string($value) || strlen($value) > 80) {
                 throw new InvalidArgumentException('Invalid placement label.');
             }
             $validated[$key] = $value;

@@ -2711,13 +2711,47 @@ node-A/node-B registration JSON artifacts (canonical API request descriptions wi
 (N-node clean); fence adapter + resolver reading per-node `kubernetes_workload`;
 `AsteriskTwoNodeTopologyTest` (artifact-shape validation).
 
-## T5-A8 missing implementation
+## T5-A8 missing implementation at audit time
 
 (1) Registry acceptance of the structured `kubernetes_workload` label (blocker —
 the canonical API currently rejects it); (2) the existing live node's
 `kubernetes_workload` label via canonical `PATCH` (blocked by #1); then the live
 rollout itself: node-B Secret + Deployment + Service, canonical node-B registration,
 listener-claim/observed-ready proof, and later the fencing RBAC/worker/token.
+
+## T5-A9 repository implementation
+
+The string-only RuntimeNode label mismatch has been corrected at the canonical
+registry boundary. `RuntimeRegistryService` now preserves the flat string contract
+for ordinary labels while accepting the single reserved structured label
+`kubernetes_workload`.
+
+The accepted workload shape is exactly:
+
+```json
+{
+  "namespace": "utcp-runtime",
+  "deployment": "asterisk-ari-b"
+}
+```
+
+The writer and reader share `RuntimeNodeWorkloadIdentityValidator`, so the
+RuntimeNode create/update APIs and `RuntimeNodeWorkloadIdentityResolver` agree on
+the canonical namespace restriction and Kubernetes Deployment DNS-label validation.
+`utcp-runtime` is the only accepted namespace; malformed deployment names, extra
+workload keys, missing fields, non-string values, and arbitrary nested nonreserved
+labels are rejected. No schema change or second workload-reference authority was
+introduced.
+
+Focused API tests prove create and update support, JSON persistence, API response
+round-trip, resolver round-trip from persisted data, flat-label compatibility, and
+malformed structured-label rejection. The node-A and node-B registration artifacts
+validate against the corrected canonical API contract.
+
+Live state was not changed in this repository slice. The existing live RuntimeNode
+still requires a later authenticated canonical `PATCH` to add its workload identity,
+and node-B Secret creation, Deployment/Service rollout, RuntimeNode registration,
+listener readiness proof, and fencing-worker activation remain pending.
 
 ## T5-A8 implementation-readiness decision
 
@@ -2728,7 +2762,7 @@ nor the existing-node workload-identity correction can be registered canonically
 until the registry label validation is generalized. This is a small, unambiguous,
 repository-testable correction and is the earliest dependency.
 
-## T5-A8 next bounded task
+## T5-A8 next bounded task (completed by T5-A9)
 
 Generalize `RuntimeRegistryService` label validation to accept the structured
 `kubernetes_workload` object (namespace + deployment as DNS-1123 labels, namespace
@@ -2736,7 +2770,7 @@ constrained to the canonical runtime namespace) alongside flat string labels, on
 both create and update, and prove via an API-level test that a node registered with
 `kubernetes_workload` round-trips and resolves through `RuntimeNodeWorkloadIdentityResolver`.
 
-## Ready-to-paste next prompt (T5-A9)
+## Ready-to-paste next prompt used for T5-A9
 
 ```
 # T5-A9 — Accept structured kubernetes_workload RuntimeNode label in the canonical registry

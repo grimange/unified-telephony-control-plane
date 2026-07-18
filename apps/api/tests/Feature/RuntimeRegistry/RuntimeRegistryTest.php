@@ -3,6 +3,7 @@
 namespace Tests\Feature\RuntimeRegistry;
 
 use App\Identity\IdentityIds;
+use App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentityResolver;
 use App\Models\User;
 use App\RuntimeEngine\EngineIds;
 use App\RuntimeEngine\Sources\EventSourceRepository;
@@ -163,6 +164,152 @@ final class RuntimeRegistryTest extends TestCase
         $this->assertStringNotContainsString('api/v1/admin/esl', $routes);
         $this->assertStringNotContainsString('test-connection', $routes);
         $this->assertStringNotContainsString('reconcile', $routes);
+    }
+
+    public function test_runtime_node_create_accepts_structured_kubernetes_workload_label_and_resolver_round_trips(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin();
+        $payload = $this->nodePayload('structured-create');
+        $payload['labels'] = [
+            'purpose' => 't5-runtime',
+            'kubernetes_workload' => [
+                'namespace' => 'utcp-runtime',
+                'deployment' => 'asterisk-ari-b',
+            ],
+        ];
+
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $payload)
+            ->assertCreated()
+            ->assertJsonPath('runtime_node.placement.labels.purpose', 't5-runtime')
+            ->assertJsonPath('runtime_node.placement.labels.kubernetes_workload.namespace', 'utcp-runtime')
+            ->assertJsonPath('runtime_node.placement.labels.kubernetes_workload.deployment', 'asterisk-ari-b')
+            ->json('runtime_node');
+
+        $persisted = json_decode((string) DB::table('runtime_nodes')->where('id', $node['id'])->value('labels'), true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame('t5-runtime', $persisted['purpose']);
+        $this->assertSame(['namespace' => 'utcp-runtime', 'deployment' => 'asterisk-ari-b'], $persisted['kubernetes_workload']);
+
+        $identity = app(RuntimeNodeWorkloadIdentityResolver::class)->resolve(DB::table('runtime_nodes')->where('id', $node['id'])->first());
+        $this->assertSame('utcp-runtime', $identity->namespace);
+        $this->assertSame('asterisk-ari-b', $identity->deployment);
+    }
+
+    public function test_runtime_node_update_adds_structured_workload_label_and_preserves_flat_labels_by_replacement_contract(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin();
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $this->nodePayload('structured-update'))
+            ->assertCreated()
+            ->assertJsonPath('runtime_node.placement.labels.purpose', 'proof')
+            ->json('runtime_node');
+
+        $updated = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->patchJson("/api/v1/admin/runtime-nodes/{$node['id']}", [
+                'labels' => [
+                    'purpose' => 'proof',
+                    'kubernetes_workload' => [
+                        'namespace' => 'utcp-runtime',
+                        'deployment' => 'asterisk-ari',
+                    ],
+                ],
+            ])
+            ->assertOk()
+            ->assertJsonPath('runtime_node.placement.labels.purpose', 'proof')
+            ->assertJsonPath('runtime_node.placement.labels.kubernetes_workload.namespace', 'utcp-runtime')
+            ->assertJsonPath('runtime_node.placement.labels.kubernetes_workload.deployment', 'asterisk-ari')
+            ->json('runtime_node');
+
+        $this->assertSame(['namespace' => 'utcp-runtime', 'deployment' => 'asterisk-ari'], $updated['placement']['labels']['kubernetes_workload']);
+        $identity = app(RuntimeNodeWorkloadIdentityResolver::class)->resolve(DB::table('runtime_nodes')->where('id', $node['id'])->first());
+        $this->assertSame('utcp-runtime', $identity->namespace);
+        $this->assertSame('asterisk-ari', $identity->deployment);
+    }
+
+    public function test_runtime_node_labels_reject_malformed_workload_and_arbitrary_nested_values(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin();
+        $cases = [
+            'missing-namespace' => [
+                'kubernetes_workload' => ['deployment' => 'asterisk-ari-b'],
+            ],
+            'missing-deployment' => [
+                'kubernetes_workload' => ['namespace' => 'utcp-runtime'],
+            ],
+            'wrong-namespace' => [
+                'kubernetes_workload' => ['namespace' => 'default', 'deployment' => 'asterisk-ari-b'],
+            ],
+            'invalid-deployment' => [
+                'kubernetes_workload' => ['namespace' => 'utcp-runtime', 'deployment' => 'Asterisk_Ari_B'],
+            ],
+            'extra-workload-key' => [
+                'kubernetes_workload' => ['namespace' => 'utcp-runtime', 'deployment' => 'asterisk-ari-b', 'pod' => 'asterisk-ari-b-123'],
+            ],
+            'string-workload' => [
+                'kubernetes_workload' => 'asterisk-ari-b',
+            ],
+            'arbitrary-nested-label' => [
+                'other_label' => ['value' => 'nested'],
+            ],
+            'non-string-label' => [
+                'priority' => 1,
+            ],
+        ];
+
+        foreach ($cases as $slug => $labels) {
+            $payload = $this->nodePayload('reject-'.$slug);
+            $payload['labels'] = $labels;
+            $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+                ->postJson('/api/v1/admin/runtime-nodes', $payload)
+                ->assertUnprocessable()
+                ->assertJsonStructure(['message']);
+        }
+    }
+
+    public function test_flat_only_runtime_node_labels_remain_valid_on_create_and_update(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin();
+        $payload = $this->nodePayload('flat-only');
+        $payload['labels'] = ['purpose' => 't0-proof', 'environment' => 'local'];
+
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $payload)
+            ->assertCreated()
+            ->assertJsonPath('runtime_node.placement.labels.purpose', 't0-proof')
+            ->assertJsonPath('runtime_node.placement.labels.environment', 'local')
+            ->json('runtime_node');
+
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->patchJson("/api/v1/admin/runtime-nodes/{$node['id']}", [
+                'labels' => ['purpose' => 't0-proof', 'environment' => 'local', 'owner' => 'utcp'],
+            ])
+            ->assertOk()
+            ->assertJsonPath('runtime_node.placement.labels.purpose', 't0-proof')
+            ->assertJsonPath('runtime_node.placement.labels.environment', 'local')
+            ->assertJsonPath('runtime_node.placement.labels.owner', 'utcp');
+
+        $persisted = json_decode((string) DB::table('runtime_nodes')->where('id', $node['id'])->value('labels'), true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame(['purpose' => 't0-proof', 'environment' => 'local', 'owner' => 'utcp'], $persisted);
+    }
+
+    public function test_node_a_and_node_b_registration_definitions_are_accepted_by_runtime_node_create_schema(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin();
+
+        foreach (['local-asterisk-ari-a', 'local-asterisk-ari-b'] as $slug) {
+            $definition = $this->registrationDefinition($slug);
+            $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+                ->postJson($definition['runtime_node']['path'], $definition['runtime_node']['body'])
+                ->assertCreated()
+                ->assertJsonPath('runtime_node.slug', $slug)
+                ->assertJsonPath('runtime_node.placement.labels.kubernetes_workload.namespace', 'utcp-runtime')
+                ->assertJsonPath('runtime_node.placement.labels.kubernetes_workload.deployment', $slug === 'local-asterisk-ari-a' ? 'asterisk-ari-a' : 'asterisk-ari-b')
+                ->json('runtime_node');
+
+            $identity = app(RuntimeNodeWorkloadIdentityResolver::class)->resolve(DB::table('runtime_nodes')->where('id', $node['id'])->first());
+            $this->assertSame('utcp-runtime', $identity->namespace);
+            $this->assertSame($definition['runtime_node']['body']['labels']['kubernetes_workload']['deployment'], $identity->deployment);
+        }
     }
 
     public function test_runtime_management_catalog_is_backend_authority_for_families_adapters_and_capabilities(): void
@@ -497,6 +644,16 @@ final class RuntimeRegistryTest extends TestCase
             'capacity_weight' => 10,
             'labels' => ['purpose' => 'proof'],
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function registrationDefinition(string $slug): array
+    {
+        $path = dirname(base_path(), 2)."/infrastructure/runtime-nodes/asterisk-ari/{$slug}.registration.json";
+
+        return json_decode((string) file_get_contents($path), true, 512, JSON_THROW_ON_ERROR);
     }
 
     private function createCredentialRow(string $runtimeNodeId, string $type, string $secret, int $version = 1): string
