@@ -3922,3 +3922,175 @@ former-node restoration, stale active-binding retirement, signaling cutoff,
 Provider Node Admin UI, replacement-node failure handling, coordinator metrics,
 fencing metrics, capacity policy, and placement policy are not proven by this
 repository-only task.
+
+## T5-A19 — NetworkPolicy reconciliation proven live; worker activation blocked by projected-CA file mode
+
+Checkpointed live execution at `UTCP_PHASE=T1` from HEAD `9a350f9`. The
+endpoint-targeted Kubernetes API egress reconciliation succeeded and is retained
+live. The dedicated fencing worker deployed, ran as UID/GID 33, passed every
+network-egress proof including the apiserver flow, but the read-only
+Kubernetes-client probe failed because the projected `ca.crt` file is not
+readable by UID 33. Per the rollback contract the worker Deployment,
+RoleBinding, Role, and ServiceAccount were removed; the correct NetworkPolicies
+remain. No fence operation, scale, Pod deletion, binding mutation, or failover
+occurred; both Asterisk nodes kept the same Pod UIDs throughout.
+
+### Baseline
+
+Clean tree at `9a350f9`; both Asterisk Deployments 1/1 (Pod UIDs
+`030c033c-…45dd` / `3b9121dc-…4671e`); both RuntimeNodes `active|ready` with
+fresh observations; node-A/node-B Services selecting only their own Pods; both
+`asterisk-ari-events` leases claimed and unexpired; one open connection epoch
+per node; zero open conferences; zero live bridges/channels on both nodes
+(console inspection via `/tmp/utcp-asterisk/asterisk.conf`); zero
+fence/verify/pending operations; fencing resources absent in all namespaces;
+status targets passed (`gateway-status` could not run because `helm` is absent
+from PATH; gateway health proven directly: `/healthz`, `/api/health/live`,
+`/api/health/ready` all 200 through Traefik).
+
+### API endpoint discovery (canonical helpers)
+
+`service_endpoint_ip default kubernetes` → `172.24.0.5`;
+`service_endpoint_port` → `6443`; ClusterIP `10.43.0.1`; in-Pod
+`KUBERNETES_SERVICE_HOST=10.43.0.1`, `KUBERNETES_SERVICE_PORT_HTTPS=443`.
+Exactly one endpoint IP and one port.
+
+### Render and generated-versus-live comparison
+
+`scripts/security/render-apiserver-policy` rendered all three policies
+endpoint-only at `172.24.0.5/32:6443` (runtime-fencer selector
+`utcp.io/kubernetes-api-client: "true"`; Traefik and observability selectors
+unchanged). Live comparison before apply:
+
+```text
+allow-runtime-fencer-kubernetes-api   rendered 172.24.0.5/32:6443   live ABSENT              drift: create
+allow-traefik-kubernetes-api          rendered 172.24.0.5/32:6443   live 172.24.0.4/32:6443
+                                                                    + dead 10.43.0.1/32:443  drift: stale+dead rule
+allow-observability-kubernetes-api-egress rendered 172.24.0.5/32:6443 live 172.24.0.4/32:6443
+                                                                    + dead 10.43.0.1/32:443  drift: stale+dead rule
+allow-backend-data-service-clusterips rendered = live                                        drift: none
+```
+
+### Apply-scope review and bounded reconciliation
+
+`kubectl diff -k infrastructure/kubernetes/security` showed exactly one real
+change beyond the policies: the live `utcp-runtime` Namespace still carries the
+pre-canonical labels (`app.kubernetes.io/part-of:
+unified-telephony-control-plane`, no PSA `*-version: v1.35` pins) versus the
+committed canonical form. Because this task's acceptable live changes were
+limited to the three policy corrections, the monolithic `scripts/security/apply`
+was not run; the lifecycle's own steps were executed instead:
+`render-apiserver-policy` → `scripts/security/config-check` → the same
+`kube apply -f` commands the lifecycle uses for its rendered policy files.
+Result: fencer policy `created`; Traefik and observability policies
+`configured` (stale endpoint replaced, dead ClusterIP rule removed);
+service-clusterip policies `unchanged`. The Namespace label drift is reported
+for the next full security apply, which reconciles it to canon.
+
+### Drift validation and safety scans (live)
+
+`scripts/security/check-apiserver-policy-drift` passed against the rendered
+files AND against live-state dumps of all three policies
+(`endpoint=172.24.0.5/32:6443`). Cluster-wide NetworkPolicy scan: no
+`0.0.0.0/0`, no `10.43.0.1/32` ClusterIP fallback, no non-/32 egress ipBlock
+anywhere. `default-deny` intact (`podSelector {}`, Ingress+Egress). Zero Pods
+matched the fencer selector before worker deployment.
+
+### Post-reconciliation workload validation
+
+Traefik 1/1; gateway health endpoints 200; PostgreSQL/Redis Running; both
+Asterisk nodes Ready; leases claimed. Supporting evidence: the Grafana Pod,
+crash-looping since the node-IP shuffle on its stale `172.24.0.4` pin,
+recovered to 2/2 Running on its next restart after the observability policy was
+corrected — no observability work performed beyond the policy reconciliation.
+
+### Worker image currency
+
+`git diff 8e72e63..9a350f9` touches no runtime application code (one test file
+only). The deployed registry image
+`utcp-local-registry:5000/utcp/api:0.1.0-k1-dev` already contains
+`runtime-engine:infrastructure-worker`, `runtime-engine:infrastructure-probe`,
+and `HttpKubernetesWorkloadClient`, and runs as uid=33(www-data). No rebuild,
+no unrelated restarts.
+
+### Render, dry-run, RBAC
+
+`components/runtime-fencing` + registry image transform rendered exactly the 4
+canonical objects (SA+Deployment in `utcp-platform`; Role+RoleBinding in
+`utcp-runtime` with the cross-namespace subject); Pod template carries both
+labels; UID/GID 33; `automountServiceAccountToken: false`; server-side dry-run
+passed. SA+Role+RoleBinding applied first. Impersonation matrix for
+`system:serviceaccount:utcp-platform:utcp-runtime-fencer`: ALLOWED in
+`utcp-runtime` — deployments get/list, deployments `--subresource=scale`
+get/patch, pods get/list; DENIED — secrets get, pods delete, full deployment
+patch, services update, deployments create/delete, and all workload access in
+`utcp-platform` and `utcp-data`. Exactly the approved boundary.
+
+### Worker deployment and startup
+
+Pre-deployment recheck: both nodes ready/fresh, zero open conferences, zero
+fence/verify/pending operations, leases healthy. The Deployment rolled out and
+became 1/1. One initial container restart occurred: the first start's
+PostgreSQL connect was refused while kube-router was still programming the new
+Pod's policy ipsets (DNS had already resolved 10.43.8.153, proving DNS egress);
+the restarted container bootstrapped Laravel, connected to PostgreSQL, and
+entered the fence-only polling loop with no further errors. Worker identity
+verified live: SA `utcp-runtime-fencer`, both Pod labels present, uid/gid 33,
+projected token + CA mounted, hardening intact, no operation created, no scale
+performed, logs free of secrets.
+
+### Blocking defect — projected CA unreadable by UID 33
+
+```text
+/var/run/secrets/kubernetes.io/serviceaccount/..data/:
+-r--r----- 1  0 0  570 ca.crt   (root:root, 0440 — NOT readable by uid 33)
+-rw------- 1 33 0 1216 token    (kubelet chowns serviceAccountToken to runAsUser)
+```
+
+The committed `infrastructure-worker-deployment.yaml` sets projected volume
+`defaultMode: 0440` with no `fsGroup`. Kubelet special-cases only the
+`serviceAccountToken` source (owner = runAsUser); ConfigMap-sourced items stay
+`root:root`, so the `kube-root-ca.crt` projection is unreadable by the UID-33
+process. `HttpKubernetesWorkloadClient::caPath()` requires `is_readable` and
+throws `unavailable_to_control`; `php artisan runtime-engine:infrastructure-probe
+--once` therefore returned `infrastructure_probe_status=failed
+reason=unavailable_to_control`. The failure is isolated to file permissions:
+
+```text
+fence-worker dns postgres            => 10.43.8.153
+fence-worker dns redis               => 10.43.87.131
+fence-worker postgres 5432           => connect_ok
+fence-worker redis 6379              => connect_ok
+fence-worker apiserver 10.43.0.1:443 => connect_ok      (via fencer policy, post-DNAT 172.24.0.5:6443)
+fence-worker external 1.1.1.1:443    => connect_failed errno=111
+ordinary worker apiserver 10.43.0.1:443 => connect_failed errno=111
+```
+
+Token readability, network path, RBAC, DNS, and database egress are all proven
+good; only the CA file mode blocks the client.
+
+### Rollback performed (per contract)
+
+`Deployment/utcp-runtime-fence-worker` → `RoleBinding` → `Role` →
+`ServiceAccount` deleted; scan confirms zero fencing resources remain. The
+reconciled NetworkPolicies were retained (independently correct; drift check
+passes). Post-rollback: both Asterisk Pods same UIDs and Ready, replicas 1/1,
+zero fence/verify/pending operations, `conference_runtime_bindings` unchanged
+(102, max updated_at 2026-07-18 01:20:42+00), leases claimed, one open epoch
+per node, tree clean, `UTCP_PHASE=T1`.
+
+### Required bounded correction (for Codex — T5-A20)
+
+One-file manifest change in
+`infrastructure/kubernetes/components/runtime-fencing/infrastructure-worker-deployment.yaml`:
+make the projected CA readable by the UID-33 process without `fsGroup` and
+without loosening the token — set an explicit per-item `mode: 0444` on the
+`kube-root-ca.crt` ConfigMap projection (the CA is public material; kubelet
+keeps the token itself 0600 owner-uid-33 regardless), or equivalently raise the
+projected `defaultMode` to 0444 relying on the kubelet token override. Extend
+`RuntimeFencingManifestTest`/`scripts/runtime-engine/config-check` to assert
+the CA projection mode is world/user-readable and the token source remains a
+projected `serviceAccountToken` with audience `https://kubernetes.default.svc`.
+No RBAC, image, label, NetworkPolicy, or handler change. After that fix,
+re-run T5-A19's activation sequence unchanged (policies are already
+reconciled live).
