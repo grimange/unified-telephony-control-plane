@@ -4733,3 +4733,144 @@ plane blind) and exercises the REAL scale 1→0 mutation; fallback trigger if
 the module cannot unload: scale node-A to zero as the outage simulation and
 accept the `already_fenced` path. Both flow through canonical detection
 (connection_closed → unavailable → grace → coordinator).
+
+## T5-A25 — First live destructive failover attempt: BLOCKED by a coordinator defect (no fence fired)
+
+Checkpointed destructive live proof at `UTCP_PHASE=T1`, HEAD `5c3bae1`. The
+canonical proof Conference was created, a faithful split-brain ARI-loss trigger
+was produced (workload alive, control-plane blind), sustained-unavailability was
+detected canonically, and the coordinator automatically scheduled absence
+verification — but the automatic lifecycle **dead-ended before any fence
+operation was created**. A precisely-isolated coordinator defect prevents the
+fence path from firing under a hard ARI outage. Per the "before the fence
+mutation" divergence contract, the former node's ARI was restored in place (no
+Pod deletion), the proof Conference was closed canonically, and both nodes were
+returned to ready. **No scale-to-zero, no fence operation, no Pod deletion, no
+binding mutation, no failover occurred.**
+
+### Baseline
+
+Clean tree at `5c3bae1`; both Asterisk Deployments 1/1 (`asterisk-ari` uid
+`030c033c…45dd`, `asterisk-ari-b` uid `3b9121dc…4671e`); both RuntimeNodes
+active/ready (`Local Asterisk ARI`=`1d15ca88…`, `Local Asterisk ARI B`=
+`05ddb383…`); fence worker Ready/idle (restart count 1); drift check passing;
+both leases claimed; one open epoch per node; zero open conferences, bridges,
+channels, fence/verify/pending operations; 102 active bindings all closed/closed.
+
+### Proof Conference (canonical API lifecycle)
+
+conference `2d5a704b-5281-49ee-8b49-287d2c53e055`, participant
+`3035abef-…0445`, active binding `6120c124-…5618`, bound node `05ddb383…`
+(**Local Asterisk ARI B = former node**; replacement = node A `1d15ca88…`),
+`configuration_generation = 2`. Verified live: `conference.ensure` and
+`conference.participant.ensure` succeeded, projected `ready`, ARI bridge
+`utcp-conf-2d5a704b…` present on node B with 2 active channels (the participant
+Local channel legs). Created strictly through the admin/member API (no SQL).
+
+### ARI-loss trigger (faithful split-brain)
+
+`asterisk -rx "module unload res_ari.so"` was refused (use-count 7). Unloading
+the ARI submodules first was attempted, but with the REST resource modules
+unloaded, `/ari/bridges/{id}` returns HTTP 404, which the client's
+`getAriResource` (accepts `[200,404]`) reads as `bridge_exists=false` — a **false
+absence** that would make the coordinator rebind WITHOUT fencing. That is not a
+faithful outage. The faithful trigger used instead: unload only
+`res_ari_events.so` (the events WebSocket resource) and keep the REST stack, so
+the listener WebSocket handshake fails (→ `connection_closed` → observed
+`unavailable`) while the workload keeps hosting the conference. Verified after
+the trigger, via the Asterisk **control socket** (independent of ARI): bridge
+`utcp-conf-2d5a704b…` alive with 2 active channels; Pod UID unchanged;
+Deployment replicas 1/1. Node B `observed_state` transitioned to `unavailable`
+at 01:51:14 through canonical projection; the events WebSocket stayed down so no
+new `ready` observation reset the grace clock (last ready `01:48:14`). In
+practice the ARI HTTP REST transport also became genuinely unreachable to the
+control plane (`ARI HTTP transport failed`, confirmed from
+`telephony-command-worker`) — the strongest, most faithful form of the
+scenario: the node still hosts the live bridge (proven by control socket) but
+the control plane cannot reach ARI at all. No DB, lease, observed-state,
+NetworkPolicy, scale, or Pod-delete action was used to produce the outage.
+
+### Automatic detection and scheduling (observed, not assisted)
+
+Grace (`stale_observation_seconds = 300`) crossed at 01:53:14. The everyMinute
+`telephony-domain:failover-coordinator` sweep at **01:54:02** claimed the
+candidate and automatically created exactly one
+`runtime.node.verify_conference_absent` operation (coordinator outcome
+`verification_requested`) — no operator action.
+
+### Defect: verification terminal-fails past the escalation window → no fence
+
+The `telephony-command-worker` executed the verification. Every ARI call failed
+with `ari_http_transport_failed` (`FailureClass::RuntimeUnavailable`, retryable).
+The operation exhausted `max_attempts = 3` and reached `terminal_failed` at
+**01:54:49** — 47 seconds, entirely between coordinator sweeps.
+
+`RuntimeFencingCoordinator::classifyExistingVerificationOperation` escalates to
+fencing **only** from `RetryScheduled`
+(`RetryScheduled => requestRuntimeFence(..., 'verification_unavailable')`), while
+`TerminalFailed => ['status' => 'verification_failed']` is a dead end. Because
+the every-minute coordinator never sampled the operation while it was briefly
+`retry_scheduled`, and because the generation-scoped idempotency key
+(`sha256(conference:node:binding:generation)` at unchanged generation 2) makes
+`findIdempotent` return the same `terminal_failed` row on every later sweep, the
+coordinator emitted `verification_failed` at 01:55:03, 01:56:02, and 01:57:02 —
+an indefinite dead-end loop. **Zero `runtime.node.runtime.fence` operations were
+ever created; zero scale mutations; node B stayed at replicas 1/1.**
+
+Test masking: `TelephonyDomainTest::test_unavailable_absence_verification_requests_external_fence_without_rebinding`
+proves escalation works, but it **manually forces** the verify operation into
+`retry_scheduled` before the second sweep. Production timing never satisfies that
+precondition — the retries exhaust into `terminal_failed` within one worker
+window — so the passing test does not cover the real hard-outage path.
+
+### Precise defect and bounded fix (for the next bounded task)
+
+The escalation-to-fence decision is coupled to catching the verify operation in
+the transient `retry_scheduled` state, which is unreachable for a sustained ARI
+outage under `max_attempts = 3` + every-minute sweeps. Bounded correction (exact
+site): in `RuntimeFencingCoordinator::classifyExistingVerificationOperation`, a
+`TerminalFailed` verify operation whose `last_failure_class` is
+`runtime_unavailable`/`timeout` (retryable/unavailability codes such as
+`ari_http_transport_failed`, `ari_http_unavailable`, `ari_connection_timeout`,
+`ari_connection_failed`) must escalate to `requestRuntimeFence(...,
+'verification_unavailable')` — identical to the `RetryScheduled` branch — rather
+than dead-ending as `verification_failed`. Only genuinely non-recoverable
+terminal failures (invalid payload, `absence_verification_context_not_found`)
+should remain `verification_failed`. Add a test that runs the real sweep path to
+`terminal_failed` (not a forced `retry_scheduled`) and asserts one
+`runtime.node.runtime.fence` is created. No change to the fence handler,
+adapter, RBAC, NetworkPolicy, or scale logic — those were already proven ready
+in T5-A24/T5-A23. (Optionally, the transport-failed verify `max_attempts`/backoff
+could be widened so the coordinator can also catch `retry_scheduled`, but the
+classifier escalation is the primary, deterministic fix.)
+
+### Divergence handling performed (before any fence mutation)
+
+Per the contract, because no fence mutation had occurred: (1) node B ARI was
+restored in the existing Pod via `asterisk -rx "core restart now"` (in-place
+process restart — Pod UID `3b9121dc…4671e` unchanged, container restart count
+1→ increment, no Pod deletion, no scale) after module reload alone did not
+recover the degraded HTTP transport; node B re-claimed its lease, opened a new
+event epoch, projected `ready`, and started clean (0 channels, orphan bridge
+gone); (2) the proof Conference was closed through the canonical API (participant
+remove → desired-state closed) and converged to `observed_state=closed`; (3)
+both nodes returned active/ready. The fence worker was never invoked and remains
+Ready/idle.
+
+### Final state (restored)
+
+Both Deployments 1/1 with **unchanged Pod UIDs** (`030c033c…45dd`,
+`3b9121dc…4671e`); both RuntimeNodes active/ready; both leases claimed; one open
+epoch per node; zero open conferences; zero live bridges/channels on both nodes;
+zero pending operations; zero fence operations ever; 102 active bindings still
+all closed/closed; tree clean; `UTCP_PHASE=T1`. No manual scale-to-zero, no Pod
+deletion, no direct operation/binding/observed-state/lease write occurred.
+
+### Readiness re-assessment
+
+The T5-A24 readiness decision assumed the coordinator would escalate a hard ARI
+outage to fencing; this live proof shows it does not, because verification
+terminal-fails past the only escalation window. The infrastructure (fence
+worker, RBAC, scale-to-zero, rebind, reconstruction) remains proven-ready; the
+single blocking gap is the coordinator classifier above. The next step is the
+bounded Codex fix, then a re-run of this exact T5-A25 destructive proof.
