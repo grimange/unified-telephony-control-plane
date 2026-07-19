@@ -5594,3 +5594,61 @@ both proof-timing artifacts with exact root causes above, neither a
 failover-logic defect. Recommended rerun: longer session TTL for participant
 reconstruction; optionally adjust the fence adapter to report `fenced` for a
 self-caused scale.
+
+## T5-A32 — Preserve self-caused fence result across runtime-operation retries
+
+Repository-only correction at `UTCP_PHASE=T1`, starting from HEAD `fa53f5c`.
+T5-A31 proved the runtime-fence operation itself performed the effective scale
+mutation on its first attempt (`asterisk-ari-b` desired replicas 1→0), then
+returned `fence_in_progress` while the owned Pod terminated gracefully. The next
+attempt saw desired replicas already 0 and owned Pods 0, so the old adapter
+classified completion as `already_fenced` even though the same runtime-fence
+operation caused the scale on the prior attempt.
+
+The corrected contract separates two cases:
+
+- A workload that was already at desired replicas 0 before the runtime-fence
+  operation issued any accepted scale mutation completes as
+  `fence_result=already_fenced`.
+- A runtime-fence operation that accepted the effective scale-to-zero on an
+  earlier or current attempt records operation-scoped provenance and completes
+  as `fence_result=fenced` once desired replicas, status replicas, available
+  replicas, and owned Pods all reach zero.
+
+The provenance is persisted in the existing runtime-operation payload under
+`runtime_fence_provenance.scale_to_zero_requested`, with structured fields for
+the operation ID, workload namespace, Deployment name, pre-scale replica count,
+attempt count, and request timestamp. No new table, Kubernetes credential,
+ServiceAccount token, full API response, Pod log, manual override, feature gate,
+RuntimeNode allowlist, or duplicate scale path was introduced. The adapter
+continues to own workload identity validation and the scale subresource call;
+the handler continues to own operation retry/completion evidence and the single
+`conference.runtime_fence_terminated` event path.
+
+Focused regression coverage now exercises the real handler-to-adapter path for:
+
+- scale and complete in one attempt → `fenced`;
+- scale, retry while a Pod is terminating, recreate the worker/handler, then
+  complete from persisted provenance → `fenced`;
+- workload already zero before the operation → `already_fenced`;
+- workload already zero with a terminating Pod → retry, then
+  `already_fenced` without self-scale provenance;
+- scale request failure before acceptance followed by external zero state →
+  `already_fenced`, not a false UTCP-caused fence;
+- target mismatch and runtime recovery before mutation → no scale and no
+  self-scale provenance;
+- repeated completed processing → no duplicate scale and no duplicate
+  termination event.
+
+Participant/session production semantics were deliberately left unchanged. The
+next live proof must create or refresh the proof telephony session through the
+canonical application lifecycle so its expiry extends beyond the approximately
+eight-minute proof window. The repository currently exposes canonical session
+creation through `POST /api/v1/telephony/sessions` using
+`telephony_domain.session_lifetime_minutes`; no proof-only infinite session,
+environment TTL override, direct database expiry mutation, hidden refresh path,
+or new Artisan management command was added.
+
+Live participant-inclusive failover rerun remains pending. No Kubernetes
+rollout, scale, Pod deletion, live Conference creation, RuntimeBinding mutation,
+or failover was performed for this repository correction.

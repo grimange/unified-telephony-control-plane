@@ -180,6 +180,8 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
             'aggregate_id' => $conferenceId,
             'event_type' => 'conference.runtime_fence_terminated',
         ]);
+        $this->assertSame('already_fenced', $this->terminationEventPayload($conferenceId)['fence_result']);
+        $this->assertNull($this->selfScaleProvenance($operationId));
     }
 
     public function test_replacement_becoming_unavailable_before_runtime_fence_execute_prevents_scale(): void
@@ -274,18 +276,146 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
         $this->bindFakeClient($fake);
         app(CommandWorker::class)->workOnce('runtime-fence-worker-1', 1);
         $this->assertSame('retry_scheduled', DB::table('runtime_operations')->where('id', $operationId)->value('status'));
+        $provenance = $this->selfScaleProvenance($operationId);
+        $this->assertIsArray($provenance);
+        $this->assertTrue($provenance['by_operation']);
+        $this->assertSame($operationId, $provenance['operation_id']);
+        $this->assertSame('utcp-runtime', $provenance['namespace']);
+        $this->assertSame('asterisk-ari-worker', $provenance['deployment']);
+        $this->assertSame(1, $provenance['pre_scale_replicas']);
 
         DB::table('runtime_operations')->where('id', $operationId)->update(['available_at' => now()->subSecond()]);
         $fake->deployment = $this->deployment('asterisk-ari-worker', 'conference-runtime-worker', 0, 0, 0);
         $fake->pods = [];
+        $this->app->forgetInstance(CommandWorker::class);
         app(CommandWorker::class)->workOnce('runtime-fence-worker-2', 1);
 
         $this->assertSame('succeeded', DB::table('runtime_operations')->where('id', $operationId)->value('status'));
-        $this->assertDatabaseHas('control_plane_outbox_messages', [
+        $eventPayload = $this->terminationEventPayload($conferenceId);
+        $this->assertSame('fenced', $eventPayload['fence_result']);
+        $this->assertSame($operationId, $eventPayload['operation_id']);
+        $this->assertSame($bindingId, $eventPayload['former_runtime_binding_id']);
+        $this->assertSame($nodeId, $eventPayload['former_runtime_node_id']);
+        $this->assertSame([['utcp-runtime', 'asterisk-ari-worker', 0]], $fake->scaleCalls);
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conferenceId)->where('event_type', 'conference.runtime_fence_terminated')->count());
+
+        $processed = app(CommandWorker::class)->workOnce('runtime-fence-worker-3', 1);
+        $this->assertSame(0, $processed);
+        $this->assertSame([['utcp-runtime', 'asterisk-ari-worker', 0]], $fake->scaleCalls);
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conferenceId)->where('event_type', 'conference.runtime_fence_terminated')->count());
+    }
+
+    public function test_runtime_fence_operation_scales_and_completes_as_fenced_in_one_attempt(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('one-attempt', observedState: 'unavailable');
+        $this->replacementRuntimeNode($tenantId, 'one-attempt-b');
+        [$conferenceId, , $operationId] = $this->runtimeFenceOperation($tenantId, $nodeId, 'one-attempt', 11);
+        $fake = FakeKubernetesWorkloadClient::withDeployment($this->deployment('asterisk-ari-one-attempt', 'conference-runtime-one-attempt', 1, 1, 1));
+        $fake->afterScaleDeployment = $this->deployment('asterisk-ari-one-attempt', 'conference-runtime-one-attempt', 0, 0, 0);
+        $fake->afterScalePods = [];
+        $this->bindFakeClient($fake);
+
+        app(CommandWorker::class)->workOnce('runtime-fence-one-attempt', 1);
+
+        $this->assertSame('succeeded', DB::table('runtime_operations')->where('id', $operationId)->value('status'));
+        $this->assertSame([['utcp-runtime', 'asterisk-ari-one-attempt', 0]], $fake->scaleCalls);
+        $this->assertSame('fenced', $this->terminationEventPayload($conferenceId)['fence_result']);
+        $this->assertIsArray($this->selfScaleProvenance($operationId));
+    }
+
+    public function test_runtime_fence_operation_already_zero_with_terminating_pod_remains_already_fenced(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('already-terminating', observedState: 'unavailable');
+        $this->replacementRuntimeNode($tenantId, 'already-terminating-b');
+        [$conferenceId, , $operationId] = $this->runtimeFenceOperation($tenantId, $nodeId, 'already-terminating', 12);
+        $fake = FakeKubernetesWorkloadClient::withDeployment($this->deployment('asterisk-ari-already-terminating', 'conference-runtime-already-terminating', 0, 0, 0));
+        $fake->pods = [['metadata' => ['name' => 'terminating-pod', 'deletionTimestamp' => now()->toIso8601String()]]];
+        $this->bindFakeClient($fake);
+
+        app(CommandWorker::class)->workOnce('runtime-fence-already-terminating-1', 1);
+
+        $this->assertSame('retry_scheduled', DB::table('runtime_operations')->where('id', $operationId)->value('status'));
+        $this->assertSame('fence_in_progress', DB::table('runtime_operations')->where('id', $operationId)->value('last_failure_code'));
+        $this->assertSame([], $fake->scaleCalls);
+        $this->assertNull($this->selfScaleProvenance($operationId));
+
+        DB::table('runtime_operations')->where('id', $operationId)->update(['available_at' => now()->subSecond()]);
+        $fake->pods = [];
+        app(CommandWorker::class)->workOnce('runtime-fence-already-terminating-2', 1);
+
+        $this->assertSame('succeeded', DB::table('runtime_operations')->where('id', $operationId)->value('status'));
+        $this->assertSame([], $fake->scaleCalls);
+        $this->assertSame('already_fenced', $this->terminationEventPayload($conferenceId)['fence_result']);
+        $this->assertNull($this->selfScaleProvenance($operationId));
+    }
+
+    public function test_runtime_fence_operation_does_not_claim_external_zero_after_scale_request_fails(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('scale-fails', observedState: 'unavailable');
+        $this->replacementRuntimeNode($tenantId, 'scale-fails-b');
+        [$conferenceId, , $operationId] = $this->runtimeFenceOperation($tenantId, $nodeId, 'scale-fails', 13);
+        $fake = FakeKubernetesWorkloadClient::withDeployment($this->deployment('asterisk-ari-scale-fails', 'conference-runtime-scale-fails', 1, 1, 1));
+        $fake->scaleException = KubernetesWorkloadClientException::unavailable();
+        $this->bindFakeClient($fake);
+
+        app(CommandWorker::class)->workOnce('runtime-fence-scale-fails-1', 1);
+
+        $this->assertSame('retry_scheduled', DB::table('runtime_operations')->where('id', $operationId)->value('status'));
+        $this->assertSame('unavailable_to_control', DB::table('runtime_operations')->where('id', $operationId)->value('last_failure_code'));
+        $this->assertSame([], $fake->scaleCalls);
+        $this->assertNull($this->selfScaleProvenance($operationId));
+
+        DB::table('runtime_operations')->where('id', $operationId)->update(['available_at' => now()->subSecond()]);
+        $fake->scaleException = null;
+        $fake->deployment = $this->deployment('asterisk-ari-scale-fails', 'conference-runtime-scale-fails', 0, 0, 0);
+        $fake->pods = [];
+        app(CommandWorker::class)->workOnce('runtime-fence-scale-fails-2', 1);
+
+        $this->assertSame('succeeded', DB::table('runtime_operations')->where('id', $operationId)->value('status'));
+        $this->assertSame([], $fake->scaleCalls);
+        $this->assertSame('already_fenced', $this->terminationEventPayload($conferenceId)['fence_result']);
+        $this->assertNull($this->selfScaleProvenance($operationId));
+    }
+
+    public function test_runtime_fence_operation_target_mismatch_records_no_self_scale_provenance(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('handler-mismatch', observedState: 'unavailable');
+        $this->replacementRuntimeNode($tenantId, 'handler-mismatch-b');
+        [$conferenceId, , $operationId] = $this->runtimeFenceOperation($tenantId, $nodeId, 'handler-mismatch', 14);
+        $fake = FakeKubernetesWorkloadClient::withDeployment($this->deployment('asterisk-ari-handler-mismatch', 'other-runtime-node', 1, 1, 1));
+        $this->bindFakeClient($fake);
+
+        app(CommandWorker::class)->workOnce('runtime-fence-handler-mismatch', 1);
+
+        $this->assertSame('terminal_failed', DB::table('runtime_operations')->where('id', $operationId)->value('status'));
+        $this->assertSame('target_mismatch', DB::table('runtime_operations')->where('id', $operationId)->value('last_failure_code'));
+        $this->assertSame([], $fake->scaleCalls);
+        $this->assertNull($this->selfScaleProvenance($operationId));
+        $this->assertDatabaseMissing('control_plane_outbox_messages', [
             'aggregate_id' => $conferenceId,
             'event_type' => 'conference.runtime_fence_terminated',
         ]);
-        $this->assertSame([['utcp-runtime', 'asterisk-ari-worker', 0]], $fake->scaleCalls);
+    }
+
+    public function test_runtime_fence_operation_recovery_before_mutation_records_no_self_scale_provenance(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('handler-recovered', observedState: 'unavailable');
+        $this->replacementRuntimeNode($tenantId, 'handler-recovered-b');
+        [$conferenceId, , $operationId] = $this->runtimeFenceOperation($tenantId, $nodeId, 'handler-recovered', 15);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update(['observed_state' => 'ready', 'updated_at' => now()]);
+        $fake = FakeKubernetesWorkloadClient::withDeployment($this->deployment('asterisk-ari-handler-recovered', 'conference-runtime-handler-recovered', 1, 1, 1));
+        $this->bindFakeClient($fake);
+
+        app(CommandWorker::class)->workOnce('runtime-fence-handler-recovered', 1);
+
+        $this->assertSame('retry_scheduled', DB::table('runtime_operations')->where('id', $operationId)->value('status'));
+        $this->assertSame('target_recovered', DB::table('runtime_operations')->where('id', $operationId)->value('last_failure_code'));
+        $this->assertSame([], $fake->scaleCalls);
+        $this->assertNull($this->selfScaleProvenance($operationId));
+        $this->assertDatabaseMissing('control_plane_outbox_messages', [
+            'aggregate_id' => $conferenceId,
+            'event_type' => 'conference.runtime_fence_terminated',
+        ]);
     }
 
     private function adapter(FakeKubernetesWorkloadClient $fake): KubernetesRuntimeFenceAdapter
@@ -429,6 +559,51 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
         );
 
         return [$conferenceId, $bindingId, $operationId];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function operationPayload(string $operationId): array
+    {
+        $payload = DB::table('runtime_operations')->where('id', $operationId)->value('payload');
+        $this->assertIsString($payload);
+
+        $decoded = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertIsArray($decoded);
+
+        return $decoded;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function selfScaleProvenance(string $operationId): ?array
+    {
+        $provenance = $this->operationPayload($operationId)['runtime_fence_provenance']['scale_to_zero_requested'] ?? null;
+        if ($provenance === null) {
+            return null;
+        }
+        $this->assertIsArray($provenance);
+
+        return $provenance;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function terminationEventPayload(string $conferenceId): array
+    {
+        $payload = DB::table('control_plane_outbox_messages')
+            ->where('aggregate_id', $conferenceId)
+            ->where('event_type', 'conference.runtime_fence_terminated')
+            ->value('payload');
+        $this->assertIsString($payload);
+
+        $decoded = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertIsArray($decoded);
+
+        return $decoded;
     }
 
     /**

@@ -39,10 +39,14 @@ final class KubernetesRuntimeFenceAdapter implements RuntimeInfrastructureFenceA
             return ['status' => 'target_recovered'];
         }
 
-        $wasAlreadyZero = $this->inspector->desiredReplicas($deployment) === 0;
+        $preScaleReplicas = $this->inspector->desiredReplicas($deployment);
+        $selfScaleProvenance = $this->hasSelfScaleProvenance($authorityContext, $identity);
+        $wasAlreadyZero = $preScaleReplicas === 0;
+        $scaleRequestedByOperation = false;
         if (! $wasAlreadyZero) {
             try {
                 $this->client->scaleDeployment($identity->namespace, $identity->deployment, 0);
+                $scaleRequestedByOperation = true;
             } catch (KubernetesWorkloadClientException $exception) {
                 return ['status' => $exception->reason];
             } catch (Throwable) {
@@ -64,29 +68,31 @@ final class KubernetesRuntimeFenceAdapter implements RuntimeInfrastructureFenceA
         }
 
         if ($this->terminationPredicateSatisfied($current, $pods)) {
+            $status = ($scaleRequestedByOperation || $selfScaleProvenance) ? 'fenced' : 'already_fenced';
+
             return [
-                'status' => $wasAlreadyZero ? 'already_fenced' : 'fenced',
-                'details' => [
+                'status' => $status,
+                'details' => array_merge([
                     'namespace' => $identity->namespace,
                     'deployment' => $identity->deployment,
                     'desired_replicas' => 0,
                     'status_replicas' => $this->inspector->statusReplicas($current),
                     'available_replicas' => $this->inspector->availableReplicas($current),
                     'owned_pods_remaining' => 0,
-                ],
+                ], $scaleRequestedByOperation ? $this->scaleProvenanceDetails($preScaleReplicas) : []),
             ];
         }
 
         return [
             'status' => 'fence_in_progress',
-            'details' => [
+            'details' => array_merge([
                 'namespace' => $identity->namespace,
                 'deployment' => $identity->deployment,
                 'desired_replicas' => $this->inspector->desiredReplicas($current),
                 'status_replicas' => $this->inspector->statusReplicas($current),
                 'available_replicas' => $this->inspector->availableReplicas($current),
                 'owned_pods_remaining' => count($pods),
-            ],
+            ], $scaleRequestedByOperation ? $this->scaleProvenanceDetails($preScaleReplicas) : []),
         ];
     }
 
@@ -108,5 +114,33 @@ final class KubernetesRuntimeFenceAdapter implements RuntimeInfrastructureFenceA
             && $this->inspector->statusReplicas($deployment) === 0
             && $this->inspector->availableReplicas($deployment) === 0
             && count($pods) === 0;
+    }
+
+    /**
+     * @param  array<string, mixed>  $authorityContext
+     */
+    private function hasSelfScaleProvenance(array $authorityContext, RuntimeNodeWorkloadIdentity $identity): bool
+    {
+        $operationId = (string) ($authorityContext['runtime_fence_operation_id'] ?? '');
+        $provenance = $authorityContext['runtime_fence_self_scale_provenance'] ?? null;
+        if (! is_array($provenance)) {
+            return false;
+        }
+
+        return ($provenance['by_operation'] ?? null) === true
+            && (string) ($provenance['operation_id'] ?? '') === $operationId
+            && (string) ($provenance['namespace'] ?? '') === $identity->namespace
+            && (string) ($provenance['deployment'] ?? '') === $identity->deployment;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function scaleProvenanceDetails(int $preScaleReplicas): array
+    {
+        return [
+            'scale_to_zero_requested_by_operation' => true,
+            'pre_scale_replicas' => $preScaleReplicas,
+        ];
     }
 }

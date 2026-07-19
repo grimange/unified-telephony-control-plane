@@ -3,6 +3,8 @@
 namespace App\Infrastructure\RuntimeFencing;
 
 use App\ControlPlane\RuntimeOperations\FailureClass;
+use App\ControlPlane\Shared\PayloadSafety;
+use App\ControlPlane\Shared\StableJson;
 use App\RuntimeEngine\Commands\RuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeOperationHandler;
 use App\TelephonyDomain\TelephonyDomainService;
@@ -66,7 +68,17 @@ final class RuntimeFenceOperationHandler implements RuntimeOperationHandler
             return $this->failure(FailureClass::RuntimeUnavailable, 'unavailable_to_control', 'infrastructure fencing adapter is unavailable');
         }
 
-        $result = $infra->fence($node, $payload);
+        $operationId = (string) ($operation['id'] ?? '');
+        $adapterContext = array_merge($payload, [
+            'runtime_fence_operation_id' => $operationId,
+            'runtime_fence_self_scale_provenance' => $this->selfScaleProvenance($payload, $operationId),
+        ]);
+
+        $result = $infra->fence($node, $adapterContext);
+        if (($result['details']['scale_to_zero_requested_by_operation'] ?? null) === true) {
+            $payload = $this->recordSelfScaleProvenance($operationId, $payload, $operation, $result['details']);
+        }
+
         $status = (string) ($result['status'] ?? 'failed');
         if (in_array($status, ['fenced', 'already_fenced'], true)) {
             return [
@@ -122,6 +134,70 @@ final class RuntimeFenceOperationHandler implements RuntimeOperationHandler
             ->first();
 
         return $binding !== null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>|null
+     */
+    private function selfScaleProvenance(array $payload, string $operationId): ?array
+    {
+        $provenance = $payload['runtime_fence_provenance']['scale_to_zero_requested'] ?? null;
+        if (! is_array($provenance)
+            || ($provenance['by_operation'] ?? null) !== true
+            || (string) ($provenance['operation_id'] ?? '') !== $operationId
+        ) {
+            return null;
+        }
+
+        return $provenance;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @param  array<string, mixed>  $operation
+     * @param  array<string, mixed>  $details
+     * @return array<string, mixed>
+     */
+    private function recordSelfScaleProvenance(string $operationId, array $payload, array $operation, array $details): array
+    {
+        if ($operationId === '') {
+            return $payload;
+        }
+
+        return DB::transaction(function () use ($operationId, $payload, $operation, $details): array {
+            $row = DB::table('runtime_operations')->where('id', $operationId)->lockForUpdate()->first();
+            if ($row === null) {
+                return $payload;
+            }
+
+            $currentPayload = json_decode((string) $row->payload, true, 512, JSON_THROW_ON_ERROR);
+            if (! is_array($currentPayload)) {
+                return $payload;
+            }
+
+            $existing = $this->selfScaleProvenance($currentPayload, $operationId);
+            if ($existing !== null) {
+                return $currentPayload;
+            }
+
+            $currentPayload['runtime_fence_provenance']['scale_to_zero_requested'] = [
+                'by_operation' => true,
+                'operation_id' => $operationId,
+                'namespace' => (string) ($details['namespace'] ?? ''),
+                'deployment' => (string) ($details['deployment'] ?? ''),
+                'pre_scale_replicas' => (int) ($details['pre_scale_replicas'] ?? 0),
+                'attempt_count' => (int) ($operation['attempt_count'] ?? 0),
+                'requested_at' => now()->toJSON(),
+            ];
+
+            DB::table('runtime_operations')->where('id', $operationId)->update([
+                'payload' => StableJson::encode(PayloadSafety::assertSafe($currentPayload)),
+                'updated_at' => now(),
+            ]);
+
+            return $currentPayload;
+        });
     }
 
     /**
