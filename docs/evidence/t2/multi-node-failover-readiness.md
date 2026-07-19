@@ -6426,3 +6426,140 @@ through a successful automatic failover, request former-node restoration through
 the desired-state API, prove `runtime.node.restore` scales the workload back up
 without manual `kubectl scale`, and confirm the restored node re-enters placement
 only after `runtime_node.restored`.
+
+## T5-A38 — Canonical restoration live proof: BLOCKED by a restore-handler activation-ordering deadlock
+
+Checkpointed live proof at `UTCP_PHASE=T1`, HEAD `fcf1e90`. The restoration
+implementation deployed and the failover→fence→**disable** half worked exactly
+as designed, but canonical restoration reached `terminal_failed` on a
+precisely-isolated design deadlock: the restore handler holds the node
+`disabled` until after gates that can only be satisfied while the node is
+`active`. Per the failed-restoration divergence contract, evidence was
+preserved, the moved conference closed canonically, and node B returned to
+health via break-glass (recorded separately, NOT counted as proof success).
+**Verdict: T5_CANONICAL_FORMER_NODE_RESTORATION_LIVE_PROOF_INCOMPLETE.**
+
+### Deployment and live code currency
+
+Built the API image from clean `fcf1e90` (digest `sha256:4a3b1e0e…`), verified
+it contains `runtime.node.restore`, `RuntimeNodeRestoreOperationHandler`,
+`runtime_restore_provenance`, `runtime_node.restored`, and the fence-to-disabled
+transition; pushed and rolled out api/scheduler/command-worker/reconciler/
+event-normalizer/infrastructure-worker/worker. Confirmed live: restore handler
+present in the infra worker, `disableAfterSuccessfulFence`/
+`latestSuccessfulFenceForDisabledNode` in the api, `runtime.node.restore` in the
+op-type config, TTL still 30. Routing verified: restore op excluded from the
+generic command-worker, included in the infrastructure-worker.
+
+### Failover + fence-to-disabled (WORKED)
+
+Proof conference `516480a5-…3632`, participant `6d83294a-…3b76`, session
+`3423f67b` (29.66 min), binding `5f9409d8-…e259`, bound node B (`05ddb383…`,
+Pod `1f53ff0b…`), generation 2. HTTP disabled 09:38:38; node B unavailable
+(restart 0, corrected probes held). Automatic chain:
+verify_conference_absent (09:44:02) → terminal_failed (3/3
+ari_http_transport_failed) → runtime.node.runtime.fence (09:45:03) → scale 1→0
+→ `conference.runtime_fence_terminated` `fence_result=fenced` (09:45:19) →
+**`runtime_node.desired_state_changed` to `disabled` (09:45:19)** →
+`conference.runtime_binding_replaced` (09:46:03) → conference on node A gen 3,
+reconstructed/ready. Exactly one verify, one fence, one termination, one active
+binding. **New restoration acceptance met**: after fence, node B
+`desired_state=disabled`, replicas 0, and placement-ineligible
+(`placement_eligible=NO` via the canonical selector predicate).
+
+### Source fence provenance (WORKED)
+
+Source fence op `ceb411f5…`: succeeded, `pre_scale_replicas=1`, and
+`runtime_fence_provenance.runtime_node_disabled.by_operation=true` recorded.
+
+### Restoration request + idempotency (WORKED)
+
+`POST /runtime-nodes/{nodeB}/desired-state {active}` (admin, `runtime.nodes.manage`)
+returned 200 with node **remaining disabled** (correct — no direct mutation).
+Repeated once: same 200, node still disabled, and **exactly one**
+`runtime.node.restore` operation `92c5ba04…` scheduled (idempotent — the second
+request reused it), with `source_fence_operation_id=ceb411f5…` and
+`target_replicas=1` from fence provenance.
+
+### Scale-up (WORKED) then DEADLOCK (FAILED)
+
+The infrastructure worker claimed the restore op and performed exactly one
+effective scale-up: node B Deployment 0→1, new Pod `c0b0d84a…`, replicas 1/1
+Ready. Restore scale provenance persisted:
+`runtime_restore_provenance.scale_to_target_requested` `{by_operation=true,
+target_replicas=1, source_fence_operation_id=ceb411f5…}`. But the operation then
+cycled `retry_scheduled` on `runtime_restore_listener_lease_missing` and reached
+**`terminal_failed` (3/3 attempts)**. Zero `runtime_node.restored` events; node
+B stuck `disabled`/`unavailable` with a running Pod.
+
+### Root cause (precisely isolated design deadlock)
+
+`RuntimeNodeRestoreOperationHandler::execute` gate order:
+Deployment ready (L145) → Pods ready (L148) → **listener lease (L153-156)** →
+event epoch (L157-160) → observed_state=ready (L162-168) →
+`completeRestorationActivation` disabled→active (**L178, last**). The
+lease/epoch/observed-ready gates require the UTCP listener to attach and project
+observations — but `AsteriskAriEventListener::eligibleNodes`
+(`AsteriskAriEventListener.php:577`) filters `whereIn('desired_state',
+['active','draining'])`, so it never attaches to a `disabled` node. The node is
+held `disabled` until L178, which only runs after those gates pass. **Circular
+dependency:** activation needs the lease gate to pass; the lease gate needs the
+node active. The retryable `RuntimeUnavailable` failure therefore exhausts
+`max_attempts=3` into `terminal_failed`. The Kubernetes scale-up (0→1) is
+correct; the deadlock is entirely in the post-scale readiness-gate ordering.
+Note this also breaks the manual `kubectl scale` break-glass, since a
+fence-disabled node's listener stays detached regardless of replicas.
+
+### Required bounded correction (for the next task, T5-A39)
+
+Reorder `RuntimeNodeRestoreOperationHandler`: perform
+`completeRestorationActivation` (disabled→active) immediately after the
+Deployment+owned-Pod readiness gates (after L150) and BEFORE the
+lease/epoch/observed-ready checks, so the listener can attach to the now-active
+node. Then either (a) complete the restore on scale + Pod-ready + activation and
+let lease/epoch/observed-ready converge via the normal listener/projection path
+(matching how any freshly-active node comes ready — no operation gates on it;
+recommended), emitting `runtime_node.restored` at activation with the scale
+provenance/new-Pod-UID/target-replicas; or (b) keep the lease/epoch/ready gates
+but evaluate them after activation and widen the retry budget beyond the ~15 s
+listener heartbeat so they are actually reachable. Placement remains safe: the
+selector also requires `observed_state='ready'`, and the restored Pod is fresh/
+empty, so brief active-but-not-yet-ready status cannot draw traffic. No change
+to fence, rebind, stale-generation, or RBAC. Add a test that drives a real
+disabled→active restore to completion asserting activation precedes (and does not
+depend on) the listener lease, exactly one `runtime_node.restored`, and
+`observed_state=ready` convergence.
+
+### Divergence handling performed
+
+Failed-restoration contract followed: (1) all operation/provenance/Kubernetes
+evidence preserved (restore op `92c5ba04…` terminal_failed with full provenance
+retained); (2) proof marked incomplete; (3) moved conference `516480a5…` closed
+canonically on node A (participant removed → desired-state closed → converged
+`closed` 09:56:17) — moved-conference authority preserved (node A gen 3, never
+reclaimed by node B); (4) **break-glass** applied only after evidence capture:
+because the documented `kubectl scale` break-glass is inert here (Pod already at
+1/1; the block is `desired_state=disabled`) and re-issuing the API disabled→active
+would reschedule the same deadlocking op, node B was returned to health by a
+direct `runtime_nodes.desired_state=active` write, after which the listener
+re-attached (lease claimed, epoch opened, observed ready by 09:56:40). This
+break-glass is exceptional recovery, **not** proof success. No manual scale, Pod
+deletion, or RuntimeBinding edit was used.
+
+### Final runtime state
+
+Both Deployments 1/1; both RuntimeNodes active/ready; both leases claimed; one
+open epoch per node; zero open conferences; zero live bridges/channels; zero
+actionable operations; infrastructure worker Ready/idle; tree clean;
+`UTCP_PHASE=T1`. Historical operations/bindings/events/audit retained (including
+the terminal-failed restore op as evidence).
+
+### Result
+
+The fence-to-disabled transition, canonical desired-state restore request,
+idempotent single restore operation, dedicated-worker claim, source-fence
+provenance, and the automatic scale-up (0→target) are all PROVEN live. The one
+blocking defect is the restore handler's activation-ordering deadlock
+(activation after listener-dependent gates). Fix is isolated to
+`RuntimeNodeRestoreOperationHandler` gate ordering + one test; then re-run this
+exact T5-A38 proof.
