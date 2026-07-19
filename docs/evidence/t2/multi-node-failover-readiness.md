@@ -7330,3 +7330,119 @@ restore operations, and preservation of exactly one scale and one
 also clean up or canonically disable leftover simulator proof RuntimeNodes before
 establishing the two-node no-capacity baseline. No simulator-family exclusion was
 added in this repository correction.
+
+## T5-A45 — No-capacity recovery proven; second-generation (G+1→G+2) BLOCKED by a deterministic RuntimeNode-ownership prefix-collision bug
+
+**Verdict: `T5_NO_CAPACITY_RECOVERY_AND_SECOND_GENERATION_LIVE_PROOF_INCOMPLETE`.**
+Deployed `51abc7a` and completed the interrupted no-capacity proof through automatic
+capacity-return detection. The `G+1 → G+2` second-generation rebind could not complete
+because a **deterministic bug in `HttpKubernetesWorkloadClient::isOwnedByDeployment`**
+prevents the `asterisk-ari` (node A) RuntimeNode from ever being fenced or restored while
+`asterisk-ari-b` (node B) has a running Pod. This is a code-robustness blocker, not an
+environmental fluke; a re-run fails identically.
+
+### Root cause (deterministic)
+
+`isOwnedByDeployment(pod, identity)` treats a Pod as owned when its owner ReplicaSet name
+`str_starts_with($identity->deployment . '-')`. Node A's deployment is `asterisk-ari`;
+node B's ReplicaSet is `asterisk-ari-b-8557bd4d76`. Because
+`str_starts_with("asterisk-ari-b-8557bd4d76", "asterisk-ari-") === true`, node A's
+`listOwnedPods` **spuriously includes node B's running Pod**. The collision is directional
+(node B's prefix `asterisk-ari-b-` never matches node A's Pods), which is why fencing and
+restoring node B always worked historically (T5-A35/A40) and only node A is affected.
+
+Two deterministic consequences:
+
+1. **Fencing node A** — `KubernetesRuntimeFenceAdapter::terminationPredicateSatisfied`
+   requires `count(ownedPods) === 0`. Node B's Pod is perpetually "owned", so the predicate
+   is never satisfied → the fence returns `fence_in_progress` on every attempt → the op
+   `terminal_failed` at 3/3. The generation-scoped verify+fence idempotency keys then poison
+   the generation (`findIdempotent` returns the terminal op; the coordinator classifies
+   `runtime_fence_failed` and does not re-drive) → the conference cannot advance to `G+2`.
+   Node A **was** scaled to 0 (`pre_scale_replicas=1` recorded) but the op never reached the
+   `fenced` state that triggers `disableAfterSuccessfulFence` + rebind.
+2. **Restoring node A** — the restore handler's `runtime_restore_waiting_for_old_pods` gate
+   (`count(ownedPods) !== 0`) never clears while node B runs → restore exhausts its 8 attempts.
+
+Live confirmation: querying the pods API exactly as the handler does
+(`labelSelector=app.kubernetes.io/part-of=utcp,app.kubernetes.io/component=asterisk-ari`)
+returns `asterisk-ari-b-8557bd4d76-gknbx` (RS `asterisk-ari-b-8557bd4d76`), and the
+`str_starts_with(..., "asterisk-ari-")` prefix test is `true`.
+
+**Suggested fix:** match the ReplicaSet name on an exact `deployment-<10charhash>` boundary,
+or add `utcp.dev/runtime-node=<slug>` (which uniquely identifies the node) to the
+`listOwnedPods` label selector. Separately, the `runtime.node.runtime.fence` op still carries
+the generic 3-attempt budget with no successor mechanism (unlike restore in `51abc7a`);
+widening it or adding a fence successor is advisable for slow-termination margin even after
+the prefix fix.
+
+### What was proven (solid)
+
+- **Simulator cleanup:** 65 leftover C4/C5 simulator-deterministic RuntimeNodes canonically
+  disabled via `POST /runtime-nodes/{id}/desired-state {disabled}` (65 OK / 0 fail). The
+  T5-A43 phantom-capacity blocker is resolved: the canonical placement candidate query
+  returns only node A and node B; excluding either leaves exactly the other.
+- **`51abc7a` deployed:** api image digest `sha256:aab63072…`, running config
+  `operation_max_attempts.runtime_node_restore = 8`, generic op default `3`; successor code
+  (`supersedes_restore_operation_id`, `restore_attempt_generation`,
+  `restoreScaleProvenanceFromPredecessor`, terminal-non-reusable, `:after:<pred>` idempotency)
+  present in the built image and all 12 app-image workloads run the new digest.
+- **First failover G(2) → G+1(3):** conference `188ff074` bound node B (gen 2); HTTP outage
+  on node B → 300s grace → verify `terminal_failed` → fence **succeeded** (attempt 2,
+  `pre_scale_replicas=1`) → node B scaled 1→0 and `disabled` → atomic rebind to node A (gen 3),
+  old binding retired → bridge + participant Local-channel legs reconstructed on node A,
+  participant `admitted/joined`.
+- **G+1 replacement failure with no capacity:** HTTP outage on node A; node B disabled, all
+  simulator nodes disabled → the canonical replacement query returns nothing.
+- **Fencing withheld (strongest form):** `classifyUnavailableVerificationOperation` checks
+  `hasDistinctEligibleReplacement` **before** requesting any fence, so with no replacement it
+  returns `no_replacement` and **no gen-3 fence op is ever created**. Node A stayed
+  `replicas=1`, Pod UID unchanged — no scale-to-zero.
+- **Durable pending state + dedup:** `failover_state=pending_no_capacity`,
+  `failover_binding_id=a1a8358b` (active G+1 binding), `failover_generation=3`,
+  `failover_started_at=2026-07-19 22:25:03+00` — stable across 8 observed coordinator sweeps;
+  exactly **one** `conference.failover_coordinator.no_replacement` event (audit and outbox);
+  no duplicate verify/fence chain, no binding retirement, no scale-to-zero.
+- **Canonical restoration:** `POST /runtime-nodes/{nodeB}/desired-state {active}` left node B
+  `disabled` and scheduled one idempotent `runtime.node.restore` op (max 8 attempts, live);
+  a repeated request produced no duplicate op; the restore **succeeded** (attempt 3/8) — node B
+  returned to `active/ready`.
+- **Capacity-return detection (automatic):** the coordinator detected the restored node B and
+  automatically initiated the second (gen-3) runtime fence of node A — the destructive fence
+  scaled node A to 0.
+- **Successor restore mechanism (incidentally exercised during recovery):** node A's stuck
+  restore (bug-blocked) `terminal_failed`; a re-request created a **successor**
+  (`supersedes_restore_operation_id=b544e4c0…`) that completed once the phantom Pod obstacle
+  was removed.
+
+### Environmental issues encountered and canonically recovered
+
+- **Host reboot (2026-07-19 21:25):** all k3d node containers restarted. agent-0 kubelet
+  serving cert carried a stale SAN (exec broken) — fixed by deleting `serving-kubelet.crt` and
+  restarting the node container.
+- **NetworkPolicy apiserver-egress drift (recurrence):** `allow-runtime-fencer-kubernetes-api`
+  pinned `172.24.0.5/32` while the apiserver moved to `172.24.0.4` after the reboot — the
+  infrastructure worker's first fence attempt got `unavailable_to_control` and poisoned the
+  first proof conference (`15b389a5`, gen 2). Re-rendered canonically
+  (`scripts/security/render-apiserver-policy` + `kube apply`), closed the poisoned conference
+  canonically (no destructive fence had occurred — node stayed `replicas=1`), and restarted the
+  proof with a fresh conference.
+
+### Session-lifetime accommodation
+
+Section 7 baseline confirmed `UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES=30`. Because a
+double-failover with two 300s graces plus a no-capacity dwell and a restoration approaches or
+exceeds 30 minutes, the ConfigMap value was temporarily raised to 60 (api rolled) so the
+participant would not be removed mid-proof, then **restored to 30** at cleanup. Login access was
+obtained through the sanctioned `utcp:user-access:reset-password` recovery command; the
+`tenant-member` role was added to the admin's Local membership to permit self-session/join
+(additive; no canonical role-removal endpoint exists).
+
+### Final state
+
+Both intended Asterisk RuntimeNodes `active/ready` (deployments 1/1), listener leases claimed,
+one open epoch per node, all simulator proof RuntimeNodes `disabled`, zero open/pending
+conferences, zero failover-state conferences, zero actionable verify/fence/restore operations,
+session TTL restored to 30. Node A recovery required a documented manual workaround (temporarily
+scaling node B to 0 so node A's canonical restore could clear the buggy `waiting_for_old_pods`
+gate); this recovery is recorded separately and does not count as proof success.
