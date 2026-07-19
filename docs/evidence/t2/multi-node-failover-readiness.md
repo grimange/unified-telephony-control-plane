@@ -6641,3 +6641,122 @@ Live canonical former-node restoration remains pending. Direct database recovery
 remains break-glass only, and manual scale-up is not restored as normal
 authority. The next live proof must rerun canonical desired-state-driven
 former-node restoration with no direct desired-state write and no manual scale-up.
+
+## T5-A40 — Canonical former-node restoration: COMPLETE (restore-authorized listener attachment)
+
+Checkpointed live proof at `UTCP_PHASE=T1`, HEAD `9a12faa`. The complete
+canonical restoration lifecycle succeeded end-to-end with **no direct
+desired-state write and no manual Kubernetes scale-up** — resolving the T5-A38
+activation-ordering deadlock. The fix (restore-authorized listener eligibility)
+lets the listener attach to a still-`disabled` node that has an actionable
+restore operation, so the lease/epoch/observed-ready gates pass before
+activation.
+
+### Database migration
+
+`2026_07_17_150000_add_restore_listener_operation_index.php` — additive only
+(one composite index `runtime_ops_type_status_tenant_node_idx` on
+`runtime_operations(operation_type, status, tenant_id, runtime_node_id)`, no
+rewrites). Applied via the canonical `utcp-migrate` Job (new image): ran once
+(`... DONE 30.52ms`), index present, migration recorded exactly once, all 4524
+`runtime_operations` rows preserved.
+
+### Image build and rollout
+
+Built from clean `9a12faa` (digest `sha256:038d0365…`), verified it contains
+`restorationListenerAuthorities` (grep=2), the restore handler, the migration,
+and `runtime_node.restored`; pushed and rolled out
+api/scheduler/command-worker/reconciler/event-normalizer/**asterisk-ari-events
+(the listener)**/infrastructure-worker/worker. Live currency confirmed:
+`restorationListenerAuthorities` present in the listener and api pods; both
+RuntimeNodes stayed ready throughout.
+
+### Failover to fenced + disabled (re-proven)
+
+Proof conference `9d423262-…2d89`, participant `75d4d4e0-…75cf`, session
+`49a8df05` (~59 min validity — comfortably beyond the proof), binding
+`66b22366-…bfc6`, bound node B (`05ddb383…`, Pod `c0b0d84a…`), generation 2.
+HTTP disabled 11:14:53 → node B unavailable (restart 0). Chain: verify (11:20:04)
+→ terminal_failed → fence (11:21:04) → scale 1→0 → `fence_result=fenced`
+(11:21:19) → `runtime_node.desired_state_changed:disabled` (11:21:19, exactly
+one) → `conference.runtime_binding_replaced` (11:22:04) → conference on node A
+gen 3. Source fence op `455fe0de…`, `pre_scale_replicas=1`.
+
+### Placement exclusion while disabled
+
+Node B `disabled`/replicas 0/owned Pods 0; zero active open-conference bindings
+reference it; canonical selector `eligible=NO`.
+
+### Restoration request + idempotency
+
+`POST /runtime-nodes/{nodeB}/desired-state {active}` (admin,
+`runtime.nodes.manage`) → 200, node **remained disabled** (no controller scale,
+no direct activation). Repeated once → 200, still disabled, **exactly one**
+`runtime.node.restore` op `daa5381f…` (second request reused it). No direct
+desired-state write anywhere.
+
+### Dedicated worker + scale-up + provenance
+
+The infrastructure worker exclusively claimed the restore op (excluded from the
+generic command worker). Exactly one effective scale-up: node B Deployment 0→1
+(target from source-fence `pre_scale_replicas=1`), new Pod. Persisted
+`runtime_restore_provenance.scale_to_target_requested`: `by_operation=true`,
+`target_replicas=1`, `source_fence_operation_id=455fe0de…`.
+
+### Restore-authorized listener attachment (the fix) — observed ordering
+
+Timestamped sequence:
+
+```text
+11:23:21  restore op created, retry_scheduled/runtime_restore_deployment_not_ready
+11:23:46  Deployment 0→1, new Pod Ready; node STILL disabled; lease released; no epoch
+11:23:58  node disabled/READY; lease CLAIMED; new open epoch=1
+          → listener attached to the DISABLED node purely via the actionable
+            restore operation (AsteriskAriEventListener::eligibleNodes now
+            includes disabled nodes with a matching actionable restore op)
+11:24:08  runtime_node.restored emitted
+11:24:11  restore op SUCCEEDED; node desired_state disabled → active; observed ready
+```
+
+Activation occurred strictly AFTER Pod readiness + lease claim + new epoch +
+observed-ready — Pod readiness alone did not complete restoration. Arbitrary
+disabled nodes remain listener-ineligible (eligibility requires a matching
+actionable restore op keyed on tenant + node + configuration_version).
+
+### Restoration completion and re-entry
+
+Exactly one `runtime_node.restored` event (11:24:08) and exactly one restore op
+(no duplicate scale/operation/event/transition). After completion node B is
+`active`/`observed ready`, and the canonical placement selector now returns
+`eligible=YES` (placement re-entry). Note: the op consumed 3/3 retry attempts,
+succeeding on the final attempt once the listener attached (~12–24 s after the
+Pod became ready) — the retry budget was sufficient but tight; a wider budget
+would add margin (non-blocking observation).
+
+### Moved-conference authority preservation
+
+Throughout restoration the moved conference stayed on node A (`1d15ca88`)
+generation 3, observed ready; the node-B binding remained `retired`; exactly one
+active binding on node A; participant remained `admitted`. Restoration did not
+move the conference back and no former-node event reclaimed authority.
+
+### Cleanup and final state
+
+Participant removed and conference closed canonically (converged `closed`
+11:26:25). Final: both Deployments 1/1; both RuntimeNodes active/ready; both
+leases claimed; one open epoch per node; zero open conferences; zero live
+bridges/channels; zero actionable operations; infrastructure worker Ready/idle;
+tree clean; `UTCP_PHASE=T1`. No manual scale-up, no direct desired-state write,
+no RuntimeBinding write, no break-glass. Historical evidence retained.
+
+### Result
+
+**T5_CANONICAL_FORMER_NODE_RESTORATION_LIVE_PROOF_COMPLETE.** All 31 completion
+criteria met. The full production restoration lifecycle is proven live: automatic
+fence → former node disabled + placement-excluded → authorized desired-state
+`active` request → single idempotent `runtime.node.restore` → infrastructure-worker
+scale-up 0→pre_scale_replicas → restore-authorized listener attachment while
+disabled → lease + fresh epoch + observed-ready → activation only after all gates
+→ single `runtime_node.restored` → placement re-entry. The proof-only manual
+`kubectl scale` restoration is fully superseded by canonical desired-state-driven
+authority.
