@@ -5652,3 +5652,161 @@ or new Artisan management command was added.
 Live participant-inclusive failover rerun remains pending. No Kubernetes
 rollout, scale, Pod deletion, live Conference creation, RuntimeBinding mutation,
 or failover was performed for this repository correction.
+
+## T5-A33 — Participant telephony-session lifetime contract for the failover proof (evidence-only)
+
+Evidence-only session-lifecycle audit at `UTCP_PHASE=T1`, HEAD `fdc745e`. No live
+failover, scaling, or session-behavior change. Determines exactly how to keep one
+admitted participant valid through the ~8–11 minute automatic failover proof
+(T5-A31's participant was removed by session expiry at 5 minutes).
+
+### Session creation authority
+
+`POST /api/v1/telephony/sessions` → `TelephonySessionController::store`
+(`routes/web.php:81`). Authenticated first-party session; actor = `$request->user()`;
+active-tenant from session (`active_tenant_id`, 409 if absent); permission
+`telephony.sessions.create_own` (`AuthorizationService::requireTenant`). Delegates
+to `TelephonyDomainService::createSession` (line 73). Request fields: none for
+expiry — only an optional `Idempotency-Key` header. **The caller cannot request an
+expiry**; the server sets it unconditionally. `createSession` is idempotent AND
+"return-existing": if an active session already exists for (tenant,user) it returns
+it **unchanged** (lines 85–93) — it does **not** extend `expires_at`. Session→
+participant link: `conference_participants.telephony_session_id`; self-admission
+(`admitSelf`/`admitParticipant`) requires `status='active'` and `expires_at > now()`
+at admission time only (line 554).
+
+### Five-minute TTL source
+
+`expires_at = now()->addMinutes(config('telephony_domain.session_lifetime_minutes', 60))`
+(`TelephonyDomainService.php:102`). The key is `telephony_domain.session_lifetime_minutes`
+= `env('UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES', 60)` (`config/telephony_domain.php:13`).
+**Code default is 60 minutes.** The live 5-minute value is a committed local-overlay
+override: `infrastructure/kubernetes/overlays/local/platform/application-config.properties:29`
+`UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES=5` (confirmed live in ConfigMap
+`utcp-application-config`). It is a configuration value applied to ALL sessions in
+the local overlay, not a request-controlled or proof-only value. No ADR documents
+the 5-minute choice; it reads as a local-dev convenience.
+
+### Maximum supported validity
+
+Unbounded by code except the config integer — any value the config provides is used
+verbatim (no server cap, no min/max validation). The code default (60) already
+exceeds the proof. There is no per-request maximum because there is no per-request
+expiry field.
+
+### Canonical refresh contract
+
+**None exists.** Exhaustive search of `App\TelephonyDomain`, controllers, and routes
+for refresh/renew/extend/heartbeat/keepalive/touch/`expires_at` updates found no
+public route, no service method, and no code path that advances an existing session's
+`expires_at`. The only session mutations are: create (sets initial expiry), end
+(`POST .../end` → `ended`), and expire (scheduler → `expired`). `createSession`
+re-called returns the existing session unchanged. So a running session cannot be
+extended through any normal application authority.
+
+### Refresh authorization
+
+N/A — no refresh path to authorize.
+
+### Expiration scheduler
+
+`Artisan::command('telephony-domain:expire-sessions')` (`console.php:721`),
+scheduled everyMinute (per the scheduler). `TelephonyDomainService::expireDueSessions`
+(line 148): selects `status='active' AND expires_at <= now()` ordered by `expires_at`,
+limit 100; per row, in a transaction, re-locks (`lockForUpdate`), re-checks
+`status='active'`, sets `status='expired'`, revokes signaling, and calls
+`removeParticipantsForSession` (line 667) which sets every admitted participant of
+that session to `desired_state='removed'`, wakes the participant reconciliation
+target at the removed generation, and audits `conference_participant.removed`.
+Emits `telephony_session.expired`. Expiry precision: within one everyMinute sweep of
+`expires_at` (0–60 s after expiry). No grace.
+
+### Refresh-versus-expiry race
+
+Not applicable to extension (no refresh path). For creation vs expiry:
+`createSession` calls `expireDueSessionsForUpdate` under lock before deciding, and
+the sweep re-locks and re-checks `status='active'` before expiring — so the two
+cannot double-process a row. An already-expired session is never renewed (create
+makes a NEW session with a new id; it does not resurrect the expired one, and the
+participant remains tied to the expired session's id). There is therefore no way to
+keep the SAME participant valid by re-creating a session.
+
+### Participant reconstruction eligibility
+
+`ConferenceParticipantReconciler` (lines 47–114) drives `conference.participant.ensure`
+purely from `participant.desired_state='admitted'` AND `conference.desired_state='open'`
+— it does **not** recheck the telephony session's status or expiry, and neither does
+the Asterisk adapter's participant path. So after RuntimeBinding replacement at G+1,
+the participant reconstructs (deterministic channel id, Local-channel re-originate,
+bridge attach) **iff it is still `desired_state='admitted'`**. The only thing that
+flips it to `removed` during the proof is the expiry sweep when its session expires.
+Proof-of-eligibility evidence at G+1: `conference_participants.desired_state='admitted'`,
+its `telephony_session_id` session `status='active'` with `expires_at > now()`, and a
+`conference.participant.ensure` op succeeding on the replacement node at the new
+generation. Net: **keeping the participant valid reduces entirely to keeping its
+session's `expires_at` beyond the proof end.**
+
+### Proof timing budget (from T5-A31 observed evidence, no preflight in rerun)
+
+```text
+conference creation + convergence + self-admission   ~60 s
+HTTP disable → unavailable projection                ~40 s   (05:03:09→05:03:46)
+300-second failover grace                             300 s
+grace-cross → coordinator sweep → verify created     ~55 s   (obs 53 s)
+3 verify attempts → terminal_failed                  ~50 s   (obs 47 s)
+terminal → next sweep → runtime.fence created        ~60 s   (obs 12 s, up to a full sweep)
+fence claim + Pod termination + completion           ~30 s   (obs 17 s)
+fence complete → binding replacement                 ~45 s   (obs 42 s)
+binding replaced → participant reconstruction        ~60 s
+evidence capture                                     ~120 s
+--------------------------------------------------------------
+conservative total (session-create → reconstruction) ~13–15 min with scheduler jitter
+```
+
+Minimum safe session validity: **~15 minutes**. The 5-minute local value is
+insufficient by construction; the 60-minute code default is more than sufficient.
+
+### Selected session strategy
+
+**D → resolved by a bounded config correction, then A.** The current lifecycle
+offers no request-controlled expiry and no refresh path, so no purely-live API action
+can extend a 5-minute session through the proof. The single deterministic lever is the
+existing config key. The bounded fix: set the committed local-overlay
+`UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES` to a value comfortably exceeding the proof
+budget (recommended **30**, giving ~15+ min margin at reconstruction; not infinite,
+not proof-only, not hidden — the canonical config knob, matching the spirit of the
+60-minute code default). After that change is rolled out, the participant-inclusive
+rerun uses **Strategy A**: normal `POST /telephony/sessions` yields a 30-minute
+session created at conference setup, leaving ~17–20 minutes of validity at
+participant reconstruction (~T0+10–13 min). No refresh, no per-request expiry, no
+new route required.
+
+Rejected: A as-is (API cannot request a longer expiry while the local config is 5 min);
+B/C refresh (no refresh path exists); raising via a hidden env override or an infinite
+session (prohibited and unnecessary).
+
+### Existing test coverage
+
+| Behavior | Test | Type | Missing |
+|---|---|---|---|
+| Session creation + participation lifecycle | TelephonyDomainTest:28 | feature | — |
+| Session expiry removes participation | TelephonyDomainTest:107 (forces `expires_at=now()-1min` then runs sweep) | feature | doesn't exercise the config TTL |
+| Requested expiry | none | — | no feature exists |
+| Maximum/validated expiry | none | — | no cap exists |
+| Refresh/renew | none | — | no feature exists |
+| Refresh/expiry race | none | — | no feature exists |
+| Participant reconstruction with a valid session through failover | none | — | **live proof still required** |
+| Participant non-reconstruction after expiry | partially (expiry→removed at :107) | feature | not tied to failover/G+1 |
+| Local session lifetime ≥ failover proof budget | none | — | **config-check assertion missing** |
+
+### Readiness decision
+
+**B — bounded Codex session-lifecycle (config) implementation is required first.** The
+missing piece is isolated exactly: one committed value
+(`infrastructure/kubernetes/overlays/local/platform/application-config.properties`
+`UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES` 5→30), rolled out to the
+`utcp-application-config` ConfigMap, plus a config-check/test assertion that the local
+telephony session lifetime comfortably exceeds the failover proof budget. No new route,
+no refresh subsystem, no request-expiry field, no session-behavior change. After it is
+deployed, the participant-inclusive destructive rerun (T5-A31 flow) uses Strategy A and
+should reconstruct the participant at G+1 with ample session margin.
