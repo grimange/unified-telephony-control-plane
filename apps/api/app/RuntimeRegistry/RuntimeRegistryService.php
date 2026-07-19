@@ -7,7 +7,11 @@ use App\ControlPlane\Idempotency\IdempotencyConflict;
 use App\ControlPlane\Idempotency\IdempotencyStore;
 use App\ControlPlane\Messaging\EventEnvelope;
 use App\ControlPlane\Messaging\OutboxRepository;
+use App\ControlPlane\RuntimeOperations\RuntimeOperationRepository;
+use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\IdempotencyKey;
+use App\ControlPlane\Shared\PayloadSafety;
+use App\ControlPlane\Shared\StableJson;
 use App\Identity\IdentityContext;
 use App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentityValidator;
 use Illuminate\Http\Request;
@@ -23,6 +27,7 @@ final class RuntimeRegistryService
         private readonly AuditRepository $audit,
         private readonly OutboxRepository $outbox,
         private readonly IdempotencyStore $idempotency,
+        private readonly RuntimeOperationRepository $operations,
     ) {}
 
     /**
@@ -136,11 +141,20 @@ final class RuntimeRegistryService
     /**
      * @return array<string, mixed>
      */
-    public function changeDesiredState(Request $request, string $tenantId, string $nodeId, string $desiredState): array
+    public function changeDesiredState(Request $request, string $tenantId, string $nodeId, string $desiredState, ?string $reason = null): array
     {
-        return DB::transaction(function () use ($request, $tenantId, $nodeId, $desiredState): array {
+        return DB::transaction(function () use ($request, $tenantId, $nodeId, $desiredState, $reason): array {
             $node = $this->nodeForUpdate($nodeId, $tenantId);
             $this->catalog->assertDesiredTransition($node->desired_state, $desiredState);
+            if ($node->desired_state === 'disabled' && $desiredState === 'active' && ($sourceFence = $this->latestSuccessfulFenceForDisabledNode($tenantId, $nodeId)) !== null) {
+                $context = IdentityContext::fromRequest($request, $tenantId);
+                $operationId = $this->requestRestoreOperation($context, $node, $sourceFence, $request->user()?->getAuthIdentifier(), $reason);
+
+                return [
+                    'runtime_node' => $this->node($nodeId, $tenantId),
+                    'runtime_operation' => $this->serializeOperation($operationId),
+                ];
+            }
             DB::table('runtime_nodes')->where('id', $nodeId)->update([
                 'desired_state' => $desiredState,
                 'configuration_version' => ((int) $node->configuration_version) + 1,
@@ -150,6 +164,69 @@ final class RuntimeRegistryService
             $this->emit($request, $tenantId, $nodeId, 'runtime_node.desired_state_changed', ['from' => $node->desired_state, 'to' => $desiredState]);
 
             return ['runtime_node' => $this->node($nodeId, $tenantId)];
+        });
+    }
+
+    public function disableAfterSuccessfulFence(ExecutionContext $context, string $tenantId, string $nodeId, string $sourceFenceOperationId): void
+    {
+        DB::transaction(function () use ($context, $tenantId, $nodeId, $sourceFenceOperationId): void {
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            if ($node->desired_state !== 'disabled') {
+                $this->catalog->assertDesiredTransition($node->desired_state, 'disabled');
+                DB::table('runtime_nodes')->where('id', $nodeId)->where('tenant_id', $tenantId)->update([
+                    'desired_state' => 'disabled',
+                    'configuration_version' => ((int) $node->configuration_version) + 1,
+                    'updated_by' => null,
+                    'updated_at' => now(),
+                ]);
+                $this->emitContext($context, $tenantId, $nodeId, 'runtime_node.desired_state_changed', [
+                    'from' => $node->desired_state,
+                    'to' => 'disabled',
+                    'source_runtime_operation_id' => $sourceFenceOperationId,
+                ]);
+            }
+
+            $source = DB::table('runtime_operations')
+                ->where('id', $sourceFenceOperationId)
+                ->where('tenant_id', $tenantId)
+                ->where('runtime_node_id', $nodeId)
+                ->lockForUpdate()
+                ->first();
+            if ($source !== null) {
+                $payload = json_decode((string) $source->payload, true, 512, JSON_THROW_ON_ERROR);
+                $payload['runtime_fence_provenance']['runtime_node_disabled'] = [
+                    'by_operation' => true,
+                    'operation_id' => $sourceFenceOperationId,
+                    'runtime_node_id' => $nodeId,
+                    'disabled_at' => now()->toISOString(),
+                ];
+                DB::table('runtime_operations')->where('id', $sourceFenceOperationId)->update([
+                    'payload' => StableJson::encode(PayloadSafety::assertSafe($payload)),
+                    'updated_at' => now(),
+                ]);
+            }
+        });
+    }
+
+    public function completeRestorationActivation(ExecutionContext $context, string $tenantId, string $nodeId, string $restoreOperationId): void
+    {
+        DB::transaction(function () use ($context, $tenantId, $nodeId, $restoreOperationId): void {
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            if ($node->desired_state === 'active') {
+                return;
+            }
+            $this->catalog->assertDesiredTransition($node->desired_state, 'active');
+            DB::table('runtime_nodes')->where('id', $nodeId)->where('tenant_id', $tenantId)->update([
+                'desired_state' => 'active',
+                'configuration_version' => ((int) $node->configuration_version) + 1,
+                'updated_by' => null,
+                'updated_at' => now(),
+            ]);
+            $this->emitContext($context, $tenantId, $nodeId, 'runtime_node.desired_state_changed', [
+                'from' => $node->desired_state,
+                'to' => 'active',
+                'source_runtime_operation_id' => $restoreOperationId,
+            ]);
         });
     }
 
@@ -372,6 +449,98 @@ final class RuntimeRegistryService
         return $node;
     }
 
+    private function latestSuccessfulFenceForDisabledNode(string $tenantId, string $nodeId): ?object
+    {
+        return DB::table('runtime_operations')
+            ->where('tenant_id', $tenantId)
+            ->where('runtime_node_id', $nodeId)
+            ->where('operation_type', (string) config('telephony_domain.operation_types.runtime_fence'))
+            ->where('status', 'succeeded')
+            ->whereNotNull('completed_at')
+            ->orderByDesc('completed_at')
+            ->orderByDesc('updated_at')
+            ->get()
+            ->first(function (object $operation): bool {
+                $payload = json_decode((string) $operation->payload, true, 512, JSON_THROW_ON_ERROR);
+
+                return data_get($payload, 'runtime_fence_provenance.runtime_node_disabled.by_operation') === true;
+            });
+    }
+
+    private function requestRestoreOperation(ExecutionContext $context, object $node, object $sourceFence, ?string $actorId, ?string $reason): string
+    {
+        $sourcePayload = json_decode((string) $sourceFence->payload, true, 512, JSON_THROW_ON_ERROR);
+        $scale = data_get($sourcePayload, 'runtime_fence_provenance.scale_to_zero_requested');
+        if (! is_array($scale)) {
+            abort(response()->json(['message' => 'Source fence operation is missing scale provenance.'], 409));
+        }
+        $targetReplicas = filter_var($scale['pre_scale_replicas'] ?? null, FILTER_VALIDATE_INT);
+        if ($targetReplicas === false || $targetReplicas < 1) {
+            abort(response()->json(['message' => 'Source fence operation has invalid target replicas.'], 409));
+        }
+        $namespace = $scale['namespace'] ?? null;
+        $deployment = $scale['deployment'] ?? null;
+        if (! is_string($namespace) || ! is_string($deployment) || $namespace === '' || $deployment === '') {
+            abort(response()->json(['message' => 'Source fence operation has invalid workload provenance.'], 409));
+        }
+        $sourceGeneration = filter_var($sourcePayload['configuration_generation'] ?? null, FILTER_VALIDATE_INT);
+        if ($sourceGeneration === false || $sourceGeneration < 1) {
+            abort(response()->json(['message' => 'Source fence operation has invalid generation provenance.'], 409));
+        }
+
+        $operationType = (string) config('telephony_domain.operation_types.runtime_node_restore');
+        $idempotency = IdempotencyKey::fromString(sprintf(
+            'runtime-node-restore:%s:%s:%s:active',
+            $node->id,
+            $sourceFence->id,
+            $sourceGeneration,
+        ));
+
+        return $this->operations->create(
+            $operationType,
+            'runtime_node',
+            (string) $node->id,
+            [
+                'tenant_id' => $node->tenant_id,
+                'runtime_node_id' => $node->id,
+                'requested_desired_state' => 'active',
+                'source_fence_operation_id' => $sourceFence->id,
+                'source_fence_generation' => $sourceGeneration,
+                'workload_namespace' => $namespace,
+                'deployment' => $deployment,
+                'target_replicas' => $targetReplicas,
+                'requesting_actor' => $actorId,
+                'reason' => $reason,
+                'expected_runtime_node_configuration_version' => (int) $node->configuration_version,
+            ],
+            $context,
+            idempotencyKey: $idempotency,
+            runtimeNodeId: (string) $node->id,
+        );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function serializeOperation(string $operationId): array
+    {
+        $operation = DB::table('runtime_operations')->where('id', $operationId)->first();
+        if ($operation === null) {
+            throw new \RuntimeException('runtime restore operation was not persisted');
+        }
+
+        return [
+            'id' => $operation->id,
+            'tenant_id' => $operation->tenant_id,
+            'runtime_node_id' => $operation->runtime_node_id,
+            'operation_type' => $operation->operation_type,
+            'aggregate_type' => $operation->aggregate_type,
+            'aggregate_id' => $operation->aggregate_id,
+            'status' => $operation->status,
+            'idempotency_key' => $operation->idempotency_key,
+        ];
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -477,6 +646,14 @@ final class RuntimeRegistryService
     private function emit(Request $request, string $tenantId, string $nodeId, string $eventType, array $payload): void
     {
         $context = IdentityContext::fromRequest($request, $tenantId);
+        $this->emitContext($context, $tenantId, $nodeId, $eventType, $payload);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function emitContext(ExecutionContext $context, string $tenantId, string $nodeId, string $eventType, array $payload): void
+    {
         $this->audit->append($context, $eventType, 'runtime_node', $nodeId, $payload);
         $this->outbox->append(EventEnvelope::forAggregate($eventType, 1, 'runtime_node', $nodeId, $payload, $context));
     }

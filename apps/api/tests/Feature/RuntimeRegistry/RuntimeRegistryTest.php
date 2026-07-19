@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\RuntimeRegistry;
 
+use App\ControlPlane\RuntimeOperations\RuntimeOperationRepository;
+use App\ControlPlane\Shared\ExecutionContext;
 use App\Identity\IdentityIds;
 use App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentityResolver;
 use App\Models\User;
@@ -193,6 +195,67 @@ final class RuntimeRegistryTest extends TestCase
         $identity = app(RuntimeNodeWorkloadIdentityResolver::class)->resolve(DB::table('runtime_nodes')->where('id', $node['id'])->first());
         $this->assertSame('utcp-runtime', $identity->namespace);
         $this->assertSame('asterisk-ari-b', $identity->deployment);
+    }
+
+    public function test_fenced_disabled_node_active_request_schedules_restore_operation_and_keeps_node_disabled(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin();
+        $member = $this->createUser('restore-member@utcp.local.test');
+        $this->attachTenantRole($member->id, $tenantId, 'tenant-member');
+        $payload = $this->nodePayload('restore-node');
+        $payload['labels'] = [
+            'purpose' => 'restore-proof',
+            'kubernetes_workload' => [
+                'namespace' => 'utcp-runtime',
+                'deployment' => 'asterisk-ari-restore-node',
+            ],
+        ];
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $payload)
+            ->assertCreated()
+            ->json('runtime_node');
+        DB::table('runtime_nodes')->where('id', $node['id'])->update([
+            'desired_state' => 'disabled',
+            'configuration_version' => 2,
+            'updated_at' => now(),
+        ]);
+        $sourceFenceId = $this->sourceFenceOperation($tenantId, $node['id'], 'asterisk-ari-restore-node', 31, 1);
+
+        $this->actingAs($member)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'active'])
+            ->assertForbidden();
+
+        $response = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", [
+                'desired_state' => 'active',
+                'reason' => 'return to placement pool',
+            ])
+            ->assertOk()
+            ->assertJsonPath('runtime_node.desired_state', 'disabled')
+            ->assertJsonPath('runtime_operation.operation_type', 'runtime.node.restore')
+            ->json();
+
+        $operationId = $response['runtime_operation']['id'];
+        $this->assertSame('disabled', DB::table('runtime_nodes')->where('id', $node['id'])->value('desired_state'));
+        $this->assertSame(1, DB::table('runtime_operations')->where('operation_type', 'runtime.node.restore')->where('runtime_node_id', $node['id'])->count());
+        $operation = DB::table('runtime_operations')->where('id', $operationId)->first();
+        $this->assertSame('runtime_node', $operation->aggregate_type);
+        $this->assertSame($node['id'], $operation->aggregate_id);
+        $operationPayload = json_decode((string) $operation->payload, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame($sourceFenceId, $operationPayload['source_fence_operation_id']);
+        $this->assertSame(31, $operationPayload['source_fence_generation']);
+        $this->assertSame('utcp-runtime', $operationPayload['workload_namespace']);
+        $this->assertSame('asterisk-ari-restore-node', $operationPayload['deployment']);
+        $this->assertSame(1, $operationPayload['target_replicas']);
+        $this->assertSame(2, $operationPayload['expected_runtime_node_configuration_version']);
+        $this->assertSame('return to placement pool', $operationPayload['reason']);
+
+        $repeat = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'active'])
+            ->assertOk()
+            ->json('runtime_operation');
+        $this->assertSame($operationId, $repeat['id']);
+        $this->assertSame(1, DB::table('runtime_operations')->where('operation_type', 'runtime.node.restore')->where('runtime_node_id', $node['id'])->count());
     }
 
     public function test_runtime_node_update_adds_structured_workload_label_and_preserves_flat_labels_by_replacement_contract(): void
@@ -674,5 +737,51 @@ final class RuntimeRegistryTest extends TestCase
         ]);
 
         return $id;
+    }
+
+    private function sourceFenceOperation(string $tenantId, string $nodeId, string $deployment, int $generation, int $preScaleReplicas): string
+    {
+        $operationId = app(RuntimeOperationRepository::class)->create(
+            'runtime.node.runtime.fence',
+            'conference',
+            IdentityIds::new(),
+            [
+                'conference_id' => IdentityIds::new(),
+                'former_runtime_binding_id' => IdentityIds::new(),
+                'former_runtime_node_id' => $nodeId,
+                'runtime_node_id' => $nodeId,
+                'configuration_generation' => $generation,
+                'runtime_fence_provenance' => [
+                    'scale_to_zero_requested' => [
+                        'by_operation' => true,
+                        'operation_id' => 'pending-source-fence',
+                        'namespace' => 'utcp-runtime',
+                        'deployment' => $deployment,
+                        'pre_scale_replicas' => $preScaleReplicas,
+                        'attempt_count' => 1,
+                        'requested_at' => now()->subMinutes(2)->toJSON(),
+                    ],
+                    'runtime_node_disabled' => [
+                        'by_operation' => true,
+                        'operation_id' => 'pending-source-fence',
+                        'runtime_node_id' => $nodeId,
+                        'disabled_at' => now()->subMinute()->toJSON(),
+                    ],
+                ],
+            ],
+            ExecutionContext::system(tenantId: $tenantId, reason: 'source fence for restore request test'),
+            runtimeNodeId: $nodeId,
+        );
+        $payload = json_decode((string) DB::table('runtime_operations')->where('id', $operationId)->value('payload'), true, 512, JSON_THROW_ON_ERROR);
+        $payload['runtime_fence_provenance']['scale_to_zero_requested']['operation_id'] = $operationId;
+        $payload['runtime_fence_provenance']['runtime_node_disabled']['operation_id'] = $operationId;
+        DB::table('runtime_operations')->where('id', $operationId)->update([
+            'payload' => json_encode($payload, JSON_THROW_ON_ERROR),
+            'status' => 'succeeded',
+            'completed_at' => now()->subMinute(),
+            'updated_at' => now()->subMinute(),
+        ]);
+
+        return $operationId;
     }
 }

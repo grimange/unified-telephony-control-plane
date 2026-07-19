@@ -313,7 +313,10 @@ Artisan::command('runtime-engine:command-worker {--once : Process one batch and 
         $worker->workOnce(
             $workerId,
             (int) config('runtime_engine.batch_size', 10),
-            excludeOperationTypes: [(string) config('telephony_domain.operation_types.runtime_fence')],
+            excludeOperationTypes: [
+                (string) config('telephony_domain.operation_types.runtime_fence'),
+                (string) config('telephony_domain.operation_types.runtime_node_restore'),
+            ],
         );
         if (! $this->option('once')) {
             sleep((int) config('runtime_engine.poll_seconds', 5));
@@ -329,7 +332,10 @@ Artisan::command('runtime-engine:infrastructure-worker {--once : Process one inf
         $worker->workOnce(
             $workerId,
             (int) config('runtime_engine.batch_size', 10),
-            includeOperationTypes: [(string) config('telephony_domain.operation_types.runtime_fence')],
+            includeOperationTypes: [
+                (string) config('telephony_domain.operation_types.runtime_fence'),
+                (string) config('telephony_domain.operation_types.runtime_node_restore'),
+            ],
         );
         if (! $this->option('once')) {
             sleep((int) config('runtime_engine.poll_seconds', 5));

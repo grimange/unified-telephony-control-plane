@@ -18,6 +18,7 @@ for file in \
   apps/api/app/RuntimeEngine/Projection/ProjectionService.php \
   apps/api/app/RuntimeEngine/Reconciliation/ReconciliationWorker.php \
   apps/api/app/Infrastructure/RuntimeFencing/HttpKubernetesWorkloadClient.php \
+  apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeRestoreOperationHandler.php \
   infrastructure/kubernetes/base/platform/outbox-dispatcher-deployment.yaml \
   infrastructure/kubernetes/base/platform/telephony-command-worker-deployment.yaml \
   infrastructure/kubernetes/base/platform/telephony-event-normalizer-deployment.yaml \
@@ -31,6 +32,7 @@ do
 done
 
 find apps/api/app/RuntimeEngine -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
+find apps/api/app/Infrastructure/RuntimeFencing -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
 php -l apps/api/config/runtime_engine.php >/dev/null
 php -l apps/api/routes/console.php >/dev/null
 
@@ -62,10 +64,63 @@ grep -q "includeOperationTypes" apps/api/app/ControlPlane/RuntimeOperations/Runt
   fail "runtime operation repository does not support include type filtering"
 grep -q "excludeOperationTypes" apps/api/app/ControlPlane/RuntimeOperations/RuntimeOperationRepository.php ||
   fail "runtime operation repository does not support exclude type filtering"
-rg -F "excludeOperationTypes: [(string) config('telephony_domain.operation_types.runtime_fence')]" apps/api/routes/console.php >/dev/null ||
-  fail "generic command worker does not exclude runtime fence operations"
-rg -F "includeOperationTypes: [(string) config('telephony_domain.operation_types.runtime_fence')]" apps/api/routes/console.php >/dev/null ||
-  fail "infrastructure worker does not include only runtime fence operations"
+rg -F "'runtime_node_restore' => 'runtime.node.restore'" apps/api/config/telephony_domain.php >/dev/null ||
+  fail "missing canonical runtime.node.restore operation type"
+rg -F "RuntimeNodeRestoreOperationHandler::class" apps/api/app/Providers/AppServiceProvider.php >/dev/null ||
+  fail "runtime.node.restore handler is not registered"
+python3 <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path('apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeRestoreOperationHandler.php')
+source = path.read_text(encoding='utf-8')
+match = re.search(r'class\s+RuntimeNodeRestoreOperationHandler\s+implements\s+([^{]+)', source)
+if match is None:
+    print('runtime engine config check failed: runtime.node.restore handler declaration was not found', file=sys.stderr)
+    raise SystemExit(1)
+interfaces = {part.strip() for part in match.group(1).replace('\n', ' ').split(',')}
+if {'RuntimeOperationHandler', 'RunsOnDisabledRuntimeNode'} - interfaces:
+    print('runtime engine config check failed: runtime.node.restore handler must be allowed to run while the RuntimeNode is disabled', file=sys.stderr)
+    raise SystemExit(1)
+PY
+python3 <<'PY'
+import pathlib
+import sys
+
+routes = pathlib.Path('apps/api/routes/console.php').read_text(encoding='utf-8')
+
+def fail(message: str) -> None:
+    print(f"runtime engine config check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+try:
+    generic_start = routes.index("Artisan::command('runtime-engine:command-worker")
+    infra_start = routes.index("Artisan::command('runtime-engine:infrastructure-worker")
+    probe_start = routes.index("Artisan::command('runtime-engine:infrastructure-probe")
+except ValueError as exc:
+    fail(f'missing worker command declaration: {exc}')
+
+generic = routes[generic_start:infra_start]
+infra = routes[infra_start:probe_start]
+fence = "(string) config('telephony_domain.operation_types.runtime_fence')"
+restore = "(string) config('telephony_domain.operation_types.runtime_node_restore')"
+
+for operation_type in (fence, restore):
+    if operation_type not in generic:
+        fail(f'generic command worker does not exclude {operation_type}')
+    if operation_type not in infra:
+        fail(f'infrastructure worker does not include {operation_type}')
+
+if 'excludeOperationTypes:' not in generic:
+    fail('generic command worker must use excludeOperationTypes for infrastructure-only work')
+if 'includeOperationTypes:' not in infra:
+    fail('infrastructure worker must use includeOperationTypes for infrastructure-only work')
+if 'excludeOperationTypes:' in infra:
+    fail('infrastructure worker must not use exclusion routing')
+if 'includeOperationTypes:' in generic:
+    fail('generic command worker must not use inclusion routing')
+PY
 grep -q "runtime-engine:infrastructure-worker {--once" apps/api/routes/console.php ||
   fail "missing dedicated infrastructure worker command"
 grep -q "runtime-engine:infrastructure-probe {--once" apps/api/routes/console.php ||

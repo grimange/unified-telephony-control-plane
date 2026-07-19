@@ -5564,8 +5564,9 @@ provision a longer-lived session or refresh it before the outage.
 
 ### Restoration and cleanup (Phase 12–13)
 
-Node B restored via `kubectl scale asterisk-ari-b --replicas=1` (the single
-authorized restoration) → **new Pod** `8557bd4d76-9z4ln` (uid `bad5fbce…`,
+Node B restored via proof-only `kubectl scale asterisk-ari-b --replicas=1`
+(manual infrastructure recovery before T5-A37; no longer normal restoration
+authority) → **new Pod** `8557bd4d76-9z4ln` (uid `bad5fbce…`,
 distinct from the fenced `c1f63121`), restart 0, corrected exec liveness,
 regenerated `http.conf` (`enabled=yes`), fresh empty Asterisk, lease claimed,
 new open epoch, RuntimeNode ready. It did **not** reclaim the conference
@@ -5980,11 +5981,12 @@ correction that T5-A31's 5-minute session could not satisfy.
 
 ### Former-node restoration
 
-`kubectl scale asterisk-ari-b --replicas=1` → **new Pod** `8557bd4d76-2d2sk`
-(uid `1f53ff0b…`, distinct from fenced `bad5fbce…`), restart 0, corrected exec
-liveness, regenerated `http.conf` (`enabled=yes`), fresh empty Asterisk, lease
-claimed, new open epoch, RuntimeNode ready. Did not reclaim the conference
-(remained on node A gen 3).
+Proof-only `kubectl scale asterisk-ari-b --replicas=1` (manual infrastructure
+recovery before T5-A37; no longer normal restoration authority) → **new Pod**
+`8557bd4d76-2d2sk` (uid `1f53ff0b…`, distinct from fenced `bad5fbce…`), restart
+0, corrected exec liveness, regenerated `http.conf` (`enabled=yes`), fresh empty
+Asterisk, lease claimed, new open epoch, RuntimeNode ready. Did not reclaim the
+conference (remained on node A gen 3).
 
 ### Cleanup and final state
 
@@ -6013,10 +6015,11 @@ production lifecycle that replaces the proof-only manual
 `kubectl scale deployment/<fenced> --replicas=1`. No implementation, scaling, or
 failover performed. All tests/config-checks pass.
 
-### Current restoration authority
+### Current restoration authority at T5-A36
 
-**None exists in production.** A successfully fenced RuntimeNode is restored
-ONLY by the manual `kubectl scale 0→1`, which appears solely in the
+**Superseded by T5-A37.** At the time of this evidence-only audit, no production
+restoration authority existed. A successfully fenced RuntimeNode was restored
+only by the manual `kubectl scale 0→1`, which appeared solely in the
 `scripts/asterisk-conference/recovery-runtime-proof` test-teardown and in the
 T5 proof runbooks — never in application/control-plane code. It must be
 reclassified as exceptional infrastructure recovery, not normal authority.
@@ -6317,3 +6320,109 @@ Do not push. End with the AGENTS.md report format. Recommended next: a live
 T5-A35-style rerun that restores the fenced node via the desired-state action
 instead of manual kubectl scale.
 ```
+
+## T5-A37 — Canonical desired-state-driven former-node restoration
+
+Repository-only implementation on `f887387`. No Kubernetes resource was applied,
+no Deployment was scaled, no Pod was deleted, no live Conference was created, and
+no live failover or live restoration was performed.
+
+### Manual scale-up authority removed from normal lifecycle
+
+T5-A35/T5-A36 proved that manual `kubectl scale deployment/<former-node>
+--replicas=1` could bring the fenced RuntimeNode workload back, but that command
+was only an operational proof tool. The normal authority is now the existing
+RuntimeNode desired-state API. `kubectl scale` remains only a break-glass
+infrastructure recovery action outside the UTCP management contract; it is not a
+coequal restoration interface.
+
+### Fence-to-disabled transition
+
+Successful current-authority runtime-fence completion now leaves the former
+RuntimeNode in `desired_state=disabled` through `RuntimeRegistryService`, not by a
+raw model write. Both successful `fenced` and valid `already_fenced` outcomes
+record source-fence disable provenance on the runtime operation and keep the
+replacement node and moved RuntimeBindings untouched. The disabled state removes
+the fenced node from placement candidacy while its Deployment is at zero replicas.
+
+### Desired-state restoration authority
+
+The existing `POST /runtime-nodes/{id}/desired-state` surface and
+`runtime.nodes.manage` permission are the only normal restoration request path.
+For a RuntimeNode disabled by the fence lifecycle, an authorized `active` request
+schedules or reuses `runtime.node.restore` and leaves the persisted node
+`disabled` while the asynchronous restoration runs. Unauthorized and cross-tenant
+requests retain the existing failure behavior.
+
+### Runtime restore operation and routing
+
+The new operation type is `runtime.node.restore`. Its payload records the tenant,
+RuntimeNode, requested `active` state, source fence operation and generation,
+workload namespace and Deployment, target replicas, actor, optional reason, and
+expected RuntimeNode configuration version. Its idempotency key includes the
+RuntimeNode ID, source fence operation ID, source fence generation, and requested
+active state. The generic telephony command worker excludes it; the dedicated
+infrastructure worker includes it with `runtime.node.runtime.fence`. No new RBAC
+or NetworkPolicy was added.
+
+### Source-fence replica target and restore provenance
+
+The scale target is taken from source-fence provenance:
+`runtime_fence_provenance.scale_to_zero_requested.pre_scale_replicas`. The restore
+handler rejects missing or invalid provenance visibly instead of guessing from the
+live Deployment spec, an environment default, or a hard-coded replica count. When
+it successfully requests `0 -> target`, the operation payload records
+`runtime_restore_provenance.scale_to_target_requested` with the operation ID,
+source fence operation, namespace, Deployment, pre-scale replicas, target replicas,
+attempt, and timestamp. That provenance survives retries and worker recreation, so
+a later attempt does not issue a duplicate effective scale request.
+
+### Readiness, lease, epoch, and fresh-runtime gates
+
+Completion is gated on Deployment desired/status/available replicas satisfying
+the source target, owned Pods existing and Ready, no prior-generation owned Pod
+remaining, a current `asterisk-ari-events` lease, a new open runtime event epoch
+opened after restoration began, `observed_state=ready`, and no active open
+Conference binding pointing back to the restored former node. The fresh-runtime
+contract for this slice is fresh Pod identity plus new event epoch plus current
+ready observation plus no old owned Pod plus no moved-Conference reclaim.
+
+### Placement re-entry
+
+The node remains `disabled` throughout scale-up and validation, so normal
+placement remains blocked by the existing placement predicate. Only after all
+restore gates pass does `RuntimeRegistryService` transition the node back to
+`active` and emit `runtime_node.restored`. No placement allowlist, hidden toggle,
+or automatic movement of Conferences back to the restored node was added.
+
+### Failure taxonomy
+
+Retryable outcomes include temporary scale failure, Deployment not yet at target,
+owned Pod not yet created or Ready, missing current lease, missing new open epoch,
+and RuntimeNode not yet observed ready. Terminal or stale outcomes include target
+or ownership mismatch, missing or invalid source fence provenance, changed
+configuration version, RuntimeNode no longer disabled, source fence no longer a
+successful source for the node, recovered active binding authority, permission
+failure, and Kubernetes client permission or target errors. Failures remain in the
+runtime operation row; there is no silent fallback to manual scale-up.
+
+### Focused regression coverage
+
+Added focused coverage for fence-to-disabled idempotency, authorized and
+unauthorized desired-state restoration requests, repeated request idempotency,
+source-fence target selection, missing-provenance terminal failure, exactly-one
+scale-up, restore provenance across worker recreation, Pod readiness retry,
+lease/epoch/ready retries, authority-change cancellation, placement blocked until
+completion, stale moved-Conference protection, and single `runtime_node.restored`
+event emission. The main regression executes the real path from desired-state
+request through operation persistence, infrastructure-worker handling, fake
+Kubernetes workload client, retry evidence, readiness/lease/epoch gates,
+desired-state activation, and outbox evidence.
+
+### Live proof boundary
+
+Live canonical restoration remains pending. The next destructive proof must roll
+through a successful automatic failover, request former-node restoration through
+the desired-state API, prove `runtime.node.restore` scales the workload back up
+without manual `kubectl scale`, and confirm the restored node re-enters placement
+only after `runtime_node.restored`.

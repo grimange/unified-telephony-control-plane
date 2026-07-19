@@ -82,10 +82,13 @@ final class AdminRuntimeNodeController extends Controller
     {
         $tenantId = $this->tenantId($request);
         $authorization->requireTenant($request->user()->id, $tenantId, 'runtime.nodes.manage');
-        $data = $request->validate(['desired_state' => ['required', 'string', 'max:32']]);
+        $data = $request->validate([
+            'desired_state' => ['required', 'string', 'max:32'],
+            'reason' => ['nullable', 'string', 'max:512'],
+        ]);
 
         try {
-            return response()->json($registry->changeDesiredState($request, $tenantId, $runtimeNode, $data['desired_state']));
+            return response()->json($registry->changeDesiredState($request, $tenantId, $runtimeNode, $data['desired_state'], $data['reason'] ?? null));
         } catch (InvalidArgumentException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
         }

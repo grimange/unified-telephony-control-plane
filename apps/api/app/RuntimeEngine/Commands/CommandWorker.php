@@ -137,7 +137,11 @@ final class CommandWorker
         if ($node === null || $node->tenant_id !== $operation->tenant_id) {
             return FailureClass::InvalidRequest;
         }
-        if (! in_array($node->desired_state, ['active', 'draining'], true)) {
+        $allowedDesiredStates = ['active', 'draining'];
+        if ($handler instanceof RunsOnDisabledRuntimeNode) {
+            $allowedDesiredStates[] = 'disabled';
+        }
+        if (! in_array($node->desired_state, $allowedDesiredStates, true)) {
             return FailureClass::Conflict;
         }
         $requiredCapability = $handler->requiredRuntimeCapability();
@@ -163,6 +167,8 @@ final class CommandWorker
             'payload_version' => (int) $row->payload_version,
             'payload' => json_decode((string) $row->payload, true, 512, JSON_THROW_ON_ERROR),
             'attempt_count' => (int) $row->attempt_count,
+            'created_at' => $row->created_at,
+            'started_at' => $row->started_at,
         ];
     }
 

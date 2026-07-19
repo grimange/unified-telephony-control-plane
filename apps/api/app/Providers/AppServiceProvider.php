@@ -7,6 +7,7 @@ use App\Infrastructure\RuntimeFencing\InfrastructureAdapterRegistry;
 use App\Infrastructure\RuntimeFencing\KubernetesRuntimeFenceAdapter;
 use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClient;
 use App\Infrastructure\RuntimeFencing\RuntimeFenceOperationHandler;
+use App\Infrastructure\RuntimeFencing\RuntimeNodeRestoreOperationHandler;
 use App\RuntimeAdapters\Asterisk\AsteriskAdapterConfigurationHandler;
 use App\RuntimeAdapters\Asterisk\AsteriskAriEventNormalizer;
 use App\RuntimeAdapters\Asterisk\AsteriskCatalog;
@@ -59,6 +60,7 @@ class AppServiceProvider extends ServiceProvider
             new ConferenceOperationHandler((string) config('telephony_domain.operation_types.participant_remove'), (string) config('telephony_domain.runtime_capabilities.conference_participation')),
             new ConferenceOperationHandler((string) config('telephony_domain.operation_types.verify_conference_absent'), (string) config('telephony_domain.runtime_capabilities.conference_lifecycle')),
             $app->make(RuntimeFenceOperationHandler::class),
+            $app->make(RuntimeNodeRestoreOperationHandler::class),
         ]));
         $this->app->singleton(EventNormalizerRegistry::class, function ($app): EventNormalizerRegistry {
             $catalog = $app->make(SimulatorCatalog::class);

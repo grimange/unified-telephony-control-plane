@@ -3,10 +3,12 @@
 namespace App\Infrastructure\RuntimeFencing;
 
 use App\ControlPlane\RuntimeOperations\FailureClass;
+use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\PayloadSafety;
 use App\ControlPlane\Shared\StableJson;
 use App\RuntimeEngine\Commands\RuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeOperationHandler;
+use App\RuntimeRegistry\RuntimeRegistryService;
 use App\TelephonyDomain\TelephonyDomainService;
 use Illuminate\Support\Facades\DB;
 
@@ -15,6 +17,7 @@ final class RuntimeFenceOperationHandler implements RuntimeOperationHandler
     public function __construct(
         private readonly InfrastructureAdapterRegistry $adapters,
         private readonly TelephonyDomainService $domain,
+        private readonly RuntimeRegistryService $registry,
     ) {}
 
     public function operationType(): string
@@ -81,6 +84,17 @@ final class RuntimeFenceOperationHandler implements RuntimeOperationHandler
 
         $status = (string) ($result['status'] ?? 'failed');
         if (in_array($status, ['fenced', 'already_fenced'], true)) {
+            $this->registry->disableAfterSuccessfulFence(
+                ExecutionContext::system(
+                    tenantId: (string) ($operation['tenant_id'] ?? ''),
+                    reason: 'runtime fence completed',
+                    origin: 'runtime-engine',
+                ),
+                (string) ($operation['tenant_id'] ?? ''),
+                (string) $payload['former_runtime_node_id'],
+                (string) ($operation['id'] ?? ''),
+            );
+
             return [
                 'status' => 'completed',
                 'event_type' => 'conference.runtime_fence_terminated',

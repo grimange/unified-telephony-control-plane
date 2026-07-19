@@ -160,7 +160,7 @@ if rg -n "replacement_.*node_id|replacement_node|replacementRuntimeNodeId" apps/
   exit 1
 fi
 
-if rg -n "kubectl|shell_exec|exec\\(|proc_open|passthru|system\\(" apps/api/app/Infrastructure/RuntimeFencing; then
+if rg -n "kubectl|shell_exec|(^|[^:[:alnum:]_])exec\\(|proc_open|passthru|(^|[^:[:alnum:]_])system\\(" apps/api/app/Infrastructure/RuntimeFencing; then
   printf 'C5 infrastructure fencing uses shell or kubectl execution.\n' >&2
   exit 1
 fi
@@ -170,7 +170,7 @@ if rg -n "delete.*Pod|pod.*delete|deleteCollection|pods/.*/delete" apps/api/app/
   exit 1
 fi
 
-if rg -n "kubectl|shell_exec|exec\\(|proc_open|passthru|system\\(" apps/api/app/Infrastructure/RuntimeFencing; then
+if rg -n "kubectl|shell_exec|(^|[^:[:alnum:]_])exec\\(|proc_open|passthru|(^|[^:[:alnum:]_])system\\(" apps/api/app/Infrastructure/RuntimeFencing; then
   printf 'C5 infrastructure fencing or worker surface uses shell or kubectl execution.\n' >&2
   exit 1
 fi

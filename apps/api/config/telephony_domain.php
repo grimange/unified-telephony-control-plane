@@ -19,6 +19,7 @@ return [
         'participant_remove' => 'conference.participant.remove',
         'verify_conference_absent' => 'runtime.node.verify_conference_absent',
         'runtime_fence' => 'runtime.node.runtime.fence',
+        'runtime_node_restore' => 'runtime.node.restore',
     ],
 
     'runtime_capabilities' => [

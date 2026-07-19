@@ -182,6 +182,8 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
         ]);
         $this->assertSame('already_fenced', $this->terminationEventPayload($conferenceId)['fence_result']);
         $this->assertNull($this->selfScaleProvenance($operationId));
+        $this->assertSame('disabled', DB::table('runtime_nodes')->where('id', $nodeId)->value('desired_state'));
+        $this->assertTrue((bool) data_get($this->operationPayload($operationId), 'runtime_fence_provenance.runtime_node_disabled.by_operation'));
     }
 
     public function test_replacement_becoming_unavailable_before_runtime_fence_execute_prevents_scale(): void
@@ -298,6 +300,8 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
         $this->assertSame($nodeId, $eventPayload['former_runtime_node_id']);
         $this->assertSame([['utcp-runtime', 'asterisk-ari-worker', 0]], $fake->scaleCalls);
         $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conferenceId)->where('event_type', 'conference.runtime_fence_terminated')->count());
+        $this->assertSame('disabled', DB::table('runtime_nodes')->where('id', $nodeId)->value('desired_state'));
+        $this->assertTrue((bool) data_get($this->operationPayload($operationId), 'runtime_fence_provenance.runtime_node_disabled.by_operation'));
 
         $processed = app(CommandWorker::class)->workOnce('runtime-fence-worker-3', 1);
         $this->assertSame(0, $processed);
@@ -321,6 +325,7 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
         $this->assertSame([['utcp-runtime', 'asterisk-ari-one-attempt', 0]], $fake->scaleCalls);
         $this->assertSame('fenced', $this->terminationEventPayload($conferenceId)['fence_result']);
         $this->assertIsArray($this->selfScaleProvenance($operationId));
+        $this->assertSame('disabled', DB::table('runtime_nodes')->where('id', $nodeId)->value('desired_state'));
     }
 
     public function test_runtime_fence_operation_already_zero_with_terminating_pod_remains_already_fenced(): void
@@ -347,6 +352,7 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
         $this->assertSame([], $fake->scaleCalls);
         $this->assertSame('already_fenced', $this->terminationEventPayload($conferenceId)['fence_result']);
         $this->assertNull($this->selfScaleProvenance($operationId));
+        $this->assertSame('disabled', DB::table('runtime_nodes')->where('id', $nodeId)->value('desired_state'));
     }
 
     public function test_runtime_fence_operation_does_not_claim_external_zero_after_scale_request_fails(): void
@@ -395,6 +401,137 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
             'aggregate_id' => $conferenceId,
             'event_type' => 'conference.runtime_fence_terminated',
         ]);
+    }
+
+    public function test_runtime_restore_operation_scales_to_source_target_and_completes_after_worker_restart(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('restore', observedState: 'unavailable');
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'desired_state' => 'disabled',
+            'configuration_version' => 2,
+            'updated_at' => now(),
+        ]);
+        $sourceFenceId = $this->sourceFenceOperation($tenantId, $nodeId, 'restore', 23, 1);
+        $restoreId = $this->restoreOperation($tenantId, $nodeId, $sourceFenceId, 'restore', 23, 1, 2);
+        $fake = FakeKubernetesWorkloadClient::withDeployment($this->deployment('asterisk-ari-restore', 'conference-runtime-restore', 0, 0, 0));
+        $fake->afterScaleDeployment = $this->deployment('asterisk-ari-restore', 'conference-runtime-restore', 1, 0, 0);
+        $fake->afterScalePods = [];
+        $this->bindFakeClient($fake);
+
+        app(CommandWorker::class)->workOnce('runtime-restore-worker-1', 1, includeOperationTypes: ['runtime.node.restore']);
+
+        $this->assertSame('retry_scheduled', DB::table('runtime_operations')->where('id', $restoreId)->value('status'));
+        $this->assertSame('runtime_restore_deployment_not_ready', DB::table('runtime_operations')->where('id', $restoreId)->value('last_failure_code'));
+        $this->assertSame([['utcp-runtime', 'asterisk-ari-restore', 1]], $fake->scaleCalls);
+        $provenance = $this->restoreScaleProvenance($restoreId);
+        $this->assertIsArray($provenance);
+        $this->assertSame($restoreId, $provenance['operation_id']);
+        $this->assertSame($sourceFenceId, $provenance['source_fence_operation_id']);
+        $this->assertSame(1, $provenance['target_replicas']);
+        $this->assertSame('disabled', DB::table('runtime_nodes')->where('id', $nodeId)->value('desired_state'));
+
+        DB::table('runtime_operations')->where('id', $restoreId)->update(['available_at' => now()->subSecond()]);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'observed_state' => 'ready',
+            'observed_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->claimAsteriskLease($tenantId, $nodeId);
+        $epochId = $this->openAsteriskEpoch($tenantId, $nodeId, now()->addSecond());
+        $fake->deployment = $this->deployment('asterisk-ari-restore', 'conference-runtime-restore', 1, 1, 1);
+        $fake->pods = [$this->readyPod('asterisk-ari-restore-new', 'pod-new-restore')];
+        $this->app->forgetInstance(CommandWorker::class);
+
+        app(CommandWorker::class)->workOnce('runtime-restore-worker-2', 1, includeOperationTypes: ['runtime.node.restore']);
+
+        $this->assertSame('succeeded', DB::table('runtime_operations')->where('id', $restoreId)->value('status'));
+        $this->assertSame('active', DB::table('runtime_nodes')->where('id', $nodeId)->value('desired_state'));
+        $this->assertSame([['utcp-runtime', 'asterisk-ari-restore', 1]], $fake->scaleCalls);
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $nodeId)->where('event_type', 'runtime_node.restored')->count());
+        $payload = $this->restoredEventPayload($nodeId);
+        $this->assertSame($restoreId, $payload['operation_id']);
+        $this->assertSame($sourceFenceId, $payload['source_fence_operation_id']);
+        $this->assertSame(1, $payload['target_replicas']);
+        $this->assertSame(['pod-new-restore'], $payload['new_pod_uids']);
+        $this->assertSame($epochId, $payload['new_event_epoch_id']);
+
+        $processed = app(CommandWorker::class)->workOnce('runtime-restore-worker-3', 1, includeOperationTypes: ['runtime.node.restore']);
+        $this->assertSame(0, $processed);
+        $this->assertSame([['utcp-runtime', 'asterisk-ari-restore', 1]], $fake->scaleCalls);
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $nodeId)->where('event_type', 'runtime_node.restored')->count());
+    }
+
+    public function test_runtime_restore_missing_source_provenance_fails_without_scale(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('restore-missing', observedState: 'unavailable');
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'desired_state' => 'disabled',
+            'configuration_version' => 2,
+            'updated_at' => now(),
+        ]);
+        $sourceFenceId = $this->sourceFenceOperation($tenantId, $nodeId, 'restore-missing', 24, 1, includeScaleProvenance: false);
+        $restoreId = $this->restoreOperation($tenantId, $nodeId, $sourceFenceId, 'restore-missing', 24, 1, 2);
+        $fake = FakeKubernetesWorkloadClient::withDeployment($this->deployment('asterisk-ari-restore-missing', 'conference-runtime-restore-missing', 0, 0, 0));
+        $this->bindFakeClient($fake);
+
+        app(CommandWorker::class)->workOnce('runtime-restore-missing', 1, includeOperationTypes: ['runtime.node.restore']);
+
+        $this->assertSame('terminal_failed', DB::table('runtime_operations')->where('id', $restoreId)->value('status'));
+        $this->assertSame('runtime_restore_source_fence_invalid', DB::table('runtime_operations')->where('id', $restoreId)->value('last_failure_code'));
+        $this->assertSame([], $fake->scaleCalls);
+        $this->assertNull($this->restoreScaleProvenance($restoreId));
+        $this->assertSame('disabled', DB::table('runtime_nodes')->where('id', $nodeId)->value('desired_state'));
+    }
+
+    public function test_runtime_restore_waits_for_lease_epoch_and_ready_projection_before_activation(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('restore-gates', observedState: 'unavailable');
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'desired_state' => 'disabled',
+            'configuration_version' => 2,
+            'updated_at' => now(),
+        ]);
+        $sourceFenceId = $this->sourceFenceOperation($tenantId, $nodeId, 'restore-gates', 25, 1);
+        $restoreId = $this->restoreOperation($tenantId, $nodeId, $sourceFenceId, 'restore-gates', 25, 1, 2);
+        $fake = FakeKubernetesWorkloadClient::withDeployment($this->deployment('asterisk-ari-restore-gates', 'conference-runtime-restore-gates', 0, 0, 0));
+        $fake->afterScaleDeployment = $this->deployment('asterisk-ari-restore-gates', 'conference-runtime-restore-gates', 1, 1, 1);
+        $fake->afterScalePods = [$this->readyPod('asterisk-ari-restore-gates-new', 'pod-new-gates')];
+        $this->bindFakeClient($fake);
+
+        app(CommandWorker::class)->workOnce('runtime-restore-gates-1', 1, includeOperationTypes: ['runtime.node.restore']);
+        $this->assertSame('runtime_restore_listener_lease_missing', DB::table('runtime_operations')->where('id', $restoreId)->value('last_failure_code'));
+
+        DB::table('runtime_operations')->where('id', $restoreId)->update(['available_at' => now()->subSecond()]);
+        $this->claimAsteriskLease($tenantId, $nodeId);
+        app(CommandWorker::class)->workOnce('runtime-restore-gates-2', 1, includeOperationTypes: ['runtime.node.restore']);
+        $this->assertSame('runtime_restore_event_epoch_missing', DB::table('runtime_operations')->where('id', $restoreId)->value('last_failure_code'));
+
+        DB::table('runtime_operations')->where('id', $restoreId)->update(['available_at' => now()->subSecond()]);
+        $this->openAsteriskEpoch($tenantId, $nodeId, now()->addSecond());
+        app(CommandWorker::class)->workOnce('runtime-restore-gates-3', 1, includeOperationTypes: ['runtime.node.restore']);
+        $this->assertSame('runtime_restore_node_not_ready', DB::table('runtime_operations')->where('id', $restoreId)->value('last_failure_code'));
+        $this->assertSame('disabled', DB::table('runtime_nodes')->where('id', $nodeId)->value('desired_state'));
+        $this->assertSame([['utcp-runtime', 'asterisk-ari-restore-gates', 1]], $fake->scaleCalls);
+    }
+
+    public function test_runtime_restore_authority_change_prevents_mutation(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('restore-stale', observedState: 'unavailable');
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'desired_state' => 'disabled',
+            'configuration_version' => 3,
+            'updated_at' => now(),
+        ]);
+        $sourceFenceId = $this->sourceFenceOperation($tenantId, $nodeId, 'restore-stale', 26, 1);
+        $restoreId = $this->restoreOperation($tenantId, $nodeId, $sourceFenceId, 'restore-stale', 26, 1, 2);
+        $fake = FakeKubernetesWorkloadClient::withDeployment($this->deployment('asterisk-ari-restore-stale', 'conference-runtime-restore-stale', 0, 0, 0));
+        $this->bindFakeClient($fake);
+
+        app(CommandWorker::class)->workOnce('runtime-restore-stale', 1, includeOperationTypes: ['runtime.node.restore']);
+
+        $this->assertSame('terminal_failed', DB::table('runtime_operations')->where('id', $restoreId)->value('status'));
+        $this->assertSame('runtime_restore_configuration_stale', DB::table('runtime_operations')->where('id', $restoreId)->value('last_failure_code'));
+        $this->assertSame([], $fake->scaleCalls);
     }
 
     public function test_runtime_fence_operation_recovery_before_mutation_records_no_self_scale_provenance(): void
@@ -561,6 +698,84 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
         return [$conferenceId, $bindingId, $operationId];
     }
 
+    private function sourceFenceOperation(string $tenantId, string $nodeId, string $slug, int $generation, int $preScaleReplicas, bool $includeScaleProvenance = true): string
+    {
+        $payload = [
+            'conference_id' => IdentityIds::new(),
+            'former_runtime_binding_id' => IdentityIds::new(),
+            'former_runtime_node_id' => $nodeId,
+            'runtime_node_id' => $nodeId,
+            'configuration_generation' => $generation,
+            'runtime_fence_provenance' => [
+                'runtime_node_disabled' => [
+                    'by_operation' => true,
+                    'operation_id' => 'source-fence',
+                    'runtime_node_id' => $nodeId,
+                    'disabled_at' => now()->toJSON(),
+                ],
+            ],
+        ];
+        if ($includeScaleProvenance) {
+            $payload['runtime_fence_provenance']['scale_to_zero_requested'] = [
+                'by_operation' => true,
+                'operation_id' => 'source-fence',
+                'namespace' => 'utcp-runtime',
+                'deployment' => 'asterisk-ari-'.$slug,
+                'pre_scale_replicas' => $preScaleReplicas,
+                'attempt_count' => 1,
+                'requested_at' => now()->subMinutes(2)->toJSON(),
+            ];
+        }
+
+        $operationId = app(RuntimeOperationRepository::class)->create(
+            'runtime.node.runtime.fence',
+            'conference',
+            (string) $payload['conference_id'],
+            $payload,
+            ExecutionContext::system(tenantId: $tenantId, reason: 'source runtime fence'),
+            runtimeNodeId: $nodeId,
+        );
+        DB::table('runtime_operations')->where('id', $operationId)->update([
+            'status' => 'succeeded',
+            'completed_at' => now()->subMinute(),
+            'updated_at' => now()->subMinute(),
+        ]);
+
+        $payload['runtime_fence_provenance']['runtime_node_disabled']['operation_id'] = $operationId;
+        if ($includeScaleProvenance) {
+            $payload['runtime_fence_provenance']['scale_to_zero_requested']['operation_id'] = $operationId;
+        }
+        DB::table('runtime_operations')->where('id', $operationId)->update([
+            'payload' => json_encode($payload, JSON_THROW_ON_ERROR),
+        ]);
+
+        return $operationId;
+    }
+
+    private function restoreOperation(string $tenantId, string $nodeId, string $sourceFenceId, string $slug, int $generation, int $targetReplicas, int $configurationVersion): string
+    {
+        return app(RuntimeOperationRepository::class)->create(
+            'runtime.node.restore',
+            'runtime_node',
+            $nodeId,
+            [
+                'tenant_id' => $tenantId,
+                'runtime_node_id' => $nodeId,
+                'requested_desired_state' => 'active',
+                'source_fence_operation_id' => $sourceFenceId,
+                'source_fence_generation' => $generation,
+                'workload_namespace' => 'utcp-runtime',
+                'deployment' => 'asterisk-ari-'.$slug,
+                'target_replicas' => $targetReplicas,
+                'requesting_actor' => null,
+                'reason' => 'test restore',
+                'expected_runtime_node_configuration_version' => $configurationVersion,
+            ],
+            ExecutionContext::system(tenantId: $tenantId, reason: 'runtime restore test'),
+            runtimeNodeId: $nodeId,
+        );
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -590,6 +805,20 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
     }
 
     /**
+     * @return array<string, mixed>|null
+     */
+    private function restoreScaleProvenance(string $operationId): ?array
+    {
+        $provenance = $this->operationPayload($operationId)['runtime_restore_provenance']['scale_to_target_requested'] ?? null;
+        if ($provenance === null) {
+            return null;
+        }
+        $this->assertIsArray($provenance);
+
+        return $provenance;
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function terminationEventPayload(string $conferenceId): array
@@ -597,6 +826,23 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
         $payload = DB::table('control_plane_outbox_messages')
             ->where('aggregate_id', $conferenceId)
             ->where('event_type', 'conference.runtime_fence_terminated')
+            ->value('payload');
+        $this->assertIsString($payload);
+
+        $decoded = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertIsArray($decoded);
+
+        return $decoded;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function restoredEventPayload(string $nodeId): array
+    {
+        $payload = DB::table('control_plane_outbox_messages')
+            ->where('aggregate_id', $nodeId)
+            ->where('event_type', 'runtime_node.restored')
             ->value('payload');
         $this->assertIsString($payload);
 
@@ -624,6 +870,75 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
             'spec' => ['replicas' => $desired],
             'status' => ['replicas' => $status, 'availableReplicas' => $available],
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function readyPod(string $name, string $uid): array
+    {
+        return [
+            'metadata' => [
+                'name' => $name,
+                'uid' => $uid,
+            ],
+            'status' => [
+                'conditions' => [
+                    ['type' => 'Ready', 'status' => 'True'],
+                ],
+            ],
+        ];
+    }
+
+    private function claimAsteriskLease(string $tenantId, string $nodeId): void
+    {
+        $eventSourceId = IdentityIds::new();
+        DB::table('event_sources')->insert([
+            'id' => $eventSourceId,
+            'source_kind' => 'runtime-node',
+            'source_key' => 'restore-'.$nodeId,
+            'runtime_node_id' => $nodeId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('runtime_listener_leases')->insert([
+            'id' => IdentityIds::new(),
+            'event_source_id' => $eventSourceId,
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $nodeId,
+            'listener_kind' => 'asterisk-ari-events',
+            'status' => 'claimed',
+            'owner' => 'restore-test',
+            'fencing_token' => IdentityIds::new(),
+            'claimed_at' => now(),
+            'heartbeat_at' => now(),
+            'lease_expires_at' => now()->addMinutes(5),
+            'metadata' => json_encode(['test' => true], JSON_THROW_ON_ERROR),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function openAsteriskEpoch(string $tenantId, string $nodeId, mixed $openedAt): string
+    {
+        $eventSourceId = (string) DB::table('event_sources')->where('runtime_node_id', $nodeId)->value('id');
+        $epochId = IdentityIds::new();
+        DB::table('runtime_event_connection_epochs')->insert([
+            'id' => $epochId,
+            'event_source_id' => $eventSourceId,
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $nodeId,
+            'adapter_key' => 'asterisk-ari',
+            'status' => 'open',
+            'owner' => 'restore-test',
+            'fencing_token' => IdentityIds::new(),
+            'opened_at' => $openedAt,
+            'closed_at' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $epochId;
     }
 }
 
