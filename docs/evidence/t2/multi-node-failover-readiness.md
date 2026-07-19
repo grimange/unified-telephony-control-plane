@@ -5444,3 +5444,153 @@ Server-side dry-run of the corrected manifests passed against
 `.runtime/kubeconfig/utcp-local.yaml` / `k3d-utcp-local` without applying
 resources. Live rollout of the corrected probe contract and the automatic
 destructive failover proof remain pending.
+
+## T5-A31 — First end-to-end automatic two-node failover: probe fix PROVEN, failover EXECUTED; two proof-timing artifacts
+
+Checkpointed destructive proof at `UTCP_PHASE=T1`, HEAD `c89bdf1`. The corrected
+probe contract was rolled out live to both Asterisk nodes, the 120-second HTTP
+outage was proven NOT to restart the container (the fix that unblocked T5-A29),
+and — for the first time — the complete automatic failover chain executed
+end-to-end: detection → verification → terminal escalation (T5-A26) → automatic
+fence → scale-to-zero → binding replacement → generation increment → bridge
+reconstruction on the surviving node. Two deviations from the literal acceptance
+criteria remain, both precisely-characterized proof-timing artifacts (not
+failover-logic defects): the fence completion event reports `already_fenced`
+rather than `fenced`, and the participant was not reconstructed because its
+telephony session expired mid-proof. No manual scale-to-zero, Pod deletion,
+direct operation write, or RuntimeBinding edit occurred.
+
+### Probe rollout (Phase 1–3)
+
+T5-A26 fix confirmed live in `scheduler` and `telephony-command-worker`. Both
+live Asterisk Deployments rolled out one at a time from the committed manifests:
+node A (`asterisk-ari`, `overlays/local/runtime`) → new Pod
+`db55d57c5-9rxg8` (uid `c19929bc`, restart 0); node B (`asterisk-ari-b`,
+`overlays/local-two-asterisk/node-b` with the parent overlay's registry image
+transform) → new Pod `8557bd4d76-n56mq` (uid `c1f63121`, restart 0). Only the
+Deployment objects were applied (Service/Secret untouched); server-side dry-run
+clean. Node-B's `node-b`-only render initially lacked the registry image
+transform (it lives in the parent overlay) → ImagePullBackOff on the bare
+`utcp-asterisk-ari:latest`; corrected by extracting `asterisk-ari-b` from the
+full overlay render (registry image), old Pod stayed Ready throughout (rolling
+strategy, no outage). Live probes on both nodes:
+
+```text
+livenessProbe.exec = [/usr/sbin/asterisk -C /tmp/utcp-asterisk/asterisk.conf -rx "core show uptime"]
+livenessProbe.tcpSocket = <unset>   (committed manifest nulls the base tcpSocket)
+readinessProbe.tcpSocket.port = ari
+startupProbe.exec = [/usr/local/bin/utcp-asterisk-readiness]
+```
+
+Manual liveness exec exit 0 on both; Service isolation correct; both
+RuntimeNodes ready; no failover op.
+
+### Probe semantic preflight — the decisive fix (Phase 4)
+
+Proof conference `cbe2371c-…d5976`, participant `ca088417-…432a9e`, binding
+`b08e9e2e-…c82c1c`, bound node B (`05ddb383…`, deployment `asterisk-ari-b`,
+Pod uid `c1f63121`), generation 2. HTTP disabled 04:59:54. Over **120 seconds**
+(double the old ~60 s ARI-liveness restart window that blocked T5-A29):
+
+```text
+restart count: 0 (unchanged) — container NEVER restarted
+Pod Ready: false (readiness ARI-TCP fails, as designed)
+liveness core command: exit 0 every sample
+bridge + 2 channels: alive throughout (control socket)
+RuntimeNode: unavailable; REST: ari_http_transport_failed / runtime_unavailable
+```
+
+HTTP restored (checksum `aaf6effb…` match); node B recovered to `ready` at
+05:02:58, same Pod uid, restart 0, bridge intact. This is exactly what the old
+`tcpSocket:ari` liveness could not do — the T5-A29 blocker is resolved.
+
+### Sustained outage and automatic failover (Phase 6–11)
+
+- **05:03:09** HTTP disabled (left disabled); liveness OK, bridge alive, PID 1,
+  replicas 1/1.
+- **05:03:46** node B `unavailable`, REST transport-failed, epochs closed.
+  Last-ready 05:03:09 → grace crosses 05:08:09. Node B held: restart 0,
+  NotReady, bridge alive through the entire grace (verified 05:04:10, 05:05:10).
+- **05:09:02** coordinator created exactly one `runtime.node.verify_conference_absent`;
+  3/3 attempts `ari_http_transport_failed` → `terminal_failed`.
+- **05:10:03** **T5-A26 escalation fired**: next sweep classified the
+  terminal-failed transport verification and created exactly one
+  `runtime.node.runtime.fence` (coordinator outcome `runtime_fence_requested`).
+- Fence op (attempt 1) performed the **effective scale-to-zero**: node B
+  `asterisk-ari-b` desired 1→0 (node B was replicas=1 until this fence, verified
+  05:05:10). Pod still gracefully terminating → `fence_in_progress` (retryable).
+- Attempt 2 (**05:10:20**) saw pods=0 → termination predicate satisfied →
+  operation `succeeded`; `conference.runtime_fence_terminated`
+  `owned_pods_remaining=0`.
+- **05:11:02** rebind: old binding (`05ddb383`/node B) retired with `unbound_at`;
+  new binding (`1d15ca88`/node A) active; `conference.runtime_node_id` = node A;
+  generation **2 → 3**; `conference.runtime_binding_replaced`
+  (previous=05ddb383, new=1d15ca88, generation=3). Exactly one active binding.
+- **05:11:04** `conference.ensure` succeeded on node A at G+1; deterministic
+  bridge `utcp-conf-cbe2371c…` reconstructed **only** on node A; node B fenced
+  (replicas 0, owned pods 0). No duplicate verify/fence/bridge chains (one of
+  each).
+
+### Artifact 1 — fence_result=already_fenced (not "fenced")
+
+The completion event reports `already_fenced`. Root cause: the fence op needed
+2 attempts because the Asterisk Pod's graceful termination spans more than one
+fence reconcile cycle (the normal case). `KubernetesRuntimeFenceAdapter::fence`
+computes `wasAlreadyZero = desiredReplicas === 0` at the START of each execution;
+attempt 1 (desired=1) performed the scale and returned `fence_in_progress`;
+attempt 2 (desired=0, because attempt 1 already scaled) re-evaluated
+`wasAlreadyZero=true` and, with pods now 0, returned `already_fenced`. The
+effective scale-to-zero WAS caused by this fence operation (node B demonstrably
+at replicas=1 until the fence). So the proof's substance — the fence caused the
+automatic scale — is met; only the completion label reflects the retry. This is
+a spec-vs-implementation nuance: `fence_result=fenced` is only reachable when the
+Pod terminates within the same execution as the scale, which graceful
+termination normally prevents. Bounded fix worth considering: track
+`wasAlreadyZero` against the operation's own prior attempts so a self-caused
+scale completes as `fenced`.
+
+### Artifact 2 — participant not reconstructed (session expiry)
+
+The bridge reconstructed on node A, but the participant Local-channel legs did
+not. Root cause: the proof member's telephony session has a **5-minute TTL**
+(created ~04:59:23, expired 05:04:23), and the scheduled
+`telephony-domain:expire-sessions` sweep removed the now-expired participant at
+05:14 — setting `desired_state=removed`/`observed_state=left`. Because the total
+proof spans ~8 minutes (300 s grace + fence + rebind + reconstruction), the
+session expired before reconstruction, so the participant was canonically
+removed rather than re-admitted. This is a proof-duration artifact, not a
+reconstruction defect (the bridge reconstructed correctly). Rerun mitigation:
+provision a longer-lived session or refresh it before the outage.
+
+### Restoration and cleanup (Phase 12–13)
+
+Node B restored via `kubectl scale asterisk-ari-b --replicas=1` (the single
+authorized restoration) → **new Pod** `8557bd4d76-9z4ln` (uid `bad5fbce…`,
+distinct from the fenced `c1f63121`), restart 0, corrected exec liveness,
+regenerated `http.conf` (`enabled=yes`), fresh empty Asterisk, lease claimed,
+new open epoch, RuntimeNode ready. It did **not** reclaim the conference
+(remained on node A gen 3 — retired binding, moved generation, empty fresh
+Asterisk, event fence prevent reclaim). Proof Conference closed canonically
+(participant remove → desired-state closed → converged `closed`).
+
+### Final state
+
+Both Deployments 1/1 with new Pods (`c19929bc` node A, `bad5fbce` node B), both
+restart 0; both RuntimeNodes active/ready; both leases claimed; one open epoch
+per node; zero open conferences; zero live bridges/channels; zero pending/actionable
+operations; corrected exec liveness live on both nodes; tree clean;
+`UTCP_PHASE=T1`. No Kubernetes manifest or committed source changed. Historical
+operations/bindings/events retained.
+
+### Assessment
+
+The central new capability — corrected probes allowing a sustained ARI outage
+that automatically fences and fails over — is DEFINITIVELY PROVEN for the first
+time: 120 s outage with zero container restarts, then a full automatic
+detection→verify→terminal→T5-A26-escalation→fence→scale-to-zero→rebind→bridge-
+reconstruction chain. Per the literal acceptance criteria the run is INCOMPLETE
+on two points (`fence_result=already_fenced` and participant reconstruction),
+both proof-timing artifacts with exact root causes above, neither a
+failover-logic defect. Recommended rerun: longer session TTL for participant
+reconstruction; optionally adjust the fence adapter to report `fenced` for a
+self-caused scale.
