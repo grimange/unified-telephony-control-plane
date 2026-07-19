@@ -7074,3 +7074,51 @@ Separately (optional, benign config drift from §T5-A41): re-apply the committed
 platform ConfigMap so the live UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES matches
 the committed 30 — this is a live-ops correction, not part of the code slice.
 ```
+
+## T5-A42 observable no-capacity failover state
+
+T5-A42 converts the T5-A41 no-capacity observability gap into durable
+Conference-owned state while preserving the coordinator as the only replacement
+reselection authority. When an open Conference remains bound to an unavailable
+RuntimeNode and no distinct ready, capable replacement exists, the coordinator
+now marks the Conference with `failover_state=pending_no_capacity`,
+`failover_binding_id`, `failover_generation`, and `failover_started_at`.
+
+The state is scoped to the active binding and generation that first observed
+`no_replacement_available`. Repeated coordinator sweeps for the same binding and
+generation retain the original `failover_started_at` and do not rewrite
+transition evidence. The existing
+`conference.failover_coordinator.no_replacement` event is now transition-only
+for that authority instead of sweep-noisy recurring evidence.
+
+Pending no-capacity state clears automatically through existing lifecycle
+authority:
+
+- successful rebind clears the old binding/generation in the same transaction
+  that retires the old binding, inserts the replacement binding, and advances
+  the Conference generation
+- Conference closure clears any pending failover state
+- current RuntimeNode recovery before destructive rebind clears the matching
+  pending state
+- stale operations or older generations cannot clear pending state for a newer
+  binding/generation
+
+The existing Conference read resource exposes the read-only failover fields so
+operators can observe capacity loss without a new management endpoint. Clients
+cannot mutate these fields directly; they remain control-plane-owned lifecycle
+observations.
+
+Focused repository coverage now exercises capacity returning after
+`pending_no_capacity`, no-replacement event de-duplication, current-node recovery
+clearing, closure clearing, stale-generation protection, authorized and
+cross-tenant read behavior, full replacement generation advancement from G to
+G+1 to G+2, stale prior-generation protections, partial bridge and participant
+reconstruction conventions, and safe reuse of a restored former RuntimeNode as a
+future replacement candidate.
+
+The local overlay still renders
+`UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES=30`; applying the live ConfigMap remains
+a separate rollout correction. No Kubernetes resources were applied, no live
+Conference was created, and no live failover or restoration proof was performed
+for T5-A42. Live replacement-node failure, capacity-return recovery, and
+multi-generation proof remain pending.

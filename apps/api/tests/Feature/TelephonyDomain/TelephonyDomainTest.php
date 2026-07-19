@@ -659,7 +659,41 @@ final class TelephonyDomainTest extends TestCase
         $this->assertSame(1, $summary['rebound']);
         $this->assertSame($nodeA, DB::table('conferences')->where('id', $conferenceA['id'])->value('runtime_node_id'));
         $this->assertSame($replacementB, DB::table('conferences')->where('id', $conferenceB['id'])->value('runtime_node_id'));
+        $pendingA = DB::table('conferences')->where('id', $conferenceA['id'])->first();
+        $bindingA = DB::table('conference_runtime_bindings')->where('conference_id', $conferenceA['id'])->where('status', 'active')->first();
+        $this->assertSame('pending_no_capacity', $pendingA->failover_state);
+        $this->assertSame((string) $bindingA->id, $pendingA->failover_binding_id);
+        $this->assertSame((int) $conferenceA['configuration_generation'], (int) $pendingA->failover_generation);
+        $this->assertNotNull($pendingA->failover_started_at);
+        $this->assertNull(DB::table('conferences')->where('id', $conferenceB['id'])->value('failover_state'));
         $this->assertDatabaseHas('control_plane_audit_records', ['action' => 'conference.failover_coordinator.no_replacement']);
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conferenceA['id'])->where('event_type', 'conference.failover_coordinator.no_replacement')->count());
+    }
+
+    public function test_no_replacement_pending_state_is_transition_only_for_same_binding_and_generation(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-07-19 10:00:00'));
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-no-replacement-dedup');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-no-replacement-dedup');
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-no-replacement-dedup-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'stale', 'updated_at' => now()]);
+
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-replacement-dedup-first', 10);
+        $this->completeFenceOperationForConference($tenantId, $conference['id'], 'absent');
+        $first = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-replacement-dedup-second', 10);
+        $startedAt = DB::table('conferences')->where('id', $conference['id'])->value('failover_started_at');
+        Carbon::setTestNow(Carbon::parse('2026-07-19 10:05:00'));
+        $second = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-replacement-dedup-third', 10);
+
+        $this->assertSame(1, $first['no_replacement']);
+        $this->assertSame(1, $second['no_replacement']);
+        $this->assertSame($startedAt, DB::table('conferences')->where('id', $conference['id'])->value('failover_started_at'));
+        $this->assertSame(1, DB::table('control_plane_audit_records')->where('subject_id', $conference['id'])->where('action', 'conference.failover_coordinator.no_replacement')->count());
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conference['id'])->where('event_type', 'conference.failover_coordinator.no_replacement')->count());
+        $payload = json_decode((string) DB::table('control_plane_outbox_messages')->where('aggregate_id', $conference['id'])->where('event_type', 'conference.failover_coordinator.no_replacement')->value('payload'), true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame('pending_no_capacity', $payload['failover_state']);
+        $this->assertSame('no_replacement_available', $payload['reason']);
+        $this->assertNotEmpty($payload['idempotency_key']);
     }
 
     public function test_failover_coordinator_second_sweep_is_idempotent_after_rebind(): void
@@ -692,6 +726,224 @@ final class TelephonyDomainTest extends TestCase
     public function test_failover_coordinator_revalidates_degraded_recovery_before_cutoff(): void
     {
         $this->assertFailoverCoordinatorRevalidatesRecoveredStateBeforeCutoff('degraded');
+    }
+
+    public function test_current_node_recovery_clears_pending_no_capacity_state(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-no-capacity-recovered');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-no-capacity-recovered');
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-no-capacity-recovered-old-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-capacity-recovered-first', 10);
+        $this->completeFenceOperationForConference($tenantId, $conference['id'], 'absent');
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-capacity-recovered-second', 10);
+        $this->assertSame('pending_no_capacity', DB::table('conferences')->where('id', $conference['id'])->value('failover_state'));
+
+        $this->readyObservation($tenantId, $nodeA, now(), 'coordinator-no-capacity-recovered-new-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'ready', 'updated_at' => now()]);
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-capacity-recovered-third', 10);
+
+        $this->assertSame(0, $summary['candidates']);
+        $this->assertNull(DB::table('conferences')->where('id', $conference['id'])->value('failover_state'));
+        $this->assertNull(DB::table('conferences')->where('id', $conference['id'])->value('failover_binding_id'));
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+    }
+
+    public function test_closing_conference_clears_pending_no_capacity_state(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-no-capacity-closed');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-no-capacity-closed');
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-no-capacity-closed-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-capacity-closed-first', 10);
+        $this->completeFenceOperationForConference($tenantId, $conference['id'], 'absent');
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-capacity-closed-second', 10);
+        $this->assertSame('pending_no_capacity', DB::table('conferences')->where('id', $conference['id'])->value('failover_state'));
+
+        $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/admin/conferences/{$conference['id']}/desired-state", ['desired_state' => 'closed'])
+            ->assertOk()
+            ->assertJsonPath('conference.failover_state', null);
+
+        $this->assertNull(DB::table('conferences')->where('id', $conference['id'])->value('failover_state'));
+        $this->assertNull(DB::table('conferences')->where('id', $conference['id'])->value('failover_binding_id'));
+    }
+
+    public function test_capacity_return_rebind_clears_pending_no_capacity_state_atomically(): void
+    {
+        [$admin, $member, $tenantId, $nodeA] = $this->fixture('coordinator-no-capacity-return');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-no-capacity-return');
+        $participant = $this->admitParticipantFor($member, $tenantId, $conference['id']);
+        DB::table('runtime_reconciliation_states')->where('target_id', $conference['id'])->update(['status' => 'converged', 'next_check_at' => now()->addHour()]);
+        DB::table('runtime_reconciliation_states')->where('target_id', $participant['id'])->update(['status' => 'converged', 'next_check_at' => now()->addHour()]);
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-no-capacity-return-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-capacity-return-first', 10);
+        $this->completeFenceOperationForConference($tenantId, $conference['id'], 'absent');
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-capacity-return-second', 10);
+        $this->assertSame('pending_no_capacity', DB::table('conferences')->where('id', $conference['id'])->value('failover_state'));
+
+        $nodeB = $this->runtimeNode($tenantId, 'coordinator-no-capacity-return-b');
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-capacity-return-third', 10);
+        $updated = DB::table('conferences')->where('id', $conference['id'])->first();
+
+        $this->assertSame(1, $summary['rebound']);
+        $this->assertSame($nodeB, $updated->runtime_node_id);
+        $this->assertSame((int) $conference['configuration_generation'] + 1, (int) $updated->configuration_generation);
+        $this->assertNull($updated->failover_state);
+        $this->assertNull($updated->failover_binding_id);
+        $this->assertNull($updated->failover_generation);
+        $this->assertNull($updated->failover_started_at);
+        $this->assertDatabaseHas('runtime_reconciliation_states', [
+            'target_type' => 'conference',
+            'target_id' => $conference['id'],
+            'desired_generation' => (int) $updated->configuration_generation,
+            'status' => 'waiting',
+        ]);
+        $this->assertDatabaseHas('runtime_reconciliation_states', [
+            'target_type' => 'conference_participant',
+            'target_id' => $participant['id'],
+            'desired_generation' => ((int) $updated->configuration_generation * 2),
+            'status' => 'waiting',
+        ]);
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conference['id'])->where('event_type', 'conference.failover_coordinator.no_replacement')->count());
+        $this->assertDatabaseHas('control_plane_outbox_messages', [
+            'aggregate_id' => $conference['id'],
+            'event_type' => 'conference.runtime_binding_replaced',
+        ]);
+    }
+
+    public function test_stale_generation_cannot_clear_newer_pending_no_capacity_state(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-no-capacity-stale-clear');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-no-capacity-stale-clear');
+        $bindingId = (string) DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->value('id');
+
+        DB::table('conferences')->where('id', $conference['id'])->update([
+            'configuration_generation' => (int) $conference['configuration_generation'] + 1,
+            'failover_state' => 'pending_no_capacity',
+            'failover_binding_id' => $bindingId,
+            'failover_generation' => (int) $conference['configuration_generation'] + 1,
+            'failover_started_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $cleared = app(TelephonyDomainService::class)->clearConferenceFailoverPendingForAuthority(
+            $tenantId,
+            $conference['id'],
+            $bindingId,
+            (int) $conference['configuration_generation'],
+        );
+
+        $this->assertFalse($cleared);
+        $this->assertSame('pending_no_capacity', DB::table('conferences')->where('id', $conference['id'])->value('failover_state'));
+        $this->assertSame((int) $conference['configuration_generation'] + 1, (int) DB::table('conferences')->where('id', $conference['id'])->value('failover_generation'));
+    }
+
+    public function test_conference_resource_exposes_read_only_pending_no_capacity_state(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-no-capacity-api');
+        [, , $otherTenantId] = $this->fixture('coordinator-no-capacity-api-other');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-no-capacity-api');
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), 'coordinator-no-capacity-api-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-capacity-api-first', 10);
+        $this->completeFenceOperationForConference($tenantId, $conference['id'], 'absent');
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-no-capacity-api-second', 10);
+        $pending = DB::table('conferences')->where('id', $conference['id'])->first();
+
+        $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->getJson("/api/v1/admin/conferences/{$conference['id']}")
+            ->assertOk()
+            ->assertJsonPath('conference.failover_state', 'pending_no_capacity')
+            ->assertJsonPath('conference.failover_binding_id', $pending->failover_binding_id)
+            ->assertJsonPath('conference.failover_generation', (int) $pending->failover_generation)
+            ->assertJsonPath('conference.failover_started_at', $pending->failover_started_at);
+        $this->actingAs($admin)->withSession($this->tenantSession($otherTenantId))
+            ->getJson("/api/v1/admin/conferences/{$conference['id']}")
+            ->assertStatus(409);
+        $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/admin/conferences/{$conference['id']}/desired-state", [
+                'desired_state' => 'open',
+                'failover_state' => null,
+                'failover_generation' => null,
+            ])
+            ->assertOk();
+        $this->assertSame('pending_no_capacity', DB::table('conferences')->where('id', $conference['id'])->value('failover_state'));
+    }
+
+    public function test_second_replacement_generation_retires_prior_bindings_and_preserves_one_active_binding(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-multi-generation');
+        $nodeB = $this->runtimeNode($tenantId, 'coordinator-multi-generation-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-multi-generation');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        $first = app(TelephonyDomainService::class)->failoverRebindConference(
+            ExecutionContext::system(tenantId: $tenantId, reason: 'first multi-generation rebind'),
+            $tenantId,
+            $conference['id'],
+            'first_node_unavailable',
+        );
+        $nodeC = $this->runtimeNode($tenantId, 'coordinator-multi-generation-c');
+        DB::table('runtime_nodes')->where('id', $nodeB)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+        $second = app(TelephonyDomainService::class)->failoverRebindConference(
+            ExecutionContext::system(tenantId: $tenantId, reason: 'second multi-generation rebind'),
+            $tenantId,
+            $conference['id'],
+            'second_node_unavailable',
+        );
+
+        $updated = DB::table('conferences')->where('id', $conference['id'])->first();
+        $this->assertSame('rebound', $first['status']);
+        $this->assertSame($nodeB, $first['runtime_node_id']);
+        $this->assertSame('rebound', $second['status']);
+        $this->assertSame($nodeC, $second['runtime_node_id']);
+        $this->assertSame($nodeC, $updated->runtime_node_id);
+        $this->assertSame((int) $conference['configuration_generation'] + 2, (int) $updated->configuration_generation);
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertDatabaseHas('conference_runtime_bindings', ['conference_id' => $conference['id'], 'runtime_node_id' => $nodeA, 'status' => 'retired']);
+        $this->assertDatabaseHas('conference_runtime_bindings', ['conference_id' => $conference['id'], 'runtime_node_id' => $nodeB, 'status' => 'retired']);
+        $this->assertDatabaseHas('conference_runtime_bindings', ['conference_id' => $conference['id'], 'runtime_node_id' => $nodeC, 'status' => 'active']);
+        $this->assertSame(2, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conference['id'])->where('event_type', 'conference.runtime_binding_replaced')->count());
+    }
+
+    public function test_restored_former_node_can_be_selected_as_future_replacement_without_reactivating_old_binding(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-restored-former-reuse');
+        $nodeB = $this->runtimeNode($tenantId, 'coordinator-restored-former-reuse-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'coordinator-restored-former-reuse');
+        $originalBindingId = (string) DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->value('id');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        $first = app(TelephonyDomainService::class)->failoverRebindConference(
+            ExecutionContext::system(tenantId: $tenantId, reason: 'first rebind before former restoration'),
+            $tenantId,
+            $conference['id'],
+            'former_node_unavailable',
+        );
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['desired_state' => 'active', 'observed_state' => 'ready', 'updated_at' => now()]);
+        DB::table('runtime_nodes')->where('id', $nodeB)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+        $second = app(TelephonyDomainService::class)->failoverRebindConference(
+            ExecutionContext::system(tenantId: $tenantId, reason: 'reuse restored former as future candidate'),
+            $tenantId,
+            $conference['id'],
+            'replacement_node_unavailable',
+        );
+
+        $activeBinding = DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->first();
+        $this->assertSame('rebound', $first['status']);
+        $this->assertSame($nodeB, $first['runtime_node_id']);
+        $this->assertSame('rebound', $second['status']);
+        $this->assertSame($nodeA, $second['runtime_node_id']);
+        $this->assertSame($nodeA, $activeBinding->runtime_node_id);
+        $this->assertNotSame($originalBindingId, (string) $activeBinding->id);
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertDatabaseHas('conference_runtime_bindings', ['id' => $originalBindingId, 'status' => 'retired']);
     }
 
     public function test_failover_coordinator_excludes_draining_replacements(): void

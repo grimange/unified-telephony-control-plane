@@ -6,6 +6,7 @@ use App\ControlPlane\Audit\AuditRepository;
 use App\ControlPlane\Messaging\EventEnvelope;
 use App\ControlPlane\Messaging\OutboxRepository;
 use App\ControlPlane\Shared\ExecutionContext;
+use App\TelephonyDomain\TelephonyDomainService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
@@ -19,6 +20,7 @@ final class ConferenceFailoverCoordinator
 
     public function __construct(
         private readonly RuntimeFencingCoordinator $fencing,
+        private readonly TelephonyDomainService $domain,
         private readonly AuditRepository $audit,
         private readonly OutboxRepository $outbox,
     ) {}
@@ -31,6 +33,8 @@ final class ConferenceFailoverCoordinator
         $limit = max(1, min(100, $batchSize ?? (int) config('runtime_engine.batch_size', 10)));
         $graceSeconds = max(1, (int) config('runtime_engine.stale_observation_seconds', 300));
         $summary = $this->emptySummary();
+
+        $this->domain->clearRecoveredFailoverPendingNoCapacity($graceSeconds);
 
         foreach ($this->claimCandidates($limit, $graceSeconds) as $candidate) {
             $summary['candidates']++;
@@ -50,6 +54,27 @@ final class ConferenceFailoverCoordinator
                 );
                 $classification = $this->classifyResult($result);
                 $summary[$classification]++;
+                if ($classification === 'no_replacement') {
+                    $this->domain->markConferenceFailoverPendingNoCapacity(
+                        $context,
+                        (string) $candidate->tenant_id,
+                        (string) $candidate->conference_id,
+                        (string) $candidate->binding_id,
+                        (int) $candidate->configuration_generation,
+                        (string) $candidate->runtime_node_id,
+                        (string) ($result['reason'] ?? 'no_replacement_available'),
+                    );
+
+                    continue;
+                }
+                if ($classification === 'recovered_before_cutoff') {
+                    $this->domain->clearConferenceFailoverPendingForAuthority(
+                        (string) $candidate->tenant_id,
+                        (string) $candidate->conference_id,
+                        (string) $candidate->binding_id,
+                        (int) $candidate->configuration_generation,
+                    );
+                }
                 if (! in_array($classification, ['verification_waiting', 'runtime_fence_waiting', 'runtime_fence_in_progress', 'external_runtime_unavailable'], true)) {
                     $this->recordOutcome($context, $candidate, $classification, (string) ($result['reason'] ?? $result['status'] ?? 'unknown'));
                 }
@@ -81,6 +106,7 @@ final class ConferenceFailoverCoordinator
                 ->select([
                     'conferences.id as conference_id',
                     'conferences.tenant_id',
+                    'conferences.configuration_generation',
                     'conference_runtime_bindings.id as binding_id',
                     'conference_runtime_bindings.runtime_node_id',
                     'runtime_nodes.observed_state as runtime_node_observed_state',
@@ -166,6 +192,9 @@ final class ConferenceFailoverCoordinator
             'binding_id' => (string) $candidate->binding_id,
             'outcome' => $outcome,
         ];
+        if (isset($candidate->configuration_generation)) {
+            $payload['generation'] = (int) $candidate->configuration_generation;
+        }
         if ($reason !== null && $reason !== '') {
             $payload['reason'] = mb_substr($reason, 0, 120);
         }

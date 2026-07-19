@@ -22,6 +22,10 @@ use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 final class TelephonyDomainService
 {
+    private const FAILOVER_STATE_PENDING_NO_CAPACITY = 'pending_no_capacity';
+
+    private const FAILOVER_REASON_NO_REPLACEMENT_AVAILABLE = 'no_replacement_available';
+
     public function __construct(
         private readonly AuditRepository $audit,
         private readonly OutboxRepository $outbox,
@@ -280,6 +284,10 @@ final class TelephonyDomainService
             }
             if ($desiredState === 'closed') {
                 $fields['closed_at'] = now();
+                $fields['failover_state'] = null;
+                $fields['failover_binding_id'] = null;
+                $fields['failover_generation'] = null;
+                $fields['failover_started_at'] = null;
             }
             if ($desiredState === 'open' && $conference->runtime_node_id === null && $runtimeNodeId !== null) {
                 $fields['runtime_node_id'] = $runtimeNodeId;
@@ -435,6 +443,10 @@ final class TelephonyDomainService
             DB::table('conferences')->where('id', $conferenceId)->update([
                 'runtime_node_id' => $replacementRuntimeNodeId,
                 'configuration_generation' => DB::raw('configuration_generation + 1'),
+                'failover_state' => null,
+                'failover_binding_id' => null,
+                'failover_generation' => null,
+                'failover_started_at' => null,
                 'updated_by' => $context->actorId,
                 'updated_at' => now(),
             ]);
@@ -521,6 +533,168 @@ final class TelephonyDomainService
         }
 
         return $replacementRuntimeNodeId !== $formerRuntimeNodeId;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function markConferenceFailoverPendingNoCapacity(
+        ExecutionContext $context,
+        string $tenantId,
+        string $conferenceId,
+        string $bindingId,
+        int $generation,
+        string $runtimeNodeId,
+        string $reason = self::FAILOVER_REASON_NO_REPLACEMENT_AVAILABLE,
+    ): array {
+        return DB::transaction(function () use ($context, $tenantId, $conferenceId, $bindingId, $generation, $runtimeNodeId, $reason): array {
+            $conference = DB::table('conferences')
+                ->where('tenant_id', $tenantId)
+                ->where('id', $conferenceId)
+                ->lockForUpdate()
+                ->first();
+            if ($conference === null) {
+                return ['status' => 'noop', 'reason' => 'conference_not_found'];
+            }
+            if ((string) $conference->desired_state !== 'open') {
+                return ['status' => 'noop', 'reason' => 'conference_not_open'];
+            }
+            if ((int) $conference->configuration_generation !== $generation) {
+                return ['status' => 'noop', 'reason' => 'generation_changed'];
+            }
+
+            $activeBinding = DB::table('conference_runtime_bindings')
+                ->where('tenant_id', $tenantId)
+                ->where('conference_id', $conferenceId)
+                ->where('id', $bindingId)
+                ->where('status', 'active')
+                ->lockForUpdate()
+                ->first();
+            if ($activeBinding === null || (string) $activeBinding->runtime_node_id !== $runtimeNodeId) {
+                return ['status' => 'noop', 'reason' => 'active_binding_changed'];
+            }
+
+            if (
+                (string) ($conference->failover_state ?? '') === self::FAILOVER_STATE_PENDING_NO_CAPACITY
+                && (string) ($conference->failover_binding_id ?? '') === $bindingId
+                && (int) ($conference->failover_generation ?? 0) === $generation
+            ) {
+                return [
+                    'status' => self::FAILOVER_STATE_PENDING_NO_CAPACITY,
+                    'transitioned' => false,
+                    'failover_started_at' => $conference->failover_started_at,
+                ];
+            }
+
+            $startedAt = now();
+            DB::table('conferences')->where('id', $conferenceId)->update([
+                'failover_state' => self::FAILOVER_STATE_PENDING_NO_CAPACITY,
+                'failover_binding_id' => $bindingId,
+                'failover_generation' => $generation,
+                'failover_started_at' => $startedAt,
+                'updated_by' => $context->actorId,
+                'updated_at' => now(),
+            ]);
+
+            $payload = [
+                'tenant_id' => $tenantId,
+                'conference_id' => $conferenceId,
+                'active_binding_id' => $bindingId,
+                'binding_id' => $bindingId,
+                'generation' => $generation,
+                'runtime_node_id' => $runtimeNodeId,
+                'failure_reason' => mb_substr($reason, 0, 120),
+                'reason' => self::FAILOVER_REASON_NO_REPLACEMENT_AVAILABLE,
+                'failover_state' => self::FAILOVER_STATE_PENDING_NO_CAPACITY,
+                'failover_started_at' => $startedAt->toISOString(),
+                'coordinator_observed_at' => now()->toISOString(),
+                'idempotency_key' => $this->failoverNoCapacityTransitionKey($tenantId, $conferenceId, $bindingId, $generation),
+            ];
+            $this->audit->append($context, 'conference.failover_coordinator.no_replacement', 'conference', $conferenceId, $payload);
+            $this->outbox->append(EventEnvelope::forAggregate('conference.failover_coordinator.no_replacement', 1, 'conference', $conferenceId, $payload, $context));
+
+            return [
+                'status' => self::FAILOVER_STATE_PENDING_NO_CAPACITY,
+                'transitioned' => true,
+                'failover_started_at' => $startedAt->toISOString(),
+            ];
+        });
+    }
+
+    public function clearConferenceFailoverPendingForAuthority(string $tenantId, string $conferenceId, string $bindingId, int $generation): bool
+    {
+        return DB::transaction(function () use ($tenantId, $conferenceId, $bindingId, $generation): bool {
+            $updated = DB::table('conferences')
+                ->where('tenant_id', $tenantId)
+                ->where('id', $conferenceId)
+                ->where('failover_state', self::FAILOVER_STATE_PENDING_NO_CAPACITY)
+                ->where('failover_binding_id', $bindingId)
+                ->where('failover_generation', $generation)
+                ->update([
+                    'failover_state' => null,
+                    'failover_binding_id' => null,
+                    'failover_generation' => null,
+                    'failover_started_at' => null,
+                    'updated_at' => now(),
+                ]);
+
+            return $updated > 0;
+        });
+    }
+
+    public function clearRecoveredFailoverPendingNoCapacity(int $graceSeconds): int
+    {
+        if (! DB::table('conferences')->where('failover_state', self::FAILOVER_STATE_PENDING_NO_CAPACITY)->exists()) {
+            return 0;
+        }
+
+        $cutoff = now()->subSeconds(max(1, $graceSeconds));
+        $rows = DB::table('conferences')
+            ->select([
+                'conferences.id as conference_id',
+                'conferences.tenant_id',
+                'conferences.failover_binding_id',
+                'conferences.failover_generation',
+            ])
+            ->join('conference_runtime_bindings', function ($join): void {
+                $join->on('conference_runtime_bindings.id', '=', 'conferences.failover_binding_id')
+                    ->whereColumn('conference_runtime_bindings.tenant_id', 'conferences.tenant_id')
+                    ->whereColumn('conference_runtime_bindings.conference_id', 'conferences.id')
+                    ->where('conference_runtime_bindings.status', 'active');
+            })
+            ->join('runtime_nodes', function ($join): void {
+                $join->on('runtime_nodes.id', '=', 'conference_runtime_bindings.runtime_node_id')
+                    ->whereColumn('runtime_nodes.tenant_id', 'conferences.tenant_id');
+            })
+            ->where('conferences.desired_state', 'open')
+            ->where('conferences.failover_state', self::FAILOVER_STATE_PENDING_NO_CAPACITY)
+            ->whereColumn('conferences.configuration_generation', 'conferences.failover_generation')
+            ->where(function ($query) use ($cutoff): void {
+                $query->whereNotIn('runtime_nodes.observed_state', ['unavailable', 'stale'])
+                    ->orWhereExists(function ($subquery) use ($cutoff): void {
+                        $subquery->selectRaw('1')
+                            ->from('runtime_observations')
+                            ->whereColumn('runtime_observations.runtime_node_id', 'runtime_nodes.id')
+                            ->where('runtime_observations.observed_state', 'ready')
+                            ->where('runtime_observations.received_at', '>', $cutoff);
+                    });
+            })
+            ->limit(100)
+            ->get();
+
+        $cleared = 0;
+        foreach ($rows as $row) {
+            if ($this->clearConferenceFailoverPendingForAuthority(
+                (string) $row->tenant_id,
+                (string) $row->conference_id,
+                (string) $row->failover_binding_id,
+                (int) $row->failover_generation,
+            )) {
+                $cleared++;
+            }
+        }
+
+        return $cleared;
     }
 
     /**
@@ -973,6 +1147,17 @@ final class TelephonyDomainService
         ]);
     }
 
+    private function failoverNoCapacityTransitionKey(string $tenantId, string $conferenceId, string $bindingId, int $generation): string
+    {
+        return hash('sha256', implode(':', [
+            $tenantId,
+            $conferenceId,
+            $bindingId,
+            (string) $generation,
+            self::FAILOVER_REASON_NO_REPLACEMENT_AVAILABLE,
+        ]));
+    }
+
     private function conferenceRow(string $tenantId, string $conferenceId): object
     {
         $row = DB::table('conferences')->where('id', $conferenceId)->where('tenant_id', $tenantId)->first();
@@ -1066,6 +1251,10 @@ final class TelephonyDomainService
             'runtime_node_id' => $row->runtime_node_id,
             'desired_state' => $row->desired_state,
             'observed_state' => $row->observed_state,
+            'failover_state' => $row->failover_state ?? null,
+            'failover_binding_id' => $row->failover_binding_id ?? null,
+            'failover_generation' => ($row->failover_generation ?? null) === null ? null : (int) $row->failover_generation,
+            'failover_started_at' => $row->failover_started_at ?? null,
             'configuration_generation' => (int) $row->configuration_generation,
             'observed_generation' => $row->observed_generation === null ? null : (int) $row->observed_generation,
             'observed_at' => $row->observed_at,
