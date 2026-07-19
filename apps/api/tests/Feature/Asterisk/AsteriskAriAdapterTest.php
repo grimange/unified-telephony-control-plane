@@ -3,6 +3,8 @@
 namespace Tests\Feature\Asterisk;
 
 use App\ControlPlane\RuntimeOperations\FailureClass;
+use App\ControlPlane\RuntimeOperations\OperationStatus;
+use App\ControlPlane\RuntimeOperations\RuntimeOperationRepository;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\PayloadSafety;
 use App\Identity\IdentityIds;
@@ -23,6 +25,7 @@ use App\RuntimeEngine\Sources\EventSourceRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
+use ReflectionMethod;
 use ReflectionProperty;
 use RuntimeException;
 use Tests\TestCase;
@@ -176,6 +179,126 @@ final class AsteriskAriAdapterTest extends TestCase
             'status' => 'released',
         ]);
         $this->assertDatabaseCount('event_sources', 1);
+    }
+
+    public function test_listener_ordinary_eligibility_still_uses_active_and_draining_nodes_only(): void
+    {
+        [$activeTenant, $activeNode] = $this->runtimeNode();
+        [$drainingTenant, $drainingNode] = $this->runtimeNode();
+        [$disabledTenant, $disabledNode] = $this->runtimeNode();
+        $this->configureAriNode($activeTenant, $activeNode);
+        $this->configureAriNode($drainingTenant, $drainingNode);
+        $this->configureAriNode($disabledTenant, $disabledNode);
+
+        DB::table('runtime_nodes')->where('id', $drainingNode)->update(['desired_state' => 'draining']);
+        DB::table('runtime_nodes')->where('id', $disabledNode)->update(['desired_state' => 'disabled']);
+
+        $eligible = $this->eligibleNodeIds();
+
+        $this->assertContains($activeNode, $eligible);
+        $this->assertContains($drainingNode, $eligible);
+        $this->assertNotContains($disabledNode, $eligible);
+    }
+
+    public function test_disabled_node_with_actionable_restore_operation_is_listener_eligible(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'desired_state' => 'disabled',
+            'configuration_version' => 4,
+        ]);
+
+        foreach ([
+            OperationStatus::Pending,
+            OperationStatus::Leased,
+            OperationStatus::Running,
+            OperationStatus::RetryScheduled,
+        ] as $status) {
+            DB::table('runtime_operations')->delete();
+            $this->restoreAuthority($tenantId, $nodeId, 4, status: $status);
+
+            $this->assertContains($nodeId, $this->eligibleNodeIds(), "{$status->value} restore operation should grant restoration listener eligibility");
+        }
+    }
+
+    public function test_disabled_listener_eligibility_requires_matching_restore_authority(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$otherTenant, $otherNode] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $this->configureAriNode($otherTenant, $otherNode);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'desired_state' => 'disabled',
+            'configuration_version' => 7,
+        ]);
+        DB::table('runtime_nodes')->where('id', $otherNode)->update(['desired_state' => 'disabled']);
+
+        $this->restoreAuthority($otherTenant, $nodeId, 7, payloadTenantId: $otherTenant);
+        $this->assertNotContains($nodeId, $this->eligibleNodeIds(), 'cross-tenant restore authority must not grant listener eligibility');
+        DB::table('runtime_operations')->delete();
+
+        $this->restoreAuthority($tenantId, $otherNode, 7, payloadRuntimeNodeId: $otherNode);
+        $this->assertNotContains($nodeId, $this->eligibleNodeIds(), 'restore authority for another RuntimeNode must not grant listener eligibility');
+        DB::table('runtime_operations')->delete();
+
+        $this->restoreAuthority($tenantId, $nodeId, 6);
+        $this->assertNotContains($nodeId, $this->eligibleNodeIds(), 'stale configuration version must not grant listener eligibility');
+        DB::table('runtime_operations')->delete();
+
+        $this->restoreAuthority($tenantId, $nodeId, 7, operationType: 'runtime.node.runtime.fence');
+        $this->assertNotContains($nodeId, $this->eligibleNodeIds(), 'wrong operation type must not grant listener eligibility');
+        DB::table('runtime_operations')->delete();
+
+        $this->restoreAuthority($tenantId, $nodeId, 7, requestedDesiredState: 'disabled');
+        $this->assertNotContains($nodeId, $this->eligibleNodeIds(), 'non-active restore request must not grant listener eligibility');
+        DB::table('runtime_operations')->delete();
+
+        $this->restoreAuthority($tenantId, $nodeId, 7, sourceFenceOperationId: null);
+        $this->assertNotContains($nodeId, $this->eligibleNodeIds(), 'restore authority without a source fence identity must not grant listener eligibility');
+    }
+
+    public function test_terminal_restore_operations_do_not_grant_disabled_listener_eligibility(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'desired_state' => 'disabled',
+            'configuration_version' => 3,
+        ]);
+
+        foreach ([
+            OperationStatus::Succeeded,
+            OperationStatus::TerminalFailed,
+            OperationStatus::Cancelled,
+            OperationStatus::Expired,
+        ] as $status) {
+            DB::table('runtime_operations')->delete();
+            $this->restoreAuthority($tenantId, $nodeId, 3, status: $status);
+
+            $this->assertNotContains($nodeId, $this->eligibleNodeIds(), "{$status->value} restore operation must not grant disabled-node listener eligibility");
+        }
+    }
+
+    public function test_restore_authorized_listener_node_remains_placement_ineligible_while_disabled(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'desired_state' => 'disabled',
+            'observed_state' => 'ready',
+            'configuration_version' => 5,
+            'observed_at' => now(),
+        ]);
+        $this->restoreAuthority($tenantId, $nodeId, 5);
+
+        $this->assertContains($nodeId, $this->eligibleNodeIds(), 'restore authority should permit listener attachment');
+        $this->assertFalse(DB::table('runtime_nodes')
+            ->where('id', $nodeId)
+            ->where('tenant_id', $tenantId)
+            ->whereIn('desired_state', ['active', 'draining'])
+            ->where('observed_state', 'ready')
+            ->exists(), 'disabled restore-authorized nodes must remain excluded from placement until restoration activates them');
     }
 
     public function test_asterisk_events_normalize_to_runtime_node_observations_without_raw_payloads(): void
@@ -579,7 +702,7 @@ final class AsteriskAriAdapterTest extends TestCase
     {
         $catalog = new AsteriskCatalog;
         $client = new AsteriskAriClient($catalog, app(AsteriskAriProfileService::class));
-        $method = new \ReflectionMethod($client, 'eventWebSocketQuery');
+        $method = new ReflectionMethod($client, 'eventWebSocketQuery');
         $method->setAccessible(true);
 
         parse_str((string) $method->invoke($client, 'utcp-t0-observation'), $query);
@@ -1062,6 +1185,72 @@ final class AsteriskAriAdapterTest extends TestCase
                 'configuration_generation' => 7,
             ],
         ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function eligibleNodeIds(int $batchSize = 20): array
+    {
+        $listener = new AsteriskAriEventListener(
+            new AsteriskCatalog,
+            new AsteriskAriClient(new AsteriskCatalog, app(AsteriskAriProfileService::class)),
+            app(AsteriskAriProfileService::class),
+            new RuntimeListenerLeaseRepository,
+            new RuntimeEventReceiptRepository,
+            new ReconciliationRepository,
+        );
+        $method = new ReflectionMethod($listener, 'eligibleNodes');
+        $method->setAccessible(true);
+
+        return array_map(
+            static fn (object $node): string => (string) $node->id,
+            $method->invoke($listener, $batchSize),
+        );
+    }
+
+    private function restoreAuthority(
+        string $tenantId,
+        string $nodeId,
+        int $configurationVersion,
+        OperationStatus $status = OperationStatus::Pending,
+        string $operationType = 'runtime.node.restore',
+        ?string $payloadTenantId = null,
+        ?string $payloadRuntimeNodeId = null,
+        ?string $requestedDesiredState = 'active',
+        ?string $sourceFenceOperationId = 'source-fence-operation',
+    ): string {
+        $payload = [
+            'tenant_id' => $payloadTenantId ?? $tenantId,
+            'runtime_node_id' => $payloadRuntimeNodeId ?? $nodeId,
+            'requested_desired_state' => $requestedDesiredState,
+            'source_fence_generation' => 39,
+            'workload_namespace' => 'utcp-runtime',
+            'deployment' => 'asterisk-ari-restore-listener',
+            'target_replicas' => 1,
+            'expected_runtime_node_configuration_version' => $configurationVersion,
+        ];
+        if ($sourceFenceOperationId !== null) {
+            $payload['source_fence_operation_id'] = $sourceFenceOperationId;
+        }
+
+        $operationId = app(RuntimeOperationRepository::class)->create(
+            $operationType,
+            'runtime_node',
+            $nodeId,
+            $payload,
+            ExecutionContext::system(tenantId: $tenantId, reason: 'restore listener eligibility test'),
+            runtimeNodeId: $nodeId,
+        );
+
+        if ($status !== OperationStatus::Pending) {
+            DB::table('runtime_operations')->where('id', $operationId)->update([
+                'status' => $status->value,
+                'updated_at' => now(),
+            ]);
+        }
+
+        return $operationId;
     }
 
     /**

@@ -6510,25 +6510,16 @@ correct; the deadlock is entirely in the post-scale readiness-gate ordering.
 Note this also breaks the manual `kubectl scale` break-glass, since a
 fence-disabled node's listener stays detached regardless of replicas.
 
-### Required bounded correction (for the next task, T5-A39)
+### Required bounded correction (superseded by T5-A39)
 
-Reorder `RuntimeNodeRestoreOperationHandler`: perform
-`completeRestorationActivation` (disabled→active) immediately after the
-Deployment+owned-Pod readiness gates (after L150) and BEFORE the
-lease/epoch/observed-ready checks, so the listener can attach to the now-active
-node. Then either (a) complete the restore on scale + Pod-ready + activation and
-let lease/epoch/observed-ready converge via the normal listener/projection path
-(matching how any freshly-active node comes ready — no operation gates on it;
-recommended), emitting `runtime_node.restored` at activation with the scale
-provenance/new-Pod-UID/target-replicas; or (b) keep the lease/epoch/ready gates
-but evaluate them after activation and widen the retry budget beyond the ~15 s
-listener heartbeat so they are actually reachable. Placement remains safe: the
-selector also requires `observed_state='ready'`, and the restored Pod is fresh/
-empty, so brief active-but-not-yet-ready status cannot draw traffic. No change
-to fence, rebind, stale-generation, or RBAC. Add a test that drives a real
-disabled→active restore to completion asserting activation precedes (and does not
-depend on) the listener lease, exactly one `runtime_node.restored`, and
-`observed_state=ready` convergence.
+The initial next-step idea was to activate the RuntimeNode before lease/epoch/
+observed-ready validation. T5-A39 rejects that ordering because it would weaken
+the restoration completion contract. The corrected design keeps the former node
+`desired_state=disabled` and placement-ineligible until all restoration gates
+pass. Listener eligibility is instead extended only when the disabled node has a
+matching, current, actionable `runtime.node.restore` operation for the same
+tenant, RuntimeNode, requested active state, source fence, and configuration
+version. Pod Ready remains insufficient for restoration completion.
 
 ### Divergence handling performed
 
@@ -6559,7 +6550,94 @@ the terminal-failed restore op as evidence).
 The fence-to-disabled transition, canonical desired-state restore request,
 idempotent single restore operation, dedicated-worker claim, source-fence
 provenance, and the automatic scale-up (0→target) are all PROVEN live. The one
-blocking defect is the restore handler's activation-ordering deadlock
-(activation after listener-dependent gates). Fix is isolated to
-`RuntimeNodeRestoreOperationHandler` gate ordering + one test; then re-run this
-exact T5-A38 proof.
+blocking defect is the listener eligibility deadlock for fence-disabled nodes.
+T5-A39 fixes listener eligibility through persisted restore-operation authority
+without early activation; then re-run this exact T5-A38 proof.
+
+## T5-A39 — Restore-authorized listener eligibility
+
+Repository-only correction at `UTCP_PHASE=T1`, starting HEAD `a33636d`. No live
+Kubernetes resources were applied, no live restoration or failover was run, and
+no direct desired-state write was performed.
+
+### Activation-ordering deadlock
+
+T5-A38 proved the canonical restoration path reached Deployment scale-up and a
+new Asterisk Pod Ready, but could not pass `runtime_restore_listener_lease_missing`.
+The restore handler correctly required listener lease, a new event epoch,
+`observed_state=ready`, and fresh-runtime validation before disabled→active
+activation. The ARI listener's ordinary eligibility excluded every disabled node,
+so the lease and epoch could never be created. The deadlock was listener
+eligibility, not Kubernetes readiness, RBAC, NetworkPolicy, or scale behavior.
+
+### Listener eligibility versus placement eligibility
+
+Ordinary listener eligibility remains `desired_state IN (active, draining)`.
+T5-A39 adds exactly one temporary disabled-node authority: a current actionable
+`runtime.node.restore` operation whose row and payload match tenant ID,
+RuntimeNode ID, expected configuration version, requested desired state `active`,
+and source fence identity. Actionable statuses are `pending`, `leased`,
+`running`, and `retry_scheduled`. Terminal and non-actionable statuses
+(`succeeded`, `terminal_failed`, `cancelled`, `expired`) grant no disabled-node
+listener eligibility.
+
+Placement remains unchanged and separate: the canonical placement predicate
+still requires `desired_state IN (active, draining)` plus `observed_state=ready`
+and capabilities. A disabled node with a valid restore operation may receive a
+listener connection so the restoration gates can recover, but it remains
+placement-ineligible until the restore handler performs the final canonical
+disabled→active transition.
+
+### Restoration completion gates
+
+T5-A39 does not complete restoration on Kubernetes Pod Ready alone. The existing
+restore handler still waits for target Deployment replicas, owned Ready Pods, a
+claimed listener lease, a new open event epoch after restoration began,
+RuntimeNode `observed_state=ready`, and fresh-runtime validation. Only then does
+it activate the RuntimeNode, complete `runtime.node.restore`, and emit one
+`runtime_node.restored` event.
+
+### Retry window calculation
+
+The restore operation keeps the existing `max_attempts=3`. Operation retry
+delays are attempt-based at 15 seconds then 30 seconds for the second retry
+window, giving a normal convergence window after the first post-scale attempt.
+The listener profile reconnect minimum is 1 second, the listener lease duration
+is 45 seconds, the WebSocket open/inspection path ingests `connection_opened`
+and `runtime_info_observed` in one cycle, and the normalizer can project
+`observed_state=ready` on its next batch. This covers at least one listener
+eligibility refresh, connection attempt, lease claim, epoch open, and observed-
+ready projection without globally inflating operation retries.
+
+### Query and index behavior
+
+The listener precomputes restore-authorized RuntimeNode IDs from
+`runtime_operations` filtered by operation type, actionable status, tenant, and
+RuntimeNode, then applies those authorities inside the existing bounded
+eligible-node query. Malformed payloads fail closed. A supporting index on
+`runtime_operations(operation_type, status, tenant_id, runtime_node_id)` backs
+the lookup without introducing Redis caching or another authority.
+
+### Regression coverage
+
+Focused tests prove active and draining nodes remain eligible; disabled nodes
+without restore authority remain ineligible; pending/leased/running/
+retry-scheduled restore operations grant eligibility only for the matching
+tenant, node, configuration version, active request, and source fence; wrong
+tenant, wrong node, stale configuration, wrong operation type, missing source
+fence, and terminal/cancelled/expired operations do not grant eligibility; and
+disabled restore-authorized nodes remain excluded from placement.
+
+The real integration regression drives admin-style restore operation data through
+the infrastructure worker, fake Kubernetes scale-up, ARI listener selection,
+one failed listener connection, listener retry/recovery, lease and epoch
+persistence, event normalization to RuntimeNode ready, restore handler
+activation, operation completion, and one `runtime_node.restored` event. It also
+asserts idempotency: no duplicate scale-up, activation, or restored event.
+
+### Remaining proof boundary
+
+Live canonical former-node restoration remains pending. Direct database recovery
+remains break-glass only, and manual scale-up is not restored as normal
+authority. The next live proof must rerun canonical desired-state-driven
+former-node restoration with no direct desired-state write and no manual scale-up.

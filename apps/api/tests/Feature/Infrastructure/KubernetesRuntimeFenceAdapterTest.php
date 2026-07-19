@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Infrastructure;
 
+use App\ControlPlane\RuntimeOperations\FailureClass;
 use App\ControlPlane\RuntimeOperations\RuntimeOperationRepository;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\Identity\IdentityIds;
@@ -13,7 +14,16 @@ use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClientException;
 use App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentity;
 use App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentityException;
 use App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentityResolver;
+use App\RuntimeAdapters\Asterisk\AsteriskAriClient;
+use App\RuntimeAdapters\Asterisk\AsteriskAriEventListener;
+use App\RuntimeAdapters\Asterisk\AsteriskAriException;
+use App\RuntimeAdapters\Asterisk\AsteriskAriProfileService;
+use App\RuntimeAdapters\Asterisk\AsteriskCatalog;
 use App\RuntimeEngine\Commands\CommandWorker;
+use App\RuntimeEngine\Events\EventNormalizerWorker;
+use App\RuntimeEngine\Events\RuntimeEventReceiptRepository;
+use App\RuntimeEngine\Listeners\RuntimeListenerLeaseRepository;
+use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -514,6 +524,75 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
         $this->assertSame([['utcp-runtime', 'asterisk-ari-restore-gates', 1]], $fake->scaleCalls);
     }
 
+    public function test_runtime_restore_listener_eligibility_allows_full_disabled_node_recovery_after_listener_retry(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode(
+            'restore-listener',
+            observedState: 'unavailable',
+            runtimeFamily: 'asterisk',
+            adapterKey: 'asterisk-ari',
+        );
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'desired_state' => 'disabled',
+            'configuration_version' => 2,
+            'updated_at' => now(),
+        ]);
+        $this->configureAriListenerNode($nodeId, configurationVersion: 2);
+        $sourceFenceId = $this->sourceFenceOperation($tenantId, $nodeId, 'restore-listener', 39, 1);
+        $restoreId = $this->restoreOperation($tenantId, $nodeId, $sourceFenceId, 'restore-listener', 39, 1, 2);
+        $fake = FakeKubernetesWorkloadClient::withDeployment($this->deployment('asterisk-ari-restore-listener', 'conference-runtime-restore-listener', 0, 0, 0));
+        $fake->afterScaleDeployment = $this->deployment('asterisk-ari-restore-listener', 'conference-runtime-restore-listener', 1, 1, 1);
+        $fake->afterScalePods = [$this->readyPod('asterisk-ari-restore-listener-new', 'pod-new-listener')];
+        $this->bindFakeClient($fake);
+
+        app(CommandWorker::class)->workOnce('restore-listener-worker-1', 1, includeOperationTypes: ['runtime.node.restore']);
+
+        $this->assertSame('retry_scheduled', DB::table('runtime_operations')->where('id', $restoreId)->value('status'));
+        $this->assertSame('runtime_restore_listener_lease_missing', DB::table('runtime_operations')->where('id', $restoreId)->value('last_failure_code'));
+        $this->assertSame([['utcp-runtime', 'asterisk-ari-restore-listener', 1]], $fake->scaleCalls);
+        $this->assertSame('disabled', DB::table('runtime_nodes')->where('id', $nodeId)->value('desired_state'));
+
+        $failingClient = new FakeRestoreAriClient(failOpenAttempts: 1);
+        $failingListener = $this->restoreListener($failingClient);
+        $this->assertSame(0, $failingListener->workOnce('restore-listener-events-fail', 5));
+        $this->assertSame('released', DB::table('runtime_listener_leases')->where('runtime_node_id', $nodeId)->value('status'));
+        $this->assertSame('disabled', DB::table('runtime_nodes')->where('id', $nodeId)->value('desired_state'));
+
+        $recoveringClient = new FakeRestoreAriClient;
+        $recoveringListener = $this->restoreListener($recoveringClient);
+        $this->assertSame(1, $recoveringListener->workOnce('restore-listener-events-ok', 5));
+        $this->assertSame(1, $recoveringClient->openAttempts);
+        $this->assertSame('claimed', DB::table('runtime_listener_leases')->where('runtime_node_id', $nodeId)->where('status', 'claimed')->value('status'));
+        $epochId = (string) DB::table('runtime_event_connection_epochs')
+            ->where('runtime_node_id', $nodeId)
+            ->where('status', 'open')
+            ->orderByDesc('created_at')
+            ->value('id');
+        $this->assertNotSame('', $epochId);
+
+        app(EventNormalizerWorker::class)->workOnce('restore-listener-normalizer', 10);
+        $this->assertSame('ready', DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_state'));
+        $this->assertSame('disabled', DB::table('runtime_nodes')->where('id', $nodeId)->value('desired_state'), 'listener projection must not activate placement before the restore handler completes');
+
+        DB::table('runtime_operations')->where('id', $restoreId)->update(['available_at' => now()->subSecond()]);
+        app(CommandWorker::class)->workOnce('restore-listener-worker-2', 1, includeOperationTypes: ['runtime.node.restore']);
+
+        $this->assertSame('succeeded', DB::table('runtime_operations')->where('id', $restoreId)->value('status'));
+        $this->assertSame('active', DB::table('runtime_nodes')->where('id', $nodeId)->value('desired_state'));
+        $this->assertSame([['utcp-runtime', 'asterisk-ari-restore-listener', 1]], $fake->scaleCalls);
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $nodeId)->where('event_type', 'runtime_node.restored')->count());
+        $payload = $this->restoredEventPayload($nodeId);
+        $this->assertSame($restoreId, $payload['operation_id']);
+        $this->assertSame($sourceFenceId, $payload['source_fence_operation_id']);
+        $this->assertSame($epochId, $payload['new_event_epoch_id']);
+        $this->assertSame(['pod-new-listener'], $payload['new_pod_uids']);
+
+        $processed = app(CommandWorker::class)->workOnce('restore-listener-worker-3', 1, includeOperationTypes: ['runtime.node.restore']);
+        $this->assertSame(0, $processed);
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $nodeId)->where('event_type', 'runtime_node.restored')->count());
+        $this->assertSame([['utcp-runtime', 'asterisk-ari-restore-listener', 1]], $fake->scaleCalls);
+    }
+
     public function test_runtime_restore_authority_change_prevents_mutation(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode('restore-stale', observedState: 'unavailable');
@@ -566,11 +645,28 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
         $this->app->forgetInstance(InfrastructureAdapterRegistry::class);
     }
 
+    private function restoreListener(AsteriskAriClient $client): AsteriskAriEventListener
+    {
+        return new AsteriskAriEventListener(
+            new AsteriskCatalog,
+            $client,
+            app(AsteriskAriProfileService::class),
+            new RuntimeListenerLeaseRepository,
+            new RuntimeEventReceiptRepository,
+            new ReconciliationRepository,
+        );
+    }
+
     /**
      * @return array{0:string,1:string}
      */
-    private function runtimeNode(string $slug, string $observedState = 'unavailable', ?array $labels = null): array
-    {
+    private function runtimeNode(
+        string $slug,
+        string $observedState = 'unavailable',
+        ?array $labels = null,
+        string $runtimeFamily = 'simulator',
+        string $adapterKey = 'simulator-deterministic',
+    ): array {
         $tenantId = IdentityIds::new();
         DB::table('tenants')->insert([
             'id' => $tenantId,
@@ -587,8 +683,8 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
             'tenant_id' => $tenantId,
             'name' => 'Runtime '.$slug,
             'slug' => $nodeSlug,
-            'runtime_family' => 'simulator',
-            'adapter_key' => 'simulator-deterministic',
+            'runtime_family' => $runtimeFamily,
+            'adapter_key' => $adapterKey,
             'desired_state' => 'active',
             'observed_state' => $observedState,
             'configuration_version' => 1,
@@ -774,6 +870,23 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
             ExecutionContext::system(tenantId: $tenantId, reason: 'runtime restore test'),
             runtimeNodeId: $nodeId,
         );
+    }
+
+    private function configureAriListenerNode(string $nodeId, int $configurationVersion): void
+    {
+        DB::table('asterisk_ari_profiles')->insert([
+            'runtime_node_id' => $nodeId,
+            'configuration_version' => $configurationVersion,
+            'application_name' => 'utcp',
+            'connect_timeout_ms' => 5000,
+            'request_timeout_ms' => 10000,
+            'websocket_handshake_timeout_ms' => 10000,
+            'heartbeat_interval_ms' => 30000,
+            'reconnect_min_delay_ms' => 1000,
+            'reconnect_max_delay_ms' => 30000,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 
     /**
@@ -1004,5 +1117,66 @@ final class FakeKubernetesWorkloadClient implements KubernetesWorkloadClient
         unset($namespace, $identity);
 
         return $this->pods;
+    }
+}
+
+final class FakeRestoreAriClient extends AsteriskAriClient
+{
+    public int $openAttempts = 0;
+
+    public function __construct(
+        private readonly int $failOpenAttempts = 0,
+    ) {
+        parent::__construct(new AsteriskCatalog, app(AsteriskAriProfileService::class));
+    }
+
+    public function inspect(string $tenantId, string $runtimeNodeId): array
+    {
+        return [
+            'runtime_node_id' => $runtimeNodeId,
+            'asterisk_version' => '20.20.1',
+            'system_name' => 'restore-listener-test',
+            'configuration_generation' => 2,
+            'auth_generation' => 1,
+        ];
+    }
+
+    public function conferenceRuntimeSummary(string $tenantId, string $runtimeNodeId, string $conferenceId, ?string $participantId = null): array
+    {
+        return [
+            'bridge_exists' => false,
+            'bridge_channel_count' => 0,
+            'owned_bridge' => false,
+            'participant_channel_checked' => $participantId !== null,
+            'participant_channel_exists' => false,
+            'participant_channel_in_bridge' => false,
+        ];
+    }
+
+    public function openWebSocket(string $tenantId, string $runtimeNodeId)
+    {
+        $this->openAttempts++;
+        if ($this->openAttempts <= $this->failOpenAttempts) {
+            throw new AsteriskAriException(FailureClass::TransientTransport, 'ari_restore_listener_test_unavailable', 'Test ARI listener unavailable.', true);
+        }
+
+        return fopen('php://temp', 'rb+');
+    }
+
+    public function closeWebSocket(mixed $stream): void
+    {
+        if (is_resource($stream)) {
+            fclose($stream);
+        }
+    }
+
+    public function stasisApplicationRegistered(string $tenantId, string $runtimeNodeId): bool
+    {
+        return true;
+    }
+
+    public function readEvent(mixed $stream): ?array
+    {
+        return null;
     }
 }

@@ -12,6 +12,7 @@ fail() {
 for file in \
   apps/api/config/runtime_engine.php \
   apps/api/database/migrations/2026_07_14_160000_create_runtime_engine_tables.php \
+  apps/api/database/migrations/2026_07_17_150000_add_restore_listener_operation_index.php \
   apps/api/app/RuntimeEngine/Outbox/OutboxDispatcher.php \
   apps/api/app/RuntimeEngine/Commands/CommandWorker.php \
   apps/api/app/RuntimeEngine/Events/EventNormalizerWorker.php \
@@ -19,6 +20,7 @@ for file in \
   apps/api/app/RuntimeEngine/Reconciliation/ReconciliationWorker.php \
   apps/api/app/Infrastructure/RuntimeFencing/HttpKubernetesWorkloadClient.php \
   apps/api/app/Infrastructure/RuntimeFencing/RuntimeNodeRestoreOperationHandler.php \
+  apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriEventListener.php \
   infrastructure/kubernetes/base/platform/outbox-dispatcher-deployment.yaml \
   infrastructure/kubernetes/base/platform/telephony-command-worker-deployment.yaml \
   infrastructure/kubernetes/base/platform/telephony-event-normalizer-deployment.yaml \
@@ -83,6 +85,48 @@ interfaces = {part.strip() for part in match.group(1).replace('\n', ' ').split('
 if {'RuntimeOperationHandler', 'RunsOnDisabledRuntimeNode'} - interfaces:
     print('runtime engine config check failed: runtime.node.restore handler must be allowed to run while the RuntimeNode is disabled', file=sys.stderr)
     raise SystemExit(1)
+PY
+python3 <<'PY'
+import pathlib
+import sys
+
+listener = pathlib.Path('apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriEventListener.php').read_text(encoding='utf-8')
+migration = pathlib.Path('apps/api/database/migrations/2026_07_17_150000_add_restore_listener_operation_index.php').read_text(encoding='utf-8')
+
+def fail(message: str) -> None:
+    print(f"runtime engine config check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+required = [
+    "restorationListenerAuthorities",
+    "runtime_node_restore",
+    "OperationStatus::Pending->value",
+    "OperationStatus::Leased->value",
+    "OperationStatus::Running->value",
+    "OperationStatus::RetryScheduled->value",
+    "requested_desired_state",
+    "expected_runtime_node_configuration_version",
+    "source_fence_operation_id",
+]
+for needle in required:
+    if needle not in listener:
+        fail(f'missing restore-authorized listener eligibility guard: {needle}')
+
+for terminal in [
+    "OperationStatus::Succeeded->value",
+    "OperationStatus::TerminalFailed->value",
+    "OperationStatus::Cancelled->value",
+    "OperationStatus::Expired->value",
+]:
+    if terminal in listener:
+        fail(f'terminal runtime.node.restore status must not grant disabled-node listener eligibility: {terminal}')
+
+if "whereIn('desired_state', ['active', 'draining'])" not in listener:
+    fail('ordinary active/draining listener eligibility changed unexpectedly')
+if "where('desired_state', 'disabled')" not in listener:
+    fail('disabled restoration listener eligibility is missing')
+if "runtime_ops_type_status_tenant_node_idx" not in migration or "operation_type', 'status', 'tenant_id', 'runtime_node_id" not in migration:
+    fail('missing runtime.node.restore listener eligibility index')
 PY
 python3 <<'PY'
 import pathlib

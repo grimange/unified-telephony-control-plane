@@ -3,6 +3,7 @@
 namespace App\RuntimeAdapters\Asterisk;
 
 use App\ControlPlane\RuntimeOperations\FailureClass;
+use App\ControlPlane\RuntimeOperations\OperationStatus;
 use App\RuntimeEngine\Events\RuntimeEventReceiptRepository;
 use App\RuntimeEngine\Listeners\RuntimeListenerLeaseRepository;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
@@ -573,9 +574,30 @@ final class AsteriskAriEventListener
      */
     private function eligibleNodes(int $batchSize): array
     {
+        $restoreAuthorities = $this->restorationListenerAuthorities();
+
         return DB::table('runtime_nodes')
             ->where('adapter_key', $this->catalog->adapterKey())
-            ->whereIn('desired_state', ['active', 'draining'])
+            ->where(function ($query) use ($restoreAuthorities): void {
+                $query->whereIn('desired_state', ['active', 'draining']);
+
+                if ($restoreAuthorities === []) {
+                    return;
+                }
+
+                $query->orWhere(function ($query) use ($restoreAuthorities): void {
+                    $query->where('desired_state', 'disabled')
+                        ->where(function ($query) use ($restoreAuthorities): void {
+                            foreach ($restoreAuthorities as $authority) {
+                                $query->orWhere(function ($query) use ($authority): void {
+                                    $query->where('tenant_id', $authority['tenant_id'])
+                                        ->where('id', $authority['runtime_node_id'])
+                                        ->where('configuration_version', $authority['configuration_version']);
+                                });
+                            }
+                        });
+                });
+            })
             ->whereExists(function ($query): void {
                 $query->selectRaw('1')
                     ->from('asterisk_ari_profiles')
@@ -585,6 +607,61 @@ final class AsteriskAriEventListener
             ->limit($batchSize)
             ->get()
             ->all();
+    }
+
+    /**
+     * @return list<array{tenant_id:string,runtime_node_id:string,configuration_version:int}>
+     */
+    private function restorationListenerAuthorities(): array
+    {
+        $rows = DB::table('runtime_operations')
+            ->select(['tenant_id', 'runtime_node_id', 'payload'])
+            ->where('operation_type', (string) config('telephony_domain.operation_types.runtime_node_restore', 'runtime.node.restore'))
+            ->whereIn('status', [
+                OperationStatus::Pending->value,
+                OperationStatus::Leased->value,
+                OperationStatus::Running->value,
+                OperationStatus::RetryScheduled->value,
+            ])
+            ->whereNotNull('tenant_id')
+            ->whereNotNull('runtime_node_id')
+            ->get();
+
+        $authorities = [];
+        foreach ($rows as $row) {
+            $payload = json_decode((string) $row->payload, true);
+            if (! is_array($payload)) {
+                continue;
+            }
+
+            $tenantId = is_string($row->tenant_id) ? $row->tenant_id : '';
+            $runtimeNodeId = is_string($row->runtime_node_id) ? $row->runtime_node_id : '';
+            $payloadTenantId = $payload['tenant_id'] ?? null;
+            $payloadRuntimeNodeId = $payload['runtime_node_id'] ?? null;
+            $expectedVersion = $payload['expected_runtime_node_configuration_version'] ?? null;
+            $hasExpectedVersion = is_int($expectedVersion) || (is_string($expectedVersion) && ctype_digit($expectedVersion));
+
+            if ($tenantId === ''
+                || $runtimeNodeId === ''
+                || $payloadTenantId !== $tenantId
+                || $payloadRuntimeNodeId !== $runtimeNodeId
+                || ($payload['requested_desired_state'] ?? null) !== 'active'
+                || ! is_string($payload['source_fence_operation_id'] ?? null)
+                || ($payload['source_fence_operation_id'] ?? '') === ''
+                || ! array_key_exists('source_fence_generation', $payload)
+                || ! $hasExpectedVersion
+            ) {
+                continue;
+            }
+
+            $authorities[$tenantId.':'.$runtimeNodeId.':'.((int) $expectedVersion)] = [
+                'tenant_id' => $tenantId,
+                'runtime_node_id' => $runtimeNodeId,
+                'configuration_version' => (int) $expectedVersion,
+            ];
+        }
+
+        return array_values($authorities);
     }
 
     /**
