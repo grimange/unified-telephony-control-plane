@@ -4983,3 +4983,139 @@ runtime fencing, but no live destructive scale-to-zero or failover proof was
 performed in this task. The next proof remains a controlled rerun of the T5-A25
 transport-unavailable scenario, stopping only when canonical automatic fencing,
 rebind, reconstruction, and restoration evidence are actually observed.
+
+## T5-A27 — Failover rerun after the T5-A26 fix: BLOCKED by a trigger divergence (fix verified, precondition unreachable)
+
+Checkpointed destructive rerun at `UTCP_PHASE=T1`, HEAD `db609cb`. The T5-A26
+coordinator fix was verified present in code and **deployed live** (the API
+image was rebuilt from the clean tree, pushed, and the failover-path
+deployments rolled out), and it is comprehensively unit-tested. But the live
+proof could not exercise it: the authorized `res_ari_events.so`-only trigger
+**does not reproduce sustained RuntimeNode unavailability** on this Asterisk
+build, so the coordinator never produced a failover candidate. Per the trigger-
+divergence rule, the proof stopped before any fence condition, node B was
+restored, and the proof Conference was closed canonically. **No fence
+operation, no scale-to-zero, no Pod deletion, no binding mutation, no failover
+occurred.**
+
+### Fix deployment (prerequisite)
+
+The running image predated `db609cb` (the classifier fix is application code,
+not a manifest change). The API image was rebuilt from the clean tree
+(`docker build --target app-prod`, verified to contain
+`classifyTerminalFailedVerificationOperation`), pushed to
+`127.0.0.1:5001/utcp/api:0.1.0-k1-dev`, and `scheduler`,
+`telephony-command-worker`, `telephony-reconciler`, `telephony-event-normalizer`,
+and `utcp-runtime-fence-worker` were rolled out. The fix was confirmed live in
+the `scheduler` pod (which runs the coordinator sweep). Baseline otherwise
+green: both nodes active/ready, fence worker Ready/idle, drift passing, zero
+open conferences/failover operations.
+
+### Proof Conference
+
+conference `77c6610e-…f088c9`, participant `daa4e954-…f08770`, binding
+`f106de92-…e9741`, bound node `05ddb383…` (Local Asterisk ARI B = former;
+deployment `asterisk-ari-b`, Pod uid `3b9121dc…4671e`), generation 2; replacement
+node A `1d15ca88…`. Live bridge `utcp-conf-77c6610e…` present on node B with 2
+channels; node A empty. Created through the admin/member API.
+
+### Trigger divergence (root cause)
+
+`asterisk -rx "module unload res_ari_events.so"` on node B (03:00:30) unloaded
+the events WebSocket resource cleanly. Immediately verified: Asterisk process
+alive, replicas 1/1, Pod UID unchanged, bridge + 2 channels alive via the
+**control socket**. But node B **stayed `ready`** for the full observation
+window (03:00:45 through 03:03:36, 8 polling samples) — it never went
+unavailable, so no failover candidate was ever produced.
+
+Root cause, confirmed by code and live probes:
+
+- Unloading `res_ari_events.so` does **not** close the listener's already-
+  established ARI events WebSocket on Asterisk 20.20.1 — the existing session
+  stays open.
+- `AsteriskAriEventListener` detects loss only via (a) its periodic health check
+  (`AsteriskAriClient::inspect` GET `/asterisk/info` + `stasisApplicationRegistered`
+  GET `/ari/applications/{app}`) throwing, or (b) `readEvent` throwing.
+- With only the events module unloaded, REST stays fully healthy: `inspect`
+  returns 200, `stasisApplicationRegistered` returned **true** (app still
+  subscribed via the still-open socket), and `conferenceRuntimeSummary` returned
+  `bridge_exists=true, owned_bridge=true`.
+- `readEvent` returns `null` (not an exception) on a quiet or EOF socket
+  (`fread` empty → return null), so even a closed socket is not treated as a
+  failure.
+
+Net: the health check passes every cycle and the node remains `ready`
+indefinitely. The event stream is silently dead, but nothing the listener
+checks reflects that.
+
+### Correction to the T5-A25 trigger characterization
+
+T5-A25's node-B unavailability was **not** caused by the `res_ari_events` unload
+in isolation, contrary to how §T5-A25 framed it. In T5-A25 the entire `res_ari`
+submodule stack was cycled (unload-all, then reload REST), which unloaded
+`res_ari_asterisk` (breaking the health check's `/asterisk/info` call) and left
+the ARI HTTP handler degraded so that REST calls failed at the **connection
+level** (`ari_http_transport_failed`, `file_get_contents` returning false). That
+collateral **transport** degradation — not the events-module unload — is what
+drove the node unavailable and made verification transport-fail. The clean,
+authorized `res_ari_events`-only trigger produces neither.
+
+### Why the authorized trigger cannot reach the precondition
+
+The T5-A26 fix escalates a `verify_conference_absent` operation that reaches
+`terminal_failed` with a retryable transport/unavailability failure class. To
+reach that live requires ARI HTTP to be genuinely unreachable from the control
+plane (connection-level failure for both the listener health check and the
+verify REST calls), while the Asterisk process and bridge stay alive. On this
+build that requires disabling the ARI HTTP server itself (e.g. `http.conf`
+`enabled=no` + reload) or a connection-level fault injection — none of which is
+among the authorized actions. The prohibited alternatives (unloading REST
+bridge modules → false-404; NetworkPolicy; Pod/scale mutation) are exactly the
+paths that would otherwise reproduce it. Therefore the precondition is
+unreachable under the T5-A27 authorization envelope.
+
+### Fix status (verified, not live-proven)
+
+The T5-A26 correction is present and correct in `db609cb` and deployed live:
+`classifyExistingVerificationOperation` now routes `TerminalFailed` through
+`classifyTerminalFailedVerificationOperation`, which escalates to
+`requestRuntimeFence(..., 'verification_unavailable')` when
+`last_failure_class ∈ {transient_transport, runtime_unavailable, timeout}` and
+authority/replacement still hold, and otherwise keeps `verification_failed`. It
+is covered by 11 new focused tests
+(`test_terminal_retry_exhausted_absence_verification_requests_external_fence_on_next_sweep`
+and siblings) that drive a real `terminal_failed` verification to exactly one
+`runtime.node.runtime.fence`, plus idempotency and authority/generation/recovery
+guards. All suites pass at HEAD (telephony-domain 45, asterisk-conference 71).
+Live end-to-end proof remains pending a faithful transport-outage trigger.
+
+### Divergence handling performed (before any fence condition)
+
+Per the "before scale-to-zero" contract: `res_ari_events.so` was reloaded on
+node B to restore event flow (this momentarily flapped node B to `unavailable`
+as the reload reset the WebSocket handler; it reconnected and returned to
+`ready` by 03:05:03 — a harmless transient, last-ready only ~4 min old so the
+300 s grace was never met and no candidate formed); the proof Conference was
+closed canonically (participant remove → desired-state closed → converged
+`closed` at 03:05:49). No manual scale, Pod deletion, operation/binding/observed-
+state/lease write occurred. Node B Pod UID stayed `3b9121dc…4671e` throughout
+(no restart this run).
+
+### Final state (restored)
+
+Both Deployments 1/1 with unchanged Pod UIDs (`030c033c…45dd`,
+`3b9121dc…4671e`); both RuntimeNodes active/ready; both leases claimed; one open
+epoch per node; zero open conferences; zero live proof bridges/channels; zero
+pending operations; zero fence operations created for `77c6610e…`; tree clean;
+`UTCP_PHASE=T1`. Fence worker Ready/idle.
+
+### Required next step
+
+A bounded task to establish a faithful, authorized ARI-transport-outage trigger
+that preserves the Asterisk process and live bridge — for example disabling the
+ARI HTTP server via `http.conf enabled=no` + `core reload` inside the former
+Pod (connection-level failure, no REST-module unload, no false-404, no Pod/scale
+mutation), or an equivalent supported fault injection — added to the authorized
+action set. Then re-run this exact T5-A27 destructive proof; the deployed +
+unit-proven T5-A26 fix is expected to escalate the transport-terminal-failed
+verification to fencing and complete the lifecycle.
