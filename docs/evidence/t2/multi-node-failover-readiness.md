@@ -5878,3 +5878,130 @@ TTL override, or direct expiry repair path was introduced.
 The participant-inclusive destructive rerun remains pending. The application image
 containing `fdc745e` and the updated local `utcp-application-config` ConfigMap must
 be deployed before that rerun.
+
+## T5-A35 — Participant-inclusive automatic two-node failover: COMPLETE
+
+Checkpointed live rollout + destructive proof at `UTCP_PHASE=T1`, HEAD `ab4418d`
+(includes `fdc745e` fence-provenance fix + `ab4418d` 30-minute local session
+lifetime). The complete canonical automatic failover lifecycle succeeded
+end-to-end WITH an admitted participant: `fence_result=fenced`, participant
+reconstructed at G+1 with ~20 minutes of session validity remaining. No manual
+scale-to-zero, Pod deletion, direct operation/expiry/participant write occurred.
+
+### Application image build and rollout
+
+Built the API image from the clean `ab4418d` tree, verified it contains the
+`fdc745e` provenance code (`runtime_fence_provenance` / `scale_to_zero_requested`,
+grep=3) and the T5-A26 escalation (grep=2), pushed to
+`127.0.0.1:5001/utcp/api:0.1.0-k1-dev` (digest `sha256:bbf2f942…`). Rolled out
+api, scheduler, telephony-command-worker, telephony-reconciler,
+telephony-event-normalizer, utcp-runtime-fence-worker, worker — all Ready, no
+crash loops (the fence-worker/worker first-second startup restart is the known
+benign PostgreSQL-connect race). Asterisk/Kamailio/PostgreSQL/Redis untouched.
+
+### Live fence-provenance code
+
+Running fence worker contains the exact fdc745e line
+(`RuntimeFenceOperationHandler.php:78` `scale_to_zero_requested_by_operation`);
+scheduler contains `classifyTerminalFailedVerificationOperation`.
+
+### ConfigMap rollout and running configuration
+
+Rendered `overlays/local/platform`, applied only the `utcp-application-config`
+ConfigMap (`UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES=30`). Live ConfigMap = 30;
+running processes confirmed: api/scheduler/telephony-command-worker all
+`printenv UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES` = 30.
+
+### Fresh telephony session and margin
+
+Fresh canonical `POST /api/v1/telephony/sessions` (new member, normal auth) →
+session `24b3c038-…c30`, active, issued 07:34:19, expires 08:04:19, **29.67 min**
+initial validity.
+
+### Proof Conference
+
+conference `8e823993-…e6a6`, participant `d6ec836b-…c7477`, session
+`24b3c038-…c30`, binding `d8b16f13-…db89c`, bound node B (`05ddb383…`,
+`asterisk-ari-b`, Pod uid `bad5fbce…`), generation 2; replacement node A
+(`1d15ca88…`). Initial: participant admitted linked to the fresh session; one
+active binding on node B; bridge `utcp-conf-8e823993…` + 2 channels on node B;
+node A empty.
+
+### Sustained HTTP outage and detection
+
+07:34:54 HTTP disabled (`enabled=no` + `core reload`, backup checksum
+`aaf6effb…`) → "Server Disabled"; liveness OK, bridge alive, PID 1, replicas
+1/1, restart 0. 07:35:34 REST `ari_http_transport_failed`/`runtime_unavailable`,
+node B `unavailable`, epochs closed, Pod NotReady, **restart count 0**
+(corrected probes hold). Last-ready 07:34:54 → grace crossed 07:39:54.
+Throughout the grace: session active, participant admitted, bridge + 2 channels
+alive, node B never restarted.
+
+### Automatic failover chain
+
+```text
+07:40:03  runtime.node.verify_conference_absent created (coordinator)
+          → 3/3 attempts ari_http_transport_failed → terminal_failed
+07:41:02  runtime.node.runtime.fence created (T5-A26 escalation on next sweep)
+          → dedicated worker scaled node B 1→0 (effective scale)
+07:41:20  conference.runtime_fence_terminated  fence_result=fenced  owned_pods_remaining=0
+07:42:02  conference.runtime_binding_replaced  → node A, generation 3
+07:42:03  conference.ensure succeeded on node A at G+1 (bridge reconstructed)
+07:42:03  conference.participant.ensure succeeded on node A at G+1 (participant reconstructed)
+```
+
+### Fence-provenance evidence and final result
+
+Fence op payload `runtime_fence_provenance.scale_to_zero_requested`:
+`by_operation=true`, `operation_id=37d65841…` (matches the fence op),
+`pre_scale_replicas=1` — proving THIS operation performed the 1→0 scale.
+Completion event `conference.runtime_fence_terminated` `fence_result=fenced`
+(NOT `already_fenced`), `owned_pods_remaining=0`. The fdc745e fix works: a
+self-caused scale reports `fenced` even though completion came on a later
+attempt after graceful Pod termination.
+
+### Binding, generation, reconstruction
+
+Old binding (`05ddb383`/node B) retired with `unbound_at`; new binding
+(`1d15ca88`/node A) active; exactly one active binding; generation 2→3 (once).
+Bridge `utcp-conf-8e823993…` reconstructed **only** on node A with **2 active
+channels** (participant Local-channel legs); node B fenced (0 replicas, 0 owned
+pods). Duplicate-prevention: exactly one verify op, one fence op, one
+termination event, one active binding — no duplicate chains.
+
+### Participant reconstruction and session validity
+
+Participant `desired_state=admitted`, `observed_state=joined` throughout —
+never removed by the expiry sweep (the 30-min session outlasted the proof).
+`conference.participant.ensure` succeeded on node A at G+1 with deterministic
+channel legs attached to the reconstructed bridge. **Session validity at
+reconstruction: ~20.3 minutes remaining** (requirement ≥5 min). This is the
+correction that T5-A31's 5-minute session could not satisfy.
+
+### Former-node restoration
+
+`kubectl scale asterisk-ari-b --replicas=1` → **new Pod** `8557bd4d76-2d2sk`
+(uid `1f53ff0b…`, distinct from fenced `bad5fbce…`), restart 0, corrected exec
+liveness, regenerated `http.conf` (`enabled=yes`), fresh empty Asterisk, lease
+claimed, new open epoch, RuntimeNode ready. Did not reclaim the conference
+(remained on node A gen 3).
+
+### Cleanup and final state
+
+Participant removed and conference closed canonically (converged `closed`); the
+proof member session left to canonical expiry (no direct edit). Final: both
+Deployments 1/1 with restart 0 (`c19929bc` node A, `1f53ff0b` node B); both
+RuntimeNodes active/ready; both leases claimed; one open epoch per node; zero
+open conferences; zero live bridges/channels; zero actionable operations; fence
+worker Ready/idle; tree clean; `UTCP_PHASE=T1`. Historical evidence retained.
+
+### Result
+
+**T5_PARTICIPANT_INCLUSIVE_AUTOMATIC_FAILOVER_COMPLETE.** All 32 completion
+criteria met. This is the first fully-successful end-to-end automatic two-node
+conference failover with participant reconstruction: sustained ARI outage (no
+container restart, corrected probes) → automatic verification → terminal
+escalation (T5-A26) → dedicated-worker fence with `fence_result=fenced`
+(fdc745e) → transactional rebind (gen 2→3) → bridge and participant
+reconstruction on the surviving node with ~20 min session validity (ab4418d) →
+one-time former-node restoration → canonical cleanup.
