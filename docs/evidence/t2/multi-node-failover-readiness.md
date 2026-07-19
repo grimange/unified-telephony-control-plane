@@ -7122,3 +7122,153 @@ a separate rollout correction. No Kubernetes resources were applied, no live
 Conference was created, and no live failover or restoration proof was performed
 for T5-A42. Live replacement-node failure, capacity-return recovery, and
 multi-generation proof remain pending.
+
+## T5-A43 — No-capacity pending state proven; second-generation recovery BLOCKED (environment + restore-retry robustness)
+
+Checkpointed live proof at `UTCP_PHASE=T1`, HEAD `26161b5`. The observable
+no-capacity feature (durable `pending_no_capacity` + single-event dedup +
+clear-on-closure) is PROVEN live. Two blockers prevented the full second-
+generation recovery: (1) an environmental artifact — accumulated C4 simulator
+proof nodes flapping to `observed_state=ready` present phantom conference-
+replacement capacity, defeating the "no capacity" precondition and allowing
+node A to be fenced; (2) a restore-robustness gap — concurrent restore ops
+terminal-fail on the tight 3-attempt retry budget, and a terminal-failed restore
+cannot be canonically re-requested (its generation-scoped idempotency key
+re-finds the terminal op), leaving nodes stuck disabled and requiring break-glass.
+**Verdict: T5_NO_CAPACITY_RECOVERY_AND_SECOND_GENERATION_LIVE_PROOF_INCOMPLETE.**
+
+### Migration and ConfigMap correction
+
+`2026_07_17_160000_add_conference_failover_pending_state.php` (additive: 4
+nullable `failover_*` columns + 2 indexes + 2 CHECK constraints) applied via the
+canonical migrate Job: recorded once, all 110 conferences preserved, zero
+falsely marked pending. The session-lifetime drift from §T5-A41 was corrected —
+`kube apply` of the platform `utcp-application-config` ConfigMap set live
+`UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES=30`, and running pods confirmed env=30.
+
+### Image rollout and currency
+
+Built from clean `26161b5` (digest `sha256:abed05db…`), verified pending-state +
+coordinator + migration code; rolled out api/scheduler/command-worker/reconciler/
+event-normalizer/listener/infra-worker/worker. Live currency confirmed
+(coordinator `markConferenceFailoverPendingNoCapacity`, domain
+`FAILOVER_STATE_PENDING_NO_CAPACITY`, TTL=30).
+
+### First failover G → G+1 (proven)
+
+Proof conference `8bc7d2c3-…b655`, participant `5554d1e5-…0e44`, session
+`a713f9ac` (29 min), initial node B (05ddb383) at G (gen 2). HTTP disabled on
+node B (12:49:59) → verify terminal_failed → fence `fenced` (12:56:02) → node B
+disabled → rebind to node A (1d15ca88) at G+1 (gen 3) → bridge+participant
+reconstructed (2 channels), participant admitted. One active binding, node B
+disabled/excluded, no pending fields.
+
+### Second outage and no-capacity entry (proven — the 26161b5 deliverable)
+
+HTTP disabled on node A (12:58:01); node B left disabled. verify node A
+terminal_failed (13:03) → fence node A (13:04:02) → rebind found no replacement
+(13:05:03) → **`failover_state=pending_no_capacity`, `failover_binding_id=094a4f50`
+(the G+1 binding), `failover_generation=3`, `failover_started_at=13:05:03`**.
+Exactly one `conference.failover_coordinator.no_replacement` event.
+
+### Event dedup across repeated sweeps (proven)
+
+Across ~9 coordinator sweeps (13:05→13:10), the pending fields and started-at
+timestamp remained stable, the no_replacement event count stayed at **exactly 1**
+(no duplicate events, no duplicate verify/fence chains, no binding retirement of
+the current binding beyond the fence, no manual reconciliation). Cross-checked:
+conference stayed authoritatively on node A (asterisk) — never rebound to a
+simulator node.
+
+### Pending clears on closure (proven)
+
+Closing the proof conference (participant remove → desired-state closed)
+immediately cleared `failover_state` to null and removed the conference from
+failover candidacy — demonstrating the clear-on-closure path.
+
+### BLOCKER 1 (environmental) — phantom capacity defeated "fencing withheld" (criterion 9)
+
+The prompt required the pre-fence guard to WITHHOLD fencing node A while no
+replacement exists (node A stays replicas=1). Instead node A was fenced (scaled
+to 0, disabled at 13:04:02). Root cause: the cluster carries ~49 leftover **C4
+simulator proof RuntimeNodes** with `conference.lifecycle`+`conference.participation`
+capabilities in `desired_state=active`, whose `observed_state` **flaps to `ready`**
+as the simulator-event-source runs (confirmed: "C4 Live Proof transient" ready
+13:07:55, "C4 Live Proof reconnect" ready 13:00:24). `hasDistinctEligibleReplacement`/
+`selectRuntimeNodeForConference` filter on `desired_state IN (active) AND
+observed_state='ready'` + capabilities — they do not exclude simulator-family
+nodes. At the fence decision (~13:04) a C4 node was transiently `ready`, so the
+guard saw capacity and the fence proceeded; by rebind (13:05) it had gone stale,
+so the rebind found none → pending. This is the T5-A41 Window-D TOCTOU realized
+via flapping test-fixture nodes: the guard behaved correctly given its inputs,
+but the "no capacity" precondition was violated by phantom transient simulator
+capacity. Net: criterion 9 not met, for an environmental reason, not a 26161b5
+defect. (The conference nonetheless reached the correct observable
+pending_no_capacity state.)
+
+### BLOCKER 2 (code robustness) — canonical restoration terminal-failed and is not re-requestable
+
+During cleanup, both nodes were restored canonically via the desired-state API.
+Both `runtime.node.restore` ops **terminal_failed at 3/3 attempts** — node A on
+`runtime_restore_pods_not_ready`, node B on `runtime_restore_listener_lease_missing`
+— because two restores ran concurrently and the pods/listener took longer than
+the tight 3-attempt retry budget (the T5-A40 "tight but sufficient" margin,
+exhausted here under concurrent load). The Deployments did scale 0→1 (pods up),
+but the ops failed before the readiness/lease/observed gates passed. Re-requesting
+`desired-state active` returned HTTP 200 but scheduled **no new restore op** — the
+terminal-failed op's generation-scoped idempotency key
+(`findIdempotent(runtime.node.restore, …)`) re-found the terminal op, so no fresh
+restore was created — leaving both nodes stuck `disabled` with running,
+listener-detached pods. `latestSuccessfulFenceForDisabledNode` still finds the
+source fence, but the idempotency short-circuit blocks the retry. This is a real
+robustness gap: (a) the restore retry budget is too small for concurrent restores
+/ slow pod readiness; (b) a terminal-failed restore permanently blocks canonical
+re-restoration for that node+generation.
+
+### Divergence / break-glass recovery (recorded separately, NOT proof success)
+
+Per the terminal-restoration-failure contract: all operation/provenance/binding/
+Pod evidence preserved (both terminal-failed restore ops retained); proof marked
+incomplete; the moved conference was closed canonically first (removing simulator-
+rebind risk and clearing pending). Because canonical re-restoration was blocked
+(idempotency) and `kubectl scale` is inert (pods already 1/1; the block is
+`desired_state=disabled`), both nodes were returned to health by a direct
+`runtime_nodes.desired_state=active` write; the listener re-attached, leases
+claimed, observed ready by 13:26:05. This break-glass is exceptional recovery,
+explicitly not counted as proof success.
+
+### What was NOT proven
+
+Criterion 9 (fencing withheld while no capacity) — blocked environmentally.
+Capacity-return recovery, the resumed G+1 fence chain, the G+1→G+2 second
+generation, pending-clear-via-rebind, and G+2 reconstruction — not exercised,
+blocked by the restoration terminal-failure and the phantom-capacity confound
+(a flapping simulator node could otherwise have captured the rebind).
+
+### Final state
+
+Both Deployments 1/1; both RuntimeNodes active/ready (via break-glass); both
+leases claimed; one open epoch per node; proof conference closed (failover fields
+cleared); zero open conferences; zero pending; zero live channels; tree clean;
+`UTCP_PHASE=T1`. Historical operations/bindings/events retained.
+
+### Tests
+
+telephony-domain-test 46→54 and asterisk-conference-test 77→85 (26161b5 added
+pending-state coverage). All focused suites pass at HEAD.
+
+### Required corrections before re-run (for the next bounded task, T5-A44)
+
+1. **Environment/test-data:** retire the leftover C4 simulator proof RuntimeNodes
+   (or otherwise ensure no non-Asterisk conference-capable node is `active`+
+   flapping-`ready`) so the two-node no-capacity precondition holds. Consider
+   whether replacement selection should require observation stability (not a
+   single flapping `ready`) or exclude simulator-family nodes for asterisk
+   conferences — noting conferences are runtime-neutral by design.
+2. **Restore robustness (code):** widen/reset the `runtime.node.restore` retry
+   budget so a scaled-up node's readiness/lease/observed gates are actually
+   reachable (especially under concurrent restores), AND allow a re-requested
+   restoration to supersede a terminal-failed restore op (per-attempt idempotency
+   scope, or clear the terminal op's key on a fresh authorized request) so a node
+   is never permanently stuck disabled requiring break-glass.
+Then re-run this exact T5-A43 proof.
