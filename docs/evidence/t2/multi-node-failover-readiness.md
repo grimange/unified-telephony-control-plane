@@ -7272,3 +7272,61 @@ pending-state coverage). All focused suites pass at HEAD.
    scope, or clear the terminal op's key on a fresh authorized request) so a node
    is never permanently stuck disabled requiring break-glass.
 Then re-run this exact T5-A43 proof.
+
+## T5-A44 repository correction: restore retry window and successor operations
+
+T5-A43 isolated two repository defects in canonical former-node restoration. Both
+former RuntimeNodes scaled from `0` to `1` and created running Pods, but normal
+asynchronous convergence (`runtime_restore_pods_not_ready` followed by
+`runtime_restore_listener_lease_missing`) exhausted the restore operation's
+three-attempt budget. The terminal restore operation then became a permanent
+idempotency blocker: a later authorized disabled-to-active desired-state request
+returned the historical `terminal_failed` operation instead of creating fresh
+restore authority.
+
+The T5-A44 correction keeps the normal authority chain intact:
+`POST /runtime-nodes/{id}/desired-state` remains the canonical restoration
+request surface, `runtime.node.restore` remains the persisted asynchronous
+authority, and the infrastructure worker remains the only Kubernetes scale and
+restoration executor. No Kubernetes manifest, RBAC, NetworkPolicy, placement,
+replacement-selection, fencing, Asterisk probe, RuntimeBinding, session, CLI, or
+environment-gate behavior was changed.
+
+The restore operation now has a restore-specific convergence window of eight
+attempts. With the repository retry schedule, failed attempts are delayed by
+15, 30, 45, 60, 75, 90, and 105 seconds, giving roughly seven minutes of retry
+delay after the initial attempt. This covers normal Pod scheduling/startup,
+startup/liveness/readiness probe convergence, two listener attachment and
+projection cycles, lease claim, event epoch creation, RuntimeNode observed-ready
+projection, and ordinary worker scheduling jitter. The default runtime-operation
+budget remains three attempts for unrelated operation types.
+
+Terminal restore operations remain immutable history. A current actionable
+restore (`pending`, `leased`, `running`, or `retry_scheduled`) is reused. A
+successful restore for the current source fence and configuration authority is
+returned and never superseded. A terminal, cancelled, or expired restore can be
+superseded only by a new authorized active desired-state request while the
+RuntimeNode remains disabled and current source-fence/configuration authority is
+still valid. The successor payload records
+`supersedes_restore_operation_id` and `restore_attempt_generation`, and its
+deterministic idempotency key includes the RuntimeNode, source fence operation,
+source fence generation, configuration version, requested active state, and the
+terminal predecessor ID. Repeated or concurrent requests for the same predecessor
+therefore converge on one successor; if that successor terminal-fails, a later
+authorized request can create the next deterministic successor.
+
+Listener eligibility remains operation-authorized: terminal predecessors do not
+make disabled RuntimeNodes listener-eligible, while an actionable successor does.
+Placement remains blocked until the restoration handler completes all gates and
+transitions the node back to `active`.
+
+Focused repository coverage now includes delayed Pod/listener convergence within
+the expanded window, concurrent RuntimeNode restoration, terminal-predecessor
+successor creation, repeated successor requests, multi-successor sequencing,
+successful-predecessor reuse, cancelled/expired predecessor supersession,
+configuration-version authority changes, listener authority through actionable
+restore operations, and preservation of exactly one scale and one
+`runtime_node.restored` event for a successful chain. The next live rerun must
+also clean up or canonically disable leftover simulator proof RuntimeNodes before
+establishing the two-node no-capacity baseline. No simulator-family exclusion was
+added in this repository correction.

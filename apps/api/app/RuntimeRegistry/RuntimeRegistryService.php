@@ -7,6 +7,7 @@ use App\ControlPlane\Idempotency\IdempotencyConflict;
 use App\ControlPlane\Idempotency\IdempotencyStore;
 use App\ControlPlane\Messaging\EventEnvelope;
 use App\ControlPlane\Messaging\OutboxRepository;
+use App\ControlPlane\RuntimeOperations\OperationStatus;
 use App\ControlPlane\RuntimeOperations\RuntimeOperationRepository;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\IdempotencyKey;
@@ -489,34 +490,162 @@ final class RuntimeRegistryService
         }
 
         $operationType = (string) config('telephony_domain.operation_types.runtime_node_restore');
-        $idempotency = IdempotencyKey::fromString(sprintf(
-            'runtime-node-restore:%s:%s:%s:active',
-            $node->id,
-            $sourceFence->id,
-            $sourceGeneration,
-        ));
+        $predecessor = $this->latestRestoreOperationForAuthority((string) $node->tenant_id, (string) $node->id, (string) $sourceFence->id, $sourceGeneration, (int) $node->configuration_version);
+        if ($predecessor !== null && $this->restoreStatusIsReusable((string) $predecessor->status)) {
+            return (string) $predecessor->id;
+        }
+        $attemptGeneration = $predecessor === null ? 1 : $this->restoreAttemptGeneration($predecessor) + 1;
+        $idempotency = $this->restoreIdempotencyKey((string) $node->id, (string) $sourceFence->id, $sourceGeneration, (int) $node->configuration_version, $predecessor?->id);
+        if (($existing = $this->operations->findIdempotent($operationType, $idempotency)) !== null) {
+            return $existing;
+        }
 
-        return $this->operations->create(
+        $payload = [
+            'tenant_id' => $node->tenant_id,
+            'runtime_node_id' => $node->id,
+            'requested_desired_state' => 'active',
+            'source_fence_operation_id' => $sourceFence->id,
+            'source_fence_generation' => $sourceGeneration,
+            'workload_namespace' => $namespace,
+            'deployment' => $deployment,
+            'target_replicas' => $targetReplicas,
+            'requesting_actor' => $actorId,
+            'reason' => $reason,
+            'expected_runtime_node_configuration_version' => (int) $node->configuration_version,
+            'supersedes_restore_operation_id' => $predecessor?->id,
+            'restore_attempt_generation' => $attemptGeneration,
+        ];
+
+        $operationId = $this->operations->create(
             $operationType,
             'runtime_node',
             (string) $node->id,
-            [
-                'tenant_id' => $node->tenant_id,
-                'runtime_node_id' => $node->id,
-                'requested_desired_state' => 'active',
-                'source_fence_operation_id' => $sourceFence->id,
-                'source_fence_generation' => $sourceGeneration,
-                'workload_namespace' => $namespace,
-                'deployment' => $deployment,
-                'target_replicas' => $targetReplicas,
-                'requesting_actor' => $actorId,
-                'reason' => $reason,
-                'expected_runtime_node_configuration_version' => (int) $node->configuration_version,
-            ],
+            $payload,
             $context,
             idempotencyKey: $idempotency,
+            maxAttempts: (int) config('telephony_domain.operation_max_attempts.runtime_node_restore', 8),
             runtimeNodeId: (string) $node->id,
         );
+        $predecessorProvenance = $this->restoreScaleProvenanceFromPredecessor($predecessor, (string) $sourceFence->id, $namespace, $deployment, $targetReplicas);
+        if ($predecessorProvenance !== null) {
+            $this->recordInheritedRestoreScaleProvenance($operationId, $predecessorProvenance, (string) $predecessor->id);
+        }
+
+        return $operationId;
+    }
+
+    private function restoreIdempotencyKey(string $nodeId, string $sourceFenceOperationId, int $sourceGeneration, int $configurationVersion, ?string $predecessorId): IdempotencyKey
+    {
+        $base = sprintf(
+            'runtime-node-restore:%s:%s:%s:%s:active',
+            $nodeId,
+            $sourceFenceOperationId,
+            $sourceGeneration,
+            $configurationVersion,
+        );
+        if ($predecessorId !== null) {
+            $base .= ':after:'.$predecessorId;
+        }
+
+        return IdempotencyKey::fromString($base);
+    }
+
+    private function latestRestoreOperationForAuthority(string $tenantId, string $nodeId, string $sourceFenceOperationId, int $sourceGeneration, int $configurationVersion): ?object
+    {
+        return DB::table('runtime_operations')
+            ->where('tenant_id', $tenantId)
+            ->where('runtime_node_id', $nodeId)
+            ->where('operation_type', (string) config('telephony_domain.operation_types.runtime_node_restore'))
+            ->orderByDesc('created_at')
+            ->orderByDesc('updated_at')
+            ->get()
+            ->first(function (object $operation) use ($tenantId, $nodeId, $sourceFenceOperationId, $sourceGeneration, $configurationVersion): bool {
+                $payload = json_decode((string) $operation->payload, true, 512, JSON_THROW_ON_ERROR);
+                if (! is_array($payload)) {
+                    return false;
+                }
+
+                return ($payload['requested_desired_state'] ?? null) === 'active'
+                    && ($payload['tenant_id'] ?? null) === $tenantId
+                    && ($payload['runtime_node_id'] ?? null) === $nodeId
+                    && ($payload['source_fence_operation_id'] ?? null) === $sourceFenceOperationId
+                    && (int) ($payload['source_fence_generation'] ?? 0) === $sourceGeneration
+                    && (int) ($payload['expected_runtime_node_configuration_version'] ?? 0) === $configurationVersion;
+            });
+    }
+
+    private function restoreStatusIsReusable(string $status): bool
+    {
+        return in_array($status, [
+            OperationStatus::Pending->value,
+            OperationStatus::Leased->value,
+            OperationStatus::Running->value,
+            OperationStatus::RetryScheduled->value,
+            OperationStatus::Succeeded->value,
+        ], true);
+    }
+
+    private function restoreAttemptGeneration(object $operation): int
+    {
+        $payload = json_decode((string) $operation->payload, true, 512, JSON_THROW_ON_ERROR);
+        $generation = is_array($payload) ? filter_var($payload['restore_attempt_generation'] ?? null, FILTER_VALIDATE_INT) : false;
+
+        return $generation === false || $generation < 1 ? 1 : (int) $generation;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function restoreScaleProvenanceFromPredecessor(?object $predecessor, string $sourceFenceOperationId, string $namespace, string $deployment, int $targetReplicas): ?array
+    {
+        if ($predecessor === null) {
+            return null;
+        }
+        $payload = json_decode((string) $predecessor->payload, true, 512, JSON_THROW_ON_ERROR);
+        if (! is_array($payload)) {
+            return null;
+        }
+        $scale = $payload['runtime_restore_provenance']['scale_to_target_requested'] ?? null;
+        if (! is_array($scale)
+            || ($scale['by_operation'] ?? null) !== true
+            || (string) ($scale['source_fence_operation_id'] ?? '') !== $sourceFenceOperationId
+            || (string) ($scale['namespace'] ?? '') !== $namespace
+            || (string) ($scale['deployment'] ?? '') !== $deployment
+            || (int) ($scale['pre_scale_replicas'] ?? -1) !== 0
+            || (int) ($scale['target_replicas'] ?? 0) !== $targetReplicas
+        ) {
+            return null;
+        }
+
+        return $scale;
+    }
+
+    /**
+     * @param  array<string, mixed>  $predecessorProvenance
+     */
+    private function recordInheritedRestoreScaleProvenance(string $operationId, array $predecessorProvenance, string $predecessorId): void
+    {
+        DB::transaction(function () use ($operationId, $predecessorProvenance, $predecessorId): void {
+            $row = DB::table('runtime_operations')->where('id', $operationId)->lockForUpdate()->first();
+            if ($row === null) {
+                return;
+            }
+            $payload = json_decode((string) $row->payload, true, 512, JSON_THROW_ON_ERROR);
+            if (! is_array($payload) || isset($payload['runtime_restore_provenance']['scale_to_target_requested'])) {
+                return;
+            }
+            $scale = $predecessorProvenance;
+            $scale['operation_id'] = $operationId;
+            $scale['scale_requested_by_restore_operation_id'] = (string) ($predecessorProvenance['scale_requested_by_restore_operation_id'] ?? $predecessorProvenance['operation_id'] ?? $predecessorId);
+            $scale['inherited_from_restore_operation_id'] = $predecessorId;
+            $scale['inherited_at'] = now()->toJSON();
+            $payload['runtime_restore_provenance']['scale_to_target_requested'] = $scale;
+
+            DB::table('runtime_operations')->where('id', $operationId)->update([
+                'payload' => StableJson::encode(PayloadSafety::assertSafe($payload)),
+                'updated_at' => now(),
+            ]);
+        });
     }
 
     /**

@@ -241,6 +241,7 @@ final class RuntimeRegistryTest extends TestCase
         $operation = DB::table('runtime_operations')->where('id', $operationId)->first();
         $this->assertSame('runtime_node', $operation->aggregate_type);
         $this->assertSame($node['id'], $operation->aggregate_id);
+        $this->assertSame(8, (int) $operation->max_attempts);
         $operationPayload = json_decode((string) $operation->payload, true, 512, JSON_THROW_ON_ERROR);
         $this->assertSame($sourceFenceId, $operationPayload['source_fence_operation_id']);
         $this->assertSame(31, $operationPayload['source_fence_generation']);
@@ -256,6 +257,138 @@ final class RuntimeRegistryTest extends TestCase
             ->json('runtime_operation');
         $this->assertSame($operationId, $repeat['id']);
         $this->assertSame(1, DB::table('runtime_operations')->where('operation_type', 'runtime.node.restore')->where('runtime_node_id', $node['id'])->count());
+    }
+
+    public function test_terminal_restore_predecessor_allows_authorized_successor_request(): void
+    {
+        [$admin, $tenantId, $node, $sourceFenceId, $terminalId] = $this->restorableNodeWithRestoreOperation('restore-terminal-successor');
+        DB::table('runtime_operations')->where('id', $terminalId)->update([
+            'status' => 'terminal_failed',
+            'last_failure_class' => 'runtime_unavailable',
+            'last_failure_code' => 'runtime_restore_listener_lease_missing',
+            'completed_at' => now()->subSecond(),
+            'updated_at' => now()->subSecond(),
+        ]);
+
+        $successor = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'active'])
+            ->assertOk()
+            ->assertJsonPath('runtime_node.desired_state', 'disabled')
+            ->json('runtime_operation');
+
+        $this->assertNotSame($terminalId, $successor['id']);
+        $this->assertSame('terminal_failed', DB::table('runtime_operations')->where('id', $terminalId)->value('status'));
+        $payload = $this->operationPayload($successor['id']);
+        $this->assertSame($terminalId, $payload['supersedes_restore_operation_id']);
+        $this->assertSame(2, $payload['restore_attempt_generation']);
+        $this->assertSame($sourceFenceId, $payload['source_fence_operation_id']);
+        $this->assertSame(8, (int) DB::table('runtime_operations')->where('id', $successor['id'])->value('max_attempts'));
+        $this->assertSame(2, DB::table('runtime_operations')->where('operation_type', 'runtime.node.restore')->where('runtime_node_id', $node['id'])->count());
+
+        $repeat = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'active'])
+            ->assertOk()
+            ->json('runtime_operation');
+        $this->assertSame($successor['id'], $repeat['id']);
+        $this->assertSame(2, DB::table('runtime_operations')->where('operation_type', 'runtime.node.restore')->where('runtime_node_id', $node['id'])->count());
+    }
+
+    public function test_terminal_successor_can_be_superseded_by_later_authorized_request(): void
+    {
+        [$admin, $tenantId, $node, , $firstId] = $this->restorableNodeWithRestoreOperation('restore-terminal-sequence');
+        DB::table('runtime_operations')->where('id', $firstId)->update([
+            'status' => 'terminal_failed',
+            'last_failure_class' => 'runtime_unavailable',
+            'last_failure_code' => 'runtime_restore_pods_not_ready',
+            'completed_at' => now()->subSeconds(3),
+            'updated_at' => now()->subSeconds(3),
+        ]);
+        $secondId = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'active'])
+            ->assertOk()
+            ->json('runtime_operation.id');
+        DB::table('runtime_operations')->where('id', $secondId)->update([
+            'status' => 'terminal_failed',
+            'last_failure_class' => 'runtime_unavailable',
+            'last_failure_code' => 'runtime_restore_listener_lease_missing',
+            'completed_at' => now()->subSecond(),
+            'updated_at' => now()->subSecond(),
+        ]);
+
+        $thirdId = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'active'])
+            ->assertOk()
+            ->json('runtime_operation.id');
+
+        $this->assertNotSame($firstId, $secondId);
+        $this->assertNotSame($secondId, $thirdId);
+        $this->assertSame($secondId, $this->operationPayload($thirdId)['supersedes_restore_operation_id']);
+        $this->assertSame(3, $this->operationPayload($thirdId)['restore_attempt_generation']);
+        $this->assertSame(3, DB::table('runtime_operations')->where('operation_type', 'runtime.node.restore')->where('runtime_node_id', $node['id'])->count());
+    }
+
+    public function test_successful_restore_predecessor_is_returned_without_successor(): void
+    {
+        [$admin, $tenantId, $node, , $operationId] = $this->restorableNodeWithRestoreOperation('restore-successful-predecessor');
+        DB::table('runtime_operations')->where('id', $operationId)->update([
+            'status' => 'succeeded',
+            'completed_at' => now()->subSecond(),
+            'updated_at' => now()->subSecond(),
+        ]);
+
+        $response = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'active'])
+            ->assertOk()
+            ->json('runtime_operation');
+
+        $this->assertSame($operationId, $response['id']);
+        $this->assertSame(1, DB::table('runtime_operations')->where('operation_type', 'runtime.node.restore')->where('runtime_node_id', $node['id'])->count());
+    }
+
+    public function test_cancelled_and_expired_restore_predecessors_allow_successor_when_authority_remains_valid(): void
+    {
+        foreach (['cancelled', 'expired'] as $status) {
+            [$admin, $tenantId, $node, , $predecessorId] = $this->restorableNodeWithRestoreOperation('restore-'.$status.'-successor');
+            DB::table('runtime_operations')->where('id', $predecessorId)->update([
+                'status' => $status,
+                'cancelled_at' => $status === 'cancelled' ? now()->subSecond() : null,
+                'completed_at' => $status === 'expired' ? now()->subSecond() : null,
+                'updated_at' => now()->subSecond(),
+            ]);
+
+            $successor = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+                ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'active'])
+                ->assertOk()
+                ->json('runtime_operation.id');
+
+            $this->assertNotSame($predecessorId, $successor);
+            $this->assertSame($predecessorId, $this->operationPayload($successor)['supersedes_restore_operation_id']);
+        }
+    }
+
+    public function test_stale_configuration_does_not_reuse_terminal_restore_authority(): void
+    {
+        [$admin, $tenantId, $node, , $terminalId] = $this->restorableNodeWithRestoreOperation('restore-stale-config-successor');
+        DB::table('runtime_operations')->where('id', $terminalId)->update([
+            'status' => 'terminal_failed',
+            'last_failure_class' => 'runtime_unavailable',
+            'last_failure_code' => 'runtime_restore_listener_lease_missing',
+            'completed_at' => now()->subSecond(),
+            'updated_at' => now()->subSecond(),
+        ]);
+        DB::table('runtime_nodes')->where('id', $node['id'])->update([
+            'configuration_version' => 3,
+            'updated_at' => now(),
+        ]);
+
+        $successor = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'active'])
+            ->assertOk()
+            ->json('runtime_operation.id');
+
+        $this->assertNotSame($terminalId, $successor);
+        $this->assertArrayNotHasKey('supersedes_restore_operation_id', array_filter($this->operationPayload($successor), static fn ($value): bool => $value !== null));
+        $this->assertSame(3, $this->operationPayload($successor)['expected_runtime_node_configuration_version']);
     }
 
     public function test_runtime_node_update_adds_structured_workload_label_and_preserves_flat_labels_by_replacement_contract(): void
@@ -737,6 +870,51 @@ final class RuntimeRegistryTest extends TestCase
         ]);
 
         return $id;
+    }
+
+    /**
+     * @return array{0: User, 1: string, 2: array<string, mixed>, 3: string, 4: string}
+     */
+    private function restorableNodeWithRestoreOperation(string $slug): array
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin('admin-'.$slug.'@utcp.local.test', 'tenant-'.$slug);
+        $payload = $this->nodePayload($slug);
+        $payload['labels'] = [
+            'purpose' => 'restore-proof',
+            'kubernetes_workload' => [
+                'namespace' => 'utcp-runtime',
+                'deployment' => 'asterisk-ari-'.$slug,
+            ],
+        ];
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $payload)
+            ->assertCreated()
+            ->json('runtime_node');
+        DB::table('runtime_nodes')->where('id', $node['id'])->update([
+            'desired_state' => 'disabled',
+            'configuration_version' => 2,
+            'updated_at' => now(),
+        ]);
+        $sourceFenceId = $this->sourceFenceOperation($tenantId, $node['id'], 'asterisk-ari-'.$slug, 41, 1);
+        $operationId = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'active'])
+            ->assertOk()
+            ->json('runtime_operation.id');
+
+        return [$admin, $tenantId, $node, $sourceFenceId, $operationId];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function operationPayload(string $operationId): array
+    {
+        $payload = DB::table('runtime_operations')->where('id', $operationId)->value('payload');
+        $this->assertIsString($payload);
+        $decoded = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertIsArray($decoded);
+
+        return $decoded;
     }
 
     private function sourceFenceOperation(string $tenantId, string $nodeId, string $deployment, int $generation, int $preScaleReplicas): string

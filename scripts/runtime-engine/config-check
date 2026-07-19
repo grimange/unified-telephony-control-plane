@@ -70,6 +70,19 @@ rg -F "'runtime_node_restore' => 'runtime.node.restore'" apps/api/config/telepho
   fail "missing canonical runtime.node.restore operation type"
 rg -F "RuntimeNodeRestoreOperationHandler::class" apps/api/app/Providers/AppServiceProvider.php >/dev/null ||
   fail "runtime.node.restore handler is not registered"
+php -r '
+if (! function_exists("env")) {
+  function env($key, $default = null) { return $default; }
+}
+$config = require "apps/api/config/telephony_domain.php";
+$attempts = $config["operation_max_attempts"]["runtime_node_restore"] ?? null;
+if (! is_int($attempts) || $attempts < 8) {
+    fwrite(STDERR, "runtime.node.restore must have a restore-specific retry budget of at least 8 attempts\n");
+    exit(1);
+}
+'
+grep -q "int \$maxAttempts = 3" apps/api/app/ControlPlane/RuntimeOperations/RuntimeOperationRepository.php ||
+  fail "default runtime operation retry budget changed unexpectedly"
 python3 <<'PY'
 import pathlib
 import re

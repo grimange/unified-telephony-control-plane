@@ -22,6 +22,10 @@ return [
         'runtime_node_restore' => 'runtime.node.restore',
     ],
 
+    'operation_max_attempts' => [
+        'runtime_node_restore' => 8,
+    ],
+
     'runtime_capabilities' => [
         'conference_lifecycle' => 'conference.lifecycle',
         'conference_participation' => 'conference.participation',
