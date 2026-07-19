@@ -5119,3 +5119,108 @@ mutation), or an equivalent supported fault injection — added to the authorize
 action set. Then re-run this exact T5-A27 destructive proof; the deployed +
 unit-proven T5-A26 fix is expected to escalate the transport-terminal-failed
 verification to fencing and complete the lifecycle.
+
+## T5-A28 — Asterisk HTTP-transport outage trigger VALIDATED (http.conf disable + core reload)
+
+Narrow reversible evidence-only audit at `UTCP_PHASE=T1`, HEAD `bc5b935`. The
+temporary `http.conf` disable trigger produces every required faithful-outage
+property: ARI REST fails at the transport level (not a route-level 404), the
+event WebSocket disconnects and the RuntimeNode projects `unavailable`, while
+the Asterisk process, proof bridge, and participant channels stay alive, the Pod
+UID is unchanged, and the Deployment stays at replicas=1. No verification or
+fence operation was created, and the original configuration was restored
+byte-for-byte. **Trigger decision: DEFINED — validated for the T5-A27 rerun.**
+
+### Effective HTTP configuration source and writability
+
+`astetcdir = /tmp/utcp-asterisk` (from `asterisk.conf`); effective
+`http.conf = /tmp/utcp-asterisk/http.conf` — a **regular writable file** on the
+container overlay filesystem (mode 644, owner asterisk uid 1000), NOT a symlink,
+ConfigMap, Secret, or projected mount. It is a container-local copy, so
+in-container edits are ephemeral and reversible with no Kubernetes object
+mutation. Original content: `[general] enabled=yes bindaddr=0.0.0.0
+bindport=8088 tlsenable=no prefix= sessionlimit=32 session_inactivity=30000`.
+Original `http show status`: Server Enabled and Bound to 0.0.0.0:8088, serving
+`/ari/...` and `/ws`. Asterisk 20.20.1, PID 1 (`asterisk -f -C
+/tmp/utcp-asterisk/asterisk.conf -U asterisk -G asterisk`).
+
+### Reload-mechanism finding (important)
+
+The prompt's preferred `config reload http.conf` was tested first (conference-
+free, on node B): it reloaded without error but **did not disable** the HTTP
+server (`http show status` still "Enabled and Bound") — the built-in HTTP server
+does not register in Asterisk's config-reload-by-filename map. **`core reload`**
+(a global configuration reload, NOT a restart — it re-reads `http.conf` and
+preserves the running process and active calls) DID disable it: with
+`enabled=no` in the file, `core reload` → `http show status` = "Server
+Disabled", PID 1 unchanged. `core reload` is therefore the working targeted
+reload; `core restart`/`module` unloads were not used.
+
+### Preliminary mechanism validation (node B, no conference)
+
+Backup checksum `aaf6effb9533af1f78d47b5d6f8413a0`. Disable
+(`sed enabled=yes→no` + `core reload`) → "Server Disabled"; control-plane ARI
+REST → `AsteriskAriException: ARI HTTP transport failed` (transport-level, not
+404); restore (backup + `core reload`) → "Server Enabled and Bound", checksum
+match. Node B briefly unavailable, reconnected to `ready` at 03:30:51, **zero**
+failover operations created (no conference bound, outage far under the 300 s
+grace).
+
+### Proof Conference
+
+conference `a660fbe5-…e23a7`, participant `49b2cf25-…68bb9`, binding
+`139e356c-…96558`, bound node `05ddb383…` (Local Asterisk ARI B, deployment
+`asterisk-ari-b`, Pod uid `3b9121dc…4671e`), generation 2. Pre-trigger: bridge
+`utcp-conf-a660fbe5…` present on node B with 2 channels (control socket), node A
+empty, node B `ready` with open epoch `7276dc62…`, last-ready `03:31:32`, zero
+failover operations. Created through the admin/member API.
+
+### Outage window (bounded, 39 s)
+
+- **03:31:57 disable** — backup `/tmp/http.conf.t5a28.orig`
+  (`aaf6effb9533af1f78d47b5d6f8413a0`), `enabled=no`, `core reload` →
+  "Server Disabled" (no enabled URIs). Immediately: bridge + 2 channels alive
+  (control socket), Pod uid `3b9121dc` unchanged, replicas 1/1.
+- **03:32:18 observe** — control-plane ARI REST →
+  `ari_http_transport_failed` class `runtime_unavailable` (transport-level, not
+  404); node B `observed_state = unavailable`; listener epoch **closed**
+  (0 open), lease **released**; bridge + channels still alive; **0** failover
+  operations for the conference.
+- **03:32:36 restore** — backup → `http.conf`, `core reload` → "Server Enabled
+  and Bound to 0.0.0.0:8088"; checksum `aaf6effb…` matches original exactly;
+  bridge + 2 channels still alive; Pod uid `3b9121dc` unchanged (container never
+  restarted; the pod's restart count of 1 predates this run).
+
+Outage duration 03:31:57 → 03:32:36 = **39 seconds** (budget 120 s; well before
+the 300 s failover-eligibility threshold at ~03:36:32).
+
+### Recovery
+
+Node B `ready` at 03:32:51 (15 s after restore): new open event epoch, lease
+`claimed`, control-plane ARI REST healthy (`bridge_exists=true,
+owned_bridge=true`). Zero failover operations for the conference throughout.
+
+### Cleanup and final state
+
+Container backups removed after restoration checks passed. Proof Conference
+closed canonically (participant remove → desired-state closed → converged
+`closed`). Final: both Deployments 1/1 with unchanged Pod UIDs
+(`030c033c…45dd`, `3b9121dc…4671e`); both RuntimeNodes active/ready; both leases
+claimed; one open epoch per node; zero open conferences; zero live bridges/
+channels; zero pending/verify/fence operations for `a660fbe5…`;
+`/tmp/utcp-asterisk/http.conf` restored (`enabled=yes`, checksum `aaf6effb…`);
+tree clean; `UTCP_PHASE=T1`. No Kubernetes ConfigMap/Secret/Deployment/volume
+was modified; the committed manifests are unchanged.
+
+### Trigger-readiness decision
+
+**T5_ASTERISK_HTTP_OUTAGE_TRIGGER_DEFINED — validated for the T5-A27 rerun.**
+All 15 acceptance criteria met. The exact trigger for the rerun: inside the
+bound Asterisk container, back up `/tmp/utcp-asterisk/http.conf`, set
+`enabled=no`, run `core reload` (NOT `config reload http.conf`, which is
+insufficient; NOT `core restart`), observe the transport-level outage, then
+restore from backup + `core reload` before the 300 s grace. This produces the
+transport-level `verify_conference_absent` failure the T5-A26 fix escalates to
+fencing. Note (retained gap): the listener still does not detect a silently dead
+event stream when only `res_ari_events` is unloaded — that latent
+liveness-detection gap is separate from this validated HTTP-outage trigger.
