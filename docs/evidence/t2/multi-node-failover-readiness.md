@@ -6005,3 +6005,315 @@ escalation (T5-A26) → dedicated-worker fence with `fence_result=fenced`
 (fdc745e) → transactional rebind (gen 2→3) → bridge and participant
 reconstruction on the surviving node with ~20 min session validity (ab4418d) →
 one-time former-node restoration → canonical cleanup.
+
+## T5-A36 — Canonical former-node restoration and un-fencing authority (evidence-only)
+
+Evidence-only architecture audit at `UTCP_PHASE=T1`, HEAD `280d3b5`. Defines the
+production lifecycle that replaces the proof-only manual
+`kubectl scale deployment/<fenced> --replicas=1`. No implementation, scaling, or
+failover performed. All tests/config-checks pass.
+
+### Current restoration authority
+
+**None exists in production.** A successfully fenced RuntimeNode is restored
+ONLY by the manual `kubectl scale 0→1`, which appears solely in the
+`scripts/asterisk-conference/recovery-runtime-proof` test-teardown and in the
+T5 proof runbooks — never in application/control-plane code. It must be
+reclassified as exceptional infrastructure recovery, not normal authority.
+
+### Scale-up authority inventory
+
+No production code path scales a runtime workload above zero. `scaleDeployment`
+(`HttpKubernetesWorkloadClient.php:36`) accepts any non-negative int, but the
+only production caller (`KubernetesRuntimeFenceAdapter.php:48`) hard-codes `0`.
+Grep across `apps/api/app` for restore/recover/unfence/resume/reactivate: no
+production hits (all `recover*` hits are conference-reconciliation wakes or
+telemetry, none scale Kubernetes). Operation types
+(`config/telephony_domain.php:15-22`): conference.ensure/close,
+participant.ensure/remove, verify_conference_absent, runtime_fence — no
+restore/recover/unfence type. No Artisan command scales/restores a node
+(`console.php` runtime commands are all reconcile/observe/worker; the
+infrastructure-probe is explicitly read-only). The application is fence-only
+(scale-to-zero-only).
+
+### RuntimeNode desired-state authority
+
+Canonical model `runtime_nodes` (`create_runtime_registry_tables.php`):
+`desired_state` string(32) default `draft`, pgsql CHECK
+`IN ('draft','active','draining','disabled')`; `observed_state` default
+`unobserved` (runtime writes ready/unavailable/degraded/stale/connecting);
+`configuration_version` generation counter. Workload identity lives in the
+`labels` JSON under `kubernetes_workload`. Canonical web-admin authority:
+`POST /runtime-nodes/{id}/desired-state` → `AdminRuntimeNodeController::desiredState`
+(permission `runtime.nodes.manage`, session tenant) →
+`RuntimeRegistryService::changeDesiredState` (`RuntimeRegistryService.php:139`),
+which validates via `RuntimeRegistryCatalog::assertDesiredTransition`
+(matrix: draft→{active,disabled}, active→{draining,disabled},
+draining→{active,disabled}, **disabled→{draft,active}**), bumps
+`configuration_version`, emits `runtime_node.desired_state_changed`. It does
+**not** wake reconciliation or scale anything. No `fenced` or `maintenance`
+state exists. **Kubernetes replicas are never derived from desired_state.**
+
+### Fence-evidence lifecycle
+
+A successful fence: (1) scales the Deployment to 0; (2) records
+`runtime_fence_provenance.scale_to_zero_requested` `{by_operation, operation_id,
+namespace, deployment, pre_scale_replicas, attempt_count, requested_at}` in the
+`runtime_operations` payload; (3) emits `conference.runtime_fence_terminated`
+(`fence_result=fenced`, owned_pods_remaining=0) to the outbox; (4) rebinds the
+conference to a replacement node. **It never mutates `runtime_nodes`** — the
+fenced node keeps `desired_state='active'` while its Deployment is at 0 replicas
+and its `observed_state` decays to unavailable/stale. This is the core structural
+gap: a node is "desired active" with no workload and nothing derives replicas
+from desired_state, so nothing brings it back. Fence evidence is operation-scoped
+and node-scoped (former_runtime_node_id in payload/event), immutable audit
+history — restoration must SUPERSEDE it (via a restoration operation + event),
+never delete it.
+
+### Selected restoration authority model
+
+**Model C (operator desired-state authority + automatic reconciliation
+execution)** — the target the prompt prefers; the request surface already exists
+(`changeDesiredState`), the automatic-execution half must be built. Canonical
+lifecycle:
+
+```text
+fence completion transitions former node desired_state active → disabled
+  (records fence provenance; node leaves placement candidacy by desired_state)
+→ authorized operator POST /runtime-nodes/{id}/desired-state {disabled→active}
+  (existing route, permission runtime.nodes.manage, existing valid transition)
+→ changeDesiredState schedules a runtime.node.restore operation when the node
+  carries fence evidence (idempotency-keyed on node + fence operation id)
+→ dedicated infrastructure worker claims it (fence-only routing, same worker)
+→ authority revalidation → scale Deployment 0 → configured replicas
+→ wait owned-Pod Ready → listener lease claimed → new open event epoch
+→ RuntimeNode observed ready → empty-runtime validation
+→ complete: emit runtime_node.restored, supersede fence evidence
+→ node eligible for FUTURE placement (never reclaims moved conferences)
+```
+
+Reusing the existing `disabled` state (per "do not infer a new state when an
+existing one fits") — a fenced node semantically "should not be running", which
+is exactly `disabled`; the fence operation/event supplies the "why". (A dedicated
+`fenced` desired-state is the documented alternative if operator-disable vs
+auto-fence must be distinguished at the state level; it requires a config/enum +
+CHECK migration and is not needed for the minimal slice.) This keeps operator
+authority at the web-admin desired-state action and never requires the operator
+to invoke the infrastructure mutation directly.
+
+### Restoration preconditions (from existing contracts)
+
+Successful fence evidence exists for the node; former Deployment desired
+replicas=0 and owned Pods=0; no active RuntimeBinding references the node for an
+open Conference (guaranteed — rebind retired it); no unresolved fence/verify
+operation for the node; workload identity (`labels.kubernetes_workload`) still
+resolves and matches ownership labels; RuntimeNode configuration/credentials/
+endpoints remain valid; replacement Conferences remain authoritative elsewhere
+(generation moved). No cooldown/capacity/health-precheck is required by any
+demonstrated safety boundary, so none should be added; an operator reason is
+conventional (audit) but not a safety gate.
+
+### Restoration operation
+
+New operation type `runtime.node.restore` (`runtime.node.*` namespace, mirroring
+`runtime.node.runtime.fence`) — do NOT overload the fence operation with reverse
+behavior (ambiguous authority). Reuses the exactly-once/idempotent operation
+substrate: idempotency key = hash(node, source fence operation id, configuration
+generation); dedicated `RuntimeNodeRestoreOperationHandler` claimed only by the
+`runtime-engine:infrastructure-worker` (add to its include list; keep excluded
+from generic `command-worker`). Scale target = configured replicas, sourced from
+the fence provenance `pre_scale_replicas` (proven=1) or the RuntimeNode/manifest
+configured replica count — never the live Deployment spec (it is 0). Idempotent
+scale: if already at target, no-op complete. Recovery after worker restart: the
+operation is re-claimed and re-evaluated against live Deployment/Pod state
+(mirror the fence handler's self-provenance pattern).
+
+### Dedicated worker authority
+
+Same dedicated infrastructure worker and RBAC already used for fencing
+(deployments get/list + deployments/scale get/patch + pods get/list in
+utcp-runtime). No new RBAC — scale-up uses the identical scale subresource verb
+already granted. Generic command workers must continue to exclude
+`runtime.node.*` infrastructure operations.
+
+### Scale target and idempotency
+
+`scaleDeployment(namespace, deployment, configuredReplicas)` — the client
+already supports arbitrary replicas (`HttpKubernetesWorkloadClient.php:40-49`).
+Idempotent: re-running observes desired=target and completes without a second
+scale (mirror the fence adapter's `wasAlreadyZero`/provenance logic in reverse).
+
+### Pod readiness / lease / epoch gates
+
+Reuse the proven gates: Deployment rollout to configured replicas with owned Pods
+Ready (startup probe + corrected exec liveness + ARI-TCP readiness — T5-A31);
+listener lease claimed and a new open `runtime_event_connection_epochs` row;
+RuntimeNode `observed_state='ready'` via canonical projection. These are the same
+signals the T5-A35 live proof observed after the manual scale-up.
+
+### Empty-runtime validation
+
+The scale-up creates a fresh Pod (the fenced Pod was terminated), so the restored
+Asterisk is empty by construction — as observed in every T5 restoration. Existing
+inspection (`AsteriskAriClient::conferenceRuntimeSummary`,
+`RuntimeConferenceInspectionService::inspect`) is per-conference/participant, not
+a node-wide enumeration. **Gap:** there is no node-wide "enumerate all UTCP-owned
+bridges/channels" emptiness scan. For scale-up-from-zero this is low-risk (fresh
+Pod), so the minimal slice can accept fresh-Pod-UID + new-epoch + zero owned-Pod-
+from-prior-generation as the emptiness contract; a node-wide UTCP-owned-resource
+scan is a documented follow-up hardening, not a blocker.
+
+### Stale-generation protection (already complete, tested)
+
+A restored former node CANNOT reclaim a moved conference: (a) operation-side —
+`AsteriskRuntimeAdapter` compares `operationGeneration < conference.configuration_generation`
+and emits `*_stale` no-ops; (b) event-side — `AsteriskAriEventNormalizer:93-104`
+joins `conference_runtime_bindings.runtime_node_id = receipt node AND status='active'`,
+dropping former-node events; (c) binding — partial unique index
+`conference_runtime_bindings_one_active` + retired-old/insert-new + generation
+bump. Proven by `AsteriskConferenceRecoveryTest::test_old_node_operation_is_stale_after_atomic_runtime_binding_replacement`
+and `test_delayed_old_node_conference_and_participant_events_do_not_project_after_rebind`.
+No new work required.
+
+### Placement re-entry (the one isolated race)
+
+`selectRuntimeNodeForConference` (`TelephonyDomainService.php:792-817`) admits a
+node on `desired_state IN (active,draining)` + `observed_state='ready'` +
+capabilities — with **no restoration-validation gate**. If fence leaves the node
+`active` (current behavior), the moment its restored Deployment observes ready it
+re-qualifies for NEW placement with no cooldown. The Model-C design closes this
+cleanly: fence→`disabled` removes it from candidacy, and it only returns to
+`active` when the restore operation completes — so completion of the restore
+operation IS the placement-re-entry gate. This is the exact bounded target; do
+not add a permanent allowlist or manual toggle.
+
+### Failure and retry taxonomy
+
+Retryable: scale request failure, Pod scheduling/startup-probe/liveness/
+readiness not yet ready, lease not claimed, event epoch not opened, RuntimeNode
+not yet ready (mirror fence `fence_in_progress`). Terminal: workload identity
+mismatch (`target_mismatch`), permission denied. Cancelled by changed authority:
+desired_state moved away from `active` during restoration (operator re-disabled),
+or configuration disabled. Non-empty restored runtime (should not occur for a
+fresh Pod): terminal, surfaced explicitly — never silent fallback to manual
+scale. Repeated restoration request: idempotent (same key returns the in-flight/
+completed operation). All failures remain observable via the operation row +
+event; no silent manual fallback.
+
+### Restoration evidence and events
+
+Persist on the restore operation: operation id, tenant, RuntimeNode, workload
+namespace+deployment, source fence operation id, requested desired state,
+requested_by actor (or policy), reason, scale provenance (target replicas,
+pre_restore_replicas), new Pod UID, new event epoch id, ready observation,
+empty-runtime result, completion result, timestamps. Single canonical event
+`runtime_node.restored` (matching the `runtime_node.*` naming used by
+`runtime_node.desired_state_changed`) — do not invent overlapping events. This
+supersedes (does not delete) the `conference.runtime_fence_terminated` history.
+
+### Existing test coverage
+
+| Behavior | Exists | Missing |
+|---|---|---|
+| Stale former-node operation after rebind | AsteriskConferenceRecoveryTest:970 | — |
+| Delayed former-node events dropped after rebind | :1039 | — |
+| Fence scale-to-zero + fenced/already_fenced | KubernetesRuntimeFenceAdapterTest | — |
+| desired-state transition matrix | RuntimeRegistry tests (assertDesiredTransition) | — |
+| Authorized/unauthorized restore request | — | **missing** |
+| Tenant isolation of restore | — | **missing** |
+| Idempotent repeated restore | — | **missing** |
+| Scale 0→configured + Pod readiness | — | **missing** |
+| Lease/epoch recovery on restore | — | **missing** |
+| Empty-runtime validation | — | **missing** |
+| Placement blocked until restore completes | — | **missing** |
+| Worker restart mid-restore | — | **missing** |
+| Retryable vs terminal restore failures | — | **missing** |
+| Desired-state changed during restore (cancel) | — | **missing** |
+| runtime_node.restored audit/outbox idempotency | — | **missing** |
+
+### Readiness decision
+
+**A — bounded Codex restoration implementation is ready.** Every element is
+isolated to exact classes/routes/operations/tests: canonical desired-state
+authority (`changeDesiredState` + disabled↔active), the request surface (existing
+route), a new `runtime.node.restore` operation + `RuntimeNodeRestoreOperationHandler`
+on the existing dedicated worker + existing RBAC, scale target (fence provenance
+`pre_scale_replicas`/configured), the proven readiness/lease/epoch gates,
+placement re-entry via fence→disabled + restore-completion→active, complete and
+tested stale-generation protection, a clear failure taxonomy, and a single
+`runtime_node.restored` event. The only accepted simplification is the
+fresh-Pod emptiness contract (node-wide UTCP-owned-resource enumeration deferred).
+
+### Ready-to-paste next prompt
+
+```text
+You are working in the Unified Telephony Control Plane repository.
+
+Perform one bounded implementation (no live failover, no scaling):
+
+# T5-A37 — Canonical former-node restoration (desired-state driven un-fencing)
+
+HEAD 280d3b5, branch main, clean tree, UTCP_PHASE=T1. Evidence basis:
+docs/evidence/t2/multi-node-failover-readiness.md §T5-A36.
+
+Goal: remove manual `kubectl scale --replicas=1` as accepted normal restoration
+authority and replace it with canonical desired-state-driven restoration; retain
+kubectl only as exceptional infrastructure recovery (document it as such, not as a
+coequal management interface). Implement the smallest coherent slice:
+
+1. Fence completion: in the runtime-fence success path (RuntimeFenceOperationHandler
+   / the fencing coordinator), transition the fenced former RuntimeNode
+   desired_state active→disabled via the canonical registry authority (not a raw DB
+   write), carrying the fence operation id as provenance. This removes the fenced
+   node from placement candidacy (selectRuntimeNodeForConference requires
+   desired_state IN active,draining) and makes its state consistent with its
+   zero-replica workload. Do not delete any fence/verify/binding/audit evidence.
+
+2. Restoration request surface: reuse POST /runtime-nodes/{id}/desired-state
+   (AdminRuntimeNodeController::desiredState, permission runtime.nodes.manage). When
+   RuntimeRegistryService::changeDesiredState transitions a fence-disabled node
+   disabled→active, schedule exactly one runtime.node.restore operation
+   (idempotency key = hash(node id, source fence operation id, configuration
+   generation)). Do NOT add an Artisan command, a kubectl path, a feature gate, an
+   allowlist, or a hidden un-fence endpoint as normal authority.
+
+3. New operation type telephony_domain.operation_types.runtime_node_restore =
+   'runtime.node.restore' + RuntimeNodeRestoreOperationHandler, claimed ONLY by the
+   dedicated runtime-engine:infrastructure-worker (include list), excluded from the
+   generic command-worker. Reuse the existing fencer RBAC (scale subresource). Add
+   a KubernetesRuntimeFenceAdapter/WorkloadClient restore method (or extend the
+   adapter) that scales the Deployment 0→configured replicas (target from the fence
+   provenance pre_scale_replicas, else the configured replica count — never the live
+   0-spec), idempotent (already-at-target → complete), with self-provenance across
+   retries mirroring fdc745e.
+
+4. Gates + completion: wait owned-Pod Ready + listener lease claimed + new open
+   event epoch + RuntimeNode observed ready; accept the fresh-Pod emptiness contract
+   (new Pod UID + new epoch + zero owned pods from the prior generation); then
+   complete, emit a single runtime_node.restored event (matching
+   runtime_node.desired_state_changed naming) with full restoration evidence
+   (source fence op, target replicas, new Pod UID, new epoch, ready observation,
+   timestamps), and leave the node desired_state=active so it re-enters placement
+   ONLY after the restore operation completes. Failure taxonomy: retryable (scale
+   fail, pod/lease/epoch/ready not yet), terminal (workload identity mismatch,
+   permission denied), cancelled (desired_state changed away from active mid-restore)
+   — never silently fall back to manual scale.
+
+5. Do not reclaim moved conferences: rely on the existing (tested) generation +
+   active-binding + event-fence protections; add no new placement reclaim path.
+
+Tests: authorized/unauthorized restore request; tenant isolation; idempotent repeat;
+scale 0→configured + readiness; lease/epoch recovery; placement blocked until restore
+completes; worker restart mid-restore; retryable vs terminal vs cancelled; 
+runtime_node.restored audit/outbox idempotency; fence→disabled transition.
+
+Verify: make repository-hygiene, workflow-check, secret-scan, runtime-engine-config-check,
+telephony-domain-config-check, asterisk-ari-config-check, asterisk-conference-config-check,
+runtime-engine-test, telephony-domain-test, asterisk-ari-test, asterisk-conference-test,
+asterisk-conference-recovery-test, git diff --check. No kubectl apply/scale, no live
+failover, no migrate:fresh. Commit once:
+feat(t5): canonical desired-state-driven former-node restoration
+Do not push. End with the AGENTS.md report format. Recommended next: a live
+T5-A35-style rerun that restores the fenced node via the desired-state action
+instead of manual kubectl scale.
+```
