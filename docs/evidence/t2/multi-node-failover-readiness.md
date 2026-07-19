@@ -4454,3 +4454,282 @@ Traefik/observability endpoint policies), `ServiceAccount/utcp-runtime-fencer`
 required. The five-defect activation chain (namespace → runtime UID →
 NetworkPolicy egress → CA file mode → token audience) is closed: the fencing
 worker is live with proven production Kubernetes read access.
+
+## T5-A24 — Destructive failover and restoration proof definition (evidence-only)
+
+Evidence-only audit at `UTCP_PHASE=T1`, HEAD `d004379`, clean tree. No scale,
+fence operation, Pod deletion, binding mutation, Conference creation, or
+failover was performed. Baseline: both nodes `active|ready`, Services isolated,
+leases claimed, one open epoch per node, fence worker Ready/idle (restart count
+stable at 1), drift check passing, zero open conferences, zero bridges/channels,
+zero fence/verify/pending operations, all 102 active bindings reference
+closed/closed conferences only (excluded from candidacy by
+`conferences.desired_state='open'`).
+
+### Complete failover state machine (traced, exact)
+
+Sweep entry: `Schedule::command('telephony-domain:failover-coordinator --once')`
+everyMinute (console.php:862) → `ConferenceFailoverCoordinator::sweepOnce`
+(batch ≤ `runtime_engine.batch_size`, grace =
+`runtime_engine.stale_observation_seconds` = 300s).
+
+1. **Candidate claim** (`claimCandidates`, one tx, `FOR UPDATE SKIP LOCKED`):
+   `conferences.desired_state='open'` ∧ binding `status='active'` (tenant-scoped
+   joins) ∧ bound `runtime_nodes.observed_state ∈ {unavailable, stale}` ∧
+   EXISTS ready `runtime_observations.received_at ≤ now-300s` ∧ NOT EXISTS
+   ready observation `> now-300s`, ordered by conference id.
+2. **Verification gate** (`RuntimeFencingCoordinator::evaluate`, serialized tx,
+   row locks conference→binding→node; re-checks open/active/unchanged/qualifying
+   /grace): idempotently creates `runtime.node.verify_conference_absent`
+   (idempotency key = sha256(conference:node:binding:generation), payload
+   carries conference_id, former_runtime_binding_id, former_runtime_node_id,
+   configuration_generation; `runtime_node_id` = former node) → status
+   `verification_requested`.
+3. **Verification execution**: the generic `telephony-command-worker`
+   (`excludeOperationTypes=[runtime.node.runtime.fence]`, console.php:315-ish)
+   claims it; `AsteriskRuntimeAdapter::verifyConferenceAbsent` (line 335) calls
+   ARI `conferenceRuntimeSummary` against the former node: bridge present →
+   result `present`; any admitted participant channel present → `present`;
+   neither → `absent`. Completion emits outbox/audit
+   `conference.runtime_fence_verified` with `verification_result`.
+   ARI unreachable → retryable failure → operation `retry_scheduled`.
+4. **Classification on later sweeps** (`classifyExistingVerificationOperation`):
+   pending/leased/running → `verification_waiting`; **retry_scheduled →
+   escalate to fence (`verification_unavailable`)**; succeeded+`absent` →
+   `absent_verified` (skip fence, rebind directly); succeeded+`present` →
+   `former_runtime_present` → fence; terminal_failed → `verification_failed`
+   (no rebind).
+5. **Fence request** (`requestRuntimeFence`, re-gated in a fresh locked tx):
+   idempotently creates `runtime.node.runtime.fence` (same key recipe; payload
+   adds `verification_operation_id`, `fence_reason`).
+6. **Fence execution**: only the dedicated worker
+   (`runtime-engine:infrastructure-worker`,
+   `includeOperationTypes=[runtime.node.runtime.fence]`, deployed as
+   `utcp-runtime-fence-worker`) claims it.
+   `RuntimeFenceOperationHandler::execute`: payload/node-identity validation →
+   `operationAuthorityCurrent` (conference open, still bound to former node,
+   generation unchanged, binding still active) → **replacement-before-fence
+   guard** `hasDistinctEligibleReplacement` (distinct active+ready node with
+   `conference.lifecycle`+`conference.participation`; fails retryable
+   `no_replacement_available`) → `KubernetesRuntimeFenceAdapter::fence`:
+   resolve `labels.kubernetes_workload` via `RuntimeNodeWorkloadIdentityResolver`
+   (utcp-runtime ns enforced) → `getDeployment` → ownership validation
+   (`isOwnedAsteriskDeployment`: part-of=utcp, component=asterisk-ari,
+   `utcp.dev/runtime-node` = node slug) → **last-instant recovery check**
+   (node observed ready → `target_recovered`, no mutation) → if desired>0:
+   `scaleDeployment(ns, name, 0)` → re-GET + `listOwnedPods` → success only
+   when desired=0 ∧ statusReplicas=0 ∧ availableReplicas=0 ∧ ownedPods=0
+   (`fenced` / `already_fenced` when it was already 0); otherwise
+   `fence_in_progress` (retryable — terminating Pods block completion).
+   Completion emits `conference.runtime_fence_terminated` with `fence_result`
+   and workload details.
+7. **Rebind** (only from `absent_verified` or `external_runtime_fenced`):
+   `TelephonyDomainService::failoverRebindConferenceAfterFence` →
+   `failoverRebindConference` in ONE transaction with locks: re-validate
+   open/active/expected binding+node/qualifying state/grace →
+   `validateFailoverFenceEvidence` (operation row: tenant/aggregate/node/status
+   succeeded; payload matches binding+node+**current generation**; outbox
+   evidence matches and shows `absent` or `fenced|already_fenced` — else noop
+   `fence_evidence_*`) → select replacement (deterministic:
+   `orderBy runtime_family, adapter_key, id`, exclude former, desired ∈
+   {active}, observed=ready, both conference capabilities) → retire old binding
+   (`status='retired'`, `unbound_at`), insert new active binding (partial
+   unique index `…one_active` guarantees single authority),
+   `conferences.runtime_node_id` = replacement, `configuration_generation += 1`
+   → `wakeTarget(conference)` + `wakeTarget` for every admitted participant →
+   audit/outbox `conference.runtime_binding_replaced`.
+8. **Reconstruction** (canonical reconciliation, no failover-specific code):
+   `ConferenceReconciler` routes through `activeRuntimeNodeId` (now node B),
+   inspects node B, bridge absent → dispatch `conference.ensure` (new
+   generation) → `AsteriskAriClient::ensureConferenceBridge`: deterministic
+   `bridgeId = conferenceBridgeId(conferenceId)`, read-first (`already_existed`
+   + `assertOwnedBridge` duplicate/ownership check), else `POST /bridges`.
+   `ConferenceParticipantReconciler` → `conference.participant.ensure` →
+   `ensureParticipantChannel`: deterministic per-participant `channelId`,
+   ARI originate of the configured Local proof endpoint into the Stasis app,
+   `addChannel` with bounded conflict retries, read-after-write
+   `participantAttachedToBridge` verification. Stale-generation operations
+   against the former node complete as `*_stale` no-ops; the event fence
+   (normalizer joins active binding node) structurally drops any late node-A
+   events.
+
+### Automatic trigger (exact)
+
+The proof begins when the former node's control-plane evidence disappears:
+listener WebSocket close → `connection_closed` → normalizer maps to
+`unavailable` observation (AsteriskAriEventNormalizer:39) → projection sets
+`runtime_nodes.observed_state='unavailable'` (or `markStale` flips it to
+`stale` after 300s of silence). Failover fires only after **both**: observed
+state ∈ {unavailable, stale} **and** the newest `ready` runtime observation is
+≥ 300s old (`stale_observation_seconds`). With the everyMinute sweep, first
+coordinator action lands ~5–6 minutes after ARI loss. First operation created:
+`runtime.node.verify_conference_absent`. Duplicate chains are prevented by the
+generation-scoped idempotency keys, existing-operation classification, the
+serialized row-locked gates, and the one-active-binding unique index.
+
+### Proof Conference contract (smallest sufficient)
+
+Conference + bridge + **one participant** (ARI-originated Local channel). No
+Kamailio, SIP, WebRTC, browser, or external endpoint is involved in T2
+conference execution — participants are Local channels originated by ARI into
+the Stasis app — so the smallest complete proof covers placement, live former-
+node ownership, binding replacement, bridge reconstruction, and participant
+reconstruction. Canonical creation path (exactly the committed
+`scripts/asterisk-conference/runtime-proof` flow): authenticated login →
+tenant-context → `POST /api/v1/admin/conferences` → `POST …/desired-state
+{"open"}` (placement+binding happen automatically) → member telephony session →
+`POST /api/v1/conferences/{id}/participants/self` → wait for
+`conference.ensure` + `conference.participant.ensure` succeeded, projected
+`ready`, converged reconciliation, live ARI bridge+channel. Placement is
+deterministic but not selectable: the proof must read the bound
+`runtime_node_id` from the active binding and treat THAT node as "node A".
+
+### Former-node absence verification (ordering answered)
+
+Verification can return `absent` while the former Pod is still running — that
+is the safe fast path (ARI answered authoritatively: no bridge, no participant
+channels), and rebind then proceeds WITHOUT fencing. Split-brain is prevented
+because `absent` is an authoritative live read of the former node itself, the
+rebind re-validates it against the unchanged generation, and late node-A
+events/operations are fenced by binding + generation. When the bridge is still
+present (`present`) or ARI is unreachable (retry_scheduled →
+`verification_unavailable`), fencing happens BEFORE rebind, and the fence's
+termination predicate (zero replicas AND zero owned Pods) guarantees the former
+process is gone before placement moves. Persisted evidence: the operation row +
+`conference.runtime_fence_verified` outbox/audit payload (`verification_result`,
+`bridge_present`, `participant_channel_present`).
+
+### Kubernetes scale-to-zero contract (exact, not executed)
+
+Chain: `runtime.node.runtime.fence` op → dedicated worker →
+`RuntimeFenceOperationHandler` (authority + replacement guards) →
+`KubernetesRuntimeFenceAdapter::fence` → `HttpKubernetesWorkloadClient::scaleDeployment(ns, name, 0)`
+(scale-subresource PATCH). Idempotent: already-zero → no second scale →
+`already_fenced`; terminating Pod → `fence_in_progress` retry loop; recovered
+node → `target_recovered` without mutation; wrong/unowned workload →
+`target_mismatch` without mutation (test-proven, including
+`old_pod_disappearing_while_new_owned_pod_exists_is_not_fenced`). Live proof
+evidence: deployment desired/status/available = 0, owned-Pod list empty,
+exactly one `conference.runtime_fence_terminated` event with
+`fence_result=fenced`, exactly one scale in the operation history.
+
+### RuntimeBinding replacement (exact)
+
+Occurs strictly AFTER authoritative evidence (absent or fenced), inside one
+transaction that retires the old binding, inserts the new active binding,
+repoints `conferences.runtime_node_id`, and bumps `configuration_generation`.
+Placement authority proof = old binding `retired`+`unbound_at`, new binding
+`active` on node B, generation incremented, `conference.runtime_binding_replaced`
+event. Single authority is DB-enforced (partial unique index). A replacement
+binding CAN be committed before the new bridge exists — by design; the wake →
+reconcile → ensure loop converges it, and a reconstruction failure leaves the
+target `waiting`/`blocked` with the binding still authoritative on node B
+(forward recovery, never rollback to the fenced node).
+
+### Participant reconstruction decision
+
+**Include one participant.** Recovery is already deterministic and canonical:
+admitted participants are woken at rebind, re-ensured on the new node with
+deterministic channel ids, conflict-bounded attach, and read-after-write
+verification; `AsteriskConferenceRecoveryTest` covers repair, staleness, event
+fencing, and duplicate prevention. Nothing about participants requires SIP or
+Kamailio in T2.
+
+### Former-node restoration — decision C
+
+**C. A bounded one-time proof restoration is acceptable; production
+restoration is still missing.** No code path in the repository scales a
+Deployment above zero (`scaleDeployment` is invoked only with 0 by the fence
+adapter); no recovery operation type exists. For the proof: one exceptional
+documented `kubectl scale deployment/<node-A> --replicas=1` restores the
+workload; the listener re-claims automatically (eligibleNodes iterates all
+nodes), a fresh connection epoch opens, observations project `ready`, and the
+node becomes eligible for FUTURE conferences only. Reclaim of the moved
+conference is structurally impossible: its active binding points at node B,
+node A's binding is retired, the generation moved, the fence destroyed the old
+bridge (fresh Asterisk starts empty), and the event fence drops node-A
+conference events. Later implementation requirement (post-proof, bounded): a
+canonical restoration path (operator-driven API/desired-state driven
+un-fencing) plus stale fence-evidence cleanup — do not build it before the
+first destructive proof.
+
+### Failure and rollback checkpoints
+
+1. Conference without bridge → reconciler retries ensure; abort proof by
+   closing the conference (rollbackable).
+2. Bridge without participant → participant reconciler retries; rollbackable.
+3. Unavailability but no candidate → diagnose candidate prerequisites
+   (observed_state, ready-observation age, open state, active binding);
+   coordinator emits `conference.failover_coordinator.*` audit only on
+   decisive outcomes; no state changed — rollback = restore node A.
+4. Verification repeatedly retrying → escalates to fence by design
+   (`verification_unavailable`); terminal_failed → `verification_failed`, no
+   rebind — investigate, restore node A (rollbackable).
+5. Fence fails before scale (`no_replacement_available`,
+   `unavailable_to_control`, `permission_denied`, `target_mismatch`) → no
+   mutation occurred; binding intact; rollbackable by restoring node A.
+6. Scale succeeded, Pod remains → `fence_in_progress` retries until the
+   termination predicate holds; no rebind can occur early — wait or restore.
+7. Fenced but rebind not yet committed (crash window) → forward recovery: the
+   fence evidence is persisted; the next sweep re-classifies
+   `external_runtime_fenced` and rebinds idempotently.
+8. Rebind committed, bridge reconstruction fails → forward recovery on node B
+   (retry/blocked visibility); never roll back to fenced node A.
+9. Participant recovery fails → forward recovery via participant target
+   (blocked state is explicit); conference bridge remains valid.
+10. Node B fails during reconstruction → coordinator treats node B as the new
+    bound unavailable node; with node A fenced there is no distinct ready
+    replacement, so the replacement-before-fence guard blocks further fencing
+    (`no_replacement_available`, retryable) — the conference waits for any
+    node to return (known replacement-node-failure gap, not part of this
+    proof's acceptance).
+11. Node-A restoration fails → conference is unaffected on node B;
+    infrastructure issue only.
+12. Node A returns post-restoration → cannot reclaim: retired binding, moved
+    generation, empty fresh Asterisk, event fence.
+
+Rollbackable: 1–5 (and 6 by waiting), plus any pre-fence stop = close proof
+conference + restore replicas. Forward-only: 7–9 (placement authority already
+moved). Never manually rewrite RuntimeBindings.
+
+### Required proof evidence (all existing observability)
+
+Coordinator artisan summary + `conference.failover_coordinator.*` audit/outbox
+rows; `runtime_operations` rows for verify + fence (status transitions, single
+occurrence, `last_failure_code` history); `conference.runtime_fence_verified`
+and `conference.runtime_fence_terminated` payloads;
+`conference.runtime_binding_replaced` payload (previous node, new node,
+generation); `conference_runtime_bindings` before/after rows; deployment
+replica + owned-Pod observations; `runtime_operation.asterisk_conference_ensured`
+/ `…participant_ensured` events on node B with the new generation; live ARI
+bridge/channel reads on node B and absence on restored node A; listener
+lease/epoch rows for node A after restoration. Non-blocking future metrics
+(dashboards/counters for fence latency, coordinator outcomes) remain a
+retained gap; nothing material to trustworthy proof is missing.
+
+### Test coverage matrix (all suites passing at HEAD)
+
+| Behavior | Test | Live proof still needed |
+|---|---|---|
+| Candidate selection + grace + exclusions | TelephonyDomainTest:526–697 (sustained, within-grace, degraded/connecting excluded, draining replacement excluded) | yes (real observations) |
+| Verification ordering / no direct rebind | :684–747, :996 (`no_direct_rebind_path`) | yes |
+| Fence-evidence authority (stale binding/generation rejected) | :830–994 | yes |
+| Replacement-before-fence | KubernetesRuntimeFenceAdapterTest:140–224 | yes |
+| Scale idempotency / in-progress / mismatch / recovered | KubernetesRuntimeFenceAdapterTest:45–138 | yes (first real scale) |
+| Binding transition atomicity / one winner | TelephonyDomainTest:307–524 | yes |
+| Bridge/participant reconstruction + duplicates + event fencing | AsteriskConferenceRecoveryTest (30 tests, incl. :970, :1039) | yes |
+| Restoration | none (no code path) | bounded kubectl step |
+| Replacement-node failure | guard tests only | out of scope for first proof |
+
+### Readiness decision
+
+**A — ready for Claude Code controlled destructive failover proof.** Every
+lifecycle stage is implemented, evidence-validated, and unit/feature-tested;
+the only non-implemented stage (restoration) has an explicit bounded one-time
+contract. The live proof's primary unavailability trigger: disable ARI inside
+node-A's running container (`asterisk -rx "module unload res_ari.so"`), which
+reproduces the exact split-brain hazard (process and bridge alive, control
+plane blind) and exercises the REAL scale 1→0 mutation; fallback trigger if
+the module cannot unload: scale node-A to zero as the outage simulation and
+accept the `already_fenced` path. Both flow through canonical detection
+(connection_closed → unavailable → grace → coordinator).
