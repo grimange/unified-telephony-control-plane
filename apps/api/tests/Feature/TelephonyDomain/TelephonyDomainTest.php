@@ -746,6 +746,170 @@ final class TelephonyDomainTest extends TestCase
         $this->assertDatabaseMissing('control_plane_audit_records', ['action' => 'conference.runtime_binding_replaced']);
     }
 
+    public function test_terminal_retry_exhausted_absence_verification_requests_external_fence_on_next_sweep(): void
+    {
+        [$tenantId, $nodeA, , $conference] = $this->terminalVerificationFixture('coordinator-terminal-fence-real');
+        $this->setSimulatorScenario($nodeA, 'transient-failure-then-ready', ['transient_attempts' => 3]);
+
+        $first = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-terminal-fence-real-first', 10);
+        $this->assertSame(1, $first['verification_requested']);
+        $verification = $this->exhaustVerificationOperation($conference['id']);
+        $this->assertSame('terminal_failed', (string) $verification->status);
+        $this->assertSame(3, (int) $verification->attempt_count);
+        $this->assertSame('transient_transport', (string) $verification->last_failure_class);
+        $this->assertSame('simulator_transient_failure', (string) $verification->last_failure_code);
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-terminal-fence-real-second', 10);
+
+        $this->assertSame(1, $summary['runtime_fence_requested']);
+        $this->assertSame(1, DB::table('runtime_operations')->where('operation_type', 'runtime.node.verify_conference_absent')->where('aggregate_id', $conference['id'])->count());
+        $this->assertSame(1, DB::table('runtime_operations')->where('operation_type', 'runtime.node.runtime.fence')->where('aggregate_id', $conference['id'])->count());
+        $fence = DB::table('runtime_operations')->where('operation_type', 'runtime.node.runtime.fence')->where('aggregate_id', $conference['id'])->first();
+        $this->assertNotNull($fence);
+        $payload = json_decode((string) $fence->payload, true, 512, JSON_THROW_ON_ERROR);
+        $bindingId = (string) DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->value('id');
+        $this->assertSame('verification_unavailable', $payload['fence_reason']);
+        $this->assertSame((string) $verification->id, $payload['verification_operation_id']);
+        $this->assertSame($conference['id'], $payload['conference_id']);
+        $this->assertSame($nodeA, $payload['former_runtime_node_id']);
+        $this->assertSame($bindingId, $payload['former_runtime_binding_id']);
+        $this->assertSame((int) $conference['configuration_generation'], $payload['configuration_generation']);
+        $this->assertDatabaseHas('runtime_operations', [
+            'id' => (string) $verification->id,
+            'status' => 'terminal_failed',
+            'last_failure_class' => 'transient_transport',
+            'last_failure_code' => 'simulator_transient_failure',
+        ]);
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->assertDatabaseMissing('control_plane_audit_records', ['action' => 'conference.runtime_binding_replaced']);
+        unset($tenantId);
+    }
+
+    public function test_terminal_retry_exhausted_absence_verification_sweeps_are_idempotent(): void
+    {
+        [, , , $conference] = $this->terminalVerificationFixture('coordinator-terminal-fence-idempotent');
+        $this->forceTerminalVerificationFailure($conference['id'], 'runtime_unavailable', 'ari_http_transport_failed');
+
+        $first = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-terminal-fence-idempotent-second', 10);
+        $second = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-terminal-fence-idempotent-third', 10);
+        $third = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-terminal-fence-idempotent-fourth', 10);
+
+        $this->assertSame(1, $first['runtime_fence_requested']);
+        $this->assertSame(1, $second['runtime_fence_waiting']);
+        $this->assertSame(1, $third['runtime_fence_waiting']);
+        $this->assertSame(1, DB::table('runtime_operations')->where('operation_type', 'runtime.node.verify_conference_absent')->where('aggregate_id', $conference['id'])->count());
+        $this->assertSame(1, DB::table('runtime_operations')->where('operation_type', 'runtime.node.runtime.fence')->where('aggregate_id', $conference['id'])->count());
+        $this->assertSame(1, DB::table('runtime_operations')->where('operation_type', 'runtime.node.runtime.fence')->where('aggregate_id', $conference['id'])->distinct()->count('idempotency_key'));
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conference['id'])->where('event_type', 'conference.failover_coordinator.runtime_fence_requested')->count());
+    }
+
+    public function test_terminal_non_retryable_absence_verification_remains_verification_failed(): void
+    {
+        [, , , $conference] = $this->terminalVerificationFixture('coordinator-terminal-invalid');
+        $this->forceTerminalVerificationFailure($conference['id'], 'invalid_request', 'absence_verification_context_not_found');
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-terminal-invalid-second', 10);
+
+        $this->assertSame(1, $summary['verification_failed']);
+        $this->assertSame(0, DB::table('runtime_operations')->where('operation_type', 'runtime.node.runtime.fence')->where('aggregate_id', $conference['id'])->count());
+    }
+
+    public function test_terminal_unknown_absence_verification_failure_does_not_fence(): void
+    {
+        [, , , $conference] = $this->terminalVerificationFixture('coordinator-terminal-unknown');
+        $this->forceTerminalVerificationFailure($conference['id'], 'future_retryable_transport', 'future_retryable_transport');
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-terminal-unknown-second', 10);
+
+        $this->assertSame(1, $summary['verification_failed']);
+        $this->assertSame(0, DB::table('runtime_operations')->where('operation_type', 'runtime.node.runtime.fence')->where('aggregate_id', $conference['id'])->count());
+    }
+
+    public function test_terminal_internal_error_absence_verification_failure_does_not_fence_without_unavailability_classification(): void
+    {
+        [, , , $conference] = $this->terminalVerificationFixture('coordinator-terminal-internal');
+        $this->forceTerminalVerificationFailure($conference['id'], 'internal_error', 'malformed_verification_evidence');
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-terminal-internal-second', 10);
+
+        $this->assertSame(1, $summary['verification_failed']);
+        $this->assertSame(0, DB::table('runtime_operations')->where('operation_type', 'runtime.node.runtime.fence')->where('aggregate_id', $conference['id'])->count());
+    }
+
+    public function test_terminal_retry_exhausted_absence_verification_cannot_fence_after_conference_closes(): void
+    {
+        [, , , $conference] = $this->terminalVerificationFixture('coordinator-terminal-closed');
+        $this->forceTerminalVerificationFailure($conference['id'], 'runtime_unavailable', 'ari_http_unavailable');
+        DB::table('conferences')->where('id', $conference['id'])->update(['desired_state' => 'closed', 'updated_at' => now()]);
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-terminal-closed-second', 10);
+
+        $this->assertSame(0, $summary['candidates']);
+        $this->assertSame(0, DB::table('runtime_operations')->where('operation_type', 'runtime.node.runtime.fence')->where('aggregate_id', $conference['id'])->count());
+    }
+
+    public function test_terminal_retry_exhausted_absence_verification_cannot_fence_after_binding_replacement(): void
+    {
+        [$tenantId, , $nodeB, $conference] = $this->terminalVerificationFixture('coordinator-terminal-rebound');
+        $this->forceTerminalVerificationFailure($conference['id'], 'runtime_unavailable', 'ari_connection_failed');
+        DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->update(['status' => 'retired', 'unbound_at' => now(), 'updated_at' => now()]);
+        DB::table('conference_runtime_bindings')->insert([
+            'id' => IdentityIds::new(),
+            'tenant_id' => $tenantId,
+            'conference_id' => $conference['id'],
+            'runtime_node_id' => $nodeB,
+            'status' => 'active',
+            'bound_at' => now(),
+            'created_by' => null,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('conferences')->where('id', $conference['id'])->update(['runtime_node_id' => $nodeB, 'updated_at' => now()]);
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-terminal-rebound-second', 10);
+
+        $this->assertSame(0, $summary['candidates']);
+        $this->assertSame(0, DB::table('runtime_operations')->where('operation_type', 'runtime.node.runtime.fence')->where('aggregate_id', $conference['id'])->count());
+    }
+
+    public function test_terminal_retry_exhausted_absence_verification_cannot_fence_after_generation_advances(): void
+    {
+        [, , , $conference] = $this->terminalVerificationFixture('coordinator-terminal-generation');
+        $this->forceTerminalVerificationFailure($conference['id'], 'timeout', 'ari_connection_timeout');
+        DB::table('conferences')->where('id', $conference['id'])->update(['configuration_generation' => DB::raw('configuration_generation + 1'), 'updated_at' => now()]);
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-terminal-generation-second', 10);
+
+        $this->assertSame(1, $summary['verification_requested']);
+        $this->assertSame(0, DB::table('runtime_operations')->where('operation_type', 'runtime.node.runtime.fence')->where('aggregate_id', $conference['id'])->count());
+    }
+
+    public function test_terminal_retry_exhausted_absence_verification_cannot_fence_after_runtime_recovers(): void
+    {
+        [, $nodeA, , $conference] = $this->terminalVerificationFixture('coordinator-terminal-recovered');
+        $this->forceTerminalVerificationFailure($conference['id'], 'runtime_unavailable', 'ari_http_transport_failed');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'ready', 'updated_at' => now()]);
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-terminal-recovered-second', 10);
+
+        $this->assertSame(0, $summary['candidates']);
+        $this->assertSame(0, DB::table('runtime_operations')->where('operation_type', 'runtime.node.runtime.fence')->where('aggregate_id', $conference['id'])->count());
+    }
+
+    public function test_terminal_retry_exhausted_absence_verification_without_replacement_does_not_fence(): void
+    {
+        [, , $nodeB, $conference] = $this->terminalVerificationFixture('coordinator-terminal-no-replacement');
+        $this->forceTerminalVerificationFailure($conference['id'], 'runtime_unavailable', 'ari_http_unavailable');
+        DB::table('runtime_nodes')->where('id', $nodeB)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        $summary = app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-terminal-no-replacement-second', 10);
+
+        $this->assertSame(1, $summary['no_replacement']);
+        $this->assertSame(0, DB::table('runtime_operations')->where('operation_type', 'runtime.node.runtime.fence')->where('aggregate_id', $conference['id'])->count());
+        $this->assertDatabaseMissing('control_plane_audit_records', ['action' => 'conference.runtime_binding_replaced']);
+        $this->assertSame((int) $conference['configuration_generation'], (int) DB::table('conferences')->where('id', $conference['id'])->value('configuration_generation'));
+    }
+
     public function test_external_runtime_fenced_evidence_authorizes_rebind(): void
     {
         [$admin, , $tenantId, $nodeA] = $this->fixture('coordinator-external-fence');
@@ -1149,6 +1313,82 @@ final class TelephonyDomainTest extends TestCase
         $this->assertSame(1, $summary['recovered_before_cutoff']);
         $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
         $this->assertSame((int) $conference['configuration_generation'], (int) DB::table('conferences')->where('id', $conference['id'])->value('configuration_generation'));
+    }
+
+    /**
+     * @return array{0:string,1:string,2:string,3:array<string,mixed>}
+     */
+    private function terminalVerificationFixture(string $slug): array
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture($slug);
+        $nodeB = $this->runtimeNode($tenantId, $slug.'-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, $slug);
+        $this->readyObservation($tenantId, $nodeA, now()->subSeconds(600), $slug.'-ready');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        return [$tenantId, $nodeA, $nodeB, $conference];
+    }
+
+    /**
+     * @param  array<string, int>  $parameters
+     */
+    private function setSimulatorScenario(string $runtimeNodeId, string $scenario, array $parameters = []): void
+    {
+        DB::table('simulator_profiles')->where('runtime_node_id', $runtimeNodeId)->update([
+            'scenario_key' => $scenario,
+            'parameters' => json_encode($parameters, JSON_THROW_ON_ERROR),
+            'updated_at' => now(),
+        ]);
+        DB::table('simulator_states')->where('runtime_node_id', $runtimeNodeId)->update([
+            'attempt_count' => 0,
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function exhaustVerificationOperation(string $conferenceId): object
+    {
+        for ($attempt = 1; $attempt <= 3; $attempt++) {
+            app(CommandWorker::class)->workOnce(
+                'coordinator-terminal-fence-command-'.$attempt,
+                1,
+                60,
+                ['runtime.node.verify_conference_absent'],
+            );
+
+            if ($attempt < 3) {
+                $this->travel($attempt === 1 ? 16 : 31)->seconds();
+            }
+        }
+
+        $operation = DB::table('runtime_operations')
+            ->where('operation_type', 'runtime.node.verify_conference_absent')
+            ->where('aggregate_id', $conferenceId)
+            ->first();
+        $this->assertNotNull($operation);
+
+        return $operation;
+    }
+
+    private function forceTerminalVerificationFailure(string $conferenceId, string $failureClass, string $failureCode): object
+    {
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('coordinator-terminal-fixture-first', 10);
+        $operation = DB::table('runtime_operations')
+            ->where('operation_type', 'runtime.node.verify_conference_absent')
+            ->where('aggregate_id', $conferenceId)
+            ->first();
+        $this->assertNotNull($operation);
+
+        DB::table('runtime_operations')->where('id', $operation->id)->update([
+            'status' => 'terminal_failed',
+            'attempt_count' => 3,
+            'last_failure_class' => $failureClass,
+            'last_failure_code' => $failureCode,
+            'last_failure_message' => 'terminal verification fixture failure',
+            'completed_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return DB::table('runtime_operations')->where('id', $operation->id)->first();
     }
 
     /**

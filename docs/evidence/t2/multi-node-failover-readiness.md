@@ -4874,3 +4874,112 @@ terminal-fails past the only escalation window. The infrastructure (fence
 worker, RBAC, scale-to-zero, rebind, reconstruction) remains proven-ready; the
 single blocking gap is the coordinator classifier above. The next step is the
 bounded Codex fix, then a re-run of this exact T5-A25 destructive proof.
+
+## T5-A26 — Exhausted verification unavailability now escalates to runtime fencing
+
+Repository correction at `UTCP_PHASE=T1`, starting from HEAD `88c0ffd`. No live
+Kubernetes resource was applied, no Deployment was scaled, no Pod was deleted, no
+runtime-fence operation was created against live data, and no failover was run.
+
+### Coordinator sampling race corrected
+
+T5-A25 proved that a hard ARI outage can complete all three
+`runtime.node.verify_conference_absent` retries between two every-minute
+coordinator sweeps. The coordinator therefore may see only the persisted
+`terminal_failed` operation, not its intermediate `retry_scheduled` state. The
+repository correction updates
+`RuntimeFencingCoordinator::classifyExistingVerificationOperation` so a terminal
+verification operation with a fence-safe unavailability taxonomy now converges
+on the same `verification_unavailable` runtime-fence request path as the
+existing `RetryScheduled` branch.
+
+### Terminal retryable-unavailability taxonomy
+
+The terminal escalation is deliberately narrow. Fence eligibility is limited to
+the structured failure classes that mean the former runtime could not be reached
+or timed out during absence verification:
+
+- `transient_transport`
+- `runtime_unavailable`
+- `timeout`
+
+These cover the live evidence family such as `ari_http_transport_failed`,
+`ari_http_unavailable`, `ari_connection_timeout`, and
+`ari_connection_failed`. Unknown terminal classifications, invalid request
+failures, authorization failures, unsupported contexts, malformed evidence, and
+plain `internal_error` remain `verification_failed` and do not fence silently.
+
+### Authority re-gates before fencing
+
+Before a terminal verification result can request fencing, the coordinator still
+revalidates the normal candidate query and the serialized operation authority:
+the Conference must still exist and be open; the active binding must still
+reference the same former RuntimeNode; the binding ID, tenant, Conference,
+RuntimeNode, aggregate, and configuration generation embedded in the
+verification operation must still match the locked Conference and binding; the
+former RuntimeNode must still qualify as unavailable or stale; a distinct
+same-tenant replacement RuntimeNode must still be active, ready, and carry the
+required conference capabilities; and the existing generation-scoped
+runtime-fence idempotency key must not already be owned by a non-terminal fence
+operation. Recovery, closure, binding replacement, generation advancement, or
+replacement loss prevents stale terminal verification evidence from fencing.
+
+### Existing fence-request path reused
+
+The fix does not add a second fence payload builder or operation authority.
+`RetryScheduled` and terminal exhausted unavailability both call the existing
+`requestRuntimeFence(..., reason: verification_unavailable)` path. The
+coordinator remains the sole scheduler of `runtime.node.runtime.fence`; the
+dedicated infrastructure worker remains the executor; and
+`KubernetesRuntimeFenceAdapter` remains the only Kubernetes scale
+implementation.
+
+### Idempotency behavior
+
+The terminal verification operation is retained as canonical evidence and is not
+deleted or recreated. The first eligible post-terminal sweep creates exactly one
+generation-scoped `runtime.node.runtime.fence` operation. Later sweeps classify
+the existing fence chain as waiting and do not create duplicate verification
+operations, duplicate fence operations, duplicate idempotency keys, or duplicate
+outbox intents.
+
+### Focused regression coverage
+
+Repository tests now cover the real timing-independent sweep path:
+coordinator creates the verification operation; the worker exhausts retryable
+ARI transport failures through normal operation handling; the operation reaches
+`terminal_failed`; the next coordinator sweep creates one runtime-fence operation
+with reason `verification_unavailable`. Additional coverage proves repeated
+sweep idempotency; preserved `RetryScheduled` compatibility; non-retryable,
+unknown, and non-unavailability terminal failures remain non-fenceable;
+Conference closure, binding replacement, generation advancement, RuntimeNode
+recovery, and replacement loss prevent stale fencing; and
+replacement-before-fence behavior remains in force.
+
+### Architecture boundaries preserved
+
+No fence handler, Kubernetes adapter, Kubernetes client, RBAC, NetworkPolicy,
+fencing-worker Deployment, operation routing, scheduler cadence, scale behavior,
+RuntimeBinding replacement, bridge reconstruction, participant reconstruction,
+Asterisk manifest, or RuntimeNode projection changed. No direct Kubernetes call,
+generic-worker fence execution, new operation type, manual operation API,
+Artisan management path, feature gate, RuntimeNode allowlist, direct
+RuntimeBinding write, direct observed-state write, or fallback for unknown
+failure classes was introduced.
+
+### Retained ARI false-404 hardening gap
+
+T5-A25 also proved a separate ARI semantics gap: unloading REST resource modules
+can make `/ari/bridges/{id}` return 404 while the bridge remains alive. That
+false-404 case is not changed by T5-A26. Authoritative bridge absence must still
+eventually distinguish a healthy bridge API returning resource-not-found from an
+unavailable or missing ARI resource route. The next destructive proof should
+reuse the transport-unavailable ARI-event trigger, not the false-404 trigger.
+
+### Remaining live proof gap
+
+The repository correction restores the coordinator path that should lead to
+runtime fencing, but no live destructive scale-to-zero or failover proof was
+performed in this task. The next proof remains a controlled rerun of the T5-A25
+transport-unavailable scenario, stopping only when canonical automatic fencing,
+rebind, reconstruction, and restoration evidence are actually observed.

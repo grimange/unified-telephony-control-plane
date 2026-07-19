@@ -2,6 +2,7 @@
 
 namespace App\TelephonyDomain\Failover;
 
+use App\ControlPlane\RuntimeOperations\FailureClass;
 use App\ControlPlane\RuntimeOperations\OperationStatus;
 use App\ControlPlane\RuntimeOperations\RuntimeOperationRepository;
 use App\ControlPlane\Shared\ExecutionContext;
@@ -22,6 +23,15 @@ final class RuntimeFencingCoordinator
      * @var list<string>
      */
     private const AUTOMATIC_REPLACEMENT_DESIRED_STATES = ['active'];
+
+    /**
+     * @var list<FailureClass>
+     */
+    private const FENCE_ELIGIBLE_VERIFICATION_FAILURE_CLASSES = [
+        FailureClass::TransientTransport,
+        FailureClass::RuntimeUnavailable,
+        FailureClass::Timeout,
+    ];
 
     public function __construct(
         private readonly RuntimeOperationRepository $operations,
@@ -197,11 +207,61 @@ final class RuntimeFencingCoordinator
             OperationStatus::Pending->value,
             OperationStatus::Leased->value,
             OperationStatus::Running->value => ['status' => 'verification_waiting', 'operation_id' => (string) $operation->id],
-            OperationStatus::RetryScheduled->value => $this->requestRuntimeFence($context, $conference, $binding, (string) $operation->id, 'verification_unavailable'),
-            OperationStatus::TerminalFailed->value => ['status' => 'verification_failed', 'operation_id' => (string) $operation->id],
+            OperationStatus::RetryScheduled->value => $this->classifyUnavailableVerificationOperation($operation, $conference, $binding, $context),
+            OperationStatus::TerminalFailed->value => $this->classifyTerminalFailedVerificationOperation($operation, $conference, $binding, $context),
             OperationStatus::Succeeded->value => $this->classifySucceededOperation($operation),
             default => ['status' => 'verification_failed', 'operation_id' => (string) $operation->id],
         };
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function classifyTerminalFailedVerificationOperation(object $operation, object $conference, object $binding, ExecutionContext $context): array
+    {
+        $failureClass = FailureClass::tryFrom((string) $operation->last_failure_class);
+        if ($failureClass === null || ! in_array($failureClass, self::FENCE_ELIGIBLE_VERIFICATION_FAILURE_CLASSES, true)) {
+            return ['status' => 'verification_failed', 'operation_id' => (string) $operation->id, 'reason' => 'verification_failure_not_fenceable'];
+        }
+
+        return $this->classifyUnavailableVerificationOperation($operation, $conference, $binding, $context);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function classifyUnavailableVerificationOperation(object $operation, object $conference, object $binding, ExecutionContext $context): array
+    {
+        if (! $this->verificationOperationMatchesAuthority($operation, $conference, $binding)) {
+            return ['status' => 'verification_failed', 'operation_id' => (string) $operation->id, 'reason' => 'verification_authority_mismatch'];
+        }
+
+        if (! $this->domain->hasDistinctEligibleReplacement((string) $conference->tenant_id, (string) $conference->id, (string) $binding->runtime_node_id)) {
+            return ['status' => 'no_replacement', 'operation_id' => (string) $operation->id, 'reason' => 'no_eligible_runtime_node'];
+        }
+
+        return $this->requestRuntimeFence($context, $conference, $binding, (string) $operation->id, 'verification_unavailable');
+    }
+
+    private function verificationOperationMatchesAuthority(object $operation, object $conference, object $binding): bool
+    {
+        if ((string) $operation->tenant_id !== (string) $conference->tenant_id
+            || (string) $operation->aggregate_type !== 'conference'
+            || (string) $operation->aggregate_id !== (string) $conference->id
+            || (string) $operation->runtime_node_id !== (string) $binding->runtime_node_id) {
+            return false;
+        }
+
+        $payload = json_decode((string) $operation->payload, true);
+        if (! is_array($payload)) {
+            return false;
+        }
+
+        return (string) ($payload['conference_id'] ?? '') === (string) $conference->id
+            && (string) ($payload['former_runtime_binding_id'] ?? '') === (string) $binding->id
+            && (string) ($payload['former_runtime_node_id'] ?? '') === (string) $binding->runtime_node_id
+            && (string) ($payload['runtime_node_id'] ?? '') === (string) $binding->runtime_node_id
+            && (int) ($payload['configuration_generation'] ?? 0) === (int) $conference->configuration_generation;
     }
 
     /**
