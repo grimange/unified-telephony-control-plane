@@ -4348,3 +4348,109 @@ failover occurred.
 
 Live production Kubernetes-client GET/LIST proof remains pending; this
 repository-only correction does not claim that the production probe has passed.
+
+## T5-A23 — Production fencing-client Kubernetes GET/LIST proof COMPLETE; resources retained live
+
+Checkpointed live execution at `UTCP_PHASE=T1` from HEAD `308bf93`. With the
+T5-A22 audience correction (explicit audience omitted → kubelet requests the
+API server's default audience), the production
+`runtime-engine:infrastructure-probe` succeeded end-to-end using only the
+committed worker manifest's projected token. All fencing resources are
+RETAINED LIVE per the successful-state contract. No fence operation, scale,
+Asterisk Pod deletion, binding mutation, or failover occurred.
+
+### Baseline and preconditions
+
+Clean tree at `308bf93`; both Asterisk Deployments 1/1 with unchanged Pod UIDs
+(`030c033c-…45dd`, `3b9121dc-…4671e`); per-node Service isolation; both
+RuntimeNodes `active|ready` (fresh); leases claimed/unexpired; one open
+connection epoch per node; zero open conferences; zero bridges/channels; zero
+fence/verify/pending operations; fencing resources absent; all status targets
+passed. API endpoint rediscovered: `172.24.0.5:6443` (single IP/port);
+`KUBERNETES_SERVICE_HOST=10.43.0.1:443`. All three endpoint policies live at
+`172.24.0.5/32:6443`; drift check passed; no ClusterIP fallback or broad CIDR;
+default-deny intact; zero fencer-selector pods; live ordinary-worker apiserver
+connect refused (errno 111). Image current (`e5ed831..308bf93` is
+manifest/test/docs/config-check only; both artisan commands and both client
+classes present in the deployed registry image).
+
+### Render, dry-run, RBAC
+
+Render (registry transform) produced exactly the 4 canonical objects;
+**no `audience:` key anywhere in the render**; `defaultMode: 288` (0440),
+`ca.crt` item `mode: 292` (0444), `path: token`, `expirationSeconds: 3600`;
+both Pod labels; UID/GID 33; server-side dry-run passed. SA+Role+RoleBinding
+applied; impersonation matrix again exactly the approved boundary.
+
+### Worker deployment
+
+Rolled out 1/1 with the by-now-characterized single first-second restart
+(kube-router ipset programming lag for the new Pod IP; kernel-level, not a
+manifest defect) and stayed Running/Ready with restart count fixed at 1 through
+final acceptance. Clean bootstrap: PostgreSQL and Redis connected, fence-only
+polling loop entered, correct SA, hardening intact, no operation created, no
+scale invoked, no secret material in logs.
+
+### Projected files and token contract (proven)
+
+```text
+uid=33(www-data) gid=33(www-data)
+..data/token  mode=600 uid=33 → token_readable=yes
+..data/ca.crt mode=444 uid=0  → ca_readable=yes
+sub => system:serviceaccount:utcp-platform:utcp-runtime-fencer
+iss => https://kubernetes.default.svc.cluster.local
+aud => ["https://kubernetes.default.svc.cluster.local","k3s"]   (accepted set)
+exp-iat => 3600s
+```
+
+### Production probe — SUCCESS (both runs identical)
+
+```text
+php artisan runtime-engine:infrastructure-probe --once   (exit 0, twice)
+runtime_node_slug=local-asterisk-ari-b
+namespace=utcp-runtime
+deployment=asterisk-ari-b
+desired_replicas=1
+status_replicas=1
+available_replicas=1
+owned_pod_count=1
+```
+
+Deterministic RuntimeNode selection, canonical workload metadata resolution,
+CA-verified TLS, default-audience authentication, Deployment GET, and
+owned-Pod LIST all through the production `HttpKubernetesWorkloadClient` with
+the manifest-mounted token — no audience override, no alternate token, no
+legacy Secret, no host-CA fallback, no TLS bypass, no retry logic. Output
+non-secret. Two consecutive runs prove stable per-request token loading.
+
+### Authorization separation (real mounted token, SelfSubjectAccessReview)
+
+```text
+allowed:  get deployments (utcp-runtime), list pods, patch deployments/scale
+denied:   get secrets, delete pods, patch full deployments,
+          get deployments in utcp-platform
+```
+
+Authentication and authorization are cleanly separated: the token
+authenticates; RBAC still bounds it to exactly the fence-scope reads and the
+scale subresource.
+
+### Operation routing and destructive-behavior absence
+
+`runtime-engine:command-worker` claims with
+`excludeOperationTypes: [runtime_fence]`;
+`runtime-engine:infrastructure-worker` claims with
+`includeOperationTypes: [runtime_fence]` — disjoint by construction. Zero fence
+operations ever; the worker idles; scheduler created nothing; Asterisk replicas
+stayed 1/1; Pod UIDs unchanged; `conference_runtime_bindings` unchanged
+(102 rows, max updated_at 2026-07-18 01:20:42+00); zero failovers.
+
+### Live resource retention (successful-state contract)
+
+Retained live: `NetworkPolicy/allow-runtime-fencer-kubernetes-api` (and the
+Traefik/observability endpoint policies), `ServiceAccount/utcp-runtime-fencer`
+(utcp-platform), `Role`+`RoleBinding/utcp-runtime-fencer` (utcp-runtime), and
+`Deployment/utcp-runtime-fence-worker` (1/1 Ready, idle). No rollback was
+required. The five-defect activation chain (namespace → runtime UID →
+NetworkPolicy egress → CA file mode → token audience) is closed: the fencing
+worker is live with proven production Kubernetes read access.
