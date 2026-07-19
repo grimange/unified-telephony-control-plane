@@ -5224,3 +5224,126 @@ transport-level `verify_conference_absent` failure the T5-A26 fix escalates to
 fencing. Note (retained gap): the listener still does not detect a silently dead
 event stream when only `res_ari_events` is unloaded — that latent
 liveness-detection gap is separate from this validated HTTP-outage trigger.
+
+## T5-A29 — Sustained failover proof BLOCKED: the Asterisk liveness probe defeats any 300 s HTTP outage
+
+Checkpointed destructive attempt at `UTCP_PHASE=T1`, HEAD `cf59459` (T5-A26 fix
+confirmed live in `scheduler` and `telephony-command-worker`). The validated
+HTTP-disable trigger was applied to the bound node, but it **cannot sustain the
+outage to the 300 s failover-eligibility threshold**: the Asterisk container's
+TCP liveness probe on the ARI port restarts the container within ~60 s, which
+destroys the proof bridge, re-enables HTTP, and returns the node to `ready`
+before any failover candidate can form. This is a decisive trigger/deployment
+finding, not a coordinator or fix defect. The divergence occurred **before any
+fence mutation**; the environment self-healed and was cleaned up canonically.
+**No fence operation, scale-to-zero, Pod deletion, binding mutation, or failover
+occurred.**
+
+### Baseline and image currency
+
+Clean tree at `cf59459`; T5-A26 fix live in both `scheduler` and
+`telephony-command-worker` (grep-confirmed); both nodes active/ready
+(`030c033c…45dd`, `3b9121dc…4671e`); fence worker Ready/idle; drift passing;
+zero open conferences; only historical failover op is the T5-A25
+`terminal_failed` verify. Proof baseline timestamp `2026-07-19 04:00:01` used to
+scope all proof-chain queries.
+
+### Proof Conference
+
+conference `0eae47d6-…0040c`, participant `7c86baef-…08887`, binding
+`f9c4928d-…0beb96`, bound node `05ddb383…` (Local Asterisk ARI B, deployment
+`asterisk-ari-b`, Pod uid `3b9121dc…4671e`), generation 2; replacement node A
+`1d15ca88…`. Live bridge `utcp-conf-0eae47d6…` + 2 channels on node B; node A
+empty. http.conf backed up (checksum `aaf6effb…`). Created via the admin/member
+API.
+
+### HTTP outage and the liveness-probe restart
+
+- **04:00:49** HTTP disabled (`enabled=no` + `core reload`) → "Server Disabled";
+  bridge + 2 channels alive, PID 1, Pod uid unchanged, replicas 1/1.
+- **04:01:29** control-plane ARI REST → `ari_http_transport_failed` class
+  `runtime_unavailable` (transport-level, not 404); node B `unavailable`;
+  listener epochs closed. All correct so far — matching T5-A28.
+- **~04:01:39** the kubelet **killed and restarted** the `asterisk` container
+  after 3 consecutive liveness-probe failures. Events:
+  `Liveness probe failed: dial tcp 10.42.2.249:8088: connect: connection
+  refused` → `Container asterisk failed liveness probe, will be restarted`.
+- **~04:01:51** the fresh container is back: `http show status` = "Server
+  Enabled and Bound" (regenerated `enabled=yes` config), and the proof **bridge
+  is gone** (fresh Asterisk starts empty). Pod uid `3b9121dc…4671e` unchanged
+  (container restart, not Pod recreation); restart count 1→2.
+- **04:02:07** node B `ready` again; zero proof-scoped failover operations.
+
+Root cause (committed manifest
+`infrastructure/kubernetes/components/asterisk-instance/asterisk-ari-deployment.yaml:65`):
+
+```yaml
+livenessProbe:
+  tcpSocket: { port: ari }   # 8088
+  initialDelaySeconds: 20
+  periodSeconds: 20
+  failureThreshold: 3        # ⇒ ~60 s tolerance
+  timeoutSeconds: 5
+```
+
+Disabling the ARI HTTP server makes port 8088 refuse connections, so the TCP
+liveness probe fails 3× (~60 s) and kubelet restarts the container. The restart
+destroys the bridge and re-enables HTTP, so the node self-heals well before the
+300 s grace. **T5-A28 succeeded only because its outage was 39 s — under the
+~60 s probe window.** Any outage long enough to reach failover eligibility
+necessarily trips the probe first.
+
+### Architectural insight
+
+In a liveness-probed deployment, the exact split-brain the fence defends against
+— a workload whose bridge stays alive while the control plane is blind to it for
+300 s — is **not reachable via a node-local ARI outage**: kubelet's same-node
+probe detects the dead ARI port and restarts the container, killing the bridge
+and recovering the node. Genuine sustained unavailability with a surviving bridge
+requires a condition the local probe cannot fix — a control-plane↔node network
+partition (the local probe still passes), an unschedulable/crashlooping
+Deployment, or a relaxed liveness probe. None of these is producible under the
+T5-A29 authorized-action set (which forbids Deployment patches and NetworkPolicy
+changes).
+
+### Divergence handling performed (before any fence mutation)
+
+Per the "before scale-to-zero" contract: the container restart had already
+re-enabled HTTP and restored ARI, so no manual `http.conf` restore was needed
+(the ephemeral backup vanished with the replaced container filesystem); node B
+was confirmed `ready`; the proof Conference was closed canonically (participant
+remove → desired-state closed → converged `closed`); both nodes returned
+active/ready. No manual scale, Pod deletion, or operation/binding/state write
+occurred.
+
+### Final state (restored)
+
+Both Deployments 1/1; both RuntimeNodes active/ready; both leases claimed; one
+open epoch per node; zero open conferences; zero live bridges/channels; zero
+proof-scoped and zero pending operations; node A untouched (uid `030c033c…45dd`,
+restart 1); node B self-healed (uid `3b9121dc…4671e`, restart 2, http.conf
+`enabled=yes`); tree clean; `UTCP_PHASE=T1`. No Kubernetes object or committed
+manifest was modified.
+
+### Required next step (bounded)
+
+The sustained failover proof needs a trigger that produces ≥300 s RuntimeNode
+unavailability while the bridge survives, without the liveness probe restarting
+the container. Options, in preference order:
+
+1. **Proof-only temporary liveness-probe relaxation** on the former node
+   (e.g. raise `failureThreshold`/`periodSeconds` or remove the liveness probe
+   for the proof, then revert) — this is a Deployment patch, so it must be added
+   to the authorized-action set for the rerun. Combine with the validated
+   http.conf disable; the node then stays unavailable through the 300 s grace
+   with the bridge intact, and the T5-A26 fix escalates to fencing.
+2. A control-plane→node ARI **network partition** (block `utcp-platform`→
+   `asterisk-ari-b:8088`) that leaves the same-node liveness probe passing —
+   requires a scoped NetworkPolicy, currently prohibited.
+3. Re-examine whether the failover trigger should key off a signal other than
+   300 s ARI-transport unavailability, given that liveness probes convert
+   node-local ARI outages into self-healing restarts.
+
+The T5-A26 coordinator fix remains verified-and-unit-tested; only a
+probe-compatible sustained-outage trigger is missing for the end-to-end live
+proof. The retained events-only listener liveness-detection gap is separate.
