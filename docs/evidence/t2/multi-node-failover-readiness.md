@@ -930,16 +930,18 @@ authority, not by the coordinator.
 
 ## Kubernetes fencing capabilities
 
-The Asterisk Deployment has `replicas: 1`, `terminationGracePeriodSeconds: 30`, an
-exec readiness probe + tcpSocket liveness probe, **no preStop hook, no
-PodDisruptionBudget, no NetworkPolicy-based isolation primitive**, and a service
-account with `automountServiceAccountToken: false`. Crucially, **no Role/ClusterRole
-grants UTCP pod-delete or deployment-patch permission** — the control plane
-**cannot terminate or isolate an Asterisk Pod today**. UTCP can therefore observe
-Pod state via the API (a future adapter) but cannot yet *effect* a Kubernetes
-runtime fence. Distinguishing the states: Pod-NotReady and endpoint-removed do
-**not** stop the process/media; only container termination or Node loss does;
-network isolation stops UTCP's view without stopping the runtime.
+The Asterisk Deployment has `replicas: 1`, `terminationGracePeriodSeconds: 30`,
+startup initialization through `/usr/local/bin/utcp-asterisk-readiness`, ongoing
+liveness through the local Asterisk control socket (`core show uptime`), ARI TCP
+readiness, **no preStop hook, no PodDisruptionBudget, no NetworkPolicy-based
+isolation primitive**, and a service account with
+`automountServiceAccountToken: false`. Crucially, **no Role/ClusterRole grants
+UTCP pod-delete or deployment-patch permission** — the control plane **cannot
+terminate or isolate an Asterisk Pod today**. UTCP can therefore observe Pod state
+via the API (a future adapter) but cannot yet *effect* a Kubernetes runtime fence.
+Distinguishing the states: Pod-NotReady and endpoint-removed do **not** stop the
+process/media; only container termination or Node loss does; network isolation
+stops UTCP's view without stopping the runtime.
 
 ## Minimum former-runtime fencing invariant
 
@@ -5347,3 +5349,98 @@ the container. Options, in preference order:
 The T5-A26 coordinator fix remains verified-and-unit-tested; only a
 probe-compatible sustained-outage trigger is missing for the end-to-end live
 proof. The retained events-only listener liveness-detection gap is separate.
+
+## T5-A30 — Asterisk core liveness separated from ARI readiness
+
+Repository-only correction at `UTCP_PHASE=T1` after T5-A29. No Kubernetes
+resource was applied, no Deployment was scaled, no Pod was deleted, no live HTTP
+outage was induced, no Conference was created, and no failover was run.
+
+T5-A29 proved the previous probe authority was wrong: disabling Asterisk HTTP
+closed ARI port 8088 while the Asterisk core, bridge, and channels remained
+alive. The kubelet treated that ARI-only outage as liveness failure and restarted
+the container after the liveness threshold, destroying the bridge before UTCP's
+300-second failover eligibility could be reached. Kubernetes liveness must
+answer "should this container be restarted"; readiness must answer "should this
+Pod receive control-plane traffic". ARI availability belongs to readiness, not
+container-restart authority.
+
+The canonical Asterisk runtime manifests now use:
+
+```yaml
+startupProbe:
+  exec:
+    command: [/usr/local/bin/utcp-asterisk-readiness]
+readinessProbe:
+  tcpSocket:
+    port: ari
+livenessProbe:
+  exec:
+    command:
+      - /usr/sbin/asterisk
+      - -C
+      - /tmp/utcp-asterisk/asterisk.conf
+      - -rx
+      - core show uptime
+  timeoutSeconds: 5
+  periodSeconds: 20
+  failureThreshold: 3
+```
+
+The source manifests also carry explicit null deletion markers for the retired
+handler fields (`readinessProbe.exec: null`, `livenessProbe.tcpSocket: null`) so
+the normal Kubernetes apply path can remove the old handler type from existing
+live objects. These markers do not contain an ARI liveness port, HTTP check, or
+fallback command.
+
+`core show uptime` was selected because it is a read-only Asterisk core CLI
+query through the local control socket configured by
+`/tmp/utcp-asterisk/asterisk.conf`. Local image proof with Asterisk 20.20.1
+showed it exits zero when the control socket responds and exits nonzero when the
+socket is absent (`Unable to connect to remote asterisk ... asterisk.ctl`). The
+command does not call ARI HTTP, does not carry ARI credentials, and does not
+reload, restart, stop, unload, originate, or mutate Asterisk state.
+
+The existing initialization script remains as startup behavior so initial
+Asterisk boot, ARI route availability, configured module state, and Local
+channel registration are still gated before normal readiness/liveness begins.
+Ongoing readiness is reduced to ARI TCP availability: ARI down makes the Pod
+NotReady and removes endpoints, but the container remains running so active
+bridges and channels are not destroyed by the liveness probe.
+
+Rejected alternatives:
+
+- A proof-only overlay or Deployment patch was rejected because production and
+  proof manifests must share the same health authority.
+- Threshold inflation was rejected because it preserves ARI as restart authority
+  and merely races UTCP's 300-second failover grace.
+- NetworkPolicy fault injection was rejected as the primary correction because
+  it changes the proof trigger, not the incorrect kubelet authority.
+
+Validation added:
+
+- Parsed manifest tests assert liveness uses the canonical Asterisk binary,
+  canonical config path, read-only `core show uptime`, a bounded timeout, and no
+  ARI TCP or HTTP probe.
+- Parsed manifest tests assert readiness checks the ARI port, startup still
+  executes `/usr/local/bin/utcp-asterisk-readiness`, node A and node B render
+  identical probe contracts, Service selectors and RuntimeNode labels are
+  unchanged, container security context and resources are unchanged, and no
+  environment/proof overlay overrides probe authority.
+- `scripts/asterisk-conference/config-check` and
+  `scripts/asterisk-ari/validate-ab-topology` now reject ARI liveness,
+  mutating CLI probe commands, unbounded exec probes, timing inflation,
+  node-A/node-B probe drift, and proof-only probe patches.
+
+Render evidence:
+
+- `kubectl kustomize infrastructure/kubernetes/overlays/local/runtime` rendered
+  startup readiness-script initialization, core CLI liveness, and ARI TCP
+  readiness for the single active Asterisk Deployment.
+- `kubectl kustomize infrastructure/kubernetes/overlays/local-two-asterisk`
+  rendered the same contract for `asterisk-ari-a` and `asterisk-ari-b`.
+
+Server-side dry-run of the corrected manifests passed against
+`.runtime/kubeconfig/utcp-local.yaml` / `k3d-utcp-local` without applying
+resources. Live rollout of the corrected probe contract and the automatic
+destructive failover proof remain pending.

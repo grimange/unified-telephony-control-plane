@@ -20,6 +20,14 @@ REQUIRED_CAPABILITIES = {
     "event.stream",
     "runtime.observation",
 }
+STARTUP_COMMAND = ["/usr/local/bin/utcp-asterisk-readiness"]
+LIVENESS_COMMAND = [
+    "/usr/sbin/asterisk",
+    "-C",
+    "/tmp/utcp-asterisk/asterisk.conf",
+    "-rx",
+    "core show uptime",
+]
 
 
 class ValidationError(RuntimeError):
@@ -71,6 +79,42 @@ def container(deployment: dict[str, Any]) -> dict[str, Any]:
         raise ValidationError(f"{deployment['metadata']['name']} must have exactly one asterisk container")
 
     return matches[0]
+
+
+def validate_probe_contract(deployment: dict[str, Any]) -> None:
+    asterisk = container(deployment)
+    name = str(deployment["metadata"]["name"])
+    startup_probe = asterisk.get("startupProbe", {})
+    readiness_probe = asterisk.get("readinessProbe", {})
+    liveness_probe = asterisk.get("livenessProbe", {})
+
+    if startup_probe.get("exec", {}).get("command") != STARTUP_COMMAND:
+        raise ValidationError(f"{name} startup probe must preserve the Asterisk initialization check")
+    if startup_probe.get("timeoutSeconds") != 5 or startup_probe.get("periodSeconds") != 15:
+        raise ValidationError(f"{name} startup probe timing changed")
+    if startup_probe.get("failureThreshold") != 12:
+        raise ValidationError(f"{name} startup probe initialization tolerance changed")
+
+    if readiness_probe.get("tcpSocket", {}).get("port") != "ari":
+        raise ValidationError(f"{name} readiness probe must check the ARI port")
+    if readiness_probe.get("exec") is not None or "httpGet" in readiness_probe:
+        raise ValidationError(f"{name} readiness probe must remain ARI TCP-only")
+    if readiness_probe.get("timeoutSeconds") != 5 or readiness_probe.get("periodSeconds") != 15:
+        raise ValidationError(f"{name} readiness probe timing changed")
+
+    if liveness_probe.get("exec", {}).get("command") != LIVENESS_COMMAND:
+        raise ValidationError(f"{name} liveness probe must query the Asterisk core control socket")
+    if liveness_probe.get("tcpSocket") is not None or "httpGet" in liveness_probe:
+        raise ValidationError(f"{name} liveness probe must not use ARI TCP or HTTP")
+    if liveness_probe.get("timeoutSeconds") != 5:
+        raise ValidationError(f"{name} liveness probe must be timeout-bounded")
+    if liveness_probe.get("periodSeconds") != 20 or liveness_probe.get("failureThreshold") != 3:
+        raise ValidationError(f"{name} liveness probe timing changed")
+
+    command_text = " ".join(LIVENESS_COMMAND).lower()
+    mutating_terms = {"reload", "restart", "stop", "unload", "module", "originate", "channel request"}
+    if any(term in command_text for term in mutating_terms):
+        raise ValidationError(f"{name} liveness probe command must be read-only")
 
 
 def secret_ref(deployment: dict[str, Any]) -> str:
@@ -144,10 +188,7 @@ def validate_active_overlay(active: list[dict[str, Any]]) -> None:
         raise ValidationError("active Asterisk image changed")
     if asterisk.get("ports", [{}])[0].get("containerPort") != 8088:
         raise ValidationError("active Asterisk ARI port changed")
-    if asterisk.get("readinessProbe", {}).get("exec", {}).get("command") != ["/usr/local/bin/utcp-asterisk-readiness"]:
-        raise ValidationError("active Asterisk readiness probe changed")
-    if asterisk.get("livenessProbe", {}).get("tcpSocket", {}).get("port") != "ari":
-        raise ValidationError("active Asterisk liveness probe changed")
+    validate_probe_contract(deployment)
 
 
 def validate_node(
@@ -180,8 +221,7 @@ def validate_node(
         raise ValidationError(f"{deployment_name} must not mount Kubernetes API tokens")
     if container(deployment).get("image") != "utcp-local-registry:5000/utcp/asterisk-ari:0.1.0-k1-dev":
         raise ValidationError(f"{deployment_name} image mismatch")
-    if container(deployment).get("readinessProbe", {}).get("exec", {}).get("command") != ["/usr/local/bin/utcp-asterisk-readiness"]:
-        raise ValidationError(f"{deployment_name} readiness probe mismatch")
+    validate_probe_contract(deployment)
 
     body = registration["runtime_node"]["body"]
     if body.get("slug") != slug:
@@ -245,6 +285,16 @@ def validate_two_node_overlay(items: list[dict[str, Any]], registrations: dict[s
     secrets = {secret_ref(item) for item in deployments}
     if secrets != {"utcp-local-asterisk-ari-a-credentials", "utcp-local-asterisk-ari-b-credentials"}:
         raise ValidationError("staged credential Secret references must be distinct")
+    probe_contracts = {
+        item["metadata"]["name"]: {
+            "startupProbe": container(item).get("startupProbe"),
+            "readinessProbe": container(item).get("readinessProbe"),
+            "livenessProbe": container(item).get("livenessProbe"),
+        }
+        for item in deployments
+    }
+    if probe_contracts["asterisk-ari-a"] != probe_contracts["asterisk-ari-b"]:
+        raise ValidationError("staged Asterisk probe contracts must be identical")
     hosts = {first_endpoint_host(registration) for registration in registrations.values()}
     if hosts != {
         "asterisk-ari-a.utcp-runtime.svc.cluster.local",

@@ -7,6 +7,16 @@ use Tests\TestCase;
 
 final class AsteriskTwoNodeTopologyTest extends TestCase
 {
+    private const STARTUP_COMMAND = ['/usr/local/bin/utcp-asterisk-readiness'];
+
+    private const LIVENESS_COMMAND = [
+        '/usr/sbin/asterisk',
+        '-C',
+        '/tmp/utcp-asterisk/asterisk.conf',
+        '-rx',
+        'core show uptime',
+    ];
+
     public function test_staged_two_node_topology_and_registration_definitions_validate(): void
     {
         $process = $this->runRepositoryCommand(['scripts/asterisk-ari/validate-ab-topology']);
@@ -64,6 +74,48 @@ final class AsteriskTwoNodeTopologyTest extends TestCase
         $this->assertSame(['control', 'events', 'health'], $this->endpointPurposes($nodeB));
     }
 
+    public function test_asterisk_probe_authority_is_split_between_core_liveness_and_ari_readiness(): void
+    {
+        $objects = $this->kustomizeObjects('infrastructure/kubernetes/overlays/local-two-asterisk');
+
+        $nodeA = $this->deployment($objects, 'asterisk-ari-a');
+        $nodeB = $this->deployment($objects, 'asterisk-ari-b');
+
+        $this->assertAsteriskProbeContract($nodeA);
+        $this->assertAsteriskProbeContract($nodeB);
+        $this->assertSame(
+            $this->probeContract($nodeA),
+            $this->probeContract($nodeB),
+            'node A and node B must render identical probe contracts',
+        );
+    }
+
+    public function test_asterisk_probe_change_preserves_selectors_identity_security_and_resources(): void
+    {
+        $objects = $this->kustomizeObjects('infrastructure/kubernetes/overlays/local-two-asterisk');
+
+        foreach (['asterisk-ari-a', 'asterisk-ari-b'] as $deploymentName) {
+            $deployment = $this->deployment($objects, $deploymentName);
+            $service = $this->service($objects, $deploymentName);
+            $container = $this->asteriskContainer($deployment);
+            $podSpec = $deployment['spec']['template']['spec'];
+
+            $this->assertSame(
+                $deployment['spec']['selector']['matchLabels']['utcp.dev/runtime-node'],
+                $service['spec']['selector']['utcp.dev/runtime-node'],
+            );
+            $this->assertSame('asterisk-ari', $service['spec']['selector']['app.kubernetes.io/component']);
+            $this->assertSame('utcp-runtime-asterisk', $podSpec['serviceAccountName']);
+            $this->assertFalse($podSpec['automountServiceAccountToken']);
+            $this->assertTrue($podSpec['securityContext']['runAsNonRoot']);
+            $this->assertSame('RuntimeDefault', $podSpec['securityContext']['seccompProfile']['type']);
+            $this->assertFalse($container['securityContext']['allowPrivilegeEscalation']);
+            $this->assertSame(['ALL'], $container['securityContext']['capabilities']['drop']);
+            $this->assertSame(['cpu' => '50m', 'memory' => '128Mi'], $container['resources']['requests']);
+            $this->assertSame(['cpu' => '500m', 'memory' => '384Mi'], $container['resources']['limits']);
+        }
+    }
+
     /**
      * @param  list<string>  $command
      */
@@ -73,6 +125,131 @@ final class AsteriskTwoNodeTopologyTest extends TestCase
         $process->run();
 
         return $process;
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function kustomizeObjects(string $path): array
+    {
+        $root = dirname(base_path(), 2);
+        $render = new Process(['kubectl', 'kustomize', $path], $root);
+        $render->run();
+        $this->assertSame(0, $render->getExitCode(), $render->getErrorOutput());
+
+        $parse = new Process(['python3', '-c', <<<'PY'
+import json
+import sys
+import yaml
+
+items = {}
+for doc in yaml.safe_load_all(sys.stdin.read()):
+    if not doc:
+        continue
+    metadata = doc.get("metadata", {})
+    key = f"{doc.get('kind')}/{metadata.get('namespace')}/{metadata.get('name')}"
+    items[key] = doc
+print(json.dumps({key: items[key] for key in sorted(items)}))
+PY], $root);
+        $parse->setInput($render->getOutput());
+        $parse->run();
+        $this->assertSame(0, $parse->getExitCode(), $parse->getErrorOutput());
+
+        $objects = json_decode($parse->getOutput(), true, flags: JSON_THROW_ON_ERROR);
+        $this->assertIsArray($objects);
+
+        return $objects;
+    }
+
+    /**
+     * @param  array<string, array<string, mixed>>  $objects
+     * @return array<string, mixed>
+     */
+    private function deployment(array $objects, string $name): array
+    {
+        $object = $objects["Deployment/utcp-runtime/{$name}"] ?? null;
+        $this->assertIsArray($object, "missing Deployment/utcp-runtime/{$name}");
+
+        return $object;
+    }
+
+    /**
+     * @param  array<string, array<string, mixed>>  $objects
+     * @return array<string, mixed>
+     */
+    private function service(array $objects, string $name): array
+    {
+        $object = $objects["Service/utcp-runtime/{$name}"] ?? null;
+        $this->assertIsArray($object, "missing Service/utcp-runtime/{$name}");
+
+        return $object;
+    }
+
+    /**
+     * @param  array<string, mixed>  $deployment
+     * @return array<string, mixed>
+     */
+    private function asteriskContainer(array $deployment): array
+    {
+        $containers = array_values(array_filter(
+            $deployment['spec']['template']['spec']['containers'],
+            static fn (array $container): bool => $container['name'] === 'asterisk',
+        ));
+        $this->assertCount(1, $containers);
+
+        return $containers[0];
+    }
+
+    /**
+     * @param  array<string, mixed>  $deployment
+     */
+    private function assertAsteriskProbeContract(array $deployment): void
+    {
+        $container = $this->asteriskContainer($deployment);
+        $startup = $container['startupProbe'] ?? [];
+        $readiness = $container['readinessProbe'] ?? [];
+        $liveness = $container['livenessProbe'] ?? [];
+
+        $this->assertSame(self::STARTUP_COMMAND, $startup['exec']['command'] ?? null);
+        $this->assertSame(15, $startup['initialDelaySeconds'] ?? null);
+        $this->assertSame(15, $startup['periodSeconds'] ?? null);
+        $this->assertSame(5, $startup['timeoutSeconds'] ?? null);
+        $this->assertSame(12, $startup['failureThreshold'] ?? null);
+
+        $this->assertSame('ari', $readiness['tcpSocket']['port'] ?? null);
+        $this->assertNull($readiness['exec'] ?? null);
+        $this->assertArrayNotHasKey('httpGet', $readiness);
+        $this->assertSame(15, $readiness['periodSeconds'] ?? null);
+        $this->assertSame(5, $readiness['timeoutSeconds'] ?? null);
+        $this->assertSame(3, $readiness['failureThreshold'] ?? null);
+
+        $this->assertSame(self::LIVENESS_COMMAND, $liveness['exec']['command'] ?? null);
+        $this->assertNull($liveness['tcpSocket'] ?? null);
+        $this->assertArrayNotHasKey('httpGet', $liveness);
+        $this->assertSame(20, $liveness['periodSeconds'] ?? null);
+        $this->assertSame(5, $liveness['timeoutSeconds'] ?? null);
+        $this->assertSame(3, $liveness['failureThreshold'] ?? null);
+        $this->assertLessThan(300, $liveness['periodSeconds'] * $liveness['failureThreshold']);
+
+        $command = strtolower(implode(' ', self::LIVENESS_COMMAND));
+        foreach (['reload', 'restart', ' stop ', 'unload', 'module', 'originate'] as $forbidden) {
+            $this->assertStringNotContainsString($forbidden, $command);
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $deployment
+     * @return array<string, mixed>
+     */
+    private function probeContract(array $deployment): array
+    {
+        $container = $this->asteriskContainer($deployment);
+
+        return [
+            'startupProbe' => $container['startupProbe'],
+            'readinessProbe' => $container['readinessProbe'],
+            'livenessProbe' => $container['livenessProbe'],
+        ];
     }
 
     /**

@@ -36,15 +36,151 @@ grep -q "module show like" infrastructure/docker/asterisk/readiness || fail "rea
 grep -q "Running" infrastructure/docker/asterisk/readiness || fail "readiness does not require configured modules to be Running"
 grep -q "core show channeltypes" infrastructure/docker/asterisk/readiness || fail "readiness does not assert Local as a channel type"
 grep -q '\$1 == "Local"' infrastructure/docker/asterisk/readiness || fail "readiness does not assert Local separately from modules"
-grep -q "exec:" infrastructure/kubernetes/base/runtime/asterisk-ari-deployment.yaml || fail "Asterisk readiness probe does not execute readiness script"
-grep -q "/usr/local/bin/utcp-asterisk-readiness" infrastructure/kubernetes/base/runtime/asterisk-ari-deployment.yaml || fail "Asterisk deployment does not use readiness script"
-if sed -n '/readinessProbe:/,/livenessProbe:/p' infrastructure/kubernetes/base/runtime/asterisk-ari-deployment.yaml | grep -q "tcpSocket"; then
-  fail "Asterisk readiness probe still uses TCP-only readiness"
-fi
-sed -n '/livenessProbe:/,$p' infrastructure/kubernetes/base/runtime/asterisk-ari-deployment.yaml | grep -q "tcpSocket:" || fail "Asterisk liveness probe no longer uses TCP socket"
-sed -n '/livenessProbe:/,$p' infrastructure/kubernetes/base/runtime/asterisk-ari-deployment.yaml | grep -q "port: ari" || fail "Asterisk liveness probe port changed"
+python3 - <<'PY' || fail "Asterisk Kubernetes probe contract is invalid"
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+ROOT = Path.cwd()
+STARTUP_COMMAND = ["/usr/local/bin/utcp-asterisk-readiness"]
+LIVENESS_COMMAND = [
+    "/usr/sbin/asterisk",
+    "-C",
+    "/tmp/utcp-asterisk/asterisk.conf",
+    "-rx",
+    "core show uptime",
+]
+
+
+def die(message: str) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def docs_from_file(path: str) -> list[dict[str, Any]]:
+    with (ROOT / path).open("r", encoding="utf-8") as handle:
+        return [doc for doc in yaml.safe_load_all(handle) if isinstance(doc, dict)]
+
+
+def render(path: str) -> list[dict[str, Any]]:
+    output = subprocess.check_output(["kubectl", "kustomize", path], cwd=ROOT, text=True)
+    return [doc for doc in yaml.safe_load_all(output) if isinstance(doc, dict)]
+
+
+def deployment(items: list[dict[str, Any]], name: str) -> dict[str, Any]:
+    matches = [
+        item
+        for item in items
+        if item.get("kind") == "Deployment" and item.get("metadata", {}).get("name") == name
+    ]
+    if len(matches) != 1:
+        die(f"expected exactly one Deployment/{name}, found {len(matches)}")
+    return matches[0]
+
+
+def container(item: dict[str, Any]) -> dict[str, Any]:
+    containers = item["spec"]["template"]["spec"].get("containers", [])
+    matches = [candidate for candidate in containers if candidate.get("name") == "asterisk"]
+    if len(matches) != 1:
+        die(f"{item['metadata']['name']} must have exactly one asterisk container")
+    return matches[0]
+
+
+def assert_contract(item: dict[str, Any]) -> dict[str, Any]:
+    name = item["metadata"]["name"]
+    pod = item["spec"]["template"]
+    pod_spec = pod["spec"]
+    labels = pod.get("metadata", {}).get("labels", {})
+    asterisk = container(item)
+    startup = asterisk.get("startupProbe", {})
+    readiness = asterisk.get("readinessProbe", {})
+    liveness = asterisk.get("livenessProbe", {})
+
+    if labels.get("utcp.io/network-role") != "asterisk-ari":
+        die(f"{name} RuntimeNode network label changed")
+    if pod_spec.get("serviceAccountName") != "utcp-runtime-asterisk":
+        die(f"{name} ServiceAccount changed")
+    if pod_spec.get("automountServiceAccountToken") is not False:
+        die(f"{name} must not mount Kubernetes API tokens")
+    if pod_spec.get("securityContext", {}).get("runAsNonRoot") is not True:
+        die(f"{name} non-root Pod security context changed")
+    security_context = asterisk.get("securityContext", {})
+    if security_context.get("allowPrivilegeEscalation") is not False:
+        die(f"{name} allowPrivilegeEscalation changed")
+    if security_context.get("capabilities", {}).get("drop") != ["ALL"]:
+        die(f"{name} dropped capabilities changed")
+    if asterisk.get("resources", {}).get("requests") != {"cpu": "50m", "memory": "128Mi"}:
+        die(f"{name} resource requests changed")
+    if asterisk.get("resources", {}).get("limits") != {"cpu": "500m", "memory": "384Mi"}:
+        die(f"{name} resource limits changed")
+
+    if startup.get("exec", {}).get("command") != STARTUP_COMMAND:
+        die(f"{name} startup probe must execute the Asterisk initialization readiness script")
+    if startup.get("timeoutSeconds") != 5 or startup.get("periodSeconds") != 15 or startup.get("failureThreshold") != 12:
+        die(f"{name} startup probe timing changed")
+
+    if readiness.get("tcpSocket", {}).get("port") != "ari":
+        die(f"{name} readiness probe must check ARI TCP")
+    if readiness.get("exec") is not None or "httpGet" in readiness:
+        die(f"{name} readiness probe must not duplicate startup or HTTP semantics")
+    if readiness.get("timeoutSeconds") != 5 or readiness.get("periodSeconds") != 15 or readiness.get("failureThreshold") != 3:
+        die(f"{name} readiness probe timing changed")
+
+    if liveness.get("exec", {}).get("command") != LIVENESS_COMMAND:
+        die(f"{name} liveness probe must query Asterisk core through the control socket")
+    if liveness.get("tcpSocket") is not None or "httpGet" in liveness:
+        die(f"{name} liveness probe must not use ARI TCP or HTTP")
+    if liveness.get("timeoutSeconds") != 5:
+        die(f"{name} liveness probe must be timeout-bounded")
+    if liveness.get("periodSeconds") != 20 or liveness.get("failureThreshold") != 3:
+        die(f"{name} liveness probe timing changed")
+    if liveness["periodSeconds"] * liveness["failureThreshold"] >= 300:
+        die(f"{name} liveness timing must not be inflated to outrun failover grace")
+
+    command_text = " ".join(LIVENESS_COMMAND).lower()
+    for forbidden in ("reload", "restart", "stop", "unload", "module", "originate"):
+        if forbidden in command_text:
+            die(f"{name} liveness command contains mutating action: {forbidden}")
+
+    return {
+        "startupProbe": startup,
+        "readinessProbe": readiness,
+        "livenessProbe": liveness,
+    }
+
+
+for manifest_path in (
+    "infrastructure/kubernetes/base/runtime/asterisk-ari-deployment.yaml",
+    "infrastructure/kubernetes/components/asterisk-instance/asterisk-ari-deployment.yaml",
+):
+    assert_contract(deployment(docs_from_file(manifest_path), "asterisk-ari"))
+
+active = deployment(render("infrastructure/kubernetes/overlays/local/runtime"), "asterisk-ari")
+assert_contract(active)
+
+two_node = render("infrastructure/kubernetes/overlays/local-two-asterisk")
+node_a = deployment(two_node, "asterisk-ari-a")
+node_b = deployment(two_node, "asterisk-ari-b")
+if assert_contract(node_a) != assert_contract(node_b):
+    die("node A and node B probe contracts differ")
+
+for item in (active, node_a, node_b):
+    for volume in item["spec"]["template"]["spec"].get("volumes", []):
+        if volume.get("name") == "kubernetes-api-credentials":
+            die(f"{item['metadata']['name']} must not mount fencing credentials")
+
+print("asterisk_probe_contract=ok")
+PY
 if rg -n "ARI_PASSWORD|ARI_USERNAME|Authorization|Basic|UTCP_.*(BYPASS|DISABLE|SKIP|ALLOWLIST|MODULES)" infrastructure/docker/asterisk/readiness; then
   fail "readiness embeds credentials, bypass controls, or a module allowlist"
+fi
+if rg -n "livenessProbe|startupProbe|readinessProbe" infrastructure/kubernetes/overlays/local-two-asterisk infrastructure/kubernetes/overlays/local/runtime; then
+  fail "proof or environment overlay must not override the canonical Asterisk probe contract"
 fi
 grep -q "proof_originate_timeout_seconds" apps/api/config/asterisk_ari.php || fail "missing bounded proof originate timeout"
 grep -q "proof_originate_timeout_seconds" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "Asterisk proof channel originate timeout is not configuration-bound"

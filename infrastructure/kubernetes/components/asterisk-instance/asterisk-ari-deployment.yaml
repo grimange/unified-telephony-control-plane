@@ -54,7 +54,7 @@ spec:
             capabilities:
               drop:
                 - ALL
-          readinessProbe:
+          startupProbe:
             exec:
               command:
                 - /usr/local/bin/utcp-asterisk-readiness
@@ -62,9 +62,23 @@ spec:
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 12
-          livenessProbe:
+          readinessProbe:
+            exec: null
             tcpSocket:
               port: ari
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket: null
+            exec:
+              command:
+                - /usr/sbin/asterisk
+                - -C
+                - /tmp/utcp-asterisk/asterisk.conf
+                - -rx
+                - core show uptime
             initialDelaySeconds: 20
             periodSeconds: 20
             timeoutSeconds: 5
+            failureThreshold: 3
