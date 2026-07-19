@@ -68,32 +68,137 @@ final class HttpKubernetesWorkloadClientTest extends TestCase
         ]], $requests);
     }
 
-    public function test_owned_pod_list_uses_fixed_utcp_selector_and_filters_to_the_deployment(): void
+    public function test_owned_pod_list_uses_controller_owner_chain_for_exact_deployment_a(): void
     {
         $this->configureCredentials('token');
-        Http::fake(fn () => Http::response([
-            'kind' => 'PodList',
-            'items' => [
-                [
-                    'metadata' => [
-                        'name' => 'owned',
-                        'ownerReferences' => [['kind' => 'ReplicaSet', 'name' => 'asterisk-ari-a-74b5d7d9']],
-                    ],
-                ],
-                [
-                    'metadata' => [
-                        'name' => 'other',
-                        'ownerReferences' => [['kind' => 'ReplicaSet', 'name' => 'asterisk-ari-b-74b5d7d9']],
-                    ],
-                ],
-            ],
-        ]));
+        $this->fakeOwnershipTopology();
 
-        $pods = (new HttpKubernetesWorkloadClient)->listOwnedPods('utcp-runtime', new RuntimeNodeWorkloadIdentity('utcp-runtime', 'asterisk-ari-a'));
+        $pods = (new HttpKubernetesWorkloadClient)->listOwnedPods('utcp-runtime', new RuntimeNodeWorkloadIdentity('utcp-runtime', 'asterisk-ari'));
 
         $this->assertCount(1, $pods);
-        $this->assertSame('owned', $pods[0]['metadata']['name']);
+        $this->assertSame('asterisk-ari-74b5d7d9-aa111', $pods[0]['metadata']['name']);
+        Http::assertSent(fn (Request $request): bool => $request->method() === 'GET' && str_ends_with($request->url(), '/apis/apps/v1/namespaces/utcp-runtime/replicasets'));
         Http::assertSent(fn (Request $request): bool => str_contains($request->url(), 'labelSelector=app.kubernetes.io%2Fpart-of%3Dutcp%2Capp.kubernetes.io%2Fcomponent%3Dasterisk-ari'));
+    }
+
+    public function test_owned_pod_list_uses_controller_owner_chain_for_exact_deployment_b(): void
+    {
+        $this->configureCredentials('token');
+        $this->fakeOwnershipTopology(targetDeployment: 'asterisk-ari-b');
+
+        $pods = (new HttpKubernetesWorkloadClient)->listOwnedPods('utcp-runtime', new RuntimeNodeWorkloadIdentity('utcp-runtime', 'asterisk-ari-b'));
+
+        $this->assertCount(1, $pods);
+        $this->assertSame('asterisk-ari-b-8557bd4d76-bb222', $pods[0]['metadata']['name']);
+    }
+
+    public function test_prefix_collision_never_grants_sibling_pod_ownership(): void
+    {
+        $this->configureCredentials('token');
+        $this->fakeOwnershipTopology();
+
+        $pods = (new HttpKubernetesWorkloadClient)->listOwnedPods('utcp-runtime', new RuntimeNodeWorkloadIdentity('utcp-runtime', 'asterisk-ari'));
+
+        $this->assertSame(['asterisk-ari-74b5d7d9-aa111'], array_map(
+            static fn (array $pod): string => (string) data_get($pod, 'metadata.name'),
+            $pods,
+        ));
+    }
+
+    public function test_deployment_uid_mismatch_rejects_identical_names(): void
+    {
+        $this->configureCredentials('token');
+        $this->fakeOwnershipTopology(
+            targetDeploymentUid: 'deployment-a-uid',
+            replicaSets: [
+                $this->replicaSet('rs-a', 'replicaset-a-uid', 'asterisk-ari', 'different-deployment-uid'),
+            ],
+            pods: [
+                $this->pod('same-name-pod', 'pod-a-uid', 'rs-a', 'replicaset-a-uid'),
+            ],
+        );
+
+        $this->assertSame([], (new HttpKubernetesWorkloadClient)->listOwnedPods('utcp-runtime', new RuntimeNodeWorkloadIdentity('utcp-runtime', 'asterisk-ari')));
+    }
+
+    public function test_replicaset_owner_mismatch_rejects_pod(): void
+    {
+        $this->configureCredentials('token');
+        $this->fakeOwnershipTopology(
+            replicaSets: [
+                $this->replicaSet('rs-a', 'replicaset-a-uid', 'asterisk-ari-b', 'deployment-b-uid'),
+            ],
+            pods: [
+                $this->pod('asterisk-ari-74b5d7d9-aa111', 'pod-a-uid', 'rs-a', 'replicaset-a-uid'),
+            ],
+        );
+
+        $this->assertSame([], (new HttpKubernetesWorkloadClient)->listOwnedPods('utcp-runtime', new RuntimeNodeWorkloadIdentity('utcp-runtime', 'asterisk-ari')));
+    }
+
+    public function test_pod_without_controller_owner_reference_is_not_owned(): void
+    {
+        $this->configureCredentials('token');
+        $this->fakeOwnershipTopology(pods: [['metadata' => ['name' => 'orphan', 'uid' => 'pod-orphan']]]);
+
+        $this->assertSame([], (new HttpKubernetesWorkloadClient)->listOwnedPods('utcp-runtime', new RuntimeNodeWorkloadIdentity('utcp-runtime', 'asterisk-ari')));
+    }
+
+    public function test_missing_replicaset_does_not_fall_back_to_prefix(): void
+    {
+        $this->configureCredentials('token');
+        $this->fakeOwnershipTopology(
+            replicaSets: [],
+            pods: [
+                $this->pod('asterisk-ari-b-8557bd4d76-bb222', 'pod-b-uid', 'asterisk-ari-b-8557bd4d76', 'missing-rs-uid'),
+            ],
+        );
+
+        $this->assertSame([], (new HttpKubernetesWorkloadClient)->listOwnedPods('utcp-runtime', new RuntimeNodeWorkloadIdentity('utcp-runtime', 'asterisk-ari')));
+    }
+
+    public function test_replicaset_without_deployment_controller_is_not_owned(): void
+    {
+        $this->configureCredentials('token');
+        $this->fakeOwnershipTopology(
+            replicaSets: [[
+                'kind' => 'ReplicaSet',
+                'metadata' => [
+                    'name' => 'asterisk-ari-74b5d7d9',
+                    'uid' => 'replicaset-a-uid',
+                    'ownerReferences' => [['kind' => 'Job', 'name' => 'not-a-deployment', 'uid' => 'job-uid', 'controller' => true]],
+                ],
+            ]],
+            pods: [
+                $this->pod('asterisk-ari-74b5d7d9-aa111', 'pod-a-uid', 'asterisk-ari-74b5d7d9', 'replicaset-a-uid'),
+            ],
+        );
+
+        $this->assertSame([], (new HttpKubernetesWorkloadClient)->listOwnedPods('utcp-runtime', new RuntimeNodeWorkloadIdentity('utcp-runtime', 'asterisk-ari')));
+    }
+
+    public function test_multiple_target_pods_and_rollout_replicasets_are_all_recognized(): void
+    {
+        $this->configureCredentials('token');
+        $this->fakeOwnershipTopology(
+            replicaSets: [
+                $this->replicaSet('asterisk-ari-74b5d7d9', 'replicaset-a-old-uid', 'asterisk-ari', 'deployment-a-uid'),
+                $this->replicaSet('asterisk-ari-95ac3f120a', 'replicaset-a-new-uid', 'asterisk-ari', 'deployment-a-uid'),
+                $this->replicaSet('asterisk-ari-b-8557bd4d76', 'replicaset-b-uid', 'asterisk-ari-b', 'deployment-b-uid'),
+            ],
+            pods: [
+                $this->pod('asterisk-ari-74b5d7d9-aa111', 'pod-a-old-uid', 'asterisk-ari-74b5d7d9', 'replicaset-a-old-uid'),
+                $this->pod('asterisk-ari-95ac3f120a-cc333', 'pod-a-new-uid', 'asterisk-ari-95ac3f120a', 'replicaset-a-new-uid'),
+                $this->pod('asterisk-ari-b-8557bd4d76-bb222', 'pod-b-uid', 'asterisk-ari-b-8557bd4d76', 'replicaset-b-uid'),
+            ],
+        );
+
+        $pods = (new HttpKubernetesWorkloadClient)->listOwnedPods('utcp-runtime', new RuntimeNodeWorkloadIdentity('utcp-runtime', 'asterisk-ari'));
+
+        $this->assertSame([
+            'asterisk-ari-74b5d7d9-aa111',
+            'asterisk-ari-95ac3f120a-cc333',
+        ], array_map(static fn (array $pod): string => (string) data_get($pod, 'metadata.name'), $pods));
     }
 
     public function test_missing_token_or_ca_fails_closed_without_sending_requests(): void
@@ -188,6 +293,103 @@ final class HttpKubernetesWorkloadClientTest extends TestCase
         } catch (KubernetesWorkloadClientException $exception) {
             $this->assertSame('failed', $exception->reason);
         }
+    }
+
+    /**
+     * @param  list<array<string, mixed>>|null  $replicaSets
+     * @param  list<array<string, mixed>>|null  $pods
+     */
+    private function fakeOwnershipTopology(
+        string $targetDeployment = 'asterisk-ari',
+        string $targetDeploymentUid = 'deployment-a-uid',
+        ?array $replicaSets = null,
+        ?array $pods = null,
+    ): void {
+        $replicaSets ??= [
+            $this->replicaSet('asterisk-ari-74b5d7d9', 'replicaset-a-uid', 'asterisk-ari', 'deployment-a-uid'),
+            $this->replicaSet('asterisk-ari-b-8557bd4d76', 'replicaset-b-uid', 'asterisk-ari-b', 'deployment-b-uid'),
+        ];
+        $pods ??= [
+            $this->pod('asterisk-ari-74b5d7d9-aa111', 'pod-a-uid', 'asterisk-ari-74b5d7d9', 'replicaset-a-uid'),
+            $this->pod('asterisk-ari-b-8557bd4d76-bb222', 'pod-b-uid', 'asterisk-ari-b-8557bd4d76', 'replicaset-b-uid'),
+        ];
+        if ($targetDeployment === 'asterisk-ari-b' && $targetDeploymentUid === 'deployment-a-uid') {
+            $targetDeploymentUid = 'deployment-b-uid';
+        }
+
+        Http::fake(function (Request $request) use ($targetDeployment, $targetDeploymentUid, $replicaSets, $pods) {
+            if (str_ends_with($request->url(), '/apis/apps/v1/namespaces/utcp-runtime/deployments/'.$targetDeployment)) {
+                return Http::response($this->deployment($targetDeployment, $targetDeploymentUid));
+            }
+            if (str_ends_with($request->url(), '/apis/apps/v1/namespaces/utcp-runtime/replicasets')) {
+                return Http::response(['kind' => 'ReplicaSetList', 'items' => $replicaSets]);
+            }
+            if (str_contains($request->url(), '/api/v1/namespaces/utcp-runtime/pods?')) {
+                return Http::response(['kind' => 'PodList', 'items' => $pods]);
+            }
+
+            return Http::response(['kind' => 'Status'], 404);
+        });
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function deployment(string $name, string $uid): array
+    {
+        return [
+            'kind' => 'Deployment',
+            'metadata' => [
+                'namespace' => 'utcp-runtime',
+                'name' => $name,
+                'uid' => $uid,
+            ],
+            'spec' => ['replicas' => 1],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function replicaSet(string $name, string $uid, string $deploymentName, string $deploymentUid): array
+    {
+        return [
+            'kind' => 'ReplicaSet',
+            'metadata' => [
+                'namespace' => 'utcp-runtime',
+                'name' => $name,
+                'uid' => $uid,
+                'ownerReferences' => [[
+                    'apiVersion' => 'apps/v1',
+                    'kind' => 'Deployment',
+                    'name' => $deploymentName,
+                    'uid' => $deploymentUid,
+                    'controller' => true,
+                ]],
+            ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function pod(string $name, string $uid, string $replicaSetName, string $replicaSetUid): array
+    {
+        return [
+            'kind' => 'Pod',
+            'metadata' => [
+                'namespace' => 'utcp-runtime',
+                'name' => $name,
+                'uid' => $uid,
+                'ownerReferences' => [[
+                    'apiVersion' => 'apps/v1',
+                    'kind' => 'ReplicaSet',
+                    'name' => $replicaSetName,
+                    'uid' => $replicaSetUid,
+                    'controller' => true,
+                ]],
+            ],
+        ];
     }
 
     private function configureCredentials(string $token): string

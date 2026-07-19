@@ -356,6 +356,7 @@ role = objects[('Role', 'utcp-runtime', 'utcp-runtime-fencer')]
 rules = role.get('rules') or []
 expected_rules = [
     {'apiGroups': ['apps'], 'resources': ['deployments'], 'verbs': ['get', 'list']},
+    {'apiGroups': ['apps'], 'resources': ['replicasets'], 'verbs': ['get', 'list']},
     {'apiGroups': ['apps'], 'resources': ['deployments/scale'], 'verbs': ['get', 'patch']},
     {'apiGroups': [''], 'resources': ['pods'], 'verbs': ['get', 'list']},
 ]

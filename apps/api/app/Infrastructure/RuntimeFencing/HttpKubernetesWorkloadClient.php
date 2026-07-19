@@ -62,6 +62,17 @@ final class HttpKubernetesWorkloadClient implements KubernetesWorkloadClient
         $this->assertDnsLabel($namespace, 'namespace');
         $this->assertDnsLabel($identity->deployment, 'deployment');
 
+        $deployment = $this->getDeployment($namespace, $identity->deployment);
+        if ($deployment === null) {
+            throw KubernetesWorkloadClientException::targetMismatch();
+        }
+        $deploymentUid = $this->objectUid($deployment);
+        if ($deploymentUid === '') {
+            throw KubernetesWorkloadClientException::failed('Kubernetes target Deployment UID is unavailable.');
+        }
+
+        $replicaSetsByUid = $this->replicaSetsByUid($namespace);
+
         $selector = http_build_query([
             'labelSelector' => implode(',', [
                 'app.kubernetes.io/part-of=utcp',
@@ -83,8 +94,39 @@ final class HttpKubernetesWorkloadClient implements KubernetesWorkloadClient
 
         return array_values(array_filter(
             $items,
-            fn ($pod): bool => is_array($pod) && $this->isOwnedByDeployment($pod, $identity),
+            fn ($pod): bool => is_array($pod) && $this->isOwnedByDeploymentUid($pod, $deploymentUid, $replicaSetsByUid),
         ));
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function replicaSetsByUid(string $namespace): array
+    {
+        $response = $this->send('get', sprintf(
+            '/apis/apps/v1/namespaces/%s/replicasets',
+            rawurlencode($namespace),
+        ));
+        $this->assertSuccessful($response);
+
+        $payload = $this->decodeObject($response, 'ReplicaSetList');
+        $items = $payload['items'] ?? null;
+        if (! is_array($items)) {
+            throw KubernetesWorkloadClientException::failed();
+        }
+
+        $replicaSetsByUid = [];
+        foreach ($items as $replicaSet) {
+            if (! is_array($replicaSet)) {
+                continue;
+            }
+            $uid = $this->objectUid($replicaSet);
+            if ($uid !== '') {
+                $replicaSetsByUid[$uid] = $replicaSet;
+            }
+        }
+
+        return $replicaSetsByUid;
     }
 
     /**
@@ -150,24 +192,54 @@ final class HttpKubernetesWorkloadClient implements KubernetesWorkloadClient
         return $payload;
     }
 
-    private function isOwnedByDeployment(array $pod, RuntimeNodeWorkloadIdentity $identity): bool
+    /**
+     * @param  array<string, array<string, mixed>>  $replicaSetsByUid
+     */
+    private function isOwnedByDeploymentUid(array $pod, string $deploymentUid, array $replicaSetsByUid): bool
     {
-        $ownerReferences = data_get($pod, 'metadata.ownerReferences', []);
-        if (! is_array($ownerReferences)) {
+        $replicaSetOwner = $this->controllerOwnerReference($pod);
+        if ($replicaSetOwner === null || (string) ($replicaSetOwner['kind'] ?? '') !== 'ReplicaSet') {
             return false;
         }
 
+        $replicaSetUid = (string) ($replicaSetOwner['uid'] ?? '');
+        if ($replicaSetUid === '' || ! isset($replicaSetsByUid[$replicaSetUid])) {
+            return false;
+        }
+
+        $deploymentOwner = $this->controllerOwnerReference($replicaSetsByUid[$replicaSetUid]);
+
+        return $deploymentOwner !== null
+            && (string) ($deploymentOwner['kind'] ?? '') === 'Deployment'
+            && (string) ($deploymentOwner['uid'] ?? '') === $deploymentUid;
+    }
+
+    /**
+     * @param  array<string, mixed>  $object
+     * @return array<string, mixed>|null
+     */
+    private function controllerOwnerReference(array $object): ?array
+    {
+        $ownerReferences = data_get($object, 'metadata.ownerReferences', []);
+        if (! is_array($ownerReferences)) {
+            return null;
+        }
+
         foreach ($ownerReferences as $ownerReference) {
-            if (! is_array($ownerReference)) {
-                continue;
-            }
-            if ((string) ($ownerReference['kind'] ?? '') === 'ReplicaSet'
-                && str_starts_with((string) ($ownerReference['name'] ?? ''), $identity->deployment.'-')) {
-                return true;
+            if (is_array($ownerReference) && ($ownerReference['controller'] ?? null) === true) {
+                return $ownerReference;
             }
         }
 
-        return false;
+        return null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $object
+     */
+    private function objectUid(array $object): string
+    {
+        return (string) data_get($object, 'metadata.uid', '');
     }
 
     private function apiServerUrl(): string

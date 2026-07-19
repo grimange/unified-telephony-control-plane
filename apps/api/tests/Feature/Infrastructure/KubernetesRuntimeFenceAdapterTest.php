@@ -806,6 +806,128 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
         ]);
     }
 
+    public function test_runtime_fence_operation_for_asterisk_ari_completes_while_asterisk_ari_b_pod_runs(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('a', observedState: 'unavailable', labels: [
+            'kubernetes_workload' => ['namespace' => 'utcp-runtime', 'deployment' => 'asterisk-ari'],
+        ]);
+        $this->replacementRuntimeNode($tenantId, 'a-replacement');
+        [$conferenceId, , $operationId] = $this->runtimeFenceOperation($tenantId, $nodeId, 'fence-a-prefix-collision', 50);
+        $fake = FakeKubernetesWorkloadClient::withDeployment($this->deployment('asterisk-ari', 'conference-runtime-a', 1, 1, 1));
+        $fake->afterScaleDeployment = $this->deployment('asterisk-ari', 'conference-runtime-a', 0, 0, 0);
+        $fake->afterScaleOwnedPodsByDeployment = [
+            'asterisk-ari' => [],
+            'asterisk-ari-b' => [$this->readyPod('asterisk-ari-b-8557bd4d76-bb222', 'pod-b-running')],
+        ];
+        $this->bindFakeClient($fake);
+
+        app(CommandWorker::class)->workOnce('runtime-fence-a-prefix-collision', 1);
+
+        $this->assertSame('succeeded', DB::table('runtime_operations')->where('id', $operationId)->value('status'));
+        $this->assertSame([['utcp-runtime', 'asterisk-ari', 0]], $fake->scaleCalls);
+        $payload = $this->terminationEventPayload($conferenceId);
+        $this->assertSame('fenced', $payload['fence_result']);
+        $this->assertSame(0, $payload['owned_pods_remaining']);
+    }
+
+    public function test_runtime_fence_operation_for_asterisk_ari_b_completes_while_asterisk_ari_pod_runs(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('b', observedState: 'unavailable', labels: [
+            'kubernetes_workload' => ['namespace' => 'utcp-runtime', 'deployment' => 'asterisk-ari-b'],
+        ]);
+        $this->replacementRuntimeNode($tenantId, 'b-replacement');
+        [$conferenceId, , $operationId] = $this->runtimeFenceOperation($tenantId, $nodeId, 'fence-b-prefix-collision', 51);
+        $fake = FakeKubernetesWorkloadClient::withDeployment($this->deployment('asterisk-ari-b', 'conference-runtime-b', 1, 1, 1));
+        $fake->afterScaleDeployment = $this->deployment('asterisk-ari-b', 'conference-runtime-b', 0, 0, 0);
+        $fake->afterScaleOwnedPodsByDeployment = [
+            'asterisk-ari' => [$this->readyPod('asterisk-ari-74b5d7d9-aa111', 'pod-a-running')],
+            'asterisk-ari-b' => [],
+        ];
+        $this->bindFakeClient($fake);
+
+        app(CommandWorker::class)->workOnce('runtime-fence-b-prefix-collision', 1);
+
+        $this->assertSame('succeeded', DB::table('runtime_operations')->where('id', $operationId)->value('status'));
+        $this->assertSame([['utcp-runtime', 'asterisk-ari-b', 0]], $fake->scaleCalls);
+        $payload = $this->terminationEventPayload($conferenceId);
+        $this->assertSame('fenced', $payload['fence_result']);
+        $this->assertSame(0, $payload['owned_pods_remaining']);
+    }
+
+    public function test_runtime_restore_operation_for_asterisk_ari_ignores_running_asterisk_ari_b_pod(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('a', observedState: 'unavailable', labels: [
+            'kubernetes_workload' => ['namespace' => 'utcp-runtime', 'deployment' => 'asterisk-ari'],
+        ]);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'desired_state' => 'disabled',
+            'configuration_version' => 2,
+            'observed_state' => 'ready',
+            'observed_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $sourceFenceId = $this->sourceFenceOperation($tenantId, $nodeId, 'restore-a-prefix-collision', 52, 1, deploymentName: 'asterisk-ari');
+        $restoreId = $this->restoreOperation($tenantId, $nodeId, $sourceFenceId, 'restore-a-prefix-collision', 52, 1, 2, deploymentName: 'asterisk-ari');
+        $this->claimAsteriskLease($tenantId, $nodeId);
+        $epochId = $this->openAsteriskEpoch($tenantId, $nodeId, now()->addSecond());
+        $fake = FakeKubernetesWorkloadClient::withDeployment($this->deployment('asterisk-ari', 'conference-runtime-a', 0, 0, 0));
+        $fake->ownedPodsByDeployment = [
+            'asterisk-ari' => [],
+            'asterisk-ari-b' => [$this->readyPod('asterisk-ari-b-8557bd4d76-bb222', 'pod-b-running')],
+        ];
+        $fake->afterScaleDeployment = $this->deployment('asterisk-ari', 'conference-runtime-a', 1, 1, 1);
+        $fake->afterScaleOwnedPodsByDeployment = [
+            'asterisk-ari' => [$this->readyPod('asterisk-ari-74b5d7d9-aa111', 'pod-a-new')],
+            'asterisk-ari-b' => [$this->readyPod('asterisk-ari-b-8557bd4d76-bb222', 'pod-b-running')],
+        ];
+        $this->bindFakeClient($fake);
+
+        app(CommandWorker::class)->workOnce('runtime-restore-a-prefix-collision', 1, includeOperationTypes: ['runtime.node.restore']);
+
+        $this->assertSame('succeeded', DB::table('runtime_operations')->where('id', $restoreId)->value('status'));
+        $this->assertSame([['utcp-runtime', 'asterisk-ari', 1]], $fake->scaleCalls);
+        $payload = $this->restoredEventPayload($nodeId);
+        $this->assertSame(['pod-a-new'], $payload['new_pod_uids']);
+        $this->assertSame($epochId, $payload['new_event_epoch_id']);
+    }
+
+    public function test_runtime_restore_operation_for_asterisk_ari_b_ignores_running_asterisk_ari_pod(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('b', observedState: 'unavailable', labels: [
+            'kubernetes_workload' => ['namespace' => 'utcp-runtime', 'deployment' => 'asterisk-ari-b'],
+        ]);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'desired_state' => 'disabled',
+            'configuration_version' => 2,
+            'observed_state' => 'ready',
+            'observed_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $sourceFenceId = $this->sourceFenceOperation($tenantId, $nodeId, 'restore-b-prefix-collision', 53, 1, deploymentName: 'asterisk-ari-b');
+        $restoreId = $this->restoreOperation($tenantId, $nodeId, $sourceFenceId, 'restore-b-prefix-collision', 53, 1, 2, deploymentName: 'asterisk-ari-b');
+        $this->claimAsteriskLease($tenantId, $nodeId);
+        $epochId = $this->openAsteriskEpoch($tenantId, $nodeId, now()->addSecond());
+        $fake = FakeKubernetesWorkloadClient::withDeployment($this->deployment('asterisk-ari-b', 'conference-runtime-b', 0, 0, 0));
+        $fake->ownedPodsByDeployment = [
+            'asterisk-ari' => [$this->readyPod('asterisk-ari-74b5d7d9-aa111', 'pod-a-running')],
+            'asterisk-ari-b' => [],
+        ];
+        $fake->afterScaleDeployment = $this->deployment('asterisk-ari-b', 'conference-runtime-b', 1, 1, 1);
+        $fake->afterScaleOwnedPodsByDeployment = [
+            'asterisk-ari' => [$this->readyPod('asterisk-ari-74b5d7d9-aa111', 'pod-a-running')],
+            'asterisk-ari-b' => [$this->readyPod('asterisk-ari-b-8557bd4d76-bb222', 'pod-b-new')],
+        ];
+        $this->bindFakeClient($fake);
+
+        app(CommandWorker::class)->workOnce('runtime-restore-b-prefix-collision', 1, includeOperationTypes: ['runtime.node.restore']);
+
+        $this->assertSame('succeeded', DB::table('runtime_operations')->where('id', $restoreId)->value('status'));
+        $this->assertSame([['utcp-runtime', 'asterisk-ari-b', 1]], $fake->scaleCalls);
+        $payload = $this->restoredEventPayload($nodeId);
+        $this->assertSame(['pod-b-new'], $payload['new_pod_uids']);
+        $this->assertSame($epochId, $payload['new_event_epoch_id']);
+    }
+
     private function adapter(FakeKubernetesWorkloadClient $fake): KubernetesRuntimeFenceAdapter
     {
         return new KubernetesRuntimeFenceAdapter($fake, app(RuntimeNodeWorkloadIdentityResolver::class), app(KubernetesRuntimeWorkloadInspector::class));
@@ -1046,8 +1168,15 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
         return [$conferenceId, $bindingId, $operationId];
     }
 
-    private function sourceFenceOperation(string $tenantId, string $nodeId, string $slug, int $generation, int $preScaleReplicas, bool $includeScaleProvenance = true): string
-    {
+    private function sourceFenceOperation(
+        string $tenantId,
+        string $nodeId,
+        string $slug,
+        int $generation,
+        int $preScaleReplicas,
+        bool $includeScaleProvenance = true,
+        ?string $deploymentName = null,
+    ): string {
         $payload = [
             'conference_id' => IdentityIds::new(),
             'former_runtime_binding_id' => IdentityIds::new(),
@@ -1068,7 +1197,7 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
                 'by_operation' => true,
                 'operation_id' => 'source-fence',
                 'namespace' => 'utcp-runtime',
-                'deployment' => 'asterisk-ari-'.$slug,
+                'deployment' => $deploymentName ?? 'asterisk-ari-'.$slug,
                 'pre_scale_replicas' => $preScaleReplicas,
                 'attempt_count' => 1,
                 'requested_at' => now()->subMinutes(2)->toJSON(),
@@ -1100,8 +1229,16 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
         return $operationId;
     }
 
-    private function restoreOperation(string $tenantId, string $nodeId, string $sourceFenceId, string $slug, int $generation, int $targetReplicas, int $configurationVersion): string
-    {
+    private function restoreOperation(
+        string $tenantId,
+        string $nodeId,
+        string $sourceFenceId,
+        string $slug,
+        int $generation,
+        int $targetReplicas,
+        int $configurationVersion,
+        ?string $deploymentName = null,
+    ): string {
         return app(RuntimeOperationRepository::class)->create(
             'runtime.node.restore',
             'runtime_node',
@@ -1113,7 +1250,7 @@ final class KubernetesRuntimeFenceAdapterTest extends TestCase
                 'source_fence_operation_id' => $sourceFenceId,
                 'source_fence_generation' => $generation,
                 'workload_namespace' => 'utcp-runtime',
-                'deployment' => 'asterisk-ari-'.$slug,
+                'deployment' => $deploymentName ?? 'asterisk-ari-'.$slug,
                 'target_replicas' => $targetReplicas,
                 'requesting_actor' => null,
                 'reason' => 'test restore',
@@ -1319,8 +1456,14 @@ final class FakeKubernetesWorkloadClient implements KubernetesWorkloadClient
     /** @var list<array<string, mixed>> */
     public array $pods = [];
 
+    /** @var array<string, list<array<string, mixed>>> */
+    public array $ownedPodsByDeployment = [];
+
     /** @var list<array<string, mixed>> */
     public array $afterScalePods = [];
+
+    /** @var array<string, list<array<string, mixed>>>|null */
+    public ?array $afterScaleOwnedPodsByDeployment = null;
 
     /** @var array<string, mixed>|null */
     public ?array $afterScaleDeployment = null;
@@ -1362,12 +1505,18 @@ final class FakeKubernetesWorkloadClient implements KubernetesWorkloadClient
         if ($this->afterScaleDeployment !== null) {
             $this->deployment = $this->afterScaleDeployment;
             $this->pods = $this->afterScalePods;
+            if ($this->afterScaleOwnedPodsByDeployment !== null) {
+                $this->ownedPodsByDeployment = $this->afterScaleOwnedPodsByDeployment;
+            }
         }
     }
 
     public function listOwnedPods(string $namespace, RuntimeNodeWorkloadIdentity $identity): array
     {
-        unset($namespace, $identity);
+        unset($namespace);
+        if ($this->ownedPodsByDeployment !== []) {
+            return $this->ownedPodsByDeployment[$identity->deployment] ?? [];
+        }
 
         return $this->pods;
     }

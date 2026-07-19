@@ -7369,12 +7369,13 @@ Live confirmation: querying the pods API exactly as the handler does
 returns `asterisk-ari-b-8557bd4d76-gknbx` (RS `asterisk-ari-b-8557bd4d76`), and the
 `str_starts_with(..., "asterisk-ari-")` prefix test is `true`.
 
-**Suggested fix:** match the ReplicaSet name on an exact `deployment-<10charhash>` boundary,
-or add `utcp.dev/runtime-node=<slug>` (which uniquely identifies the node) to the
-`listOwnedPods` label selector. Separately, the `runtime.node.runtime.fence` op still carries
-the generic 3-attempt budget with no successor mechanism (unlike restore in `51abc7a`);
-widening it or adding a fence successor is advisable for slow-termination margin even after
-the prefix fix.
+**Superseded by T5-A46:** do not repair this with a stricter prefix boundary or a
+runtime-node label selector. The repository correction below removes prefix ownership
+authority entirely and resolves Pod ownership through the exact Pod -> ReplicaSet ->
+Deployment controller UID chain. Separately, the `runtime.node.runtime.fence` op still
+carries the generic 3-attempt budget with no successor mechanism (unlike restore in
+`51abc7a`); widening it or adding a fence successor remains a retained follow-up only if
+post-fix live evidence shows a transient convergence problem.
 
 ### What was proven (solid)
 
@@ -7446,3 +7447,74 @@ conferences, zero failover-state conferences, zero actionable verify/fence/resto
 session TTL restored to 30. Node A recovery required a documented manual workaround (temporarily
 scaling node B to 0 so node A's canonical restore could clear the buggy `waiting_for_old_pods`
 gate); this recovery is recorded separately and does not count as proof success.
+
+## T5-A46 — Repository correction: exact Kubernetes controller ownership replaces prefix ownership
+
+**Verdict: `T5_EXACT_KUBERNETES_WORKLOAD_OWNERSHIP_FIX_COMPLETE` for repository behavior only.**
+The T5-A45 live `G+1 -> G+2` failure was caused by a deterministic prefix collision between
+the local Asterisk Deployments `asterisk-ari` and `asterisk-ari-b`. The former
+`HttpKubernetesWorkloadClient::isOwnedByDeployment` authority treated a Pod as owned when
+its controller ReplicaSet name started with the target Deployment name plus `-`, so the
+node-B ReplicaSet `asterisk-ari-b-8557bd4d76` was incorrectly accepted as owned by
+`asterisk-ari`.
+
+T5-A46 removes Deployment-name prefix authority. `listOwnedPods` now resolves the exact
+target Deployment object and requires a non-empty `metadata.uid`; lists namespace
+ReplicaSets once for the current operation attempt; indexes them by `metadata.uid`; and
+evaluates each candidate Pod through Kubernetes controller owner references:
+
+1. Pod `metadata.ownerReferences[controller=true]` must be `kind=ReplicaSet` and carry a
+   ReplicaSet UID.
+2. The ReplicaSet UID must resolve to a current ReplicaSet in the same namespace list.
+3. ReplicaSet `metadata.ownerReferences[controller=true]` must be `kind=Deployment`.
+4. The ReplicaSet controller Deployment UID must exactly equal the target Deployment UID.
+
+No Pod name, ReplicaSet name, Deployment-name prefix, generated name, provider-family name,
+RuntimeNode display name, or partial label match grants ownership. Missing Pod owner
+references, non-ReplicaSet Pod controllers, missing ReplicaSets, ReplicaSets without a
+Deployment controller, and Deployment UID mismatches all fail closed as not owned. Normal
+Deployment rollout is preserved because multiple ReplicaSets from different revisions are
+accepted when each ReplicaSet controller points to the same exact Deployment UID.
+
+Fence and restore continue to share the canonical `KubernetesWorkloadClient::listOwnedPods`
+implementation. The fence lifecycle remains unchanged:
+
+```
+scale target Deployment to zero
+-> wait for target desired/status/available replicas to reach zero
+-> wait for exact target-owned Pods to reach zero
+-> complete fence
+```
+
+The generic fence operation retry budget remains the default three attempts; no fence
+successor operation was added. Restore still requires exact target-owned Pods to be zero
+before scale-up and counts only exact target-owned Ready Pods after scale-up. Sibling Pods
+from similarly named Deployments do not contribute to owned-Pod counts, Ready-Pod counts,
+new Pod UID evidence, or fresh-runtime validation.
+
+Focused repository coverage added the required prefix-collision topology:
+
+- Deployment A `asterisk-ari`, UID `deployment-a-uid`; ReplicaSet A controlled by that UID;
+  Pod A controlled by ReplicaSet A.
+- Deployment B `asterisk-ari-b`, UID `deployment-b-uid`; ReplicaSet B controlled by that UID;
+  Pod B controlled by ReplicaSet B.
+- Pod B keeps a realistic name beginning with the old prefix-compatible text
+  `asterisk-ari-b-...`, but is not owned by Deployment A.
+
+Focused tests cover exact ownership for A and B, directional prefix collision, UID mismatch,
+ReplicaSet owner mismatch, Pod without owner reference, missing ReplicaSet, ReplicaSet without
+Deployment controller, multiple target Pods, and rollout ReplicaSets. Real handler-path
+regressions execute `RuntimeFenceOperationHandler -> KubernetesRuntimeFenceAdapter` for
+both A-with-B-running and B-with-A-running, and `RuntimeNodeRestoreOperationHandler` for
+both A-with-B-running and B-with-A-running.
+
+Repository RBAC inspection found the runtime-fencer Role already had read access to
+Deployments and Pods but not ReplicaSets. T5-A46 therefore adds only read-only
+`get,list` access for `apps/replicasets`; no Kubernetes write authority, labels,
+NetworkPolicy, feature gate, allowlist, management CLI, RuntimeBinding authority change,
+replacement-selector change, restore successor change, or Asterisk Deployment naming change
+was introduced.
+
+The live second-generation no-capacity recovery proof has **not** been rerun. The remaining
+T5 live gap is to deploy this ownership fix and rerun the cleaned two-node no-capacity
+capacity-return proof to complete `G+1 -> G+2`.

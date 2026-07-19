@@ -222,6 +222,7 @@ final class RuntimeFencingManifestTest extends TestCase
         $role = $objects['Role/utcp-runtime/utcp-runtime-fencer'];
         $this->assertSame([
             ['apiGroups' => ['apps'], 'resources' => ['deployments'], 'verbs' => ['get', 'list']],
+            ['apiGroups' => ['apps'], 'resources' => ['replicasets'], 'verbs' => ['get', 'list']],
             ['apiGroups' => ['apps'], 'resources' => ['deployments/scale'], 'verbs' => ['get', 'patch']],
             ['apiGroups' => [''], 'resources' => ['pods'], 'verbs' => ['get', 'list']],
         ], $role['rules']);
