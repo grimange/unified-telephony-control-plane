@@ -6760,3 +6760,317 @@ disabled → lease + fresh epoch + observed-ready → activation only after all 
 → single `runtime_node.restored` → placement re-entry. The proof-only manual
 `kubectl scale` restoration is fully superseded by canonical desired-state-driven
 authority.
+
+## T5-A41 — Replacement-node failure handling contract (evidence-only)
+
+Evidence-only audit at `UTCP_PHASE=T1`, HEAD `b4677a2`. Determines control-plane
+behavior when the selected replacement RuntimeNode fails during failover/
+reconstruction. **Headline: replacement-node failure is already handled
+resiliently by the existing architecture** — replacement identity is never
+pinned (re-selected fresh at each rebind), repeated rebind is supported across
+arbitrary generations, and the coordinator re-drives automatically. The only
+genuine gaps are (a) no durable/observable "no-capacity / failover-pending"
+state and (b) missing test coverage for the second-failover and restored-node-
+reuse paths.
+
+### Replacement selection authority
+
+Replacement identity is **not persisted anywhere** and **not part of any
+idempotency key**. It is re-selected fresh inside the rebind transaction:
+`TelephonyDomainService::failoverRebindConference` calls
+`selectRuntimeNodeForConference(tenantId, caps, excludeCurrentNode, ['active'])`
+(`TelephonyDomainService.php:417-422`) within the same `DB::transaction` that
+locks conference+binding+former-node, retires the old binding, inserts the new,
+and bumps generation. The fence op payload carries only the FORMER node id, never
+a `replacement_runtime_node_id`. Three points touch replacement selection —
+coordinator pre-fence probe (`RuntimeFencingCoordinator.php:239`), fence-handler
+last-instant probe (`RuntimeFenceOperationHandler.php:61`), and the authoritative
+fresh selection at rebind (`TelephonyDomainService.php:417`) — but only the last
+binds; the first two are check-only (`hasDistinctEligibleReplacement`, no
+persistence). One caveat: the chosen replacement row is read with `->first()`
+without `lockForUpdate` (`TelephonyDomainService.php:812`), so it is validated but
+not row-locked during the rebind.
+
+**Reselection owner (Model A, already de facto):** the `ConferenceFailoverCoordinator`
+everyMinute sweep is the single canonical reselection authority — it re-drives
+the verify→fence→rebind chain, and each rebind re-selects fresh. There is no
+duplicated/conflicting reselection ownership.
+
+### Failure Window A — before verification completion
+
+Former node unavailable, no fence yet. The coordinator's `hasDistinctEligibleReplacement`
+gate (`RuntimeFencingCoordinator.php:239`) is checked before requesting the fence;
+if no replacement exists it returns `no_replacement` and the verify chain is not
+escalated. The grace timer is derived from `runtime_observations` (durable), not
+an in-memory timer, so it is preserved across sweeps. Verification is created but
+fencing is withheld until capacity exists. No destructive action; nothing to
+roll back.
+
+### Failure Window B — after verification terminal_failed, before fence creation
+
+The terminal verification is retained as historical evidence and re-usable: the
+generation-scoped verify idempotency key means the same terminal-failed op is
+re-found each sweep, and the T5-A26 escalation re-evaluates it against current
+authority + `hasDistinctEligibleReplacement`. A later replacement uses the same
+verification evidence (no new verify chain needed). Duplicate fence requests are
+prevented by the fence idempotency key `sha256(conf:formerNode:binding:generation)`.
+
+### Failure Window C — fence created, before scale-to-zero
+
+`RuntimeFenceOperationHandler::execute` performs a last-instant
+`hasDistinctEligibleReplacement` check (`:61-67`) BEFORE `scaleDeployment(0)`; if
+the replacement vanished, it fails `no_replacement_available`
+(`FailureClass::RuntimeUnavailable`, retryable) with no scale mutation. The op
+retries; the coordinator maps it to `no_replacement` and re-drives. A different
+replacement may satisfy the next attempt (nothing pins the earlier one).
+
+### Failure Window D — former workload already scaled to zero (first irreversible boundary)
+
+The replacement-before-fence guard means a replacement existed at scale time, but
+the rebind re-selects fresh (TOCTOU). If the replacement disappears between
+scale-to-zero and rebind, `failoverRebindConference` aborts 422 BEFORE retiring
+the old binding (selection at `:417` precedes retire at `:429`, inside a
+transaction that rolls back) — so the conference stays `desired_state='open'`,
+bound to the now-fenced former node, at unchanged generation G. The coordinator
+records `conference.failover_coordinator.no_replacement` and re-drives every
+minute; the fence op is idempotent (`already_fenced`), so when ANY capable node
+returns ready the rebind succeeds and reconstruction proceeds. **Safe and
+self-healing**, but the conference has no live runtime (no bridge anywhere) for
+an unbounded window with only event-level visibility — the observability gap.
+
+### Failure Window E — replacement binding committed, bridge not ready
+
+`ConferenceReconciler` drives `conference.ensure` on the new node via
+`activeRuntimeNodeId` (current active binding). If the new node's inspection is
+`unavailable`/`failed`, it returns `waiting(...,30s)` — not block/error
+(`ConferenceReconciler.php:52-54`). If the new node then crosses the
+unavailable/stale grace, the coordinator's candidate query re-fires (it keys on
+the CURRENT active binding node + observed_state, no generation/history gate), so
+the conference enters a **second automatic failover** producing G+2 with a fresh
+binding to another node. The prior replacement binding is retired atomically by
+the next rebind; the same open conference can be rebound repeatedly.
+
+### Failure Window F — bridge reconstructed, participant reconstruction incomplete
+
+Same mechanism: `ConferenceParticipantReconciler` returns `waiting` on inspection
+unavailable (`ConferenceParticipantReconciler.php:53-55`), and a failed
+replacement re-enters failover. Partial resources on the failed node are reclaimed
+because that node is itself fenced (scale-to-zero + `disabled`) on the next
+rebind, and stale-authority guards (`operationAuthorityCurrent`, generation
+checks) neutralize its late operations. Reconstruction on the next node is
+idempotent via **deterministic ids**: `conferenceBridgeId` = `utcp-conf-<conf>`,
+`participantChannelId` = `utcp-part-<participant>` (`AsteriskAriClient.php:517-525`).
+
+### Failure Window G — former node restoration in progress
+
+A former node mid-restoration has `desired_state='disabled'`
+(`RuntimeNodeRestoreOperationHandler.php:62-64`), so it is excluded from
+`selectRuntimeNodeForConference` (requires active/draining) — it cannot be
+grabbed as an emergency replacement while restoring. Restoration continues
+independently. After `runtime_node.restored` (desired_state=active, observed
+ready) it becomes a normal placement/replacement candidate again (nothing
+excludes prior-owner nodes; only the currently-bound node is excluded), safe by
+generation.
+
+### Destructive authority boundaries
+
+| Boundary | Owner | Idempotency | Replacement may still change after? |
+|---|---|---|---|
+| verify terminal persistence | coordinator | verify key (former node+gen) | yes (not selected yet) |
+| runtime-fence op creation | coordinator | fence key (former node+gen) | yes |
+| scale-to-zero accepted | fence handler/adapter | self-scale provenance | yes (rebind re-selects) |
+| owned former Pods → 0 | adapter | provenance | yes |
+| old binding retired | rebind tx | row locks + expected_binding/node | **no** (bound at same instant) |
+| new binding committed | rebind tx | one-active partial index | no (until next failover) |
+| generation incremented | rebind tx | monotonic +1 | n/a |
+| bridge ensure accepted | reconciler/adapter | deterministic bridge id + generation | via next failover only |
+| participant ensure accepted | reconciler/adapter | deterministic channel id + generation | via next failover only |
+
+Replacement identity is free to change at every boundary EXCEPT the atomic
+retire+insert, where selection and binding happen in one locked transaction.
+
+### Multi-generation support
+
+Fully supported and generation-agnostic. `failoverRebindConference` works for any
+open conference regardless of prior rebinds; generation bump is `+1` relative to
+current (`:437`); the partial unique index `conference_runtime_bindings_one_active`
+enforces exactly one active binding while allowing unlimited retired rows;
+stale protections compare against the LIVE generation (operation-side `< current`,
+event-side active-binding join), so G, G+1 events/ops all go stale once at G+2.
+No path is hard-coded to a single replacement.
+
+### No-capacity state
+
+When fenced with no replacement: conference `desired_state='open'`, bound to the
+fenced former node (observed unavailable/stale), generation G; `conference_runtime_bindings`
+has exactly one active (former-node) binding intact; the only signal is a
+recurring `conference.failover_coordinator.no_replacement` audit+outbox event each
+sweep. **There is no dedicated conference desired/observed enum for "failover
+blocked / no capacity / degraded"** (conferences.desired_state ∈
+draft/open/draining/closed; observed_state ∈ unobserved/provisioning/ready/
+degraded/unavailable/closed — `degraded`/`unavailable` are observation-driven,
+not a failover-pending marker). Recovery is automatic when capacity returns (the
+sweep re-drives). Gap: no durable, queryable "failover-pending/no-capacity"
+state, and the no_replacement event repeats unboundedly (audit/outbox noise).
+
+### Replacement reselection authority
+
+**Model A — coordinator-owned reselection (already implemented).** The
+`ConferenceFailoverCoordinator` sweep re-drives the chain and `failoverRebindConference`
+re-selects fresh; the reconstruction handlers and reconcilers do NOT re-select
+(they `waiting` and let the coordinator re-fire). Single canonical owner, no
+duplication. No bounded change to ownership is required.
+
+### Operation and idempotency contract
+
+Verify/fence ops are generation-scoped idempotent (former node + binding +
+generation). Rebind uses no key but is protected by row locks + `expected_binding_id`/
+`expected_runtime_node_id` + generation. A second failover (G+1→G+2) naturally
+produces new verify/fence ops keyed on the NEW bound node + new generation, so it
+never collides with the G→G+1 chain's keys. Repeated sweeps, worker restarts, and
+capacity-returns are all handled by re-discovery + idempotent keys; historical
+ops are retained (never rewritten/deleted).
+
+### Partial-resource cleanup
+
+No explicit domain cleanup of a failed replacement's bridge/channels — reclaimed
+by fencing that node (scale-to-zero terminates its Pod) plus stale-authority
+guards, with deterministic ids making reconstruction on the next node idempotent.
+Cleanup is best-effort and not completion-gated; an unreachable failed replacement
+is handled by scale-to-zero (workload-placement authority), not ARI cleanup.
+
+### Restored-node eligibility
+
+A restored former node (active/ready) is re-selectable as a replacement for a
+still-open conference — nothing excludes prior-owner/retired-binding nodes; only
+the currently-bound node is excluded. Safe by generation. Reuse is permitted, not
+forced.
+
+### Failure taxonomy
+
+| Classification | Mapping |
+|---|---|
+| replacement_unavailable_before_fence | `no_replacement` (RuntimeUnavailable, retryable) — no fence, re-drive |
+| replacement_unavailable_after_fence | `no_replacement_available` (RuntimeUnavailable, retryable) — no scale, re-drive |
+| replacement_lost_before_binding_commit | rebind 422 → `no_replacement`; tx rollback, binding preserved |
+| replacement_lost_after_binding_commit | second automatic failover (G+1→G+2), terminal-for-current-generation but recoverable |
+| replacement_reconstruction_failed | reconciler `waiting`; if node crosses grace → next failover |
+| replacement_participant_reconstruction_failed | same as reconstruction_failed |
+| no_replacement_capacity | `no_replacement`, non-terminal, auto re-drive; **not durably observable (gap)** |
+| replacement_identity_stale | not applicable — identity never pinned; fresh selection each rebind |
+
+### Events and observability
+
+Existing: `conference.failover_coordinator.{rebound,no_replacement,verification_failed,...}`,
+`conference.runtime_fence_terminated`, `conference.runtime_binding_replaced`,
+`runtime_node.desired_state_changed`, `runtime_node.restored`. Gaps: (a) no
+durable per-conference failover-pending signal; (b) `no_replacement` repeats every
+sweep with no dedup/backoff. Future metrics (failover latency, no-capacity
+duration, rebind count per conference) are noted, not implemented here.
+
+### Existing test coverage
+
+Covered: no-replacement rollback/authority preservation
+(`TelephonyDomainTest.php:415,507`), distinct-replacement queries (`:462,470,479`),
+coordinator `no_replacement` continues sweep (`:637,936,996`), idempotent second
+sweep after ONE rebind (`:665`), draining excluded (`:697`), stale-after-rebind
+(`AsteriskConferenceRecoveryTest.php:970`), generation-advance stale
+(`:912,1140`). **Missing:** (1) full second automatic failover G+1→G+2 (rebind to
+B, B fails, rebind to C) with one active binding + monotonic generation; (2)
+stale G+1 ops/events ignored after G+2; (3) partial bridge/participant on a failed
+replacement reclaimed + idempotent reconstruction on C; (4) restored former node
+re-selected as a valid replacement; (5) capacity-returns-later auto-recovery from
+a no_replacement hold; (6) durable no-capacity state (once implemented).
+
+### Session-lifetime configuration observation
+
+**Classification: benign rollout/config drift; bounded correction available.**
+The committed overlay `infrastructure/kubernetes/overlays/local/platform/application-config.properties`
+sets `UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES=30` and `kubectl kustomize
+overlays/local/platform` renders `utcp-application-config` with the key = "30".
+But the LIVE ConfigMap `utcp-application-config` is the original 2026-07-13 object
+(resourceVersion 225896, never updated) and contains only `SESSION_DRIVER/
+HTTP_ONLY/SAME_SITE/SECURE_COOKIE` — **no `UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES`**.
+So pods (envFrom this ConfigMap) have the var unset and the code falls back to
+`env(..., 60)`. The `ab4418d` overlay change was never durably applied to the
+live cluster via the canonical `kube apply -k overlays/local/platform`. Non-
+blocking (60 min > any proof window). Bounded correction: re-apply the platform
+overlay ConfigMap (canonical security/platform apply path) and roll the app pods
+so the live value matches the committed 30.
+
+### Readiness decision
+
+**A — bounded Codex implementation is ready.** The audit establishes: one
+canonical reselection owner (coordinator, already implemented, no duplication);
+failure behavior for all seven windows; multi-generation support (proven by
+design); the exact no-capacity behavior (safe + auto-re-drive, but not durably
+observable); operation/idempotency contract; partial-resource handling; restored-
+node eligibility; failure taxonomy; event contract; and the exact test gaps. The
+core resilience already exists — the bounded slice is narrow: a durable/observable
+no-capacity ("failover_pending") signal + no_replacement event de-duplication,
+plus the missing multi-generation / restored-node-reuse / capacity-returns tests.
+
+### Ready-to-paste next prompt
+
+```text
+You are working in the Unified Telephony Control Plane repository.
+
+Perform one bounded implementation (no live failover, no scaling):
+
+# T5-A42 — Observable no-capacity failover state + multi-generation test coverage
+
+HEAD b4677a2, branch main, clean tree, UTCP_PHASE=T1. Evidence basis:
+docs/evidence/t2/multi-node-failover-readiness.md §T5-A41.
+
+Context (already proven, do NOT change): replacement identity is re-selected
+fresh at each rebind; the ConferenceFailoverCoordinator is the single canonical
+reselection owner; repeated rebind (G→G+1→G+2) is supported; stale protections
+are generation-relative; no-replacement rolls back before retiring the old
+binding. Preserve all of this. Establish ONE canonical no-capacity signal and add
+the missing multi-generation tests; remove no duplicated/conflicting behavior.
+
+Implement the smallest coherent slice:
+1. Durable, observable no-capacity signal. When the coordinator resolves a
+   fenced-or-unavailable open conference to `no_replacement`, persist a durable,
+   queryable marker WITHOUT introducing a second authority or a new conference
+   desired_state: prefer a bounded field/row (e.g. a failover-pending marker on
+   the conference row or a dedicated single-row-per-conference failover-state
+   record) recording {reason=no_capacity, since, last_attempt_at, source
+   fence/binding generation}. It MUST clear automatically when a rebind succeeds
+   (do not require operator action). Do not add an enum value that breaks the
+   existing conferences.desired_state/observed_state CHECK constraints unless the
+   migration updates the constraint additively.
+2. De-duplicate the no_replacement event: emit the audit/outbox
+   conference.failover_coordinator.no_replacement (or a new
+   conference.failover_pending event, following existing naming) only on
+   transition INTO the no-capacity state (and on recovery), not every sweep —
+   using the durable marker to suppress repeats. Keep exactly one canonical event
+   per authority transition.
+3. Add focused tests (no live cluster): (a) full second automatic failover
+   G+1→G+2 — rebind to B, B goes unavailable past grace, coordinator re-fires,
+   rebind to C, asserting exactly one active binding, monotonic generation, old
+   bindings retired; (b) stale G+1 operations/events are ignored after G+2; (c) a
+   restored former node (active/ready) is a valid replacement candidate for a
+   still-open conference; (d) capacity-returns-later: a conference held in
+   no-capacity rebinds automatically once a ready node appears, and the durable
+   marker clears; (e) the no_replacement event is emitted once per transition,
+   not per sweep.
+4. Do not: pin replacement identity in the fence op, add a manual
+   replacement-selection interface, add an environment gate/allowlist/manual
+   reconciliation trigger, change the reselection owner, or delete historical
+   operations/events.
+
+Verify: make repository-hygiene, workflow-check, secret-scan,
+runtime-engine-config-check, telephony-domain-config-check,
+asterisk-ari-config-check, asterisk-conference-config-check, runtime-engine-test,
+telephony-domain-test, asterisk-ari-test, asterisk-conference-test,
+asterisk-conference-recovery-test, git diff --check. No kubectl/live failover/
+migrate:fresh. If a migration is added it must be additive and constraint-safe.
+Commit once:
+feat(t5): observable no-capacity failover state and multi-generation coverage
+Do not push. End with the AGENTS.md report format.
+
+Separately (optional, benign config drift from §T5-A41): re-apply the committed
+platform ConfigMap so the live UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES matches
+the committed 30 — this is a live-ops correction, not part of the code slice.
+```
