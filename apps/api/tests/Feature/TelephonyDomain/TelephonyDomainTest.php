@@ -16,6 +16,7 @@ use App\TelephonyDomain\Failover\ConferenceFailoverCoordinator;
 use App\TelephonyDomain\TelephonyDomainService;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
@@ -154,6 +155,42 @@ final class TelephonyDomainTest extends TestCase
             'aggregate_type' => 'conference_participant',
             'aggregate_id' => $participant['id'],
         ]);
+    }
+
+    public function test_session_creation_uses_configured_lifetime_without_request_expiry_or_extension(): void
+    {
+        [, $member, $tenantId] = $this->fixture('session-lifetime');
+        config(['telephony_domain.session_lifetime_minutes' => 30]);
+        $now = now()->setMicrosecond(0);
+        Carbon::setTestNow($now);
+
+        try {
+            $session = $this->actingAs($member)->withSession($this->tenantSession($tenantId))
+                ->postJson('/api/v1/telephony/sessions', [
+                    'expires_at' => $now->copy()->addMinutes(5)->toISOString(),
+                    'session_lifetime_minutes' => 5,
+                ])
+                ->assertCreated()
+                ->assertJsonPath('telephony_session.status', 'active')
+                ->json('telephony_session');
+
+            $this->assertSame($now->copy()->addMinutes(30)->toISOString(), Carbon::parse($session['expires_at'])->toISOString());
+
+            Carbon::setTestNow($now->copy()->addMinutes(10));
+            $duplicate = $this->actingAs($member)->withSession($this->tenantSession($tenantId))
+                ->postJson('/api/v1/telephony/sessions', [
+                    'expires_at' => $now->copy()->addHours(2)->toISOString(),
+                    'session_lifetime_minutes' => 120,
+                ])
+                ->assertCreated()
+                ->json('telephony_session');
+
+            $this->assertSame($session['id'], $duplicate['id']);
+            $this->assertSame(Carbon::parse($session['expires_at'])->toISOString(), Carbon::parse($duplicate['expires_at'])->toISOString());
+            $this->assertSame(Carbon::parse($session['expires_at'])->toISOString(), Carbon::parse((string) DB::table('telephony_sessions')->where('id', $session['id'])->value('expires_at'))->toISOString());
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     public function test_session_scoped_signaling_credential_is_issued_once_and_metadata_is_sanitized(): void

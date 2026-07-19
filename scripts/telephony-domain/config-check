@@ -6,6 +6,9 @@ cd "$(dirname "$0")/../.."
 test -f apps/api/config/telephony_domain.php
 test -f apps/api/database/migrations/2026_07_15_090000_create_telephony_session_conference_domain_tables.php
 
+local_platform_config="infrastructure/kubernetes/overlays/local/platform/application-config.properties"
+test -f "$local_platform_config"
+
 grep -Eq '^UTCP_PHASE=C[45]$|^UTCP_PHASE=T[01]$' versions.env
 grep -q "'conference.lifecycle'" apps/api/config/runtime_registry.php
 grep -q "'conference.participation'" apps/api/config/runtime_registry.php
@@ -82,6 +85,34 @@ grep -q "whereIn('runtime_nodes.observed_state', self::QUALIFYING_BOUND_STATES)"
 grep -q "'replacement_desired_states' => self::AUTOMATIC_REPLACEMENT_DESIRED_STATES" apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php
 grep -q "telephony-domain:failover-coordinator {--once" apps/api/routes/console.php
 grep -q "Schedule::command('telephony-domain:failover-coordinator --once')->everyMinute()->withoutOverlapping()" apps/api/routes/console.php
+
+session_lifetime_key="UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES"
+session_lifetime_count=0
+session_lifetime_value=""
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in
+    ''|'#'*) continue ;;
+  esac
+  key="${line%%=*}"
+  value="${line#*=}"
+  if [ "$key" = "$session_lifetime_key" ]; then
+    session_lifetime_count=$((session_lifetime_count + 1))
+    session_lifetime_value="$value"
+  fi
+done < "$local_platform_config"
+
+if [ "$session_lifetime_count" -ne 1 ]; then
+  printf 'telephony session lifetime config must appear exactly once in %s.\n' "$local_platform_config" >&2
+  exit 1
+fi
+if ! [[ "$session_lifetime_value" =~ ^[0-9]+$ ]]; then
+  printf 'telephony session lifetime config must be an integer.\n' >&2
+  exit 1
+fi
+if [ "$session_lifetime_value" -lt 20 ]; then
+  printf 'telephony session lifetime config must be at least 20 minutes for local failover proof.\n' >&2
+  exit 1
+fi
 
 php -l apps/api/app/TelephonyDomain/TelephonyDomainService.php >/dev/null
 php -l apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php >/dev/null

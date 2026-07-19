@@ -5810,3 +5810,71 @@ telephony session lifetime comfortably exceeds the failover proof budget. No new
 no refresh subsystem, no request-expiry field, no session-behavior change. After it is
 deployed, the participant-inclusive destructive rerun (T5-A31 flow) uses Strategy A and
 should reconstruct the participant at G+1 with ample session margin.
+
+## T5-A34 — Local telephony-session lifetime correction for failover
+
+Repository-only correction at `UTCP_PHASE=T1`, starting from HEAD `d412f20`.
+No live ConfigMap rollout, Kubernetes apply, rollout restart, live session creation,
+Conference creation, HTTP outage, RuntimeBinding mutation, scale, Pod deletion, or
+failover was performed.
+
+### Root cause
+
+T5-A31 through T5-A33 established that the automatic failover proof consumes roughly
+13-15 minutes from canonical session creation through participant reconstruction.
+The PHP default remains 60 minutes:
+`config('telephony_domain.session_lifetime_minutes', 60)`. The committed local
+platform overlay, however, overrode the runtime value to 5 minutes through
+`UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES=5`, causing the expiration scheduler to
+expire the admitted participant before reconstruction.
+
+### Correction
+
+The single local platform override was changed to:
+
+```text
+UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES=30
+```
+
+The 30-minute value is the deterministic local default for normal local operation
+and failover testing. The 60-minute PHP code default was not changed because the
+defect was a local overlay override, not application behavior.
+
+### Guard
+
+`scripts/telephony-domain/config-check` now parses the local platform properties
+file and requires `UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES` to appear exactly once
+as an integer value of at least 20. The guard rejects missing, non-numeric, zero,
+negative, and failover-unsafe undersized values without enforcing a speculative
+maximum.
+
+### Session behavior
+
+Focused coverage now freezes the application clock, sets
+`telephony_domain.session_lifetime_minutes` to 30, creates a session through the
+canonical `POST /api/v1/telephony/sessions` route, and asserts `expires_at` is the
+controlled current time plus 30 minutes. The same test sends request fields named
+`expires_at` and `session_lifetime_minutes` to prove request payloads do not control
+expiration. A repeated create call for the same active user and tenant returns the
+existing session id and preserves the original `expires_at`; no refresh or renewal
+subsystem was added.
+
+### Render and dry-run
+
+The local platform overlay renders `utcp-application-config` with
+`UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES=30`. Server-side dry-run against
+`.runtime/kubeconfig/utcp-local.yaml` and context `k3d-utcp-local` passed for the
+rendered platform overlay. Live ConfigMap rollout remains pending.
+
+### Boundaries retained
+
+No session API route, request validation, model, expiration scheduler, participant
+reconciliation, failover coordinator, runtime-fence handler, Kubernetes adapter,
+Asterisk probe, RBAC, NetworkPolicy, RuntimeBinding replacement, or former-node
+restoration behavior changed. No refresh endpoint, proof-only session type,
+infinite session, additional environment key, feature gate, manual switch, hidden
+TTL override, or direct expiry repair path was introduced.
+
+The participant-inclusive destructive rerun remains pending. The application image
+containing `fdc745e` and the updated local `utcp-application-config` ConfigMap must
+be deployed before that rerun.
