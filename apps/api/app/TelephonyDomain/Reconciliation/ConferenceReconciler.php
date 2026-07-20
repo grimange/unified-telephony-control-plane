@@ -31,6 +31,10 @@ final class ConferenceReconciler implements Reconciler
         }
         $runtimeNodeId = $this->activeRuntimeNodeId((string) $conference->tenant_id, (string) $conference->id);
         if ($runtimeNodeId === null) {
+            if ($conference->desired_state === 'closed' && $conference->observed_state === 'closed') {
+                return ReconciliationResult::converged(300);
+            }
+
             return ReconciliationResult::blocked('conference_runtime_binding_missing');
         }
         if (! DB::table('runtime_node_capabilities')->where('runtime_node_id', $runtimeNodeId)->where('capability_key', 'conference.lifecycle')->exists()) {

@@ -506,6 +506,135 @@ final class TelephonyDomainService
         ]));
     }
 
+    /**
+     * @return array{candidates:int,retired:int,skipped:int}
+     */
+    public function retireClosedConferenceBindings(int $batchSize = 100, ?string $tenantId = null, string $reason = 'conference_closed'): array
+    {
+        $limit = max(1, min(500, $batchSize));
+        $candidates = DB::table('conferences')
+            ->join('conference_runtime_bindings', function ($join): void {
+                $join->on('conference_runtime_bindings.conference_id', '=', 'conferences.id')
+                    ->on('conference_runtime_bindings.tenant_id', '=', 'conferences.tenant_id')
+                    ->where('conference_runtime_bindings.status', 'active');
+            })
+            ->where('conferences.desired_state', 'closed')
+            ->where('conferences.observed_state', 'closed')
+            ->when($tenantId !== null, fn ($query) => $query->where('conferences.tenant_id', $tenantId))
+            ->orderBy('conferences.updated_at')
+            ->orderBy('conferences.id')
+            ->limit($limit)
+            ->get([
+                'conferences.id as conference_id',
+                'conferences.tenant_id',
+                'conferences.runtime_node_id as conference_runtime_node_id',
+                'conferences.configuration_generation',
+                'conference_runtime_bindings.id as binding_id',
+                'conference_runtime_bindings.runtime_node_id as binding_runtime_node_id',
+            ]);
+
+        $summary = [
+            'candidates' => $candidates->count(),
+            'retired' => 0,
+            'skipped' => 0,
+        ];
+
+        foreach ($candidates as $candidate) {
+            if ($this->retireClosedConferenceBindingCandidate($candidate, $reason)) {
+                $summary['retired']++;
+            } else {
+                $summary['skipped']++;
+            }
+        }
+
+        return $summary;
+    }
+
+    private function retireClosedConferenceBindingCandidate(object $candidate, string $reason): bool
+    {
+        return DB::transaction(function () use ($candidate, $reason): bool {
+            $conference = DB::table('conferences')
+                ->where('id', (string) $candidate->conference_id)
+                ->where('tenant_id', (string) $candidate->tenant_id)
+                ->lockForUpdate()
+                ->first();
+            if ($conference === null) {
+                return false;
+            }
+            if ((string) $conference->desired_state !== 'closed' || (string) $conference->observed_state !== 'closed') {
+                return false;
+            }
+            if ((int) $conference->configuration_generation !== (int) $candidate->configuration_generation) {
+                return false;
+            }
+            if ((string) $conference->runtime_node_id !== (string) $candidate->conference_runtime_node_id) {
+                return false;
+            }
+
+            $binding = DB::table('conference_runtime_bindings')
+                ->where('id', (string) $candidate->binding_id)
+                ->where('tenant_id', (string) $candidate->tenant_id)
+                ->where('conference_id', (string) $candidate->conference_id)
+                ->lockForUpdate()
+                ->first();
+            if ($binding === null || (string) $binding->status !== 'active') {
+                return false;
+            }
+            if ((string) $binding->runtime_node_id !== (string) $candidate->binding_runtime_node_id) {
+                return false;
+            }
+            if ((string) $binding->runtime_node_id !== (string) $conference->runtime_node_id) {
+                return false;
+            }
+
+            $activeBindingId = DB::table('conference_runtime_bindings')
+                ->where('tenant_id', (string) $candidate->tenant_id)
+                ->where('conference_id', (string) $candidate->conference_id)
+                ->where('status', 'active')
+                ->value('id');
+            if ((string) $activeBindingId !== (string) $candidate->binding_id) {
+                return false;
+            }
+
+            $unboundAt = now();
+            $updated = DB::table('conference_runtime_bindings')
+                ->where('id', (string) $binding->id)
+                ->where('status', 'active')
+                ->update([
+                    'status' => 'retired',
+                    'unbound_at' => $unboundAt,
+                    'updated_at' => now(),
+                ]);
+            if ($updated !== 1) {
+                return false;
+            }
+
+            $normalizedReason = mb_substr(trim($reason) === '' ? 'conference_closed' : $reason, 0, 120);
+            $context = ExecutionContext::system(
+                reason: $normalizedReason,
+                tenantId: (string) $candidate->tenant_id,
+                origin: 'telephony-domain',
+            );
+            $safePayload = [
+                'tenant_id' => (string) $candidate->tenant_id,
+                'conference_id' => (string) $candidate->conference_id,
+                'runtime_binding_id' => (string) $binding->id,
+                'runtime_node_id' => (string) $binding->runtime_node_id,
+                'conference_generation' => (int) $conference->configuration_generation,
+                'configuration_generation' => (int) $conference->configuration_generation,
+                'retirement_reason' => $normalizedReason,
+                'reason' => $normalizedReason,
+                'source_transition' => 'conference_closed',
+                'unbound_at' => $unboundAt->toISOString(),
+                'occurred_at' => $context->occurredAt->toISOString(),
+            ];
+            $this->audit->append($context, 'conference.runtime_binding_retired', 'conference', (string) $candidate->conference_id, $safePayload, $normalizedReason);
+            $this->outbox->append(EventEnvelope::forAggregate('conference.runtime_binding_retired', 1, 'conference', (string) $candidate->conference_id, $safePayload, $context));
+
+            return true;
+        });
+    }
+
     public function hasDistinctEligibleReplacement(string $tenantId, string $conferenceId, string $formerRuntimeNodeId): bool
     {
         $conference = DB::table('conferences')
@@ -1243,12 +1372,19 @@ final class TelephonyDomainService
      */
     private function serializeConference(object $row): array
     {
+        $binding = $this->conferenceBindingSnapshot((string) $row->tenant_id, (string) $row->id);
+
         return [
             'id' => $row->id,
             'tenant_id' => $row->tenant_id,
             'slug' => $row->slug,
             'display_name' => $row->display_name,
             'runtime_node_id' => $row->runtime_node_id,
+            'active_runtime_binding_id' => $binding['active_runtime_binding_id'],
+            'active_binding_runtime_node_id' => $binding['active_binding_runtime_node_id'],
+            'runtime_binding_lifecycle_status' => $binding['runtime_binding_lifecycle_status'],
+            'last_runtime_binding_retirement_reason' => $binding['last_runtime_binding_retirement_reason'],
+            'last_runtime_binding_retired_at' => $binding['last_runtime_binding_retired_at'],
             'desired_state' => $row->desired_state,
             'observed_state' => $row->observed_state,
             'failover_state' => $row->failover_state ?? null,
@@ -1263,6 +1399,54 @@ final class TelephonyDomainService
             'closed_at' => $row->closed_at,
             'created_at' => $row->created_at,
             'updated_at' => $row->updated_at,
+        ];
+    }
+
+    /**
+     * @return array{
+     *     active_runtime_binding_id:?string,
+     *     active_binding_runtime_node_id:?string,
+     *     runtime_binding_lifecycle_status:?string,
+     *     last_runtime_binding_retirement_reason:?string,
+     *     last_runtime_binding_retired_at:?string
+     * }
+     */
+    private function conferenceBindingSnapshot(string $tenantId, string $conferenceId): array
+    {
+        $active = DB::table('conference_runtime_bindings')
+            ->where('tenant_id', $tenantId)
+            ->where('conference_id', $conferenceId)
+            ->where('status', 'active')
+            ->orderByDesc('bound_at')
+            ->first();
+        $retired = DB::table('conference_runtime_bindings')
+            ->where('tenant_id', $tenantId)
+            ->where('conference_id', $conferenceId)
+            ->where('status', 'retired')
+            ->whereNotNull('unbound_at')
+            ->orderByDesc('unbound_at')
+            ->first();
+        $retirementReason = null;
+        if ($retired !== null) {
+            $metadata = DB::table('control_plane_audit_records')
+                ->where('tenant_id', $tenantId)
+                ->where('subject_type', 'conference')
+                ->where('subject_id', $conferenceId)
+                ->where('action', 'conference.runtime_binding_retired')
+                ->orderByDesc('occurred_at')
+                ->value('metadata');
+            $decoded = $this->decodeJsonObject($metadata);
+            $data = is_array($decoded['data'] ?? null) ? $decoded['data'] : [];
+            $reason = $data['retirement_reason'] ?? $data['reason'] ?? null;
+            $retirementReason = is_string($reason) && $reason !== '' ? $reason : null;
+        }
+
+        return [
+            'active_runtime_binding_id' => $active === null ? null : (string) $active->id,
+            'active_binding_runtime_node_id' => $active === null ? null : (string) $active->runtime_node_id,
+            'runtime_binding_lifecycle_status' => $active === null ? ($retired === null ? null : 'retired') : 'active',
+            'last_runtime_binding_retirement_reason' => $retirementReason,
+            'last_runtime_binding_retired_at' => $retired === null ? null : (string) $retired->unbound_at,
         ];
     }
 

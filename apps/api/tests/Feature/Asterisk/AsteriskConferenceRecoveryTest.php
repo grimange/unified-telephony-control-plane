@@ -253,6 +253,73 @@ final class AsteriskConferenceRecoveryTest extends TestCase
         ], $recorded->items);
     }
 
+    public function test_closed_conference_without_active_binding_is_converged_without_runtime_inspection(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId] = $this->conferenceFixture($tenantId, $nodeId, conferenceDesiredState: 'closed', observedConferenceState: 'closed');
+        DB::table('conference_runtime_bindings')->where('conference_id', $conferenceId)->update([
+            'status' => 'retired',
+            'unbound_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $inspectionCalls = (object) ['count' => 0];
+        $reconciler = new ConferenceReconciler($this->inspectionServiceCounting($inspectionCalls));
+
+        $result = $reconciler->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $conferenceId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('converged', $result->status);
+        $this->assertNull($result->operationType);
+        $this->assertSame(0, $inspectionCalls->count);
+    }
+
+    public function test_closing_conference_without_active_binding_remains_blocked(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId] = $this->conferenceFixture($tenantId, $nodeId, conferenceDesiredState: 'closed', observedConferenceState: 'ready');
+        DB::table('conference_runtime_bindings')->where('conference_id', $conferenceId)->update([
+            'status' => 'retired',
+            'unbound_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $result = (new ConferenceReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::observed(false)
+        )))->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $conferenceId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('blocked', $result->status);
+        $this->assertSame('conference_runtime_binding_missing', $result->reasonCode);
+    }
+
+    public function test_open_conference_without_active_binding_remains_blocked(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId] = $this->conferenceFixture($tenantId, $nodeId, conferenceDesiredState: 'open', observedConferenceState: 'ready');
+        DB::table('conference_runtime_bindings')->where('conference_id', $conferenceId)->update([
+            'status' => 'retired',
+            'unbound_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $result = (new ConferenceReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::observed(true)
+        )))->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $conferenceId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('blocked', $result->status);
+        $this->assertSame('conference_runtime_binding_missing', $result->reasonCode);
+    }
+
     public function test_closed_conference_waits_when_runtime_inspection_unavailable_or_failed(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode();

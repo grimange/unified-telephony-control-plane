@@ -773,6 +773,22 @@ Artisan::command('telephony-domain:failover-coordinator {--once : Run one bounde
     return 0;
 })->purpose('Run the automatic conference failover coordinator without manual target selection.');
 
+Artisan::command('telephony-domain:retire-closed-bindings {--once : Run one bounded closed-conference binding retirement sweep and exit} {--batch=100 : Maximum closed-conference bindings to evaluate}', function (TelephonyDomainService $domain): int {
+    $batch = filter_var($this->option('batch'), FILTER_VALIDATE_INT);
+    if ($batch === false || $batch < 1) {
+        $this->error('The --batch option must be a positive integer.');
+
+        return 2;
+    }
+
+    $summary = $domain->retireClosedConferenceBindings((int) $batch);
+    foreach ($summary as $key => $value) {
+        $this->line('telephony_domain_closed_binding_retirement_'.$key.'='.$value);
+    }
+
+    return 0;
+})->purpose('Run the automatic closed-conference RuntimeBinding retirement sweep without manual target selection.');
+
 Artisan::command('telephony-domain:status', function (): int {
     foreach (['telephony_sessions', 'conferences', 'conference_participants'] as $table) {
         if (! Schema::hasTable($table)) {
@@ -866,3 +882,4 @@ Schedule::command('asterisk-ari:ensure-targets')->everyMinute()->withoutOverlapp
 Schedule::command('telephony-domain:expire-sessions')->everyMinute()->withoutOverlapping();
 Schedule::command('telephony-domain:ensure-targets')->everyMinute()->withoutOverlapping();
 Schedule::command('telephony-domain:failover-coordinator --once')->everyMinute()->withoutOverlapping();
+Schedule::command('telephony-domain:retire-closed-bindings --once')->everyMinute()->withoutOverlapping();

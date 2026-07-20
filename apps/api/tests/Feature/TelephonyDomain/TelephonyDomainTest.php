@@ -103,6 +103,19 @@ final class TelephonyDomainTest extends TestCase
             ->json('conference');
         $this->runConferenceRuntime($conference['id']);
         $this->assertSame('closed', DB::table('conferences')->where('id', $conference['id'])->value('observed_state'));
+
+        $summary = app(TelephonyDomainService::class)->retireClosedConferenceBindings(10);
+        $this->assertSame(['candidates' => 1, 'retired' => 1, 'skipped' => 0], $summary);
+        $this->assertSame(0, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'retired')->whereNotNull('unbound_at')->count());
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conference['id'])->where('event_type', 'conference.runtime_binding_retired')->count());
+
+        $this->runConferenceRuntime($conference['id']);
+        $this->assertDatabaseHas('runtime_reconciliation_states', [
+            'target_type' => 'conference',
+            'target_id' => $conference['id'],
+            'status' => 'converged',
+        ]);
     }
 
     public function test_session_expiry_removes_participation_and_cross_tenant_access_fails(): void
@@ -142,6 +155,10 @@ final class TelephonyDomainTest extends TestCase
 
         $this->assertSame('expired', DB::table('telephony_sessions')->where('id', $session['id'])->value('status'));
         $this->assertSame('removed', DB::table('conference_participants')->where('id', $participant['id'])->value('desired_state'));
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertSame(['candidates' => 0, 'retired' => 0, 'skipped' => 0], app(TelephonyDomainService::class)->retireClosedConferenceBindings(10));
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertSame(0, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conference['id'])->where('event_type', 'conference.runtime_binding_retired')->count());
         $this->assertDatabaseHas('runtime_reconciliation_states', [
             'target_type' => 'conference_participant',
             'target_id' => $participant['id'],
@@ -155,6 +172,79 @@ final class TelephonyDomainTest extends TestCase
             'aggregate_type' => 'conference_participant',
             'aggregate_id' => $participant['id'],
         ]);
+    }
+
+    public function test_closed_conference_retirement_sweep_is_idempotent_and_emits_one_transition_event(): void
+    {
+        [$admin, , $tenantId, $nodeId] = $this->fixture('binding-retire-normal');
+        $conference = $this->openConference($admin, $tenantId, $nodeId, 'binding-retire-normal');
+
+        $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/admin/conferences/{$conference['id']}/desired-state", ['desired_state' => 'closed'])
+            ->assertOk();
+        $this->runConferenceRuntime($conference['id']);
+
+        $bindingId = (string) DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->value('id');
+        $first = app(TelephonyDomainService::class)->retireClosedConferenceBindings(10);
+        $second = app(TelephonyDomainService::class)->retireClosedConferenceBindings(10);
+        $outbox = DB::table('control_plane_outbox_messages')->where('aggregate_id', $conference['id'])->where('event_type', 'conference.runtime_binding_retired')->first();
+        $payload = json_decode((string) $outbox->payload, true, 512, JSON_THROW_ON_ERROR);
+
+        $this->assertSame(['candidates' => 1, 'retired' => 1, 'skipped' => 0], $first);
+        $this->assertSame(['candidates' => 0, 'retired' => 0, 'skipped' => 0], $second);
+        $this->assertDatabaseHas('conference_runtime_bindings', ['id' => $bindingId, 'status' => 'retired']);
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->count());
+        $this->assertSame(0, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conference['id'])->where('event_type', 'conference.runtime_binding_retired')->count());
+        $this->assertSame(1, DB::table('control_plane_audit_records')->where('subject_id', $conference['id'])->where('action', 'conference.runtime_binding_retired')->count());
+        $this->assertSame($tenantId, $outbox->tenant_id);
+        $this->assertSame($tenantId, $payload['tenant_id']);
+        $this->assertSame($conference['id'], $payload['conference_id']);
+        $this->assertSame($bindingId, $payload['runtime_binding_id']);
+        $this->assertSame($nodeId, $payload['runtime_node_id']);
+        $this->assertSame('conference_closed', $payload['retirement_reason']);
+        $this->assertSame('conference_closed', $payload['source_transition']);
+        $this->assertNotEmpty($payload['unbound_at']);
+    }
+
+    public function test_retirement_sweep_requires_observed_closed_before_unbinding(): void
+    {
+        [$admin, , $tenantId, $nodeId] = $this->fixture('binding-retire-observed');
+        $conference = $this->openConference($admin, $tenantId, $nodeId, 'binding-retire-observed');
+
+        $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/admin/conferences/{$conference['id']}/desired-state", ['desired_state' => 'closed'])
+            ->assertOk();
+
+        $summary = app(TelephonyDomainService::class)->retireClosedConferenceBindings(10);
+
+        $this->assertSame(['candidates' => 0, 'retired' => 0, 'skipped' => 0], $summary);
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertSame(0, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conference['id'])->where('event_type', 'conference.runtime_binding_retired')->count());
+    }
+
+    public function test_closed_conference_residue_retires_through_same_domain_service_with_tenant_scope(): void
+    {
+        [$adminA, , $tenantA, $nodeA] = $this->fixture('binding-retire-residue-a');
+        [$adminB, , $tenantB, $nodeB] = $this->fixture('binding-retire-residue-b');
+        $conferenceA = $this->openConference($adminA, $tenantA, $nodeA, 'binding-retire-residue-a');
+        $conferenceB = $this->openConference($adminB, $tenantB, $nodeB, 'binding-retire-residue-b');
+        DB::table('conferences')->whereIn('id', [$conferenceA['id'], $conferenceB['id']])->update([
+            'desired_state' => 'closed',
+            'observed_state' => 'closed',
+            'closed_at' => now()->subHour(),
+            'observed_at' => now()->subHour(),
+            'updated_at' => now()->subHour(),
+        ]);
+
+        $summary = app(TelephonyDomainService::class)->retireClosedConferenceBindings(10, $tenantA, 'closed_conference_residue');
+        $payload = json_decode((string) DB::table('control_plane_outbox_messages')->where('aggregate_id', $conferenceA['id'])->where('event_type', 'conference.runtime_binding_retired')->value('payload'), true, 512, JSON_THROW_ON_ERROR);
+
+        $this->assertSame(['candidates' => 1, 'retired' => 1, 'skipped' => 0], $summary);
+        $this->assertSame(0, DB::table('conference_runtime_bindings')->where('conference_id', $conferenceA['id'])->where('status', 'active')->count());
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conferenceB['id'])->where('status', 'active')->count());
+        $this->assertSame('closed_conference_residue', $payload['retirement_reason']);
+        $this->assertSame(0, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conferenceB['id'])->where('event_type', 'conference.runtime_binding_retired')->count());
     }
 
     public function test_session_creation_uses_configured_lifetime_without_request_expiry_or_extension(): void
@@ -769,6 +859,39 @@ final class TelephonyDomainTest extends TestCase
 
         $this->assertNull(DB::table('conferences')->where('id', $conference['id'])->value('failover_state'));
         $this->assertNull(DB::table('conferences')->where('id', $conference['id'])->value('failover_binding_id'));
+
+        $this->runConferenceRuntime($conference['id']);
+        $summary = app(TelephonyDomainService::class)->retireClosedConferenceBindings(10);
+        $this->assertSame(['candidates' => 1, 'retired' => 1, 'skipped' => 0], $summary);
+        $this->assertSame(0, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertNull(DB::table('conferences')->where('id', $conference['id'])->value('failover_state'));
+        $this->assertNull(DB::table('conferences')->where('id', $conference['id'])->value('failover_binding_id'));
+    }
+
+    public function test_retirement_sweep_preserves_pending_no_capacity_and_disabled_open_bindings(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('binding-retire-no-capacity');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'binding-retire-no-capacity');
+        $bindingId = (string) DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->value('id');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update([
+            'desired_state' => 'disabled',
+            'observed_state' => 'unavailable',
+            'updated_at' => now(),
+        ]);
+        DB::table('conferences')->where('id', $conference['id'])->update([
+            'failover_state' => 'pending_no_capacity',
+            'failover_binding_id' => $bindingId,
+            'failover_generation' => (int) $conference['configuration_generation'],
+            'failover_started_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $summary = app(TelephonyDomainService::class)->retireClosedConferenceBindings(10);
+
+        $this->assertSame(['candidates' => 0, 'retired' => 0, 'skipped' => 0], $summary);
+        $this->assertDatabaseHas('conference_runtime_bindings', ['id' => $bindingId, 'status' => 'active']);
+        $this->assertSame('pending_no_capacity', DB::table('conferences')->where('id', $conference['id'])->value('failover_state'));
+        $this->assertSame(0, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conference['id'])->where('event_type', 'conference.runtime_binding_retired')->count());
     }
 
     public function test_capacity_return_rebind_clears_pending_no_capacity_state_atomically(): void
@@ -910,6 +1033,110 @@ final class TelephonyDomainTest extends TestCase
         $this->assertDatabaseHas('conference_runtime_bindings', ['conference_id' => $conference['id'], 'runtime_node_id' => $nodeB, 'status' => 'retired']);
         $this->assertDatabaseHas('conference_runtime_bindings', ['conference_id' => $conference['id'], 'runtime_node_id' => $nodeC, 'status' => 'active']);
         $this->assertSame(2, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conference['id'])->where('event_type', 'conference.runtime_binding_replaced')->count());
+
+        DB::table('conferences')->where('id', $conference['id'])->update([
+            'desired_state' => 'closed',
+            'observed_state' => 'closed',
+            'closed_at' => now(),
+            'observed_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $summary = app(TelephonyDomainService::class)->retireClosedConferenceBindings(10);
+        $this->assertSame(['candidates' => 1, 'retired' => 1, 'skipped' => 0], $summary);
+        $this->assertSame(0, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertSame(3, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'retired')->count());
+        $this->assertDatabaseHas('conference_runtime_bindings', ['conference_id' => $conference['id'], 'runtime_node_id' => $nodeA, 'status' => 'retired']);
+        $this->assertDatabaseHas('conference_runtime_bindings', ['conference_id' => $conference['id'], 'runtime_node_id' => $nodeB, 'status' => 'retired']);
+        $this->assertDatabaseHas('conference_runtime_bindings', ['conference_id' => $conference['id'], 'runtime_node_id' => $nodeC, 'status' => 'retired']);
+        $this->assertSame(2, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conference['id'])->where('event_type', 'conference.runtime_binding_replaced')->count());
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conference['id'])->where('event_type', 'conference.runtime_binding_retired')->count());
+    }
+
+    public function test_stale_retirement_snapshot_cannot_retire_newer_active_binding(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('binding-retire-stale');
+        $nodeB = $this->runtimeNode($tenantId, 'binding-retire-stale-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'binding-retire-stale');
+        DB::table('conferences')->where('id', $conference['id'])->update([
+            'desired_state' => 'closed',
+            'observed_state' => 'closed',
+            'closed_at' => now(),
+            'observed_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $oldBindingId = (string) DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->value('id');
+        $changed = false;
+        DB::listen(function (object $query) use (&$changed, $conference, $tenantId, $nodeB, $oldBindingId): void {
+            if ($changed || ! str_contains($query->sql, 'conference_runtime_bindings') || ! str_contains($query->sql, 'conferences')) {
+                return;
+            }
+            $changed = true;
+            DB::table('conference_runtime_bindings')->where('id', $oldBindingId)->update([
+                'status' => 'retired',
+                'unbound_at' => now(),
+                'updated_at' => now(),
+            ]);
+            DB::table('conference_runtime_bindings')->insert([
+                'id' => IdentityIds::new(),
+                'tenant_id' => $tenantId,
+                'conference_id' => $conference['id'],
+                'runtime_node_id' => $nodeB,
+                'status' => 'active',
+                'bound_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            DB::table('conferences')->where('id', $conference['id'])->update([
+                'runtime_node_id' => $nodeB,
+                'configuration_generation' => DB::raw('configuration_generation + 1'),
+                'updated_at' => now(),
+            ]);
+        });
+
+        $summary = app(TelephonyDomainService::class)->retireClosedConferenceBindings(10);
+
+        $this->assertTrue($changed);
+        $this->assertSame(['candidates' => 1, 'retired' => 0, 'skipped' => 1], $summary);
+        $this->assertDatabaseHas('conference_runtime_bindings', ['id' => $oldBindingId, 'status' => 'retired']);
+        $this->assertDatabaseHas('conference_runtime_bindings', ['conference_id' => $conference['id'], 'runtime_node_id' => $nodeB, 'status' => 'active']);
+        $this->assertSame(0, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conference['id'])->where('event_type', 'conference.runtime_binding_retired')->count());
+    }
+
+    public function test_closed_conference_prevents_stale_failover_rebind_and_then_retires_binding(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('binding-retire-rebind-race');
+        $this->runtimeNode($tenantId, 'binding-retire-rebind-race-b');
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'binding-retire-rebind-race');
+        $bindingId = (string) DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->value('id');
+
+        $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/admin/conferences/{$conference['id']}/desired-state", ['desired_state' => 'closed'])
+            ->assertOk();
+        $rebind = app(TelephonyDomainService::class)->failoverRebindConference(
+            ExecutionContext::system(tenantId: $tenantId, reason: 'stale rebind after close request'),
+            $tenantId,
+            $conference['id'],
+            'stale_worker_after_close',
+            [
+                'expected_binding_id' => $bindingId,
+                'expected_runtime_node_id' => $nodeA,
+            ],
+        );
+
+        $this->assertSame(['status' => 'noop', 'reason' => 'conference_not_open'], $rebind);
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertSame(0, DB::table('control_plane_outbox_messages')->where('aggregate_id', $conference['id'])->where('event_type', 'conference.runtime_binding_replaced')->count());
+
+        DB::table('conferences')->where('id', $conference['id'])->update([
+            'observed_state' => 'closed',
+            'observed_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $summary = app(TelephonyDomainService::class)->retireClosedConferenceBindings(10);
+
+        $this->assertSame(['candidates' => 1, 'retired' => 1, 'skipped' => 0], $summary);
+        $this->assertSame(0, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+        $this->assertDatabaseHas('conference_runtime_bindings', ['id' => $bindingId, 'status' => 'retired']);
     }
 
     public function test_restored_former_node_can_be_selected_as_future_replacement_without_reactivating_old_binding(): void
@@ -1460,14 +1687,22 @@ final class TelephonyDomainTest extends TestCase
         $this->artisan('telephony-domain:failover-coordinator', ['--once' => true])
             ->expectsOutput('telephony_domain_failover_candidates=0')
             ->assertExitCode(0);
+        $this->artisan('telephony-domain:retire-closed-bindings', ['--once' => true])
+            ->expectsOutput('telephony_domain_closed_binding_retirement_candidates=0')
+            ->expectsOutput('telephony_domain_closed_binding_retirement_retired=0')
+            ->expectsOutput('telephony_domain_closed_binding_retirement_skipped=0')
+            ->assertExitCode(0);
 
         $console = file_get_contents(base_path('routes/console.php'));
         $this->assertIsString($console);
         $this->assertStringContainsString('telephony-domain:failover-coordinator {--once', $console);
         $this->assertStringContainsString("Schedule::command('telephony-domain:failover-coordinator --once')->everyMinute()->withoutOverlapping()", $console);
+        $this->assertStringContainsString('telephony-domain:retire-closed-bindings {--once', $console);
+        $this->assertStringContainsString("Schedule::command('telephony-domain:retire-closed-bindings --once')->everyMinute()->withoutOverlapping()", $console);
         $this->assertStringNotContainsString('--conference', $console);
         $this->assertStringNotContainsString('--runtime-node', $console);
         $this->assertStringNotContainsString('--replacement', $console);
+        $this->assertStringNotContainsString('--binding', $console);
     }
 
     /**

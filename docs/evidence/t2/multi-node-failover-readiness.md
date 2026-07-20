@@ -7907,3 +7907,176 @@ git diff --check
 feat(t5): retire stale RuntimeBindings on canonical conference closure
 Do not push. Keep UTCP_PHASE=T1.
 ```
+
+## T5-A49 — Canonical RuntimeBinding Retirement After Conference Closure
+
+**Verdict:** `T5_STALE_RUNTIME_BINDING_RETIREMENT_IMPLEMENTATION_REPOSITORY_READY`
+
+### Evidence Basis
+
+This repository-only implementation follows the T5-A48 stale-binding audit. That audit found a
+live stale population of 114 Conferences with `desired_state=closed` and `observed_state=closed`
+while their corresponding RuntimeBindings remained `status=active`. The newest T5-A47 Conference
+reproduced the same forward lifecycle defect: after the G+2 replacement Conference closed
+canonically, its final active binding did not retire.
+
+No live database mutation, Kubernetes apply, PBX mutation, live failover, or live restoration was
+performed in this repository task. The 114-row live repair proof remains pending.
+
+### Previous Indefinite Binding Authority Removed
+
+The invalid authority state was:
+
+```text
+Conference desired_state=closed
+Conference observed_state=closed
+RuntimeBinding remains active indefinitely
+```
+
+The repository now provides a canonical retirement path:
+
+```text
+Conference desired_state=closed
+AND Conference observed_state=closed
+AND exact active RuntimeBinding is still current under lock
+→ retire active RuntimeBinding automatically
+```
+
+Desired-state closure alone is not sufficient. The active binding remains the cleanup target until
+the runtime projection has observed the Conference as closed.
+
+### Canonical Retirement Owner
+
+`TelephonyDomainService::retireClosedConferenceBindings()` owns the new retirement authority. It is
+tenant-aware, batched, idempotent, and domain-service-owned. The scheduler and command wrapper call
+the service; they do not write RuntimeBindings directly.
+
+RuntimeBinding rows are retained. The implementation updates `status=retired` and records
+`unbound_at`; it does not delete historical bindings.
+
+### Retirement Transaction
+
+Each candidate is revalidated inside its own bounded transaction:
+
+- lock the Conference
+- require desired and observed state are both `closed`
+- require the Conference generation matches the candidate snapshot
+- require the Conference runtime node still matches the candidate snapshot
+- lock the candidate RuntimeBinding
+- require the same tenant, Conference, binding ID, runtime node, and `status=active`
+- require the current active binding ID is still the candidate binding
+- retire the binding, record `unbound_at`, and emit transition evidence
+
+A failed revalidation no-ops safely. This rejects stale snapshots and newer active bindings.
+
+### Historical Residue Repair
+
+Historical closed/closed residue uses the same domain method as forward lifecycle retirement. The
+method supports bounded tenant-scoped execution and structured reasons, including
+`closed_conference_residue` where the caller has residue evidence. The automatic scheduled sweep
+uses the same lifecycle path and is safe to run repeatedly until the stale population is cleared.
+
+### Automatic Scheduling
+
+The repository registers:
+
+```text
+telephony-domain:retire-closed-bindings --once
+Schedule::command(...)->everyMinute()->withoutOverlapping()
+```
+
+The command is a thin scheduler mechanism with bounded batch control. It has no binding,
+Conference, tenant, RuntimeNode, replacement, allowlist, or manual repair selector.
+
+### Reconciler Closure Behavior
+
+`ConferenceReconciler` now treats:
+
+```text
+desired_state=closed
+observed_state=closed
+no active RuntimeBinding
+```
+
+as converged. A missing active binding before observed closure remains blocked, and an open
+Conference without an active binding preserves the previous failure behavior.
+
+### No-Capacity and Failover Preservation
+
+Open Conferences, including `failover_state=pending_no_capacity`, remain bound. RuntimeNode disabled
+or unavailable state alone cannot retire a binding. Rebind remains the only authority that retires a
+binding while a Conference stays open:
+
+```text
+failoverRebindConference
+→ retire old binding
+→ insert replacement binding
+→ increment generation
+→ clear failover state
+```
+
+After G → G+1 → G+2, canonical closure retires only the final active binding and leaves all prior
+retired bindings retained.
+
+### Event Evidence
+
+Each actual closure retirement emits exactly one audit record and one outbox event:
+
+```text
+conference.runtime_binding_retired
+```
+
+Payload evidence includes tenant ID, Conference ID, RuntimeBinding ID, RuntimeNode ID, Conference
+generation, retirement reason, source transition, `unbound_at`, and event timestamp. Repeated sweeps
+after retirement emit no duplicate event. Rebind continues to use
+`conference.runtime_binding_replaced`.
+
+### Diagnostic Read Visibility
+
+The Conference serializer now exposes read-only binding diagnostics:
+
+- current active RuntimeBinding ID
+- active binding RuntimeNode ID
+- binding lifecycle status
+- last binding retirement reason
+- last binding retirement timestamp
+
+No Admin/UI mutation endpoint, manual button, direct SQL workflow, environment switch, runtime
+allowlist, or manual binding-ID repair list was added.
+
+### Focused Repository Tests
+
+Focused tests cover:
+
+- normal Admin/API close → reconciler cleanup → projection observed closed → service sweep →
+  binding retired → retirement event → later reconciliation converged
+- desired closed but observed not closed retains the binding
+- closed/closed residue through the same service
+- repeated sweeps and scheduler overlap-style invocation are idempotent
+- pending no capacity and disabled open Conference retain the binding
+- pending no capacity closure retires only after observed closed
+- G → G+1 → G+2 closure leaves zero active bindings with all historical rows retained
+- stale candidate snapshots cannot retire newer active bindings
+- tenant isolation
+- stale failover/rebind after closure cannot insert a new binding for a closed Conference
+- event and audit deduplication
+- closed/closed without active binding is converged
+- closing/open without active binding remains blocked
+- session expiry does not retire the binding unless the Conference separately closes
+
+### Verification Snapshot
+
+Focused repository checks passed:
+
+```text
+php -l apps/api/app/TelephonyDomain/TelephonyDomainService.php
+php -l apps/api/app/TelephonyDomain/Reconciliation/ConferenceReconciler.php
+php -l apps/api/routes/console.php
+php -l apps/api/tests/Feature/TelephonyDomain/TelephonyDomainTest.php
+php -l apps/api/tests/Feature/Asterisk/AsteriskConferenceRecoveryTest.php
+php artisan test --filter=TelephonyDomainTest
+php artisan test --filter=AsteriskConferenceRecoveryTest
+```
+
+Broad required Make verification and live deployment proof are recorded in the task completion
+report. The live automatic retirement and historical-residue repair proof remains pending.
