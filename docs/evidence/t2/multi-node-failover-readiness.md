@@ -8738,3 +8738,316 @@ before this proof), not to this proof. This proof's own participant channels cle
 (0 `1aa7b9b2` channels). These orphans are pre-existing environmental residue, unrelated to and
 unaffected by the false-404 hardening; they were not touched (hanging them up would be an
 out-of-scope direct PBX mutation of another proof's leftovers). No break-glass recovery was used.
+
+## T5-A54 — Canonical orphan Stasis Local-channel cleanup contract (evidence-only)
+
+**Verdict: `T5_ORPHAN_STASIS_LOCAL_CHANNEL_CLEANUP_CONTRACT_DEFINED`.**
+Read-only audit at `02385fc`. Root-caused the two orphan Local channels (participant
+`utcp-part-91b59874…`) to a **current, reproducible** defect: closing a Conference while a
+participant is still `admitted` orphans its Local legs, and the participant is only removed after
+the RuntimeBinding is retired, at which point the participant reconciler is permanently blocked
+(it derives the node from the *active* binding). No channel-hangup operation is ever scheduled.
+Defined one canonical cleanup owner, completion evidence, retained-authority repair, concurrency,
+events, and tests. No production code, tests, config, or runtime state modified; the orphan
+channels were not touched.
+
+### Baseline
+Clean at `02385fc`, `UTCP_PHASE=T1`. Both intended RuntimeNodes active/ready; both Asterisk
+Deployments 1/1; zero open/pending Conferences; zero active RuntimeBindings; zero actionable
+operations; all simulator nodes disabled; all 8 ARI modules loaded. App image `sha256:a3a1e3f8`.
+Node A `1d15ca88` (pod `asterisk-ari-db55d57c5-2vvsn`), node B `05ddb383`
+(pod `asterisk-ari-b-8557bd4d76-cm7sc`); both leases claimed, one open epoch each.
+
+### Orphan channel inventory
+Exactly **two** Local legs on node B, no additional resources:
+`Local/participant@utcp-conference-proof-00000001;1` and `;2`, both `State=Up`,
+`Application=Stasis(utcp-t0-observation)`, context `utcp-conference-proof`, extension `participant`,
+UniqueID/LinkedID `utcp-part-91b59874-2c57-41f3-b7e9-0e5cab231129`, duration ~159s+ (growing), **no
+bridge membership**. Both are visible via ARI (`GET /ari/channels/utcp-part-91b59874…=200`; the
+channels list returns exactly the two ids `…91b59874…` and `…91b59874…;2`). The `;1` side carries
+the participant identity as the ARI channel id; `;2` is the deterministic peer. Node A has zero
+channels; both nodes have zero bridges.
+
+### Canonical participant correlation
+Participant `91b59874-…`: desired_state=**removed**, observed_state=**left**, joined 01:17:48,
+left_at 01:20:27, created 01:17:44, updated 01:24:17, role participant, no failure. Conference
+`a90bac34-…` (`t5a50-proof-1784510257`): desired=**closed**, observed=**closed**, generation 3,
+observed_generation 3, runtime_node_id `05ddb383` (node B), opened 01:17:44, closed_at 01:20:26,
+observed_at 01:20:30. Session `8bb8f624-…`: **ended** 01:24:17 (`user_ended`), issued 01:17:37,
+expiry 01:47:37. Binding `0efc6e14-…`: **retired** 01:21:04, runtime_node_id `05ddb383` (node B).
+**No current canonical record asserts the channels should exist** — every authority says
+removed/left/closed/ended/retired. These are genuine orphans.
+
+### Conference and session state
+Conference closed/closed at generation 3 on node B; session ended; participant removed. The
+generation at admission was 2 (open); at removal, 3 (closed). No failover occurred
+(draft→open→closed, gen 1→2→3).
+
+### RuntimeBinding and generation authority
+Exactly one binding ever existed (`0efc6e14`, node B), now retired at 01:21:04. The retired row
+**still holds the node id** (`05ddb383`) — which matches where the orphan channels live — so
+retained historical authority is available for repair. The deterministic channel id
+(`utcp-part-{participantId}`) is participant-specific and generation-independent.
+
+### Participant cleanup lifecycle
+Admission → `conference.participant.ensure` originates the two deterministic Local legs and attaches
+`;1` to the bridge. Removal path: `removeParticipant` (or session-end `removeParticipantsForSession`)
+sets `desired_state='removed'` + `wakeTarget('conference_participant')`. `ConferenceParticipantReconciler`
+then resolves the node from `activeRuntimeNodeId` (the **active** binding), inspects
+(health-gated, T5-A52), and — if the deterministic channel is still present
+(`participant_channel_exists`) — schedules `conference.participant.remove`, whose adapter calls
+`removeParticipantChannel` = `POST bridges/{id}/removeChannel` + `DELETE channels/{;1}` (relying on
+Local peer-hangup to destroy `;2`). `conference.close` destroys **only the bridge**
+(`DELETE bridges/{id}`); it does not hang up participant channels.
+
+### T5-A50 cleanup timeline (audit + operations + PBX)
+- 01:17:38 conference.created; 01:17:44 open (gen 2) + participant.admitted;
+  01:17:45→48 `conference.ensure` + `conference.participant.ensure` succeeded (channels originated).
+- 01:20:26 conference desired=**closed** (gen 3); 01:20:27 `conference.close` succeeded → **bridge
+  destroyed**; the two Local legs left the bridge but stayed `Up` in Stasis. Participant
+  observed→**left** (bridge-departure projection), left_at 01:20:27.
+- 01:20:30 conference observed=**closed**. 01:21:04 binding **retired** (T5-A49 sweep).
+- **01:24:17 participant.removed** (session ended → `removeParticipantsForSession` set
+  desired=removed). By now the binding is retired.
+- **No `conference.participant.remove` operation exists** (operations for the conference are only
+  `conference.ensure`, `conference.participant.ensure`, `conference.close`).
+
+### Proven failure category
+**A — cleanup was never scheduled**, precipitated by **I — superseded by Conference closure.**
+The participant was still `admitted` when the conference closed; closing destroyed the bridge (not
+the channels) and, ~40s later, retired the binding. The participant was only marked `removed` at
+session-end (01:24:17), after retirement. `ConferenceParticipantReconciler.evaluate` resolves the
+node from `activeRuntimeNodeId`; with the binding retired it returns
+`blocked('conference_runtime_binding_missing')` before ever inspecting or scheduling
+`conference.participant.remove`. No hangup call was ever issued — this is not E (no op returned
+false success) nor J (both legs remain, not one). The participant `observed=left` came from
+bridge-departure, not an actual hangup, masking the orphan from the domain.
+
+### Historical residue versus current defect
+**Current, reproducible** at `02385fc`. The chain is intact in current code:
+`open→closed` is allowed directly (`assertConferenceTransition`) with no drain/removal prerequisite;
+`changeConferenceDesiredState('closed')` does not remove participants or hang up channels;
+`conference.close` destroys only the bridge; the participant reconciler derives the node solely from
+the active binding; T5-A49 retires that binding shortly after observed-close. Any
+"close-with-admitted-participant, then session-end/removal" sequence leaks. T5-A49 binding
+retirement (correct on its own) *tightened* the window by removing the reconciler's node authority
+sooner. The two channels are the live symptom; a historical-repair mechanism is also required
+because the existing orphaned participant will never be re-driven by normal reconciliation.
+
+### Local-channel peer semantics
+One `POST /ari/channels` originate creates both legs (`;1` and `;2`). The `;1` side is the ARI
+channel whose id equals `participantChannelId(participantId)` = `utcp-part-{id}` and carries the
+participant identity; `;2` is the deterministic peer (the normalizer resolves a `;2` suffix back to
+the same participant — `AsteriskAriAdapterTest` line 765). `removeParticipantChannel` DELETEs only
+`;1`; Local peer-hangup then destroys `;2` (proven live in T5-A53, where a single participant
+removal cleaned up both legs). Bridge removal affects only membership, not channel existence. Full
+destruction is evidenced by `StasisEnd`/`ChannelDestroyed` for both legs. Both ids are derivable
+from the participant id; neither must be persisted.
+
+### ARI cleanup semantics
+`removeParticipantChannel` accepts `removeChannel [200,202,204,404,409,422]` and
+`DELETE channels/{id} [200,202,204,404,409]` — 404 idempotent (channel already gone). The T5-A50
+leak involved **no cleanup ARI call at all** (no op ran), so there is **no demonstrated cleanup
+false-success mechanism**; the T5-A52 health-gated *inspection* correction must **not** be expanded
+into the cleanup accept-lists. Accept-lists stay unchanged.
+
+### Conference closure interaction
+`conference.close` is generation-gated and runs on the active binding's node; it destroys the bridge
+only. Closing does not drain admitted participants. This is the precipitating step: it removes the
+bridge (and triggers binding retirement) while participant channels remain, and provides no
+channel-cleanup itself.
+
+### Binding-retirement interaction
+The proven T5-A49 retirement (after observed-close) removed the *active*-binding node authority the
+participant reconciler needs — but the **retired binding row retains the node id**, so historical
+authority is sufficient for repair. Channel cleanup must **not** be made a prerequisite for observed
+Conference closure or for binding retirement (that would couple/stall the proven retirement
+lifecycle and could block on an unavailable node). Instead, participant channel cleanup should be
+able to proceed best-effort using the **most-recent (retired-inclusive) binding** as node authority;
+a stale worker may safely use the former binding because the deterministic channel id is
+participant-specific. The proven binding-retirement lifecycle is not weakened.
+
+### Canonical cleanup owner
+**Model D — the existing participant lifecycle: `ConferenceParticipantReconciler` +
+`conference.participant.remove` operation, with node authority resolved from the most-recent binding
+(active OR retired) for a `desired_state='removed'` participant** whose conference is closed. The
+`conference.participant.remove` operation remains the single cleanup **executor** (no duplicated
+ownership). Rejected: Model A alone (op never scheduled once binding retired); Model B (coupling
+channel cleanup into conference closure duplicates concerns and cannot repair existing orphans);
+Model C as executor (a second cleanup authority). A bounded scheduled **discovery** sweep is added
+that only **re-wakes** participant reconciliation for orphaned removed participants — it discovers,
+it does not hang up — so cleanup execution stays solely in `conference.participant.remove`.
+
+### Cleanup completion evidence
+Cleanup is complete only when, on the authoritative (most-recent-binding) RuntimeNode, a health-gated
+ARI inspection shows **both deterministic Local legs absent** (`participant_channel_exists=false`,
+via T5-A52 family-health gating so a degraded family cannot false-succeed) and **no bridge
+membership**, with `participant.desired_state='removed'`. A 2xx from the hangup call alone is
+insufficient — presence must be re-inspected. Requires bounded retry via the operation lifecycle;
+if the RuntimeNode is unavailable, cleanup defers (retryable) and completes after node recovery.
+Corroborating `ChannelDestroyed` events may be used but ARI absence under a healthy family is the
+authoritative signal.
+
+### Historical repair contract
+A scheduled `telephony-domain:reclaim-orphan-participant-channels --once` (everyMinute,
+`withoutOverlapping`, batch-bounded), owned by `TelephonyDomainService`, parallel to
+`retire-closed-bindings`. It discovers candidates from canonical state — participants with
+`desired_state='removed'` (or belonging to a `closed`/observed-closed conference) whose deterministic
+Local channel still exists (health-gated inspection) on the conference's most-recent binding node —
+verifies the participant/conference no longer authorize channels, revalidates under lock, and
+**re-wakes participant reconciliation** (it does not hang up channels itself). The existing
+`conference.participant.remove` operation performs the hangup. Idempotent (a participant with no
+present channel is not re-selected); tenant-scoped; derives the node and deterministic channel id
+(no hard-coded ids); no prefix-wide sweep; no channel-age-only deletion; no env gate; no allowlist;
+no routine Artisan; no Asterisk CLI as normal authority. A read-only Artisan diagnostic is
+acceptable for break-glass only.
+
+### Concurrency and stale authority
+All node/generation guards from `conferenceFromOperation` remain: the `conference.participant.remove`
+operation still validates the participant/conference and (extended) the most-recent binding node.
+Deterministic per-participant channel ids make cross-participant collision impossible — a stale
+worker cannot hang up a *new* participant's channel because a new participant has a different
+`utcp-part-{id}`. Participant removal racing closure/failover/rebind: the remove op targets the
+participant's own deterministic channel on the current-or-most-recent node; a generation-G worker
+after G+1 exists is short-circuited by the existing generation guard. Delayed `ChannelDestroyed`,
+one leg disappearing before the other (peer-hangup), and repeated cleanup ops are all idempotent
+(re-inspection converges). The discovery sweep only wakes reconciliation and revalidates under lock,
+so it cannot double-hang-up or race a late original cleanup destructively.
+
+### Events and observability
+Existing: `conference_participant.removed` (audit + emit), `conference_participant.admitted`, and the
+adapter's `runtime_operation.asterisk_conference_participant_removed` completion event. Missing: a
+transition-only signal distinguishing an orphaned-channel reclaim. Add one transition-only
+`conference_participant.channel_reclaimed` event (audit + outbox) emitted once per successful reclaim,
+carrying tenant, conference, participant, session, runtime_binding (most-recent), generation,
+runtime_node, both channel ids, cleanup classification, attempt, and final outcome. Do not emit on
+every discovery poll while the condition is unchanged (a participant with a present channel is
+re-woken, not re-evented; the event fires only on the reclaim transition).
+
+### Web-admin authority boundary
+Unchanged: participant removal stays authorized via Web Admin/API; channel cleanup is runtime
+automation. No Admin user runs Asterisk CLI/Artisan/Kubernetes, deletes channels, or selects channel
+ids. The UI may surface a cleanup-degraded state; no "hang up orphan channel" button is warranted
+(no business decision required — reclaim is deterministic automation).
+
+### Existing test coverage
+Present (`AsteriskConferenceRecoveryTest`): removed-participant-with-channel-present schedules
+`conference.participant.remove` (353); projected-`left`-still-inspects (374); already-absent records
+absence without a remove op (395); projected-`left` records absence and converges (432);
+inspection-unavailable waits (459/489); **`test_close_before_remove_projected_left_does_not_bypass_participant_runtime_cleanup`
+(518)** — closed conference + projected-`left` + channel present → schedules remove; pending-op
+prevents duplicates (566). **Gap:** every one of these fixtures keeps the binding **active**; none
+exercise the reconciler when the binding is **retired** (the exact leak). **Missing tests:**
+- participant removed after binding retirement → node resolved from most-recent (retired) binding →
+  `conference.participant.remove` scheduled (the forward fix)
+- historical orphan discovery sweep re-wakes participant reconciliation for a removed participant
+  whose channel persists
+- both Local legs reclaimed by a single hangup (peer semantics)
+- cleanup completion requires re-inspected absence, not a 2xx
+- node unavailable during reclaim → deferred, retried after recovery
+- health-gated inspection: degraded family does not falsely declare channels absent (regression)
+- stale-generation / wrong-participant guard: never hang up a newer participant's deterministic id
+- discovery sweep idempotency (no duplicate reclaim/event)
+- tenant isolation
+- reconciler converges once both legs absent
+
+### Missing implementation (smallest coherent slice)
+1. `ConferenceParticipantReconciler` (and `conferenceFromOperation`/participant node resolution for
+   the remove op): when `participant.desired_state='removed'` and no active binding exists, resolve
+   the node from the **most-recent binding** (active or retired) for the conference; keep all
+   generation/stale guards.
+2. `TelephonyDomainService::reclaimOrphanParticipantChannels()` + a
+   `telephony-domain:reclaim-orphan-participant-channels --once` command + everyMinute
+   `withoutOverlapping` schedule (mirrors `retire-closed-bindings`): discover removed participants
+   whose deterministic channel still exists (health-gated) on the most-recent binding node,
+   revalidate under lock, and re-wake participant reconciliation. Discovery/wake only — hangup stays
+   in `conference.participant.remove`.
+3. New transition-only `conference_participant.channel_reclaimed` event (audit + outbox).
+4. Tests per the matrix above.
+(No change to conference-close behavior, binding-retirement timing, or the cleanup ARI accept-lists.)
+
+### Implementation-readiness decision
+**A — bounded Codex implementation.** The audit establishes the exact root cause (participant still
+admitted at close → channels orphaned → removal after binding retirement → reconciler blocked on
+active-binding node resolution → hangup op never scheduled), current reproducibility, the single
+cleanup executor (`conference.participant.remove`) with most-recent-binding node authority, exact
+completion evidence (re-inspected health-gated absence of both legs), retained-authority historical
+repair, concurrency/stale semantics (deterministic per-participant ids), the event contract, and the
+exact test gaps. No unresolved wrong-node or stale-generation ambiguity.
+
+### Ready-to-paste next prompt
+
+```
+# T5-A55 — Implement Orphan Participant Channel Reclaim
+
+Implement the contract in docs/evidence/t2/multi-node-failover-readiness.md §T5-A54.
+
+Starting state: HEAD 02385fc (or later), branch main, clean tree, UTCP_PHASE=T1.
+Bounded implementation task. Do not begin a new phase; UTCP_PHASE stays T1.
+
+## Problem
+Closing a Conference with an admitted participant orphans its two Local channel legs:
+conference.close destroys only the bridge (legs return to Stasis), the participant is removed
+only at session-end AFTER the RuntimeBinding is retired (T5-A49), and
+ConferenceParticipantReconciler resolves the node from the ACTIVE binding -> null -> blocked
+-> conference.participant.remove hangup op is never scheduled. Two live orphans exist
+(participant 91b59874, conference a90bac34, node B 05ddb383, retired binding 0efc6e14).
+
+## Scope (smallest slice)
+1. ConferenceParticipantReconciler + the participant node authority used by
+   conference.participant.remove: when participant.desired_state='removed' and there is no ACTIVE
+   binding, resolve the RuntimeNode from the MOST-RECENT binding (active or retired) for the
+   conference. Keep all generation/stale guards (conferenceFromOperation) and the health-gated
+   inspection. conference.participant.remove stays the ONLY cleanup executor.
+2. TelephonyDomainService::reclaimOrphanParticipantChannels(int $batchSize): tenant-scoped,
+   batched discovery sweep. Candidates: participants with desired_state='removed' whose
+   conference is closed/observed-closed and whose deterministic Local channel still exists (via
+   the health-gated inspection) on the conference's most-recent binding node. Under lock,
+   revalidate participant/conference/binding, then re-wake participant reconciliation
+   (wakeTarget). The sweep DISCOVERS and WAKES only; it must not hang up channels itself.
+3. telephony-domain:reclaim-orphan-participant-channels {--once} {--batch=100} Artisan command +
+   Schedule::command('telephony-domain:reclaim-orphan-participant-channels --once')->everyMinute()
+   ->withoutOverlapping(), mirroring telephony-domain:retire-closed-bindings.
+4. New transition-only conference_participant.channel_reclaimed event (audit + outbox) emitted
+   once per successful reclaim (tenant, conference, participant, session, runtime_binding,
+   generation, runtime_node, both channel ids, classification, attempt, outcome). No per-poll
+   events.
+
+## Invariants
+- conference.participant.remove is the sole hangup executor; the sweep only discovers/wakes.
+- Cleanup is complete only when a health-gated re-inspection shows BOTH Local legs absent and no
+  bridge membership; a 2xx alone is insufficient.
+- Node unavailable -> defer (retryable) -> complete after recovery. Never declare removed while
+  channels remain.
+- Never hang up a channel of a newer participant lifecycle or newer generation (deterministic
+  per-participant ids + existing generation guard).
+- Do NOT change conference.close behavior, binding-retirement timing, or the cleanup ARI
+  accept-lists ([...404,409,422]). Do NOT extend the T5-A52 health gate into cleanup accept-lists.
+- No prefix-wide or age-only deletion; no hard-coded channel ids; no env gate/allowlist; no
+  routine Artisan/CLI cleanup authority. Read-only Artisan diagnostic acceptable.
+- Deterministic Local-channel peer semantics: hangup of the ;1 leg destroys ;2; do not add
+  fallback ids.
+
+## Tests (AsteriskConferenceRecoveryTest + TelephonyDomainTest)
+- removed participant with RETIRED binding -> node from most-recent binding -> remove op scheduled
+- discovery sweep re-wakes reconciliation for a removed participant whose channel persists
+- both Local legs reclaimed by a single hangup (peer)
+- completion requires re-inspected absence, not a 2xx
+- node unavailable -> deferred, retried after recovery
+- degraded ARI family does NOT falsely declare channels absent (regression, T5-A52)
+- stale-generation / wrong-participant guard
+- sweep idempotency (no duplicate reclaim/event)
+- tenant isolation
+- reconciler converges once both legs absent
+- conference.close still destroys only the bridge (regression)
+
+## Verification
+make repository-hygiene workflow-check secret-scan
+make runtime-engine-config-check telephony-domain-config-check asterisk-ari-config-check asterisk-conference-config-check
+make runtime-engine-test telephony-domain-test asterisk-ari-test asterisk-conference-test asterisk-conference-recovery-test
+git diff --check
+
+## Commit
+feat(t5): reclaim orphaned participant Local channels after closure
+Do not push. Keep UTCP_PHASE=T1.
+```
