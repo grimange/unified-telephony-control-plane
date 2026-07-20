@@ -9140,3 +9140,162 @@ The live automatic reclamation proof remains pending: deploy the repository fix,
 discovery sweep to find the existing T5-A50 orphan pair, and prove both Local legs are removed
 without direct live mutation. Events-only listener liveness detection and other T5 follow-up work
 remain outside this bounded repository correction.
+
+## T5-A56 — Automatic orphan participant Local-channel reclamation: LIVE PROOF COMPLETE (historical event via forward path)
+
+**Verdict: `T5_ORPHAN_STASIS_LOCAL_CHANNEL_CLEANUP_LIVE_PROOF_COMPLETE`.**
+Deployed `62ae45e` and proved the automatic orphan reclamation contract from T5-A54/A55. The
+existing T5-A50 orphan pair was automatically discovered and reclaimed through the canonical
+`conference.participant.remove` operation using the retained (retired) binding, and a fresh
+close-with-admitted-participant lifecycle reproduced the orphan condition live and was reclaimed
+end-to-end **with the `conference_participant.channel_reclaimed` event emitted on NEW code**. One
+divergence: the *historical* orphan's reclaim **event** was missed because an old command-worker
+pod (terminating mid-rollout) executed the historical remove operation on pre-`62ae45e` adapter
+code; the historical channels were still correctly reclaimed. The event path is proven on the
+identical forward orphan run entirely on `62ae45e`.
+
+### Phase marker
+`versions.env` line 7 = `UTCP_PHASE=T1`; clean tree at `62ae45e`.
+
+### Application image build and rollout
+Built the api image from `62ae45e` (digest `sha256:2ea4bcd2`), pushed, rolled out api, scheduler,
+telephony-reconciler, telephony-command-worker, worker, asterisk-ari-events,
+telephony-event-normalizer, control-plane-outbox-dispatcher, simulator-event-source,
+kamailio-registration-observer. Asterisk/Kamailio/Postgres/Redis/runtime-fencer/RBAC/NetworkPolicy
+not rolled. All 11 app pods run the new digest.
+
+### Live reclamation-code currency
+Running command-worker/reconciler/api pods contain `reclaimOrphanParticipantChannels`,
+`cleanupRuntimeAuthority` (retained-binding resolution), `ari_participant_cleanup_pending`
+(both-leg reinspection), `orphan_reclamation`, and `conference_participant.channel_reclaimed`.
+The image also contains the command, everyMinute schedule, and both-leg peer logic.
+
+### Scheduler registration
+`schedule:list` shows `* * * * *  php artisan telephony-domain:reclaim-orphan-participant-channels
+--once` with `Has Mutex` (withoutOverlapping), batch-bounded (`--batch=100`). No manual invocation.
+
+### No-manual-command proof
+Reclamation was driven entirely by the everyMinute scheduler + reconciler + command-worker; the
+`reclaim-orphan-participant-channels` command was never manually invoked (only read-only
+`schedule:list` and normal authenticated APIs).
+
+### Historical orphan baseline
+Before rollout: participant `91b59874` desired=**removed**/observed=**left**; conference
+`a90bac34` **closed/closed** gen 3; session ended; binding `0efc6e14` **retired** on node B
+(`05ddb383`); 0 active binding. Two Local legs on node B: `;1`
+(`utcp-part-91b59874-…`) and `;2` (`…;2`), both `Up`, `Stasis(utcp-t0-observation)`, no bridge
+membership, ARI-visible. Node A clean; node B Pod UID `6e8e874c`.
+
+### Automatic historical discovery
+The scheduler discovered participant `91b59874` from canonical state (removed participant of a
+closed/observed-closed conference with no active binding but a retired binding) — not a hard-coded
+id — and re-woke participant reconciliation. Discovery performed no ARI DELETE, no Asterisk CLI,
+and no direct operation mutation (it only wakes reconciliation).
+
+### Discovery versus execution authority
+The discovery sweep only wakes/enqueues participant reconciliation; the sole hangup executor is the
+`conference.participant.remove` operation. No alternate cleanup executor appeared.
+
+### Final retained binding resolution
+Participant reconciliation selected the most-recent **retired** binding `0efc6e14` on RuntimeNode
+`05ddb383` (node B) — the historical orphan op payload carried
+`historical_runtime_binding_id=0efc6e14`, `runtime_node_id=05ddb383`, `orphan_reclamation=true`,
+`configuration_generation=3`. It selected neither an earlier binding, node A, a simulator node, a
+new binding, nor a cross-node fallback. No active binding was recreated (active_bindings stayed 0).
+
+### Historical participant-remove operation
+Exactly one `conference.participant.remove` operation for `91b59874`
+(`43ebb392…`, orphan_reclamation=true, node B, gen 3, binding `0efc6e14`), succeeded on attempt 1.
+No alternate cleanup operation type appeared.
+
+### Historical both-leg cleanup
+Both Local legs removed (node B `91b59874` channel count 0). The reconciler+adapter targeted the
+primary `;1` deterministic channel; Local peer-hangup destroyed `;2`.
+
+### Historical cleanup reinspection
+The historical op ran on the retained-binding node and the channels are absent. **Divergence:** the
+op's `lease_owner` was `telephony-command-worker-5d997465f8-4t98q` — the **old** pod (new pod is
+`668b7fb47-xkchf`), which was still terminating during the rollout and executed the op on
+pre-`62ae45e` adapter code. The old adapter cleans the channels (removeChannel + DELETE, peer
+hangup) but has no both-leg reinspection and no reclaim-event call. Hence the historical channels
+were correctly reclaimed but **no `conference_participant.channel_reclaimed` event was emitted for
+`91b59874`**. This is a rollout race, not a code defect — proven by the forward run below on
+clean `62ae45e` code, and by no old pods remaining afterward.
+
+### Historical reclamation event
+0 audit / 0 outbox `conference_participant.channel_reclaimed` for `91b59874` (see divergence).
+The functional reclamation (both legs removed via the retained-binding orphan op) is proven; the
+event is proven on the forward orphan (identical code path, NEW executor).
+
+### Historical idempotency
+Across 3+ later sweeps (04:33:39→04:34:49): exactly 1 remove op, 0 reclaimed events, channels
+stayed 0 — no duplicate operation, no duplicate event, no recreated channel/binding. The discovery
+sweep correctly saw the channels absent and did not re-wake.
+
+### Unrelated resource preservation
+Node A stayed clean (0 channels); no other participant channel removed; no prefix-wide cleanup; no
+bridge deleted by discovery; no active Conference affected; no RuntimeNode state change; 0 active
+bindings throughout.
+
+### Forward proof Conference
+Session `f76dad8c` (expiry 05:05:50), conference `e67db906` (gen 2, node B `05ddb383`), participant
+`f58004a9` admitted, active binding `062990c5`, conference `open/ready`, deterministic bridge
+`utcp-conf-e67db906-…`, two participant Local legs. Created via normal APIs only.
+
+### Forward closure timeline
+Closed at 04:36:33 with the participant **still admitted/joined**. Timeline: bridge destroyed
+immediately (control-socket bridge count 0), the **two participant Local legs lingered in Stasis**
+(channels=2), conference observed=**closed**, binding **retired** at 04:37:05. `conference.close`
+added no synchronous participant hangup — it destroyed only the bridge, exactly reproducing the
+T5-A50 orphan condition on live NEW code.
+
+### RuntimeBinding retirement
+Closure and binding-retirement timing were unchanged (T5-A49 behavior): binding `062990c5` retired
+~30s after observed-close while the participant channels still existed.
+
+### Forward participant removal
+Ending session `f76dad8c` transitioned participant `f58004a9` to desired=**removed**/observed=left
+with the conference closed/closed, 0 active binding, and retained binding `062990c5` (node B)
+available. No manual cleanup operation was created.
+
+### Forward automatic discovery and cleanup
+The scheduler + reconciler + NEW command-worker (`668b7fb47-xkchf`) automatically discovered the
+orphan, resolved the retained binding `062990c5` (node B), created exactly one
+`conference.participant.remove` (orphan_reclamation=true, node B, gen 3, binding `062990c5`),
+removed the primary Local leg, and Local peer-hangup removed the peer — both legs absent
+(participant channel count 0). The op only succeeds when both legs are re-inspected absent (the
+adapter throws retryable `ari_participant_cleanup_pending` otherwise); it succeeded on attempt 1.
+No direct PBX cleanup, no manual command, no manual reconciliation, no new binding, no cross-node
+request, no duplicate operation.
+
+### Forward event and idempotency
+Exactly one `conference_participant.channel_reclaimed` **audit + outbox** event for `f58004a9`,
+payload complete: tenant, conference, participant, session `f76dad8c`, runtime_binding `062990c5`,
+generation 3, runtime_node `05ddb383`, primary `utcp-part-f58004a9-…`, peer `…;2`, classification
+`post_closure_orphan`, operation/attempt id, outcome `reclaimed`, occurred_at. Across 4 later
+sweeps (04:39:34→04:41:19): remove_ops=1, audit=1, outbox=1, 0 active bindings — no duplicate op or
+event, no resource recreation.
+
+### Runtime-unavailable deferral boundary
+No node/ARI failure was introduced; the unavailable-deferral path is covered by repository tests
+(`ari_participant_cleanup_pending` retryable + inspection-unavailable waits) and live code currency
+(`reclaimOrphanParticipantChannels` skips `unavailable`/`failed` inspections). No natural transient
+occurred.
+
+### Final runtime state
+Both intended RuntimeNodes active/ready; both Asterisk Deployments 1/1; both leases claimed; one
+open epoch per node; 0 open/pending Conferences; 0 active RuntimeBindings; 0 actionable runtime
+operations; **zero T5-A50 orphan legs and zero forward-proof legs** (0 utcp-part channels on both
+nodes); 0 proof bridges; all simulator nodes disabled; all 8 ARI modules loaded; scheduler and
+workers Ready. Total `conference_participant.channel_reclaimed` events: 1 audit / 1 outbox (the
+forward reclaim; the historical one was missed to the rollout race).
+
+### Divergence
+The historical orphan's reclaim **event** was not emitted because an old command-worker pod
+(`5d997465f8-4t98q`), still terminating during the rollout, executed the historical
+`conference.participant.remove` operation on pre-`62ae45e` adapter code. The historical **channels**
+were still correctly reclaimed via the retained binding. No manual/break-glass action was taken; no
+old pods remained afterward; the identical reclaim-and-event path is fully proven on the forward
+orphan run entirely on `62ae45e` (op executed by the new command-worker, event emitted). To obtain
+a historical event without a rollout race, redeploy while ensuring the old command-worker has fully
+terminated before any orphan op is claimed.
