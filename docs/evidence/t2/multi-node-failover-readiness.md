@@ -9980,3 +9980,321 @@ evaluating cleanly, build-info consistency, existing-metrics compatibility, and 
 NetworkPolicy preservation all PASS; blocked on D1 (reference-health `other` aggregate does not match
 durable totals due to duplicate series) and D2 (public `/api/metrics` route). Both are pre-existing and
 not b78a0b5 regressions. UTCP_PHASE remains T1; commit not pushed.
+
+---
+
+# T5-A60 — Contract: metrics security cutoff and actionable orphan alert (evidence-only)
+
+Verdict: `T5_METRICS_SECURITY_AND_ORPHAN_ALERT_CONTRACT_DEFINED`. Read-only audit against
+`utcp-local` running the deployed b78a0b5 API (pod `api-7684684b5b-s24sl`, image digest
+`sha256:0d96195...`). No production PHP/tests/manifests/runtime/PostgreSQL/Redis/Asterisk/
+Kamailio were modified. Baseline: `UTCP_PHASE=T1`, clean tree at `69a37c2`.
+
+Confirmed at start (read-only): API image from b78a0b5 deployed; application scrape target `up`
+(`lastError=""`); `/api/metrics` still returns HTTP 200 publicly on `app.utcp.local.test` and
+`utcp.local.test` (https 200; http 301→https→200); `utcp_conference_orphan_participant_candidates=121`;
+no live orphan participant channels (all 121 candidate participants observed_state=left with terminal
+sessions; only 2 orphan-reclamation operations ever, both succeeded); `UTCPOrphanParticipantCandidates`
+has now FIRED (activeAt 11:04:46Z, for=15m elapsed); `utcp_conference_stale_active_bindings=0`;
+`utcp_conference_failover_pending{pending_no_capacity}=0`.
+
+## D1 aggregation defect (settled target, re-confirmed unchanged)
+Present defect: `runtimeReferenceHealthMetrics()` runs `SELECT resource_type, reason AS health,
+count(*) GROUP BY resource_type, reason`, then maps each raw `reason` to a bounded `health` in PHP.
+Multiple raw reasons map to `other`, so duplicate final `{resource_type,health="other"}` lines are
+emitted; Prometheus keeps the first and drops the rest. Live durable grouping of
+`conference_recovery_metric_events.reason`:
+- conference → other = ari_http_transport_failed(326)+ari_http_unavailable(1)+none(3543) = 3870;
+  Prometheus stores 326.
+- conference_participant → other = 433+1+7170 = 7604; Prometheus stores 433.
+The four recognized values match exactly (conference{degraded_unavailable=11,healthy_absent=4,
+healthy_present=20}; conference_participant{degraded_unavailable=11,healthy_absent=27,healthy_present=21,
+transport_unavailable=2712}).
+
+## D1 exact correction
+Map first, then aggregate, then emit one series per final label set:
+```
+rows = SELECT resource_type, reason, count(*) c GROUP BY resource_type, reason
+agg = {}
+for row: rt = bounded(resource_type, [conference, conference_participant])
+         h  = bounded(reason, [healthy_present, healthy_absent, degraded_unavailable, transport_unavailable])
+         agg[rt, h] += row.c            # sum mapped-identical label sets
+ksort(agg); emit exactly one sample per (rt, h)
+```
+Acceptance: recognized health values unchanged; all unmapped reasons summed into one `other` total
+(conference other=3870, participant other=7604); repeated scrapes stable; no raw reason becomes a label;
+regression seeds >=2 distinct unmapped reasons per resource_type and asserts a single `other` sample
+equal to their sum. Purely additive-safe; no other metric method touched. D1 stays ready for Codex.
+
+## Current Prometheus scrape path (full trace)
+| Hop | ns | kind/name | selector/route | port→target | path | scope | TLS | source identity |
+|---|---|---|---|---|---|---|---|---|
+| 1 | utcp-observability | ServiceMonitor utcp-application | matchLabels component=gateway,part-of=utcp; nsSelector utcp-platform; endpoint port `http` | — | /api/metrics (30s/10s) | cluster | — | — |
+| 2 | utcp-platform | Service gateway (ClusterIP) | selector component=gateway | http 8080→http | — | cluster | no | — |
+| 3 | utcp-platform | EndpointSlice gateway | — | 10.42.2.160:8080 | — | cluster | — | Prometheus scrapes pod IP directly |
+| 4 | utcp-platform | gateway Pod (nginx) | listen 8080 | location ^~ /api/ → fastcgi api:9000 | /api/metrics | cluster | no | — |
+| 5 | utcp-platform | Service api (ClusterIP) | selector component=api | php-fpm 9000→php-fpm | (FastCGI) | cluster | no | — |
+| 6 | utcp-platform | api Pod | containerPort php-fpm 9000 (only) | php-fpm | index.php | cluster | no | — |
+| 7 | — | MetricsController (Laravel routes/api.php /metrics) | — | — | /api/metrics | — | — | — |
+The ServiceMonitor reports `job="gateway"` and `URL=http://<gateway-pod>:8080/api/metrics` because it
+selects the `gateway` Service (component=gateway) — the only Service exposing HTTP for /api/metrics.
+It cannot select the `api` Service: the api container exposes ONLY `php-fpm` (FastCGI) on 9000, which
+does not speak HTTP, so Prometheus cannot scrape it directly. All HTTP metrics access is fronted by the
+gateway nginx. Prometheus connects to the gateway POD IP directly (EndpointSlice), bypassing Traefik.
+
+## Current public metrics route (why 200)
+`app-https`/`root-https` HTTPRoutes (Gateway `utcp-local`/websecure) use a single rule with implicit
+`PathPrefix:/` → backend `gateway:8080`. The gateway nginx serves `location ^~ /api/` (includes
+/api/metrics) by FastCGI to api:9000; the Laravel `/metrics` route (routes/api.php) is unauthenticated.
+Traefik `allow-gateway-required-traffic` NetworkPolicy permits Traefik→gateway:8080. Result:
+`https://app.utcp.local.test/api/metrics` → 200 (proven), and `https://utcp.local.test/api/metrics` → 200.
+`app-http-redirect`/`root-http-redirect` 301 http→https, so port 80 does not bypass. Public surface is
+the Traefik LoadBalancer (80:30480, 443:32417 on node IPs, and k3d serverlb 127.0.0.1:80/443); no
+Ingress; no direct-to-gateway NodePort. All public forms funnel through Traefik→gateway Service→nginx:8080,
+so a single nginx-8080 cutoff covers every public form. NetworkPolicy alone does not help — it permits
+Traefik to proxy the request.
+
+## Internal scrape alternatives
+- Direct api Service scrape (Model A candidate): NOT viable. api Service/pod expose only php-fpm:9000
+  (FastCGI, no HTTP). Prometheus cannot scrape it; would require adding an HTTP listener.
+- Dedicated metrics Service selecting existing gateway:8080 (Model B candidate): does NOT preserve the
+  boundary. The public HTTPRoute uses the same gateway Service→pod:8080 nginx; any nginx `return 404`
+  for /api/metrics on 8080 breaks the metrics Service too (same port/path/server). So B alone cannot
+  separate public from Prometheus.
+- Route-layer block (Model D candidate): Traefik v3.7.7 Gateway API has no core "return 404" filter and
+  the repo has no reject backend; only RequestRedirect (3xx, discloses) or a new reject service would
+  work — larger than a second nginx listener. (Repo does use path-scoped rules: sip-wss Exact /ws.)
+Conclusion: Models A and B cannot preserve the boundary; the metrics must be fronted by nginx.
+
+## Selected metrics security model — Model C (dedicated internal nginx metrics listener)
+Smallest reliable model that keeps /api/metrics cluster-internal using the repository-standard nginx
+`return 404` mechanism (already used for dotfiles), preserves Prometheus scraping, adds no public auth,
+no feature gate, no source-IP allowlist, no scrape token, and no second metrics authority (same
+MetricsController via FastCGI).
+- `infrastructure/docker/gateway/nginx.conf`: add a second internal server block
+  `server { listen 8081; server_name _; location = /api/metrics { <same fastcgi_params + fastcgi_pass
+  api:9000>; } location / { return 404; } }`, AND on the public `server{listen 8080}` add
+  `location = /api/metrics { return 404; }` (exact match wins over `^~ /api/`, non-disclosing 404).
+- `infrastructure/kubernetes/base/platform/gateway-deployment.yaml`: add containerPort 8081 name `metrics`.
+- `infrastructure/kubernetes/base/platform/gateway-service.yaml`: add port `metrics` 8081→8081.
+
+## Public runtime-authority cutoff
+Exact change: the public 8080 server returns the repo-standard `404` for `/api/metrics`
+(`location = /api/metrics { return 404; }`) so the public host no longer proxies the path to
+MetricsController. Covers HTTP (via 301→HTTPS→same nginx) and HTTPS, both `app.utcp.local.test` and
+`utcp.local.test` (all funnel to nginx:8080). Unrelated `/api/*` routes (`/api/version`,
+`/api/health/live`, etc.) stay on `location ^~ /api/` and are unchanged. HTTPRoutes are NOT changed
+(Gateway API cannot 404 natively without a reject backend); the cutoff is at the nginx authority.
+
+## ServiceMonitor contract
+`infrastructure/kubernetes/observability/servicemonitors/…` `utcp-application`: change the single
+endpoint `port: http` → `port: metrics` (8081); keep path `/api/metrics`, interval 30s, timeout 10s,
+selector, and namespaceSelector. Prometheus then scrapes gateway pod:8081 (internal-only) instead of
+:8080. No new ServiceMonitor.
+
+## NetworkPolicy contract
+`allow-application-metrics-from-prometheus` (utcp-platform): change the ingress port 8080 → 8081; keep
+from = utcp-observability/prometheus only, keep podSelector utcp.io/network-role=gateway. Result:
+Prometheus→gateway:8081 allowed; the public 8080 route reaches nginx but nginx 404s /api/metrics (route
+does not reach MetricsController). `allow-gateway-required-traffic` (Traefik→8080) unchanged so normal
+API ingress is preserved. No namespace-wide broadening; no path filtering in NetworkPolicy (correctly,
+NP is not an HTTP-path authority — the path authority is nginx). NetworkPolicy change IS required (the
+scrape port moves 8080→8081).
+
+## Security cutover rollout order (no scrape outage)
+1. Deploy corrected API image (D1 aggregation fix + new orphan-reclamation-ops metric; candidate gauge
+   retained, non-alertable). Confirm /api/metrics still served on 8080.
+2. Deploy gateway with the ADDED internal 8081 metrics listener only (do NOT yet add the 8080 404).
+   8081 serves metrics; 8080 still serves metrics.
+3. Repoint ServiceMonitor port→metrics(8081) and NetworkPolicy port→8081. Confirm target `up` on 8081,
+   >=3 scrapes.
+4. Deploy the gateway public cutoff (`location = /api/metrics { return 404; }` on 8080). Public now
+   blocked; Prometheus unaffected (8081). Confirm public 404 + target still up.
+5. Apply corrected PrometheusRule (replace UTCPOrphanParticipantCandidates with the actionable
+   orphan-reclamation alert). Confirm all expressions evaluate.
+Steps 2→4 split ensures the internal target is healthy before the public authority is removed.
+
+## Public and internal acceptance tests (D2)
+- Public HTTPS `app.utcp.local.test` and `utcp.local.test` GET /api/metrics → 404 (non-disclosing).
+- Public HTTP (port 80) → 301 → HTTPS → 404 (no bypass).
+- Alternate Host header / NodePort (30480/32417) → still 404 (all funnel to nginx:8080).
+- `/api/version`, `/api/health/live`, and other `/api/*` app routes remain 200/302 as before.
+- Prometheus target `up`, `lastError=""`, >=3 successful scrapes on the internal port.
+- ServiceMonitor selects only the intended internal target (port metrics/8081).
+- NetworkPolicy permits Prometheus→8081 and does not expose the metrics target publicly.
+- No Ingress/Gateway route forwards metrics to MetricsController.
+- No metrics token, feature gate, or IP allowlist introduced.
+- Expected public status code: 404 (repository-standard non-disclosing response).
+
+## Orphan candidate predicate
+Shared by `TelephonyDomainService::reclaimOrphanParticipantChannels()` and the metric
+`orphanParticipantCandidateMetrics()`:
+```
+conference_participants.desired_state = 'removed'
+AND conferences.desired_state = 'closed' AND conferences.observed_state = 'closed'
+AND NOT EXISTS active binding for (tenant, conference)
+AND EXISTS retired binding with runtime_node_id NOT NULL for (tenant, conference)
+```
+The predicate is purely static closed-conference history. It has NO exclusion for participants already
+inspected-absent, already reclaimed (channel_reclaimed event), or otherwise conclusively handled, so a
+matching participant remains a candidate FOREVER — it is a monotonic-style upper bound, not a live count.
+The scrape performs only these SQL reads; it never calls ARI/Asterisk. The reclaim sweep (not the scrape)
+is the only path that performs ARI inspection and acts only when a channel is still observed present.
+
+## Current candidate classification (121 rows, read-only)
+- Participant: 121/121 desired_state=removed, observed_state=left.
+- Conference: 121/121 desired_state=closed, observed_state=closed; no active binding; retired
+  node-bound binding present.
+- Session: 117 expired, 4 ended (all terminal; no live sessions).
+- Reclamation event (`conference_participant.channel_reclaimed`): 1 candidate has one; 120 do not.
+- Orphan-reclamation operations (`runtime_operations` operation_type=conference.participant.remove AND
+  payload.orphan_reclamation=true): 2 total, both `succeeded`/failure_class none; 0 actionable
+  (pending/leased/retry_scheduled/terminal_failed/expired). Total participant.remove ops = 644.
+These rows remain candidates after successful/unnecessary cleanup because the predicate never records
+"handled" — closed conferences with removed participants and a retained node-bound retired binding match
+permanently. No PBX channel presence is implied (participants already observed left; sessions terminal).
+
+## Candidate gauge disposition — retain as inventory upper bound (non-alertable)
+Keep `utcp_conference_orphan_participant_candidates` as a database-derived upper-bound inventory gauge
+(HELP already states "does not prove a PBX channel is currently alive"; retain that caveat). Do NOT
+refine via a new DB column (existing durable evidence — the orphan-reclamation operation objects — is
+sufficient for alerting, see below), and do NOT remove it (useful backlog/inventory visibility). The
+metric must never call ARI/Asterisk (it does not).
+
+## Current alert defect classification — C
+"Metric is valid inventory, alert is invalid." The gauge correctly reports the DB upper bound (121), but
+`UTCPOrphanParticipantCandidates: sum(...) > 0` alerts on a value guaranteed positive in a healthy
+environment (accumulated closed-conference history), so it fires with zero live orphans and zero stuck
+automation. Confirmed against durable data (0 actionable orphan-reclamation operations).
+
+## Actionable orphan alert source — Model A (tagged reclamation operations)
+Durable source: `runtime_operations` where `operation_type = 'conference.participant.remove'` AND
+`payload->>'orphan_reclamation' = 'true'`, grouped by bounded `status` (OperationStatus) and
+`last_failure_class` (FailureClass + none). This marker is set by
+`ConferenceParticipantReconciler` (orphan_reclamation=true) and consumed by `AsteriskRuntimeAdapter`,
+which records the reclaim event on success — a durable, deduplicated, restart-safe signal that isolates
+orphan reclamation from the 642 normal participant removals. New dedicated metric (the existing
+`utcp_runtime_resilience_operations_total` conflates orphan with normal participant.remove):
+`utcp_conference_orphan_reclamation_operations_total{result,failure_class}` (counter). Successful/absent
+rows do not remain "actionable"; retry/terminal rows indicate stuck automation. Healthy value today:
+`{result="succeeded",failure_class="none"} 2`, terminal_failed = 0. Bounded labels only (result,
+failure_class); no participant/conference/operation/binding/node/channel/session id. Max series bounded
+(~status × failure_class).
+
+## Corrected alert contract
+Replace `UTCPOrphanParticipantCandidates` (delete) with:
+- Alert: `UTCPOrphanReclamationTerminalFailure`
+- expr: `sum(increase(utcp_conference_orphan_reclamation_operations_total{result="terminal_failed",failure_class!="none"}[10m])) > 0`
+- for: 10m; severity: warning; component: telephony-domain; namespace: utcp-platform
+- summary: "Automatic orphan participant channel reclamation reached terminal failure during recent recovery."
+- description: automatic orphan-channel reclamation is terminally failing; the control plane's automatic
+  reconciliation is not clearing observed post-closure orphan channels.
+- Automatic condition considered stuck: a tagged orphan-reclamation `conference.participant.remove`
+  operation reached `terminal_failed` within the lookback (mirrors UTCPRuntimeFence/RestoreTerminalFailure).
+- Operator response: observe automatic recovery; the alert signals automation is failing — NO artisan,
+  manual reconciliation, PBX channel deletion, PostgreSQL/Redis edits, manual Kubernetes scaling, or
+  feature gate. Expected healthy value: 0.
+(Optional future extension, not required: a gauge of currently-overdue actionable orphan-reclamation
+operations for "retrying/overdue" — deferred; terminal-failure is the reliable primary signal.)
+
+## Cardinality and security
+D1 fix, orphan metric, and alert use only bounded enum labels (resource_type, health, result,
+failure_class, classification, version, commit). No tenant/conference/participant/session/binding/
+operation/RuntimeNode/channel id, phone number, credential, or raw failure message becomes a label.
+No environment gate, no IP allowlist, no scrape token in any proposed change (grep-verified against the
+proposal). Manual-recovery wording excluded from the alert annotation.
+
+## Test matrix (for the future implementation)
+- Healthy historical candidate inventory (gauge > 0) does NOT fire the actionable alert.
+- Retrying orphan-reclamation operation → new metric shows result=retry_scheduled (represented, not
+  alerted by the terminal-failure rule).
+- Terminal-failed orphan op → metric result=terminal_failed; alert fires after `for`.
+- Successful orphan op → does not remain alerting.
+- Repeated scheduler sweeps do not inflate a transition counter (metric counts durable operation ROWS,
+  idempotent per operation; reclaim event is deduped per participant).
+- Unknown failure classes map to `other`.
+- No participant/Conference/operation/binding/RuntimeNode/channel id appears as a label.
+- Alert expression references the implemented `utcp_conference_orphan_reclamation_operations_total`.
+- Alert annotation preserves automatic-recovery authority (no manual controls).
+- Candidate gauge HELP retains the upper-bound caveat.
+- D1: multiple raw reasons → single `other` sample equal to their sum; repeated scrapes stable.
+Do NOT manufacture a live PBX failure during the later acceptance proof.
+
+## Missing implementation (this audit changed no code)
+D1 aggregation fix; new orphan-reclamation-ops metric; gateway nginx dual-listener + public 404;
+gateway Deployment/Service 8081 port; ServiceMonitor port→metrics; NetworkPolicy port→8081; PrometheusRule
+alert replacement. All specified above; none applied (evidence-only).
+
+## Implementation-readiness decision — A (bounded Codex implementation)
+The audit establishes the exact D1 correction, exact public cutoff, exact internal scrape target,
+required ServiceMonitor and NetworkPolicy changes, rollout order, exact orphan gauge disposition, the
+exact actionable alert source and contract, and tests + live acceptance criteria. Ready for a bounded
+Codex implementation prompt (below).
+
+## Ready-to-paste next prompt (Codex — bounded implementation)
+```
+T5-A61 — Implement metrics security cutoff, D1 aggregation fix, and actionable orphan alert
+
+Repo state: HEAD 69a37c2, branch main, working tree clean, UTCP_PHASE=T1. Deployed API: b78a0b5.
+Implement exactly the contract in docs/evidence/t2/multi-node-failover-readiness.md (T5-A60).
+Do not begin V0. Keep UTCP_PHASE=T1. Do not push.
+
+1. D1 — apps/api/app/Http/Controllers/Platform/MetricsController.php, runtimeReferenceHealthMetrics():
+   query resource_type,reason,count group by resource_type,reason; in PHP map resource_type→
+   [conference,conference_participant] and reason→[healthy_present,healthy_absent,degraded_unavailable,
+   transport_unavailable] (else other); aggregate counts by (mapped resource_type, mapped health);
+   ksort; emit exactly one sample per final label set. No raw reason as a label.
+
+2. New metric — MetricsController: add utcp_conference_orphan_reclamation_operations_total (counter,
+   HELP+TYPE, "Maximum series" note) from runtime_operations where operation_type='conference.participant.remove'
+   AND (payload->>'orphan_reclamation')='true', group by status, coalesce(last_failure_class,'none');
+   bound result to OperationStatus and failure_class to FailureClass+none; zero/none placeholder when the
+   table is absent, matching existing convention. Keep utcp_conference_orphan_participant_candidates as-is
+   (retain upper-bound HELP caveat; no ARI/Asterisk I/O).
+
+3. Gateway nginx — infrastructure/docker/gateway/nginx.conf: on server{listen 8080} add
+   `location = /api/metrics { return 404; }` (before location ^~ /api/). Add server{listen 8081; listen
+   [::]:8081; server_name _; server_tokens off; access_log ...; location = /api/metrics { <same
+   fastcgi_params, SCRIPT_FILENAME/NAME/DOCUMENT_ROOT, fastcgi_pass api:9000> } location / { return 404; } }.
+
+4. Gateway workload — base/platform/gateway-deployment.yaml add containerPort 8081 name metrics;
+   base/platform/gateway-service.yaml add port name metrics 8081 targetPort metrics.
+
+5. ServiceMonitor — observability utcp-application: endpoint port http→metrics (keep path /api/metrics,
+   30s/10s, selectors).
+
+6. NetworkPolicy — security/platform allow-application-metrics-from-prometheus: ingress port 8080→8081
+   (keep from utcp-observability/prometheus only, keep gateway podSelector). Leave allow-gateway-required-traffic.
+
+7. PrometheusRule — observability/alerts/utcp-alerts.yaml: delete UTCPOrphanParticipantCandidates; add
+   UTCPOrphanReclamationTerminalFailure: expr sum(increase(utcp_conference_orphan_reclamation_operations_total
+   {result="terminal_failed",failure_class!="none"}[10m])) > 0; for 10m; severity warning; component
+   telephony-domain; namespace utcp-platform; summary "Automatic orphan participant channel reclamation
+   reached terminal failure during recent recovery." No manual-recovery wording.
+
+8. Tests — extend apps/api/tests/Feature/Platform/MetricsEndpointTest.php: (a) D1 multiple unmapped reasons
+   per resource_type → single other sample = sum; (b) orphan-reclamation metric result/failure_class from
+   tagged operations, unknown failure_class→other, no id labels; (c) alert-yaml fixture asserts the new
+   alert references the implemented metric, no UTCPOrphanParticipantCandidates, no artisan/manual wording.
+
+Verify: make repository-hygiene workflow-check secret-scan; make runtime-engine-config-check
+telephony-domain-config-check asterisk-ari-config-check asterisk-conference-config-check; make
+runtime-engine-test telephony-domain-test asterisk-ari-test asterisk-conference-test
+asterisk-conference-recovery-test; git diff --check. Commit
+feat(t5): scope metrics to internal scrape and add actionable orphan alert. Do not push.
+Then hand to Claude Code for the T5-A62 live cutover proof (rollout order in T5-A60 §Security cutover).
+```
+
+## Verification performed (T5-A60)
+Read-only: metrics public-route inventory (https app/root 200, http 301, NodePort/LB enumerated, no
+Ingress); Gateway/HTTPRoute precedence trace; ServiceMonitor selector trace; api/gateway Service + port
+inventory; EndpointSlice (gateway pod-direct 10.42.2.160:8080); metrics NetworkPolicy trace; public
+hostname access proof (200 now, will be 404 post-cutoff); internal scrape-alternative proof (api=FastCGI-only);
+D1 mapped-aggregation trace with live durable reason grouping; orphan candidate classification (121);
+orphan-reclamation operation payload inventory (2 succeeded, 0 actionable); reclamation-event inventory
+(1); alert actionability analysis (defect C); cardinality/sensitive-data scan; env-gate/allowlist scan;
+manual-recovery wording scan; phase-marker inspection.
+make repository-hygiene / workflow-check / secret-scan: PASS. make *-config-check (4): PASS.
+make *-test (runtime-engine 21, telephony-domain 60, asterisk-ari 94, asterisk-conference 109,
+asterisk-conference-recovery 89): PASS. git diff --check / --cached --check: clean.
+No mutating command run (no apply/scale/delete/PBX/Conference/RuntimeBinding/SQL-write/migrate).
