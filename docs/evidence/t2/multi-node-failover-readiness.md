@@ -10550,3 +10550,331 @@ inventory and unreferenced by any alert; invalid candidate alert absent; replace
 alert loaded once and evaluating; no healthy inventory causes an orphan alert; bounded non-sensitive
 labels; existing families compatible; existing T5 alerts healthy; no public route exposes 8081; no token/
 allowlist/gate/public fallback; wider runtime healthy. UTCP_PHASE remains T1; commit not pushed.
+
+---
+
+# T5-A63 — Contract: events-only listener liveness authority (evidence-only)
+
+Verdict: `T5_EVENTS_ONLY_LISTENER_LIVENESS_CONTRACT_DEFINED`. Read-only audit against `utcp-local`
+(listener pod `asterisk-ari-events-5798745d5b-qm82r`). Baseline `UTCP_PHASE=T1`, clean tree at `fa0d8d3`.
+No production PHP/tests/manifests/leases/epochs/PostgreSQL/Redis/Asterisk/Kamailio modified.
+
+Baseline confirmed: 2 asterisk-ari RuntimeNodes active (`1d15ca88`, `05ddb383`), both observed `ready`;
+asterisk-ari-events 1/1, asterisk-ari 1/1, asterisk-ari-b 1/1; both listener leases claimed by one
+worker `...qm82r:asterisk-ari-events:1` (exp ~45s out); 0 open conferences (117 all observed=closed),
+0 pending_no_capacity, 0 active bindings, 0 actionable operations, all simulators disabled.
+
+## Listener implementation
+`App\RuntimeAdapters\Asterisk\AsteriskAriEventListener::workOnce()` is the single-threaded event pump,
+driven by the `asterisk-ari-events` console loop (`gethostname():asterisk-ari-events:getmypid()` as
+owner/worker_id). Per cycle, for each node in the in-memory `$connections`: (1) renew lease
+(`RuntimeListenerLeaseRepository::renew`), (2) every `heartbeat_interval_ms` run a REST health check
+(`AsteriskAriClient::inspect` + `stasisApplicationRegistered`) and ingest a `runtime_info_observed`
+receipt, (3) drain up to `max_events_per_cycle` WebSocket frames via non-blocking `readEvent`. Newly
+eligible nodes are claimed and `openConnection()` opens a raw `stream_socket_client` WebSocket
+(hand-rolled HTTP/1.1 Upgrade), sets `stream_set_blocking(false)`, closes stale epochs, opens a new
+event epoch, and ingests `connection_opened`+`runtime_info_observed`+conference reconnect inspections.
+Receipts flow through the normalizer → `ProjectionService` → `runtime_nodes.observed_state`/`observed_at`.
+
+## Listener process versus stream liveness (the conflations)
+| Concept | Current authority | Proves stream alive? |
+|---|---|---|
+| process alive | K8s livenessProbe `php artisan about` | No |
+| Pod Ready | K8s readinessProbe `php artisan about` | No |
+| lease claimed | `runtime_listener_leases` single-owner mutex, renewed every cycle | No |
+| WebSocket TCP connected | only at `openWebSocket` handshake (HTTP 101) | Only at open |
+| ARI authenticated | only at handshake (Basic auth → 101) | Only at open |
+| event stream subscribed | REST `stasisApplicationRegistered` every 15s | Indirect/out-of-band |
+| event frame received | `readEvent` return; NOT timestamped anywhere | No durable trace |
+| event epoch current | `runtime_event_connection_epochs.status='open'` (binary) | No — see below |
+| RuntimeNode ready | last projected receipt `observed_state` + `observed_at` | No — REST-fed |
+Conflations currently treated as equivalent though they are not:
+1. **lease renewal ≡ stream liveness** — FALSE. `renew()` is a pure DB update keyed on
+   `(lease_id, owner, fencing_token, status='claimed')`; it has zero coupling to the socket and runs
+   every cycle while the process loop is alive.
+2. **epoch open ≡ presently connected** — FALSE. An epoch is `open` until explicitly closed/superseded;
+   the table has only `opened_at`/`closed_at`, **no last-frame/heartbeat/connectivity timestamp**.
+3. **observed_state=ready ≡ events flowing** — FALSE. `runtime_info_observed`→`ready` is ingested by the
+   **REST** health check every 15s, so the node stays `ready` from REST heartbeats independent of the
+   WebSocket. Live proof: the most recent receipts are all `runtime.info_observed` (no telephony events
+   in the idle env), yet both nodes stayed `ready` with `observed_at` ~15s fresh.
+4. **Pod Ready ≡ authoritative listener** — FALSE. The probe is `artisan about`.
+
+## Lease authority
+Created by `claim()` (single row per `(runtime_node_id, listener_kind)`, unique index), renewed by
+`renew()`, released by `release()`, ownership checked by `isCurrent()`. Duration `lease_seconds`=45;
+renewed every workOnce cycle. Expiry → another owner may `claim()` (takeover) once
+`lease_expires_at < now`. Owner = `gethostname():asterisk-ari-events:pid` (pod name + pid). A spare
+`metadata` JSON column exists and is currently unused. **No listener build/version recorded.** Renewal
+does **not** require an active WebSocket and occurs merely because the process loop is alive.
+Primary audit answer — **Can a listener continue renewing its lease while disconnected from ARI
+events? YES.** Between the 15s REST health checks (and whenever `stasisApplicationRegistered` still
+returns true, e.g. a half-open socket Asterisk has not yet timed out, or a sibling subscriber masking
+the app registration), the listener renews its lease and reads zero frames indistinguishably from a
+quiet-but-healthy stream.
+
+## Event epoch authority
+`openEpoch` inserts `status='open'`; `closeEpoch` sets `closed` (owner+open match); `closeStaleEpochs`
+sets `expired` for **other** owners' open epochs on a node. An open epoch means "a listener opened it
+and has not torn it down/been superseded" — i.e. **historically connected**, NOT presently connected.
+Multiple `open` epochs can coexist and RuntimeNode readiness does not depend on any epoch's currency.
+**Observed live defect (classification C):** node `1d15ca88` and `05ddb383` each have **3 simultaneous
+`open` epochs**, all owned by the same still-running pod/pid (`...qm82r:...:1`), opened 10:47:08,
+16:00:43, 21:24:53 — the same long-lived process reopened without closing its own prior epochs. Root
+cause: (a) `closeStaleEpochs(nodeId, workerId)` only closes epochs with a **different** owner, so a
+same-owner reconnect leaks; (b) `openConnection()` opens the epoch (line 223) before `inspect()`
+(line 224) — if inspect/conference-inspection throws, the epoch is left `open` and control falls to the
+outer catch which opens+closes a **different** epoch. So "open epoch per node" is not currently a
+reliable single-authoritative-connection signal; the epoch cannot serve as a liveness anchor until its
+lifecycle is corrected.
+
+## RuntimeNode readiness authority
+Canonical owner: `ProjectionService::apply()` sets `runtime_nodes.observed_state`/`observed_at` from the
+normalized receipt (`connection_opened`/`runtime_info_observed`→`ready`, `connection_closed`→
+`unavailable`, `authentication_failed`/default→`degraded`). A separate time-based degrader,
+`ProjectionService::markStale($staleSeconds)` (scheduled via `console.php`, `runtime_engine.
+stale_observation_seconds`=300), sets `observed_state='stale'` when `observed_at < now-300s`. **But the
+REST health check ingests `runtime_info_observed` every 15s, keeping `observed_at` fresh, so `markStale`
+never fires for a WebSocket-dead-but-REST-healthy node.** No path degrades the node on WebSocket-frame
+absence. Readiness is thus a REST-driven projection, not an event-stream-liveness signal.
+
+## Proven events-only failure mode
+`readEvent` (non-blocking `fread`) returns `null` for **all** of: quiet-healthy (no frames),
+peer-closed (no `feof` check), and stalled/half-open (no FIN). There is **no** WebSocket ping/pong (the
+frame reader ignores opcodes entirely and treats every frame as a JSON text payload), **no** TCP
+keepalive, **no** application heartbeat over the socket, **no** last-frame timestamp, and the
+`stream_set_timeout` set at open is nullified by `stream_set_blocking(false)`. The only stall detection
+is the 15s REST `stasisApplicationRegistered` correlation, which throws `ari_stasis_subscription_lost`
+and tears down when the Stasis app is no longer REST-registered. Five sub-modes, distinct:
+- **Connection failure** (no socket): caught at `openWebSocket`/`readEvent` throw → teardown+backoff.
+- **Authentication failure** (401/403 at handshake): caught → `authentication_failed`→degraded.
+- **Stalled connection** (socket open, no frames, no FIN, app still REST-registered): **NOT detected**
+  between/through health checks — lease renews, epoch stays open, node stays `ready`. This is the gap.
+- **Quiet-but-healthy PBX** (no activity): indistinguishable from stalled at the WebSocket layer today.
+- **Downstream failure** (frames arrive, normalize/persist fails): separate — receipt/projection errors,
+  not a listener-liveness concern.
+Classification (Section 9): **D — already partly corrected (the REST stasis-correlation catches the
+REST-visible deregistration case, tested at `AsteriskAriAdapterTest` ~line 1227/1275) but the positive
+per-socket stream-liveness authority is absent/unproven**, compounded by the observed **C** epoch-leak.
+Prior evidence explicitly retains this: "Old-node listener half-open — heartbeat + Stasis-registration
+check tears down and reconnects (T2-B)" and "The retained events-only listener liveness-detection gap
+is separate."
+
+## Quiet-stream semantics
+UTCP currently **cannot** distinguish a quiet-healthy stream from a dead/stalled one at the WebSocket
+layer — both surface as `readEvent → null`. The only positive signal that proves THIS TCP connection is
+bidirectionally alive is a **WebSocket ping/pong** (client sends opcode 0x9 ping, requires a 0xA pong
+within a bounded window). The REST stasis-correlation is out-of-band and can be masked (half-open before
+Asterisk's own socket timeout, or a second subscriber holding the app registered). Liveness must not be
+based solely on receiving telephony events (idle PBX = zero events legitimately).
+
+## Reconnect behavior
+On any `AsteriskAriException` from health check or `readEvent`: `ingestFailure` (records
+`connection_closed`/`authentication_failed` receipt), `recordFailureBackoff`
+(`AsteriskAriReconnectBackoff`, bounded `reconnect_min_delay_ms`=1000 … `reconnect_max_delay_ms`=30000,
+process-local per-node), `teardownConnection` (closes epoch, closes socket, releases lease). Reconnect
+is indefinite but bounded-backoff; retry ownership is process-local (the backoff map is in-memory).
+During backoff the node's `observed_state` reflects the last receipt (`unavailable` after
+`connection_closed`), so readiness is not falsely `ready` **for a detected** close — but a stall that is
+never detected keeps it `ready`. Per-node lease prevents cross-node interference; a stale listener that
+loses its lease cannot resume (renew fails → teardown). Event gaps during an undetected stall are not
+observable today.
+
+## Listener rollout and overlap
+On rollout, a new pod claims a node's lease only after the old lease expires or is released
+(single-owner mutex; `claim()` returns null while a live lease is held by another owner). `openConnection`
+verifies `isCurrent` after the socket opens and calls `closeStaleEpochs(nodeId, newOwner)` to expire the
+old owner's open epochs. So listener leases + epoch fencing **do** prevent duplicate *authority* and the
+normalizer's binding join prevents cross-node projection (T5-A1). Duplicate normalization is prevented by
+the receipt `external_event_key` idempotency. The **residual** overlap issue is the same-owner epoch
+leak above (not cross-owner), which does not cause duplicate authority but pollutes the epoch signal.
+
+## Placement and failover impact
+- **No active Conference**: events-only loss → node should be marked **events-degraded** (a capability
+  degradation), not full `unavailable`, since REST control still works. No immediate failover.
+- **Active Conference**: missed bridge/channel events can block convergence/cleanup; the node should be
+  events-degraded and its bound conferences woken for REST re-inspection (the reconnect path already does
+  targeted re-inspection on reconnect — the gap is *triggering* it when the stall is undetected).
+- **Pending runtime operation**: verification already uses REST inspection (absence-verification), so a
+  REST-healthy node can still complete fence/restore verification even when events are degraded.
+- **REST healthy**: the system must NOT conclude complete node failure from events-only loss.
+Chosen effect: events-only failure should **mark listener degraded → mark RuntimeNode events-degraded →
+block new Conference placement on that node → wake bound-conference REST re-inspection → alert**. It
+should **not** trigger fencing/failover by itself while REST control remains usable (deterministic
+capability degradation, not global disable; no operator action required).
+
+## Selected liveness model
+**Model C (corrected) — event epoch carries connectivity state — driven by a positive WebSocket
+ping/pong signal, with the epoch-leak defect fixed.** Rationale: prefer correcting the existing
+per-connection authority (the epoch) over adding a parallel table; the epoch is the natural home for
+"presently connected" once it (a) is guaranteed single-open-per-node and (b) carries a
+`last_authoritative_signal_at`. The lease stays a pure ownership mutex (do NOT couple `renew()` to the
+socket — that would cause churn on every transient blip). A secondary retained signal is the existing
+REST stasis-correlation. (Model A rejected: coupling the lease to the socket conflates ownership with
+connectivity and causes takeover churn. Model B — separate stream-health table — rejected as parallel
+state when the epoch already exists.)
+
+## State transitions
+| transition | owner | trigger | durable | RuntimeNode effect | lease | epoch | metric | alert |
+|---|---|---|---|---|---|---|---|---|
+| connecting→connected | listener | 101 handshake + first pong/frame | epoch `open`, `last_authoritative_signal_at`=now | ready | held | open | connection state=connected | — |
+| connected (heartbeat) | listener | pong received OR real frame OR REST stasis ok | update `last_authoritative_signal_at` | ready | renew | open | last_signal_age reset | — |
+| connected→degraded | listener/sweeper | `last_authoritative_signal_at` older than grace | node events-degraded | held | open | events_degraded=1 | events-degraded alert |
+| degraded→disconnected | listener | ping timeout / read throw / stasis lost | `connection_closed` receipt | unavailable/degraded | released | closed | reconnect_total++ | (existing reconnect) |
+| disconnected→reconnecting | listener | backoff elapsed | — | (unchanged) | claim | — | — | — |
+| reconnecting→connected | listener | new 101 + pong | new epoch, signal fresh | ready (recovered) | held | new open | recovered event | resolves |
+Avoid one durable write per ping/pong: update `last_authoritative_signal_at` in-place (bounded to the
+heartbeat cadence), and emit degraded/recovered audit events only on the crossing, not per frame.
+
+## Timeout and grace contract
+Reuse existing `config/asterisk_ari.php` (no new env, no feature gate): `heartbeat_interval_ms`=15000
+(ping + REST correlation cadence), `websocket_handshake_timeout_ms`=4000 (connect), `request_timeout_ms`
+=4000, `reconnect_min/max_delay_ms`=1000/30000 (backoff), `lease_seconds`=45. New constants (as
+validated `config/asterisk_ari.php` keys, following the existing validation pattern): a **pong/read
+deadline** (e.g. one heartbeat interval — no pong within 15s → degraded candidate) and an
+**events-degraded grace** (e.g. 2× heartbeat = 30s of missing authoritative signal → node
+events-degraded), with **readiness restoration** on the first fresh pong/frame after reconnect. The
+existing `runtime_engine.stale_observation_seconds`=300 remains the coarse backstop.
+
+## Metrics and alerts
+Existing listener metric families (unchanged): `asterisk_ari_nodes` (by desired/observed state),
+`asterisk_ari_websocket_connections` (epochs by status), `asterisk_ari_events_received_total`,
+`asterisk_ari_reconnects_total`, `asterisk_ari_authentication_failures_total`,
+`asterisk_ari_listener_claims_total`, `asterisk_ari_listener_nodes` (claimed). Existing alerts:
+`UTCPAsteriskAriEventsUnavailable`, `UTCPAsteriskAriNodeWithoutListenerEvidence`,
+`UTCPAsteriskAriAuthenticationFailures`, `UTCPAsteriskAriReconnectLoop`, `UTCPAsteriskAriReceiptBacklog`,
+`UTCPAsteriskRuntimeObservationStale`. Minimum additions:
+- gauge `asterisk_ari_events_degraded_nodes` (current count of active nodes whose authoritative stream
+  signal is stale) — the durable, alertable health signal.
+- optional counter `asterisk_ari_listener_signal_timeouts_total{result}` (pong/read-deadline timeouts).
+- (reconnect_total and websocket_connections already cover reconnect/epoch churn.)
+Bounded labels only (state/result enums). **No** RuntimeNode UUID, Pod UID, lease owner, raw error,
+endpoint URL, or tenant label. One actionable alert: `UTCPAsteriskAriEventStreamDegraded` —
+`sum(asterisk_ari_events_degraded_nodes) > 0 for 5m`, severity warning, summary "Asterisk ARI event
+stream liveness is degraded on an active node while REST may still be reachable" (no manual-recovery
+wording; automatic reconnect owns recovery).
+
+## Events and audit
+Emit durable audit/outbox transitions only on the crossing (not per reconnect attempt):
+`runtime_node.event_listener_degraded` and `runtime_node.event_listener_recovered`, following the
+existing outbox `EventEnvelope::forAggregate` convention with bounded payload (runtime_node_id in the
+payload body, never as a metric label; classification/reason as bounded enums). These add operational
+value beyond metrics (correlatable timeline). Do not emit an event per ping/pong or per backoff tick.
+
+## Existing test coverage
+Present: `test_listener_leases_are_node_scoped_and_fenced` (claim/takeover/renew/release/isCurrent),
+`test_profile_configuration_change_releases_the_listener_lease...`, subscription-lost detection via REST
+`stasisApplicationRegistered` → `ari_stasis_subscription_lost` teardown (`AsteriskAriAdapterTest`
+~1227/1275), plus extensive absence-verification/conference-recovery coverage. **Missing:** quiet-healthy
+vs stalled/dead stream distinction; WebSocket ping/pong + pong-timeout; lease renewal gated/monitored
+against stream liveness; epoch single-open-per-node invariant + leak-on-inspect-failure regression;
+events-degraded RuntimeNode transition + recovery; placement blocked while events-degraded; active
+Conference during undetected event loss; REST-healthy-while-stream-dead; the new metric/alert behavior.
+
+## Missing implementation (this audit changed no code)
+(1) Fix epoch lifecycle: single open epoch per node (close same-owner superseded epochs; close the
+epoch on `openConnection` failure paths). (2) Add WebSocket ping/pong to the frame reader/writer
+(opcode-aware) as the positive per-socket signal. (3) Record `last_authoritative_signal_at` on the
+current epoch; degrade to events-degraded when stale. (4) Events-degraded RuntimeNode capability that
+blocks new placement + wakes bound-conference REST re-inspection while keeping REST control. (5) Metrics
+`asterisk_ari_events_degraded_nodes` (+ optional signal-timeout counter) and alert
+`UTCPAsteriskAriEventStreamDegraded`. (6) Degraded/recovered audit-outbox events. (7) The test matrix
+above. All specified here; none applied (evidence-only).
+
+## Controlled live-proof boundary
+NOT performed in this audit (read-only). Constraint discovered: ARI **REST and the event WebSocket share
+the same Asterisk HTTP port**, so a clean L4 "affect only the WebSocket" disruption is not trivially
+reversible without touching REST — a naive NetworkPolicy/iptables block would also kill REST (and
+NetworkPolicy/Pod/Asterisk mutation is prohibited). Define for the next Claude live-proof step: against
+one **idle** RuntimeNode only, induce a WebSocket-only stall that keeps Asterisk + ARI REST healthy
+(candidate mechanisms to establish from Asterisk evidence first: a socket-level pause of the listener's
+single WS connection, or a `tc`/proxy delay scoped to the WS stream), capture lease/epoch/listener/
+RuntimeNode state before and after, prove the node transitions to events-degraded within the grace and
+recovers on reconnect, and fully restore. Avoid active Conference, Pod deletion, Deployment scaling,
+direct DB writes; preserve the second node.
+
+## Implementation-readiness decision — A (bounded Codex implementation)
+The audit establishes the exact failure mechanism, the canonical authority (Model C corrected +
+ping/pong), lease semantics (ownership mutex, decoupled), epoch semantics (+ the leak fix), the
+RuntimeNode readiness effect (events-degraded capability), quiet-stream handling (ping/pong positive
+signal), timeout/reconnect behavior (existing config + two new validated constants), placement/failover
+effect (degrade + wake, no self-fence), metrics/events, the exact tests, and the live acceptance
+criteria. The controlled live proof is explicitly deferred to the Codex implementation's Claude-proof
+follow-up (Section 20 permits defining it for the next step). Ready for a bounded Codex implementation.
+
+## Ready-to-paste next prompt (Codex — bounded implementation)
+```
+T5-A64 — Implement events-only listener liveness authority
+
+Repo state: HEAD fa0d8d3, branch main, clean, UTCP_PHASE=T1. Implement exactly the T5-A63 contract in
+docs/evidence/t2/multi-node-failover-readiness.md. Do not begin V0. Keep UTCP_PHASE=T1. No feature gate,
+no manual reconnect command, no source-IP allowlist, no per-frame durable write. Do not push.
+
+1. Epoch lifecycle fix (AsteriskAriEventListener + RuntimeEventReceiptRepository): guarantee a single
+   open epoch per node. Close the epoch on every openConnection() failure path (inspect/conference-
+   inspection throw after openEpoch), and close the listener's own prior open epoch for the node before
+   opening a new one (not just other owners'). Add a regression proving no same-owner epoch leak.
+
+2. WebSocket ping/pong (AsteriskAriClient): make the frame reader opcode-aware (handle 0x1 text/0x9
+   ping/0xA pong/0x8 close); send a client ping (masked 0x9) each heartbeat interval; require a pong
+   (0xA) within a bounded read/pong deadline. A missing pong within the deadline is a degraded signal;
+   a close frame or read error is a disconnect.
+
+3. Authoritative stream signal: add last_authoritative_signal_at to runtime_event_connection_epochs
+   (migration) updated in-place (bounded to heartbeat cadence) on a received pong OR a real telephony
+   frame OR a successful REST stasis correlation. Do NOT update it merely because the process loop ran.
+   Keep the lease a pure ownership mutex (do not couple renew() to the socket).
+
+4. Events-degraded RuntimeNode capability: when last_authoritative_signal_at is older than the
+   events-degraded grace (new validated config/asterisk_ari.php constant, ~2x heartbeat), mark the node
+   events-degraded — block NEW Conference placement on it and wake bound-conference REST re-inspection,
+   while keeping REST control operations (fence/restore verification) usable. Restore to ready on the
+   first fresh pong/frame after reconnect. Reuse existing timings; add only the pong deadline and the
+   events-degraded grace as validated constants (no env feature gate).
+
+5. Metrics (MetricsController): add gauge asterisk_ari_events_degraded_nodes (active nodes with a stale
+   authoritative signal) and optional counter asterisk_ari_listener_signal_timeouts_total{result};
+   bounded enum labels only, no UUID/PodUID/owner/tenant/URL/raw-error labels.
+
+6. Alert (utcp-alerts.yaml): add UTCPAsteriskAriEventStreamDegraded —
+   sum(asterisk_ari_events_degraded_nodes) > 0 for 5m, severity warning, component asterisk-ari,
+   summary about ARI event-stream liveness degraded while REST may still be reachable; no manual-recovery
+   wording. Preserve the existing six asterisk-ari alerts.
+
+7. Audit/outbox transitions: emit runtime_node.event_listener_degraded / _recovered only on the crossing
+   (EventEnvelope::forAggregate convention, bounded payload; runtime_node_id in payload body, never a
+   metric label). No event per reconnect attempt.
+
+8. Tests: initial connect; auth failure; socket close; reconnect; quiet-healthy stream stays ready via
+   pong; pong-timeout → events-degraded; lease renewal continues but stream-signal drives readiness;
+   epoch single-open-per-node + leak-on-inspect-failure regression; events-degraded transition + recovery;
+   placement blocked while events-degraded; active Conference during event loss wakes REST re-inspection;
+   REST-healthy-while-stream-dead; metric + alert behavior.
+
+Verify: make repository-hygiene workflow-check secret-scan; make runtime-engine-config-check
+telephony-domain-config-check asterisk-ari-config-check asterisk-conference-config-check; make
+runtime-engine-test telephony-domain-test asterisk-ari-test asterisk-conference-test
+asterisk-conference-recovery-test; git diff --check. Commit
+feat(t5): detect events-only listener liveness loss. Do not push.
+Then hand to Claude Code for the T5-A65 controlled live proof (idle-node WebSocket-only stall; note
+REST and WS share the Asterisk HTTP port — establish the reversible WS-only stall mechanism from
+Asterisk evidence first).
+```
+
+## Verification performed (T5-A63)
+Read-only: full AsteriskAriEventListener trace; WebSocket lifecycle trace (openWebSocket/readEvent/
+closeWebSocket — non-blocking, no ping/pong, no feof/keepalive); lease authority trace
+(RuntimeListenerLeaseRepository — renew decoupled from socket); event-epoch trace (open/close/stale —
+no liveness timestamp; observed 3 open epochs/node under one owner); RuntimeNode readiness-writer trace
+(ProjectionService.apply + markStale, REST-fed observed_at); reconnect/backoff trace
+(AsteriskAriReconnectBackoff bounded); K8s probe trace (artisan about = process-only); historical
+listener-failure evidence scan (prior half-open + retained-gap notes); rollout overlap trace (lease +
+epoch fencing prevent duplicate authority; residual same-owner epoch leak); placement/failover impact
+analysis; existing metric/alert inventory; cardinality/secret scan of proposal (bounded labels only);
+env-gate/allowlist scan (none in listener path); manual reconnect/recovery surface scan (none);
+phase-marker inspection.
+make repository-hygiene / workflow-check / secret-scan: PASS. make *-config-check (4): PASS.
+make *-test: runtime-engine 21, telephony-domain 60, asterisk-ari 94, asterisk-conference 109,
+asterisk-conference-recovery 89: PASS. git diff --check / --cached: clean. No forbidden command run
+(no scale/Pod-delete/Asterisk-restart/ARI-unload/Conference/RuntimeBinding/SQL-write/Redis/migrate/
+lease/epoch mutation).
