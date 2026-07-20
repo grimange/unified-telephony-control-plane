@@ -392,6 +392,226 @@ final class AsteriskConferenceRecoveryTest extends TestCase
         $this->assertSame($nodeId, $result->runtimeNodeId);
     }
 
+    public function test_removed_participant_with_retired_final_binding_resolves_cleanup_node(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId, $participantId] = $this->conferenceFixture(
+            $tenantId,
+            $nodeId,
+            conferenceDesiredState: 'closed',
+            participantDesiredState: 'removed',
+            observedConferenceState: 'closed',
+            observedParticipantState: 'left',
+        );
+        $bindingId = (string) DB::table('conference_runtime_bindings')->where('conference_id', $conferenceId)->value('id');
+        DB::table('conference_runtime_bindings')->where('id', $bindingId)->update([
+            'status' => 'retired',
+            'unbound_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $reconciler = new ConferenceParticipantReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::observed(false, true, false)
+        ));
+
+        $result = $reconciler->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $participantId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('operation_required', $result->status);
+        $this->assertSame('conference.participant.remove', $result->operationType);
+        $this->assertSame($nodeId, $result->runtimeNodeId);
+        $this->assertSame($bindingId, $result->operationPayload['historical_runtime_binding_id']);
+        $this->assertTrue($result->operationPayload['orphan_reclamation']);
+    }
+
+    public function test_closed_conference_with_multiple_historical_bindings_uses_latest_final_binding(): void
+    {
+        [$tenantId, $formerNodeId] = $this->runtimeNode();
+        $finalNodeId = $this->runtimeNodeForTenant($tenantId, 'asterisk-ari-final');
+        [$conferenceId, $participantId] = $this->conferenceFixture(
+            $tenantId,
+            $formerNodeId,
+            conferenceDesiredState: 'closed',
+            participantDesiredState: 'removed',
+            observedConferenceState: 'closed',
+            observedParticipantState: 'left',
+        );
+        DB::table('conferences')->where('id', $conferenceId)->update(['runtime_node_id' => $finalNodeId, 'configuration_generation' => 3]);
+        DB::table('conference_runtime_bindings')->where('conference_id', $conferenceId)->update([
+            'status' => 'retired',
+            'unbound_at' => now()->subMinutes(2),
+            'bound_at' => now()->subMinutes(5),
+            'updated_at' => now()->subMinutes(2),
+        ]);
+        $finalBindingId = IdentityIds::new();
+        DB::table('conference_runtime_bindings')->insert([
+            'id' => $finalBindingId,
+            'tenant_id' => $tenantId,
+            'conference_id' => $conferenceId,
+            'runtime_node_id' => $finalNodeId,
+            'status' => 'retired',
+            'bound_at' => now()->subMinute(),
+            'unbound_at' => now(),
+            'created_at' => now()->subMinute(),
+            'updated_at' => now(),
+        ]);
+
+        $result = (new ConferenceParticipantReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::observed(false, true, false)
+        )))->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $participantId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('operation_required', $result->status);
+        $this->assertSame($finalNodeId, $result->runtimeNodeId);
+        $this->assertSame($finalBindingId, $result->operationPayload['historical_runtime_binding_id']);
+        $this->assertSame(3, $result->operationPayload['configuration_generation']);
+    }
+
+    public function test_open_participant_without_active_binding_does_not_use_retired_binding(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [, $participantId] = $this->conferenceFixture($tenantId, $nodeId, participantDesiredState: 'removed', observedConferenceState: 'ready', observedParticipantState: 'joined');
+        DB::table('conference_runtime_bindings')->where('runtime_node_id', $nodeId)->update([
+            'status' => 'retired',
+            'unbound_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $result = (new ConferenceParticipantReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::observed(true, true, true)
+        )))->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $participantId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('blocked', $result->status);
+        $this->assertSame('conference_runtime_binding_missing', $result->reasonCode);
+    }
+
+    public function test_participant_not_removed_does_not_use_retired_binding_cleanup_authority(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [, $participantId] = $this->conferenceFixture(
+            $tenantId,
+            $nodeId,
+            conferenceDesiredState: 'closed',
+            participantDesiredState: 'admitted',
+            observedConferenceState: 'closed',
+            observedParticipantState: 'joined',
+        );
+        DB::table('conference_runtime_bindings')->where('runtime_node_id', $nodeId)->update([
+            'status' => 'retired',
+            'unbound_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $result = (new ConferenceParticipantReconciler($this->inspectionServiceReturning(
+            RuntimeConferenceInspectionResult::observed(false, true, false)
+        )))->evaluate((object) [
+            'tenant_id' => $tenantId,
+            'target_id' => $participantId,
+            'last_operation_id' => null,
+        ]);
+
+        $this->assertSame('blocked', $result->status);
+        $this->assertSame('conference_runtime_binding_missing', $result->reasonCode);
+    }
+
+    public function test_historical_discovery_wakes_removed_participant_without_runtime_mutation(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId, $participantId] = $this->conferenceFixture(
+            $tenantId,
+            $nodeId,
+            conferenceDesiredState: 'closed',
+            participantDesiredState: 'removed',
+            observedConferenceState: 'closed',
+            observedParticipantState: 'left',
+        );
+        DB::table('conference_runtime_bindings')->where('conference_id', $conferenceId)->update([
+            'status' => 'retired',
+            'unbound_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $recorded = (object) ['items' => []];
+        $summary = app(TelephonyDomainService::class)->reclaimOrphanParticipantChannels(
+            10,
+            $this->inspectionServiceReturning(RuntimeConferenceInspectionResult::observed(false, true, false), $recorded),
+        );
+
+        $this->assertSame(1, $summary['candidates']);
+        $this->assertSame(1, $summary['inspected']);
+        $this->assertSame(1, $summary['woken']);
+        $this->assertSame([], $recorded->items, 'discovery may inspect but must not record runtime evidence or mutate ARI directly');
+        $this->assertDatabaseHas('runtime_reconciliation_states', [
+            'tenant_id' => $tenantId,
+            'target_type' => 'conference_participant',
+            'target_id' => $participantId,
+            'status' => 'waiting',
+        ]);
+        $this->assertSame(0, DB::table('runtime_operations')->count());
+    }
+
+    public function test_repeated_historical_discovery_is_idempotent(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [, $participantId] = $this->conferenceFixture(
+            $tenantId,
+            $nodeId,
+            conferenceDesiredState: 'closed',
+            participantDesiredState: 'removed',
+            observedConferenceState: 'closed',
+            observedParticipantState: 'left',
+        );
+        DB::table('conference_runtime_bindings')->where('runtime_node_id', $nodeId)->update([
+            'status' => 'retired',
+            'unbound_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $domain = app(TelephonyDomainService::class);
+        $inspections = $this->inspectionServiceReturning(RuntimeConferenceInspectionResult::observed(false, true, false));
+
+        $first = $domain->reclaimOrphanParticipantChannels(10, $inspections);
+        $second = $domain->reclaimOrphanParticipantChannels(10, $inspections);
+
+        $this->assertSame(1, $first['woken']);
+        $this->assertSame(1, $second['woken']);
+        $this->assertSame(1, DB::table('runtime_reconciliation_states')->where('target_id', $participantId)->count());
+        $this->assertSame(0, DB::table('runtime_operations')->count());
+    }
+
+    public function test_discovery_skips_removed_participant_when_runtime_reference_is_absent(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [, $participantId] = $this->conferenceFixture(
+            $tenantId,
+            $nodeId,
+            conferenceDesiredState: 'closed',
+            participantDesiredState: 'removed',
+            observedConferenceState: 'closed',
+            observedParticipantState: 'left',
+        );
+        DB::table('conference_runtime_bindings')->where('runtime_node_id', $nodeId)->update([
+            'status' => 'retired',
+            'unbound_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $summary = app(TelephonyDomainService::class)->reclaimOrphanParticipantChannels(
+            10,
+            $this->inspectionServiceReturning(RuntimeConferenceInspectionResult::observed(false, false, false)),
+        );
+
+        $this->assertSame(0, $summary['woken']);
+        $this->assertSame(0, DB::table('runtime_reconciliation_states')->where('target_id', $participantId)->count());
+    }
+
     public function test_removed_participant_already_absent_records_absence_without_remove_operation(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode();

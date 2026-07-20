@@ -28,10 +28,11 @@ final class ConferenceParticipantReconciler implements Reconciler
         if ($conference === null) {
             return ReconciliationResult::blocked('conference_runtime_binding_missing');
         }
-        $runtimeNodeId = $this->activeRuntimeNodeId((string) $conference->tenant_id, (string) $conference->id);
-        if ($runtimeNodeId === null) {
+        $cleanupAuthority = $this->cleanupRuntimeAuthority($conference, $participant);
+        if ($cleanupAuthority === null) {
             return ReconciliationResult::blocked('conference_runtime_binding_missing');
         }
+        $runtimeNodeId = $cleanupAuthority['runtime_node_id'];
         if (! DB::table('runtime_node_capabilities')->where('runtime_node_id', $runtimeNodeId)->where('capability_key', 'conference.participation')->exists()) {
             return ReconciliationResult::blocked('conference_participation_capability_missing');
         }
@@ -98,6 +99,8 @@ final class ConferenceParticipantReconciler implements Reconciler
                     'runtime_node_id' => $runtimeNodeId,
                     'configuration_generation' => (int) $conference->configuration_generation,
                     'desired_state' => $participant->desired_state,
+                    'historical_runtime_binding_id' => $cleanupAuthority['historical_runtime_binding_id'],
+                    'orphan_reclamation' => $cleanupAuthority['orphan_reclamation'],
                 ], 'conference_participant_runtime_drift', $runtimeNodeId);
             }
         }
@@ -112,17 +115,54 @@ final class ConferenceParticipantReconciler implements Reconciler
             'runtime_node_id' => $runtimeNodeId,
             'configuration_generation' => (int) $conference->configuration_generation,
             'desired_state' => $participant->desired_state,
+            'historical_runtime_binding_id' => $cleanupAuthority['historical_runtime_binding_id'],
+            'orphan_reclamation' => $cleanupAuthority['orphan_reclamation'],
         ], 'conference_participant_runtime_drift', $runtimeNodeId);
     }
 
-    private function activeRuntimeNodeId(string $tenantId, string $conferenceId): ?string
+    /**
+     * @return array{runtime_node_id:string,historical_runtime_binding_id:?string,orphan_reclamation:bool}|null
+     */
+    private function cleanupRuntimeAuthority(object $conference, object $participant): ?array
     {
         $runtimeNodeId = DB::table('conference_runtime_bindings')
-            ->where('tenant_id', $tenantId)
-            ->where('conference_id', $conferenceId)
+            ->where('tenant_id', (string) $conference->tenant_id)
+            ->where('conference_id', (string) $conference->id)
             ->where('status', 'active')
             ->value('runtime_node_id');
 
-        return is_string($runtimeNodeId) && $runtimeNodeId !== '' ? $runtimeNodeId : null;
+        if (is_string($runtimeNodeId) && $runtimeNodeId !== '') {
+            return [
+                'runtime_node_id' => $runtimeNodeId,
+                'historical_runtime_binding_id' => null,
+                'orphan_reclamation' => false,
+            ];
+        }
+
+        if ((string) $participant->desired_state !== 'removed') {
+            return null;
+        }
+        if ((string) $conference->desired_state !== 'closed' || (string) $conference->observed_state !== 'closed') {
+            return null;
+        }
+
+        $binding = DB::table('conference_runtime_bindings')
+            ->where('tenant_id', (string) $conference->tenant_id)
+            ->where('conference_id', (string) $conference->id)
+            ->where('status', 'retired')
+            ->whereNotNull('runtime_node_id')
+            ->orderByDesc('bound_at')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->first();
+        if ($binding === null || (string) $binding->runtime_node_id === '') {
+            return null;
+        }
+
+        return [
+            'runtime_node_id' => (string) $binding->runtime_node_id,
+            'historical_runtime_binding_id' => (string) $binding->id,
+            'orphan_reclamation' => true,
+        ];
     }
 }

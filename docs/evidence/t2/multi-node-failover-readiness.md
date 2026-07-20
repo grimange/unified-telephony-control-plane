@@ -213,6 +213,7 @@ Reusing existing vocabulary (conference `observed_state`, node `observed_state`,
 binding `status`, `configuration_generation`):
 
 ```
+
 BOUND_READY              active binding node observed ready; normal reconcile
 BOUND_UNAVAILABLE        bound node observed unavailable/stale; reconciler waits
 FAILOVER_ELIGIBLE        BOUND_UNAVAILABLE sustained ≥ eligibility window AND a
@@ -9051,3 +9052,91 @@ git diff --check
 feat(t5): reclaim orphaned participant Local channels after closure
 Do not push. Keep UTCP_PHASE=T1.
 ```
+
+## T5-A55 — Orphan participant Local-channel reclamation implementation
+
+**Verdict: repository implementation complete; live reclamation proof pending.**
+Implemented the bounded post-closure participant cleanup correction at `e90452d` lineage without
+mutating live Conferences, RuntimeBindings, Asterisk channels, Kubernetes resources, or PBX state.
+The T5-A50 live orphan pair (`participant=91b59874`, `conference=a90bac34`,
+retired binding `0efc6e14`, RuntimeNode `05ddb383`, Local legs `;1` and `;2`) remains live-proof
+pending; no claim is made that those channels were removed during this repository task.
+
+### Removed active-binding-only cleanup authority
+`ConferenceParticipantReconciler` no longer treats "no active RuntimeBinding" as a permanent block
+for a participant that is `desired_state=removed` after its Conference is conclusively
+`desired_state=closed` and `observed_state=closed`. Open Conferences and non-removed participants
+still require the active binding exactly as before. The post-closure path resolves cleanup authority
+from the most recent **retired** RuntimeBinding for the same tenant and Conference, ordered by
+`bound_at desc`, `created_at desc`, and stable id tie-breaker. The retired binding is not
+reactivated, no replacement binding is inserted, and Conference binding-retirement timing is not
+delayed or reversed.
+
+### Single cleanup executor preserved
+The only production PBX channel mutation remains the existing `conference.participant.remove`
+operation handled by the Asterisk runtime adapter's `removeParticipantChannel` path. The new domain
+discovery method only inspects and wakes reconciliation. It does not call ARI DELETE, Asterisk CLI,
+bridge deletion, direct SQL repair, or any alternate cleanup operation type.
+
+### Retired-binding authority and stale guards
+Post-closure participant cleanup carries the selected `historical_runtime_binding_id` and
+`orphan_reclamation=true` in the existing participant-remove operation payload. Before ARI mutation,
+the adapter revalidates that the Conference is still closed/closed, the participant is still
+removed, no active binding exists, the retained binding is still the most recent retired binding,
+and its RuntimeNode is the operation node. Existing generation and wrong-node guards remain in front
+of runtime mutation, so stale generation-G work cannot mutate after G+1 while the Conference remains
+open, and closed-Conference cleanup uses the final retained generation.
+
+### Both-leg completion evidence
+The Asterisk ARI client now derives the exact peer Local-channel id from the deterministic primary
+participant channel id (`utcp-part-{participantId};2`). Runtime inspection reports primary and peer
+presence, bridge membership, aggregate participant presence, and health-gated runtime-reference
+classification. Participant cleanup removes the primary deterministic channel and the exact peer
+channel through the existing cleanup executor, then re-inspects. A successful cleanup HTTP response
+alone is insufficient: the operation succeeds only after both deterministic legs are absent and no
+bridge membership remains. If either leg is still present, or ARI resource-family/transport health
+is unavailable, the persisted operation remains retryable/deferred.
+
+### Historical discovery and scheduling
+`TelephonyDomainService::reclaimOrphanParticipantChannels()` performs bounded discovery for removed
+participants whose Conferences are closed/closed, have no active binding, have a most recent retired
+binding with a RuntimeNode, and whose deterministic participant runtime reference is still observed
+through the runtime inspection service. Each candidate is revalidated under lock before waking the
+existing conference-participant reconciler. The scheduled internal command
+`telephony-domain:reclaim-orphan-participant-channels --once` runs every minute with
+`withoutOverlapping` and bounded batch controls. It has no tenant, participant, channel, or binding
+selector and is not a manual management authority.
+
+### Reclamation event
+Added transition-only `conference_participant.channel_reclaimed` audit and outbox evidence after a
+historical/orphan cleanup is proven complete. Payload evidence includes tenant, Conference,
+participant, session when present, RuntimeBinding, generation, RuntimeNode, primary and peer channel
+ids, classification, operation/attempt id, outcome, and timestamp. Repeated sweeps and repeated
+operation completions deduplicate on the participant aggregate and emit no duplicate event.
+
+### Concurrency and preservation
+The implementation preserves no-capacity, failover, generation, RuntimeBinding, Conference closure,
+and binding-retirement authority. A pending/open Conference without an active binding remains
+blocked rather than using retired authority. Former failover-generation bindings are ignored after
+closure because only the most recent retired binding may authorize cleanup. Discovery and delayed
+original cleanup converge through the same idempotent participant-remove executor. No prefix-wide
+channel scan, channel-age rule, hard-coded orphan id, active-binding recreation, binding deletion,
+environment gate, runtime allowlist, UI action, API endpoint, Kubernetes procedure, or Asterisk CLI
+management surface was added.
+
+### Test coverage
+Focused repository tests cover removed participants with active bindings, removed participants with
+retired final bindings, multiple-binding chronology, open Conference without active binding,
+participant-not-removed boundary, historical discovery and wake-up, discovery without runtime
+mutation, repeated discovery idempotency, runtime-reference absence skip, both-Local-leg
+completion, one-leg/still-present retry behavior, ARI family degraded deferral, reclamation
+event/outbox deduplication, stale generation and wrong-node guards, cleanup 404 preservation,
+Conference close regression, and binding-retirement preservation. The real handler path exercised
+is `ConferenceParticipantReconciler -> conference.participant.remove -> AsteriskRuntimeAdapter ->
+removeParticipantChannel -> health-gated reinspection -> channel_reclaimed event`.
+
+### Remaining proof
+The live automatic reclamation proof remains pending: deploy the repository fix, allow the scheduled
+discovery sweep to find the existing T5-A50 orphan pair, and prove both Local legs are removed
+without direct live mutation. Events-only listener liveness detection and other T5 follow-up work
+remain outside this bounded repository correction.

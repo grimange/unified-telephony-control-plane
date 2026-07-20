@@ -192,15 +192,18 @@ class AsteriskAriClient
         $profile = $this->profiles->requiredProfile($tenantId, $runtimeNodeId);
         $bridgeId = $this->conferenceBridgeId($conferenceId);
         $channelId = $this->participantChannelId($participantId);
+        $peerChannelId = $this->participantPeerChannelId($participantId);
         $timeoutMs = (int) $profile['request_timeout_ms'];
 
         $this->ariRequest($runtimeNodeId, 'POST', 'bridges/'.$bridgeId.'/removeChannel', ['channel' => $channelId], $timeoutMs, [200, 202, 204, 404, 409, 422]);
         $this->ariRequest($runtimeNodeId, 'DELETE', 'channels/'.$channelId, [], $timeoutMs, [200, 202, 204, 404, 409]);
+        $this->ariRequest($runtimeNodeId, 'DELETE', 'channels/'.$peerChannelId, [], $timeoutMs, [200, 202, 204, 404, 409]);
 
         return [
             'runtime_node_id' => $runtimeNodeId,
             'bridge_id' => $bridgeId,
             'channel_id' => $channelId,
+            'peer_channel_id' => $peerChannelId,
             'configuration_generation' => $configurationGeneration,
             'absent' => true,
         ];
@@ -238,13 +241,24 @@ class AsteriskAriClient
 
         if ($participantId !== null) {
             $channelId = $this->participantChannelId($participantId);
+            $peerChannelId = $this->participantPeerChannelId($participantId);
             $channelInspection = $this->getAriResourceForAuthoritativeInspection($runtimeNodeId, 'channels/'.$channelId, 'channels', $timeoutMs);
             $channel = $channelInspection['resource'];
+            $peerInspection = $this->getAriResourceForAuthoritativeInspection($runtimeNodeId, 'channels/'.$peerChannelId, 'channels', $timeoutMs);
+            $peerChannel = $peerInspection['resource'];
             $summary['participant_channel_exists'] = is_array($channel);
             $summary['participant_channel_in_bridge'] = in_array($channelId, $channels, true);
+            $summary['participant_peer_channel_id'] = $peerChannelId;
+            $summary['participant_peer_channel_exists'] = is_array($peerChannel);
+            $summary['participant_peer_channel_in_bridge'] = in_array($peerChannelId, $channels, true);
+            $summary['participant_any_channel_exists'] = is_array($channel) || is_array($peerChannel);
+            $summary['participant_any_channel_in_bridge'] = in_array($channelId, $channels, true) || in_array($peerChannelId, $channels, true);
             $summary['participant_runtime_reference_health'] = $channelInspection['runtime_reference_health'];
-            if (is_array($channel) || ! is_array($bridge)) {
-                $summary['runtime_reference_health'] = $channelInspection['runtime_reference_health'];
+            $summary['participant_peer_runtime_reference_health'] = $peerInspection['runtime_reference_health'];
+            if (is_array($channel) || is_array($peerChannel) || ! is_array($bridge)) {
+                $summary['runtime_reference_health'] = is_array($peerChannel)
+                    ? $peerInspection['runtime_reference_health']
+                    : $channelInspection['runtime_reference_health'];
             }
         }
 
@@ -586,6 +600,11 @@ class AsteriskAriClient
     public function participantChannelId(string $participantId): string
     {
         return (string) config('asterisk_ari.conference.participant_channel_id_prefix', 'utcp-part-').$this->safeRuntimeReference($participantId);
+    }
+
+    public function participantPeerChannelId(string $participantId): string
+    {
+        return $this->participantChannelId($participantId).';2';
     }
 
     private function conferenceBridgeName(string $conferenceId): string

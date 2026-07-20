@@ -11,6 +11,7 @@ use App\ControlPlane\RuntimeOperations\OperationStatus;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\IdempotencyKey;
 use App\Identity\IdentityContext;
+use App\RuntimeEngine\Commands\RuntimeConferenceInspectionService;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use App\TelephonyDomain\Signaling\SignalingCredentialService;
 use Illuminate\Http\Request;
@@ -550,6 +551,157 @@ final class TelephonyDomainService
         return $summary;
     }
 
+    /**
+     * @return array{candidates:int,inspected:int,woken:int,skipped:int,unavailable:int}
+     */
+    public function reclaimOrphanParticipantChannels(int $batchSize = 100, ?RuntimeConferenceInspectionService $inspections = null): array
+    {
+        $limit = max(1, min(500, $batchSize));
+        $candidates = DB::table('conference_participants')
+            ->join('conferences', function ($join): void {
+                $join->on('conferences.id', '=', 'conference_participants.conference_id')
+                    ->on('conferences.tenant_id', '=', 'conference_participants.tenant_id');
+            })
+            ->where('conference_participants.desired_state', 'removed')
+            ->where('conferences.desired_state', 'closed')
+            ->where('conferences.observed_state', 'closed')
+            ->whereNotExists(function ($query): void {
+                $query->selectRaw('1')
+                    ->from('conference_runtime_bindings')
+                    ->whereColumn('conference_runtime_bindings.tenant_id', 'conferences.tenant_id')
+                    ->whereColumn('conference_runtime_bindings.conference_id', 'conferences.id')
+                    ->where('conference_runtime_bindings.status', 'active');
+            })
+            ->whereExists(function ($query): void {
+                $query->selectRaw('1')
+                    ->from('conference_runtime_bindings')
+                    ->whereColumn('conference_runtime_bindings.tenant_id', 'conferences.tenant_id')
+                    ->whereColumn('conference_runtime_bindings.conference_id', 'conferences.id')
+                    ->where('conference_runtime_bindings.status', 'retired')
+                    ->whereNotNull('conference_runtime_bindings.runtime_node_id');
+            })
+            ->orderBy('conference_participants.updated_at')
+            ->orderBy('conference_participants.id')
+            ->limit($limit)
+            ->get([
+                'conference_participants.id as participant_id',
+                'conference_participants.tenant_id',
+                'conference_participants.conference_id',
+                'conference_participants.telephony_session_id',
+                'conferences.configuration_generation',
+            ]);
+
+        $summary = [
+            'candidates' => $candidates->count(),
+            'inspected' => 0,
+            'woken' => 0,
+            'skipped' => 0,
+            'unavailable' => 0,
+        ];
+        $inspectionService = $inspections ?? app(RuntimeConferenceInspectionService::class);
+
+        foreach ($candidates as $candidate) {
+            $binding = $this->latestRuntimeBindingForConference((string) $candidate->tenant_id, (string) $candidate->conference_id);
+            if ($binding === null || (string) $binding->runtime_node_id === '') {
+                $summary['skipped']++;
+
+                continue;
+            }
+
+            $inspection = $inspectionService->inspect((string) $candidate->tenant_id, (string) $binding->runtime_node_id, (string) $candidate->conference_id, (string) $candidate->participant_id);
+            $summary['inspected']++;
+            if (in_array($inspection->status, ['unavailable', 'failed'], true)) {
+                $summary['unavailable']++;
+
+                continue;
+            }
+            if ($inspection->status !== 'observed' || ! ((bool) $inspection->participantPresent || (bool) $inspection->participantAttached)) {
+                $summary['skipped']++;
+
+                continue;
+            }
+
+            if ($this->wakeOrphanParticipantReconciliationCandidate($candidate, $binding)) {
+                $summary['woken']++;
+            } else {
+                $summary['skipped']++;
+            }
+        }
+
+        return $summary;
+    }
+
+    /**
+     * @param  array<string, mixed>  $evidence
+     */
+    public function recordOrphanParticipantChannelReclaimed(array $evidence): bool
+    {
+        return DB::transaction(function () use ($evidence): bool {
+            $tenantId = (string) ($evidence['tenant_id'] ?? '');
+            $conferenceId = (string) ($evidence['conference_id'] ?? '');
+            $participantId = (string) ($evidence['participant_id'] ?? '');
+            $bindingId = (string) ($evidence['runtime_binding_id'] ?? '');
+            $runtimeNodeId = (string) ($evidence['runtime_node_id'] ?? '');
+            $generation = (int) ($evidence['conference_generation'] ?? 0);
+            if ($tenantId === '' || $conferenceId === '' || $participantId === '' || $bindingId === '' || $runtimeNodeId === '' || $generation < 1) {
+                return false;
+            }
+
+            $conference = DB::table('conferences')->where('id', $conferenceId)->where('tenant_id', $tenantId)->lockForUpdate()->first();
+            $participant = DB::table('conference_participants')->where('id', $participantId)->where('tenant_id', $tenantId)->where('conference_id', $conferenceId)->lockForUpdate()->first();
+            $binding = DB::table('conference_runtime_bindings')->where('id', $bindingId)->where('tenant_id', $tenantId)->where('conference_id', $conferenceId)->lockForUpdate()->first();
+            if ($conference === null || $participant === null || $binding === null) {
+                return false;
+            }
+            if ((string) $conference->desired_state !== 'closed' || (string) $conference->observed_state !== 'closed') {
+                return false;
+            }
+            if ((string) $participant->desired_state !== 'removed') {
+                return false;
+            }
+            if ((int) $conference->configuration_generation !== $generation || (string) $binding->runtime_node_id !== $runtimeNodeId) {
+                return false;
+            }
+            if ((string) $binding->status !== 'retired') {
+                return false;
+            }
+            if (! $this->isLatestRuntimeBinding((string) $binding->tenant_id, (string) $binding->conference_id, (string) $binding->id)) {
+                return false;
+            }
+            if (DB::table('control_plane_outbox_messages')
+                ->where('event_type', 'conference_participant.channel_reclaimed')
+                ->where('aggregate_type', 'conference_participant')
+                ->where('aggregate_id', $participantId)
+                ->exists()) {
+                return false;
+            }
+
+            $context = ExecutionContext::system(reason: 'orphan_participant_channel_reclaimed', tenantId: $tenantId, origin: 'telephony-domain');
+            $payload = [
+                'tenant_id' => $tenantId,
+                'conference_id' => $conferenceId,
+                'conference_participant_id' => $participantId,
+                'participant_id' => $participantId,
+                'telephony_session_id' => (string) ($evidence['telephony_session_id'] ?? $participant->telephony_session_id ?? ''),
+                'runtime_binding_id' => $bindingId,
+                'conference_generation' => $generation,
+                'configuration_generation' => $generation,
+                'runtime_node_id' => $runtimeNodeId,
+                'primary_channel_id' => (string) ($evidence['primary_channel_id'] ?? ''),
+                'peer_channel_id' => (string) ($evidence['peer_channel_id'] ?? ''),
+                'classification' => (string) ($evidence['classification'] ?? 'post_closure_orphan'),
+                'attempt_id' => (string) ($evidence['operation_id'] ?? ''),
+                'operation_id' => (string) ($evidence['operation_id'] ?? ''),
+                'outcome' => (string) ($evidence['outcome'] ?? 'reclaimed'),
+                'occurred_at' => $context->occurredAt->toISOString(),
+            ];
+            $this->audit->append($context, 'conference_participant.channel_reclaimed', 'conference_participant', $participantId, $payload, 'post_closure_orphan');
+            $this->outbox->append(EventEnvelope::forAggregate('conference_participant.channel_reclaimed', 1, 'conference_participant', $participantId, $payload, $context));
+
+            return true;
+        });
+    }
+
     private function retireClosedConferenceBindingCandidate(object $candidate, string $reason): bool
     {
         return DB::transaction(function () use ($candidate, $reason): bool {
@@ -633,6 +785,74 @@ final class TelephonyDomainService
 
             return true;
         });
+    }
+
+    private function wakeOrphanParticipantReconciliationCandidate(object $candidate, object $binding): bool
+    {
+        return DB::transaction(function () use ($candidate, $binding): bool {
+            $conference = DB::table('conferences')
+                ->where('id', (string) $candidate->conference_id)
+                ->where('tenant_id', (string) $candidate->tenant_id)
+                ->lockForUpdate()
+                ->first();
+            $participant = DB::table('conference_participants')
+                ->where('id', (string) $candidate->participant_id)
+                ->where('tenant_id', (string) $candidate->tenant_id)
+                ->where('conference_id', (string) $candidate->conference_id)
+                ->lockForUpdate()
+                ->first();
+            if ($conference === null || $participant === null) {
+                return false;
+            }
+            if ((string) $conference->desired_state !== 'closed' || (string) $conference->observed_state !== 'closed') {
+                return false;
+            }
+            if ((string) $participant->desired_state !== 'removed') {
+                return false;
+            }
+            if ((int) $conference->configuration_generation !== (int) $candidate->configuration_generation) {
+                return false;
+            }
+            if (DB::table('conference_runtime_bindings')
+                ->where('tenant_id', (string) $candidate->tenant_id)
+                ->where('conference_id', (string) $candidate->conference_id)
+                ->where('status', 'active')
+                ->exists()) {
+                return false;
+            }
+            if (! $this->isLatestRuntimeBinding((string) $candidate->tenant_id, (string) $candidate->conference_id, (string) $binding->id)) {
+                return false;
+            }
+
+            $this->reconciliation->wakeTarget(
+                (string) $candidate->tenant_id,
+                'conference_participant',
+                (string) $candidate->participant_id,
+                $this->participantDesiredGeneration($conference, 'removed'),
+            );
+
+            return true;
+        });
+    }
+
+    private function latestRuntimeBindingForConference(string $tenantId, string $conferenceId): ?object
+    {
+        return DB::table('conference_runtime_bindings')
+            ->where('tenant_id', $tenantId)
+            ->where('conference_id', $conferenceId)
+            ->where('status', 'retired')
+            ->whereNotNull('runtime_node_id')
+            ->orderByDesc('bound_at')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    private function isLatestRuntimeBinding(string $tenantId, string $conferenceId, string $bindingId): bool
+    {
+        $latest = $this->latestRuntimeBindingForConference($tenantId, $conferenceId);
+
+        return $latest !== null && (string) $latest->id === $bindingId;
     }
 
     public function hasDistinctEligibleReplacement(string $tenantId, string $conferenceId, string $formerRuntimeNodeId): bool

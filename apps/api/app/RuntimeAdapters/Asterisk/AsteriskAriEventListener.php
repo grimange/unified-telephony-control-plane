@@ -342,7 +342,7 @@ final class AsteriskAriEventListener
 
                 $channelId = $this->client->participantChannelId((string) $participant->id);
                 $participantStillDesired = (string) $conference->desired_state === 'open' && (string) $participant->desired_state === 'admitted';
-                $participantInBridge = (bool) ($participantSummary['participant_channel_in_bridge'] ?? false);
+                $participantInBridge = (bool) ($participantSummary['participant_any_channel_in_bridge'] ?? $participantSummary['participant_channel_in_bridge'] ?? false);
 
                 if ($participantStillDesired) {
                     $this->reconciliation->wakeTarget((string) $participant->tenant_id, 'conference_participant', (string) $participant->id, $this->participantDesiredGeneration($conference, 'admitted'), 0);
@@ -368,7 +368,7 @@ final class AsteriskAriEventListener
                     ]);
                 }
 
-                if (((string) $participant->desired_state === 'removed' || (string) $conference->desired_state === 'closed') && ! (bool) ($participantSummary['participant_channel_exists'] ?? false)) {
+                if (((string) $participant->desired_state === 'removed' || (string) $conference->desired_state === 'closed') && ! (bool) ($participantSummary['participant_any_channel_exists'] ?? $participantSummary['participant_channel_exists'] ?? false)) {
                     $this->ingest($node, $epochId, 'inspection:channel-absent:'.(string) $participant->id.':'.(int) $conference->configuration_generation.':'.$inspectionRun, $this->catalog->eventType('channel_destroyed'), [
                         'runtime_node_id' => (string) $node->id,
                         'configuration_generation' => (int) $conference->configuration_generation,

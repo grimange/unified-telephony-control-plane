@@ -7,6 +7,7 @@ use App\RuntimeEngine\Commands\RuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeConferenceInspectionAdapter;
 use App\RuntimeEngine\Commands\RuntimeConferenceInspectionResult;
 use App\RuntimeEngine\Events\RuntimeEventReceiptRepository;
+use App\TelephonyDomain\TelephonyDomainService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -16,6 +17,7 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
         private readonly AsteriskCatalog $catalog,
         private readonly AsteriskAriClient $client,
         private readonly ?RuntimeEventReceiptRepository $receipts = null,
+        private readonly ?TelephonyDomainService $domain = null,
     ) {}
 
     public function adapterKey(): string
@@ -73,8 +75,12 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
 
         return RuntimeConferenceInspectionResult::observed(
             (bool) ($summary['bridge_exists'] ?? false),
-            array_key_exists('participant_channel_exists', $summary) ? (bool) $summary['participant_channel_exists'] : null,
-            array_key_exists('participant_channel_in_bridge', $summary) ? (bool) $summary['participant_channel_in_bridge'] : null,
+            array_key_exists('participant_any_channel_exists', $summary)
+                ? (bool) $summary['participant_any_channel_exists']
+                : (array_key_exists('participant_channel_exists', $summary) ? (bool) $summary['participant_channel_exists'] : null),
+            array_key_exists('participant_any_channel_in_bridge', $summary)
+                ? (bool) $summary['participant_any_channel_in_bridge']
+                : (array_key_exists('participant_channel_in_bridge', $summary) ? (bool) $summary['participant_channel_in_bridge'] : null),
             $this->runtimeReferenceHealth($summary),
         );
     }
@@ -151,7 +157,7 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
                 'occurred_at' => now()->toISOString(),
             ]) || $recorded;
         }
-        if (((string) $participant->desired_state === 'removed' || (string) $conference->desired_state === 'closed') && ! (bool) ($summary['participant_channel_exists'] ?? false)) {
+        if (((string) $participant->desired_state === 'removed' || (string) $conference->desired_state === 'closed') && ! (bool) ($summary['participant_any_channel_exists'] ?? $summary['participant_channel_exists'] ?? false)) {
             $recorded = $this->ingestInspectionEvidence($node, (string) $epoch->id, 'inspection:channel-absent:'.$participantId.':'.(int) $conference->configuration_generation.':'.$inspectionRun, $this->catalog->eventType('channel_destroyed'), [
                 'runtime_node_id' => $runtimeNodeId,
                 'configuration_generation' => (int) $conference->configuration_generation,
@@ -312,6 +318,15 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
                 'stale_operation' => true,
             ]);
         }
+        if ((bool) data_get($operation, 'payload.orphan_reclamation', false) && ! $this->orphanReclamationAuthorityValid($operation, $node, $conference, $participant)) {
+            return $this->completed('runtime_operation.asterisk_conference_participant_stale', $operation, [
+                'conference_id' => (string) $conference->id,
+                'conference_participant_id' => (string) $participant->id,
+                'configuration_generation' => (int) $conference->configuration_generation,
+                'runtime_reference_present' => false,
+                'stale_operation' => true,
+            ]);
+        }
 
         $result = $this->client->removeParticipantChannel(
             (string) $node->tenant_id,
@@ -320,12 +335,45 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
             (string) $participant->id,
             (int) $conference->configuration_generation,
         );
+        $summary = $this->client->conferenceRuntimeSummary(
+            (string) $node->tenant_id,
+            (string) $node->id,
+            (string) $conference->id,
+            (string) $participant->id,
+        );
+        if ((bool) ($summary['participant_any_channel_exists'] ?? $summary['participant_channel_exists'] ?? false)
+            || (bool) ($summary['participant_any_channel_in_bridge'] ?? $summary['participant_channel_in_bridge'] ?? false)) {
+            throw new AsteriskAriException(FailureClass::RuntimeUnavailable, 'ari_participant_cleanup_pending', 'ARI participant Local channel pair cleanup has not converged.', true);
+        }
+
+        if ((bool) data_get($operation, 'payload.orphan_reclamation', false)) {
+            ($this->domain ?? app(TelephonyDomainService::class))->recordOrphanParticipantChannelReclaimed([
+                'tenant_id' => (string) $node->tenant_id,
+                'conference_id' => (string) $conference->id,
+                'participant_id' => (string) $participant->id,
+                'telephony_session_id' => (string) $participant->telephony_session_id,
+                'runtime_binding_id' => (string) data_get($operation, 'payload.historical_runtime_binding_id', ''),
+                'runtime_node_id' => (string) $node->id,
+                'conference_generation' => (int) $conference->configuration_generation,
+                'operation_id' => (string) ($operation['id'] ?? ''),
+                'primary_channel_id' => $this->client->participantChannelId((string) $participant->id),
+                'peer_channel_id' => $this->client->participantPeerChannelId((string) $participant->id),
+                'classification' => 'post_closure_orphan',
+                'outcome' => 'reclaimed',
+            ]);
+        }
 
         return $this->completed('runtime_operation.asterisk_conference_participant_removed', $operation, [
             'conference_id' => (string) $conference->id,
             'conference_participant_id' => (string) $participant->id,
             'configuration_generation' => (int) $result['configuration_generation'],
-            'runtime_reference_present' => true,
+            'runtime_reference_present' => false,
+            'participant_channel_id' => $this->client->participantChannelId((string) $participant->id),
+            'participant_peer_channel_id' => $this->client->participantPeerChannelId((string) $participant->id),
+            'participant_channel_present' => false,
+            'participant_peer_channel_present' => false,
+            'runtime_reference_health' => $this->runtimeReferenceHealth($summary),
+            'orphan_reclamation' => (bool) data_get($operation, 'payload.orphan_reclamation', false),
         ]);
     }
 
@@ -386,7 +434,7 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
             ->pluck('id');
         foreach ($participantIds as $participantId) {
             $participantSummary = $this->client->conferenceRuntimeSummary((string) $node->tenant_id, (string) $node->id, $conferenceId, (string) $participantId);
-            if ((bool) ($participantSummary['participant_channel_exists'] ?? false)) {
+            if ((bool) ($participantSummary['participant_any_channel_exists'] ?? $participantSummary['participant_channel_exists'] ?? false)) {
                 return $this->absenceVerificationCompleted($operation, $conferenceId, $formerBindingId, $formerRuntimeNodeId, $generation, 'present', [
                     'bridge_present' => false,
                     'participant_channel_present' => true,
@@ -466,6 +514,44 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
     }
 
     /**
+     * @param  array<string, mixed>  $operation
+     */
+    private function orphanReclamationAuthorityValid(array $operation, object $node, object $conference, object $participant): bool
+    {
+        if ((string) $conference->desired_state !== 'closed' || (string) $conference->observed_state !== 'closed') {
+            return false;
+        }
+        if ((string) $participant->desired_state !== 'removed') {
+            return false;
+        }
+        if (DB::table('conference_runtime_bindings')
+            ->where('tenant_id', (string) $node->tenant_id)
+            ->where('conference_id', (string) $conference->id)
+            ->where('status', 'active')
+            ->exists()) {
+            return false;
+        }
+
+        $bindingId = (string) data_get($operation, 'payload.historical_runtime_binding_id', '');
+        if ($bindingId === '') {
+            return false;
+        }
+        $latest = DB::table('conference_runtime_bindings')
+            ->where('tenant_id', (string) $node->tenant_id)
+            ->where('conference_id', (string) $conference->id)
+            ->where('status', 'retired')
+            ->whereNotNull('runtime_node_id')
+            ->orderByDesc('bound_at')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->first();
+
+        return $latest !== null
+            && (string) $latest->id === $bindingId
+            && (string) $latest->runtime_node_id === (string) $node->id;
+    }
+
+    /**
      * @param  array<string, mixed>  $summary
      */
     private function runtimeReferenceHealth(array $summary): string
@@ -475,7 +561,9 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
             return $health;
         }
 
-        return (bool) ($summary['bridge_exists'] ?? false) || (bool) ($summary['participant_channel_exists'] ?? false)
+        return (bool) ($summary['bridge_exists'] ?? false)
+            || (bool) ($summary['participant_any_channel_exists'] ?? false)
+            || (bool) ($summary['participant_channel_exists'] ?? false)
             ? 'healthy_present'
             : 'healthy_absent';
     }

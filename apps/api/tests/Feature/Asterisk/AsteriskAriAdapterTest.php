@@ -200,17 +200,23 @@ final class AsteriskAriAdapterTest extends TestCase
             ['status' => 200, 'body' => json_encode(['id' => 'utcp-conf-conference-channel-absent', 'channels' => []], JSON_THROW_ON_ERROR)],
             ['status' => 404, 'body' => ''],
             ['status' => 200, 'body' => '[]'],
+            ['status' => 404, 'body' => ''],
+            ['status' => 200, 'body' => '[]'],
         ]);
 
         $summary = $client->conferenceRuntimeSummary($tenantId, $nodeId, 'conference-channel-absent', 'participant-channel-absent');
 
         $this->assertTrue($summary['bridge_exists']);
         $this->assertFalse($summary['participant_channel_exists']);
+        $this->assertFalse($summary['participant_peer_channel_exists']);
+        $this->assertFalse($summary['participant_any_channel_exists']);
         $this->assertSame('healthy_present', $summary['runtime_reference_health']);
         $this->assertSame('healthy_absent', $summary['participant_runtime_reference_health']);
         $this->assertSame([
             'bridges/'.$client->conferenceBridgeId('conference-channel-absent'),
             'channels/'.$client->participantChannelId('participant-channel-absent'),
+            'channels',
+            'channels/'.$client->participantPeerChannelId('participant-channel-absent'),
             'channels',
         ], array_column($client->requests, 'resource'));
     }
@@ -352,6 +358,7 @@ final class AsteriskAriAdapterTest extends TestCase
         $client = $this->ariClientWithResponses([
             ['status' => 404, 'body' => ''],
             ['status' => 404, 'body' => ''],
+            ['status' => 404, 'body' => ''],
         ]);
 
         $result = $client->removeParticipantChannel($tenantId, $nodeId, 'conference-cleanup', 'participant-cleanup', 7);
@@ -360,7 +367,131 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertSame([
             'bridges/'.$client->conferenceBridgeId('conference-cleanup').'/removeChannel',
             'channels/'.$client->participantChannelId('participant-cleanup'),
+            'channels/'.$client->participantPeerChannelId('participant-cleanup'),
         ], array_column($client->requests, 'resource'));
+    }
+
+    public function test_participant_remove_operation_reinspects_both_local_legs_before_completion(): void
+    {
+        [$tenantId, $nodeId, $conferenceId, $participantId] = $this->participantCleanupContext('closed', 'removed', 'closed', 'joined');
+        $client = $this->ariClientWithResponses([
+            ['status' => 202, 'body' => ''],
+            ['status' => 202, 'body' => ''],
+            ['status' => 202, 'body' => ''],
+            ['status' => 404, 'body' => ''],
+            ['status' => 200, 'body' => '[]'],
+            ['status' => 404, 'body' => ''],
+            ['status' => 200, 'body' => '[]'],
+            ['status' => 404, 'body' => ''],
+            ['status' => 200, 'body' => '[]'],
+        ]);
+        $adapter = new AsteriskRuntimeAdapter(new AsteriskCatalog, $client);
+
+        $result = $adapter->execute($this->participantRemoveOperation($tenantId, $nodeId, $conferenceId, $participantId));
+
+        $this->assertSame('completed', $result['status']);
+        $this->assertSame('runtime_operation.asterisk_conference_participant_removed', $result['event_type']);
+        $this->assertFalse($result['event_payload']['runtime_reference_present']);
+        $this->assertFalse($result['event_payload']['participant_channel_present']);
+        $this->assertFalse($result['event_payload']['participant_peer_channel_present']);
+        $this->assertSame([
+            'bridges/'.$client->conferenceBridgeId($conferenceId).'/removeChannel',
+            'channels/'.$client->participantChannelId($participantId),
+            'channels/'.$client->participantPeerChannelId($participantId),
+            'bridges/'.$client->conferenceBridgeId($conferenceId),
+            'bridges',
+            'channels/'.$client->participantChannelId($participantId),
+            'channels',
+            'channels/'.$client->participantPeerChannelId($participantId),
+            'channels',
+        ], array_column($client->requests, 'resource'));
+    }
+
+    public function test_participant_remove_operation_retries_when_local_peer_remains_present(): void
+    {
+        [$tenantId, $nodeId, $conferenceId, $participantId] = $this->participantCleanupContext('closed', 'removed', 'closed', 'joined');
+        $client = $this->ariClientWithResponses([
+            ['status' => 202, 'body' => ''],
+            ['status' => 202, 'body' => ''],
+            ['status' => 202, 'body' => ''],
+            ['status' => 404, 'body' => ''],
+            ['status' => 200, 'body' => '[]'],
+            ['status' => 404, 'body' => ''],
+            ['status' => 200, 'body' => '[]'],
+            ['status' => 200, 'body' => json_encode(['id' => 'peer'], JSON_THROW_ON_ERROR)],
+        ]);
+        $adapter = new AsteriskRuntimeAdapter(new AsteriskCatalog, $client);
+
+        $result = $adapter->execute($this->participantRemoveOperation($tenantId, $nodeId, $conferenceId, $participantId));
+
+        $this->assertSame('retry_scheduled', $result['status']);
+        $this->assertSame('runtime_unavailable', $result['failure_class']);
+        $this->assertSame('ari_participant_cleanup_pending', $result['failure_code']);
+    }
+
+    public function test_participant_remove_operation_defers_when_completion_inspection_family_degraded(): void
+    {
+        [$tenantId, $nodeId, $conferenceId, $participantId] = $this->participantCleanupContext('closed', 'removed', 'closed', 'joined');
+        $client = $this->ariClientWithResponses([
+            ['status' => 202, 'body' => ''],
+            ['status' => 202, 'body' => ''],
+            ['status' => 202, 'body' => ''],
+            ['status' => 404, 'body' => ''],
+            ['status' => 200, 'body' => '[]'],
+            ['status' => 404, 'body' => ''],
+            ['status' => 500, 'body' => ''],
+        ]);
+        $adapter = new AsteriskRuntimeAdapter(new AsteriskCatalog, $client);
+
+        $result = $adapter->execute($this->participantRemoveOperation($tenantId, $nodeId, $conferenceId, $participantId));
+
+        $this->assertSame('retry_scheduled', $result['status']);
+        $this->assertSame('runtime_unavailable', $result['failure_class']);
+        $this->assertSame('ari_resource_family_degraded', $result['failure_code']);
+    }
+
+    public function test_orphan_reclamation_event_is_emitted_once_after_proven_cleanup(): void
+    {
+        [$tenantId, $nodeId, $conferenceId, $participantId] = $this->participantCleanupContext('closed', 'removed', 'closed', 'left');
+        $bindingId = (string) DB::table('conference_runtime_bindings')->where('conference_id', $conferenceId)->value('id');
+        DB::table('conference_runtime_bindings')->where('id', $bindingId)->update([
+            'status' => 'retired',
+            'unbound_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $responses = [
+            ['status' => 202, 'body' => ''],
+            ['status' => 202, 'body' => ''],
+            ['status' => 202, 'body' => ''],
+            ['status' => 404, 'body' => ''],
+            ['status' => 200, 'body' => '[]'],
+            ['status' => 404, 'body' => ''],
+            ['status' => 200, 'body' => '[]'],
+            ['status' => 404, 'body' => ''],
+            ['status' => 200, 'body' => '[]'],
+        ];
+
+        $operation = $this->participantRemoveOperation($tenantId, $nodeId, $conferenceId, $participantId, [
+            'historical_runtime_binding_id' => $bindingId,
+            'orphan_reclamation' => true,
+        ]);
+        $first = (new AsteriskRuntimeAdapter(new AsteriskCatalog, $this->ariClientWithResponses($responses)))->execute($operation);
+        $second = (new AsteriskRuntimeAdapter(new AsteriskCatalog, $this->ariClientWithResponses($responses)))->execute($operation);
+
+        $this->assertSame('completed', $first['status']);
+        $this->assertSame('completed', $second['status']);
+        $this->assertDatabaseCount('control_plane_outbox_messages', 1);
+        $this->assertDatabaseHas('control_plane_outbox_messages', [
+            'event_type' => 'conference_participant.channel_reclaimed',
+            'aggregate_type' => 'conference_participant',
+            'aggregate_id' => $participantId,
+        ]);
+        $this->assertDatabaseCount('control_plane_audit_records', 1);
+        $this->assertDatabaseHas('control_plane_audit_records', [
+            'action' => 'conference_participant.channel_reclaimed',
+            'subject_type' => 'conference_participant',
+            'subject_id' => $participantId,
+        ]);
     }
 
     public function test_reconstruction_absence_and_create_conflict_remain_idempotent_without_family_probe(): void
@@ -1402,6 +1533,102 @@ final class AsteriskAriAdapterTest extends TestCase
         }
 
         return [$tenantId, $nodeId, $conferenceId, $bindingId];
+    }
+
+    /**
+     * @return array{0:string,1:string,2:string,3:string}
+     */
+    private function participantCleanupContext(string $conferenceDesiredState, string $participantDesiredState, string $conferenceObservedState, string $participantObservedState): array
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $userId = IdentityIds::new();
+        $sessionId = IdentityIds::new();
+        $conferenceId = IdentityIds::new();
+        $participantId = IdentityIds::new();
+        DB::table('users')->insert([
+            'id' => $userId,
+            'email' => 'cleanup-'.substr($userId, 0, 8).'@utcp.local.test',
+            'normalized_email' => 'cleanup-'.substr($userId, 0, 8).'@utcp.local.test',
+            'display_name' => 'Cleanup User',
+            'password' => 'not-used',
+            'status' => 'active',
+            'password_change_required' => false,
+            'session_version' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('telephony_sessions')->insert([
+            'id' => $sessionId,
+            'tenant_id' => $tenantId,
+            'user_id' => $userId,
+            'status' => 'ended',
+            'issued_at' => now()->subMinutes(5),
+            'expires_at' => now()->addHour(),
+            'ended_at' => now()->subMinute(),
+            'created_at' => now()->subMinutes(5),
+            'updated_at' => now()->subMinute(),
+        ]);
+        DB::table('conferences')->insert([
+            'id' => $conferenceId,
+            'tenant_id' => $tenantId,
+            'slug' => 'cleanup-'.substr($conferenceId, 0, 8),
+            'display_name' => 'Cleanup Conference',
+            'runtime_node_id' => $nodeId,
+            'desired_state' => $conferenceDesiredState,
+            'observed_state' => $conferenceObservedState,
+            'configuration_generation' => 1,
+            'observed_generation' => $conferenceObservedState === 'closed' ? 1 : null,
+            'created_at' => now()->subMinutes(5),
+            'updated_at' => now()->subMinute(),
+        ]);
+        DB::table('conference_runtime_bindings')->insert([
+            'id' => IdentityIds::new(),
+            'tenant_id' => $tenantId,
+            'conference_id' => $conferenceId,
+            'runtime_node_id' => $nodeId,
+            'status' => 'active',
+            'bound_at' => now()->subMinutes(5),
+            'created_at' => now()->subMinutes(5),
+            'updated_at' => now()->subMinute(),
+        ]);
+        DB::table('conference_participants')->insert([
+            'id' => $participantId,
+            'tenant_id' => $tenantId,
+            'conference_id' => $conferenceId,
+            'telephony_session_id' => $sessionId,
+            'user_id' => $userId,
+            'desired_state' => $participantDesiredState,
+            'observed_state' => $participantObservedState,
+            'role' => 'participant',
+            'created_at' => now()->subMinutes(5),
+            'updated_at' => now()->subMinute(),
+        ]);
+
+        return [$tenantId, $nodeId, $conferenceId, $participantId];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function participantRemoveOperation(string $tenantId, string $nodeId, string $conferenceId, string $participantId, array $payload = []): array
+    {
+        return [
+            'id' => IdentityIds::new(),
+            'tenant_id' => $tenantId,
+            'operation_type' => 'conference.participant.remove',
+            'aggregate_type' => 'conference_participant',
+            'aggregate_id' => $participantId,
+            'runtime_node_id' => $nodeId,
+            'payload' => array_merge([
+                'conference_id' => $conferenceId,
+                'participant_id' => $participantId,
+                'telephony_session_id' => (string) DB::table('conference_participants')->where('id', $participantId)->value('telephony_session_id'),
+                'runtime_node_id' => $nodeId,
+                'configuration_generation' => 1,
+                'desired_state' => 'removed',
+            ], $payload),
+        ];
     }
 
     /**

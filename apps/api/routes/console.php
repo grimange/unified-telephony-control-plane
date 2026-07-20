@@ -789,6 +789,22 @@ Artisan::command('telephony-domain:retire-closed-bindings {--once : Run one boun
     return 0;
 })->purpose('Run the automatic closed-conference RuntimeBinding retirement sweep without manual target selection.');
 
+Artisan::command('telephony-domain:reclaim-orphan-participant-channels {--once : Run one bounded orphan participant channel discovery sweep and exit} {--batch=100 : Maximum removed participants to evaluate}', function (TelephonyDomainService $domain): int {
+    $batch = filter_var($this->option('batch'), FILTER_VALIDATE_INT);
+    if ($batch === false || $batch < 1) {
+        $this->error('The --batch option must be a positive integer.');
+
+        return 2;
+    }
+
+    $summary = $domain->reclaimOrphanParticipantChannels((int) $batch);
+    foreach ($summary as $key => $value) {
+        $this->line('telephony_domain_orphan_participant_channel_reclamation_'.$key.'='.$value);
+    }
+
+    return 0;
+})->purpose('Run the automatic orphan participant channel discovery sweep without manual target selection.');
+
 Artisan::command('telephony-domain:status', function (): int {
     foreach (['telephony_sessions', 'conferences', 'conference_participants'] as $table) {
         if (! Schema::hasTable($table)) {
@@ -883,3 +899,4 @@ Schedule::command('telephony-domain:expire-sessions')->everyMinute()->withoutOve
 Schedule::command('telephony-domain:ensure-targets')->everyMinute()->withoutOverlapping();
 Schedule::command('telephony-domain:failover-coordinator --once')->everyMinute()->withoutOverlapping();
 Schedule::command('telephony-domain:retire-closed-bindings --once')->everyMinute()->withoutOverlapping();
+Schedule::command('telephony-domain:reclaim-orphan-participant-channels --once')->everyMinute()->withoutOverlapping();
