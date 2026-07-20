@@ -8610,3 +8610,131 @@ Repository tests added in `AsteriskAriAdapterTest` cover:
 No Kubernetes resource, Asterisk module, ARI resource, RuntimeBinding, Conference row, failover,
 fencing, or restoration was mutated during this repository task. The controlled live ARI
 resource-family degradation proof remains pending.
+
+## T5-A53 — Authoritative ARI false-404 hardening: LIVE PROOF COMPLETE
+
+**Verdict: `T5_AUTHORITATIVE_ARI_FALSE_404_LIVE_PROOF_COMPLETE`.**
+Deployed `af2212d` and proved live that a degraded ARI bridge resource family cannot falsely
+establish that a live Conference bridge is absent. With `res_ari_bridges.so` unloaded (bridge REST
+routes 404, HTTP up, bridge alive via control socket), every inspection classified
+`degraded_unavailable` (retryable `RuntimeUnavailable`), no authoritative absence was concluded,
+and no verify/fence/rebind occurred. After module restore, inspection auto-recovered to
+`healthy_present` with no duplicate bridge or participant. The complementary case
+(healthy family + genuine bridge 404 → `healthy_absent`) was also proven after canonical closure.
+
+### Phase marker
+`versions.env` line 7 = `UTCP_PHASE=T1`; working tree clean at `af2212d`.
+
+### Application image build and rollout
+Built the api image from `af2212d` (digest `sha256:a3a1e3f8`), pushed to the local registry,
+rolled out api, telephony-reconciler, telephony-command-worker, worker, telephony-event-normalizer,
+asterisk-ari-events, control-plane-outbox-dispatcher, scheduler, simulator-event-source,
+kamailio-registration-observer. Asterisk, Kamailio, PostgreSQL, Redis, runtime-fencer, RBAC, and
+NetworkPolicy were not rolled. Every rolled workload runs `sha256:a3a1e3f8`.
+
+### Live false-404 code currency
+The image and running listener/command-worker/api pods contain `bridgeResourceFamilyHealthy`,
+`channelResourceFamilyHealthy`, `ari_resource_family_degraded`, `runtime_reference_health`,
+`healthy_present`/`healthy_absent`/`degraded_unavailable`/`transport_unavailable`, and
+`getAriResourceForAuthoritativeInspection` (4 family-health markers per critical pod). The cleanup
+accept-lists (`DELETE bridges/{id}` `[200,202,204,404]`; `removeParticipantChannel`
+`[…,404,…]`) and the node/generation guards (`conference_not_bound_to_node`, generation
+short-circuit) are unchanged.
+
+### Proof Conference
+Session `83b73fc2` (30-min, expiry 03:44:55), conference `22182381` (gen 2 on open, node B
+`05ddb383`), participant `1aa7b9b2` admitted, one active binding `00bb7f57`, conference `open/ready`,
+deterministic bridge `utcp-conf-22182381-45d6-46e1-8af2-a77d63cc7fcc`, participant Local-channel
+legs, node B Asterisk Pod UID `6e8e874c`. Created via normal authenticated APIs only.
+
+### Healthy ARI baseline
+From within node B against the authoritative ARI endpoint:
+`GET /ari/bridges/{bridge_id}=200`, `GET /ari/bridges=200`, `GET /ari/channels=200`,
+`GET /ari/asterisk/info=200`. Control socket: bridge present with 2 channels. Scheduled inspection
+recorded `conference_recovery_metric_events` `result=observed, reason=healthy_present` every ~15s.
+
+### Controlled bridge-family degradation
+Module inventory (control socket): `res_ari_bridges.so` loaded, **use-count 0**, `.so` present on
+disk. Per T5-A25 evidence, `res_ari_bridges.so` serves the `/ari/bridges` REST routes; the live
+bridge lives in Asterisk core (`bridge.c`), not this REST module. Recorded pre-mutation state and
+the reversible commands (`module unload res_ari_bridges.so` / `module load res_ari_bridges.so`).
+At 03:16:56 unloaded **only** `res_ari_bridges.so` via the control socket.
+
+### Asterisk HTTP and process health
+Immediately after unload: Pod UID unchanged (`6e8e874c`), Deployment replicas 1/1, Asterisk process
+running (`core show uptime`), `GET /ari/asterisk/info=200` and `GET /ari/channels=200` (HTTP up,
+only bridge routes gone), listener lease claimed, node B `observed_state=ready` throughout.
+
+### Specific bridge 404 + Bridge-family health result
+While degraded (03:17:11): `GET /ari/bridges/{bridge_id}=404`, `GET /ari/bridges=404`
+(bridge family degraded), while `GET /ari/channels=200` and `GET /ari/asterisk/info=200`.
+
+### Live bridge and channel existence
+Control socket during degradation: bridge `utcp-conf-22182381…` still present (same deterministic
+id, 2 active channels) — a false resource-specific absence, not a deletion.
+
+### Runtime-reference health classification
+Every scheduled inspection from 03:17:05 onward recorded
+`result=unavailable, failure_class=runtime_unavailable, reason=degraded_unavailable` for both the
+conference and conference_participant resources. No `bridge_exists=false`, no `healthy_absent`.
+
+### Verification operation behavior
+No `verify_conference_absent` operation was created for the conference (0). The family-degraded
+classification is retryable `RuntimeUnavailable`; the reconciler simply kept re-inspecting on its
+cadence (`unavailable`) rather than escalating. No manual verification was created.
+
+### False-absence prevention
+Across ~5 minutes of degradation (03:16:56 → 03:21:45): conference stayed `open/ready`, gen 2, node
+B, `failover_state` null; exactly one active binding on node B (no rebind); no `bridge_exists=false`
+conclusion; no `healthy_absent`; no bridge recreation; no participant re-origination; no new
+generation.
+
+### Failover-escalation prevention
+Zero `verify_conference_absent` and zero `runtime.node.runtime.fence` operations; node B replicas
+1/1 (no scale-to-zero); Pod UID unchanged; no RuntimeBinding rebind; no generation increment; zero
+actionable runtime operations. Because only the bridge REST module was degraded (not the events
+WebSocket), node B liveness stayed `ready` — bridge absence itself was never treated as
+authoritative while the bridge family was degraded, exactly as required.
+
+### Module restoration
+At 03:22:03 reloaded `res_ari_bridges.so` via the control socket. `GET /ari/bridges=200` and
+`GET /ari/bridges/{bridge_id}=200` returned. Pod UID unchanged; module use-count 0, Running.
+
+### Automatic inspection recovery
+Later scheduled inspection auto-recovered to `result=observed, reason=healthy_present` at 03:22:37
+— no manual operation creation, no manual ARI retry endpoint, no Artisan recovery, no direct state
+repair.
+
+### Duplicate-prevention proof
+After restore: exactly ONE `utcp-conf-` bridge (original id, continuous duration = never
+destroyed/recreated), exactly the 2 original participant Local-channel legs (no duplicate
+originate), Pod UID unchanged. The conference remained authoritative on node B.
+
+### Healthy-family authoritative absence
+After canonical participant removal and conference closure (03:23:36), the bridge was genuinely
+destroyed (control socket bridge count 0) while `GET /ari/bridges=200` and
+`GET /ari/bridges/{bridge_id}=404`. The inspection classified `result=observed, reason=healthy_absent`
+at 03:23:42 — healthy family + genuine specific-resource 404 correctly yields authoritative absence,
+the complement of the false-404 case. No bridge was deleted via ARI directly.
+
+### Cleanup 404 preservation
+The canonical `conference.close` operation succeeded (attempt 1/3); its bridge `DELETE bridges/{id}`
+accepts `[200,202,204,404]` idempotently with **no** resource-family probe (unchanged path,
+confirmed in live code and regression). A DELETE 404 during idempotent cleanup remains success.
+
+### Canonical cleanup
+Participant removed, conference closed, session ended; bridge and my participant channels
+(`1aa7b9b2`) disappeared; the final RuntimeBinding auto-retired (T5-A49 sweep) by 03:24:19.
+
+### Final runtime state
+Both intended RuntimeNodes active/ready; both Asterisk Deployments 1/1; both leases claimed; one
+open epoch per node; 0 open/pending conferences; 0 active RuntimeBindings; 0 actionable runtime
+operations; all simulator proof nodes disabled; all 8 ARI REST modules restored on node B.
+
+### Divergence / pre-existing residue
+Two orphan Local channels (`utcp-part-91b59874…`, Stasis `utcp-t0-observation`) remained on node B;
+they belong to the **T5-A50** participant `91b59874` (conference `a90bac34`, closed 01:20 — ~2h
+before this proof), not to this proof. This proof's own participant channels cleaned up completely
+(0 `1aa7b9b2` channels). These orphans are pre-existing environmental residue, unrelated to and
+unaffected by the false-404 hardening; they were not touched (hanging them up would be an
+out-of-scope direct PBX mutation of another proof's leftovers). No break-glass recovery was used.
