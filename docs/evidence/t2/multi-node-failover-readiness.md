@@ -7625,3 +7625,285 @@ claimed, one open epoch per node, all simulator proof RuntimeNodes disabled, zer
 conferences, zero failover-state conferences, zero actionable verify/fence/restore operations,
 infrastructure worker Ready and idle. No break-glass or manual Kubernetes mutation was used on
 the successful path.
+
+## T5-A48 — Canonical stale RuntimeBinding retirement contract (evidence-only)
+
+**Verdict: `T5_STALE_RUNTIME_BINDING_RETIREMENT_CONTRACT_DEFINED`.**
+Read-only audit at `9c07568`. Confirmed the single root cause of stale active RuntimeBindings:
+**canonical Conference closure never retires the active RuntimeBinding.** Retirement exists only
+on the two rebind transitions (`bindRuntimeNode`, `failoverRebindConference`). Defined one
+canonical automatic retirement owner, exact timing, unified historical repair, locking, event,
+API visibility, and the exact test slice. No production code, migrations, tests, manifests, or
+runtime state were modified.
+
+### Active RuntimeBinding inventory (live, read-only)
+- Conferences: 114, all `desired_state=closed` / `observed_state=closed`. Zero open, zero
+  `pending_no_capacity`, zero actionable verify/fence/restore operations.
+- RuntimeBindings: **114 active, 8 retired**. One-active-per-conference is enforced by the partial
+  unique index `conference_runtime_bindings_one_active (conference_id) WHERE status='active'`
+  (verified: zero conferences with >1 active binding).
+- **All 114 active bindings belong to closed conferences** (Category B). Active bindings by node:
+  `Local Asterisk ARI` 82, `Local Asterisk ARI B` 6, and 26 on disabled C5 simulator proof nodes —
+  every one of them on a **closed** conference.
+- Category E (missing/deleted conference): 0. Category G (open conference on non-active node —
+  the valid no-capacity case): 0. Residue span: `2026-07-15 01:16:55` → `2026-07-20 00:06:04`,
+  single tenant `local` (114/114).
+- The `conference_runtime_bindings` table has **no generation column**; generation lives on the
+  Conference (`configuration_generation`). Category F (binding generation mismatch) is therefore
+  structurally impossible.
+
+### Authoritative active bindings
+Category A (open, active, current generation, current node) currently: **0** (no open
+conferences). The one-active partial index guarantees each open conference has exactly one
+authoritative active binding when open; the reconciler and projection both resolve the target
+node from that active binding.
+
+### Confirmed stale binding categories
+- **Category B — closed Conference, binding still active: 114 (the entire population).** This is a
+  stale-authority defect, not retained history: the domain closure transaction sets
+  `desired_state=closed` but performs no binding write.
+- Categories A, C, D, E, F, G: empty in the live environment; F structurally impossible; E and G
+  confirmed absent by direct query.
+
+### Historical residue versus current defect
+Same root cause; **not separable.** The defect is currently reproducible at `9c07568`: the
+T5-A47 conference `5e16a610` (closed canonically last session at `00:10:11`) still holds an
+**active** G+2 binding — its G and G+1 bindings were retired by *failover rebind*
+(`unbound_at` = the rebind times `23:52:03` / `00:06:04`, not the `00:10:11` closure). Every one
+of the 6 most-recent closed conferences shows the same pattern (final binding active, `closed_at`
+set, binding never retired). The residue spans the entire C5 history through current HEAD, so it
+is one continuous defect; historical repair and the forward fix share one mechanism.
+
+### RuntimeBinding write authorities (complete)
+Exactly three write sites, all in `App\TelephonyDomain\TelephonyDomainService`; no DELETE anywhere;
+no unaccounted authority:
+- **Creation** — `writeBinding()` (INSERT `status=active`), called from `createConference`
+  (initial bound node), `changeConferenceDesiredState('open')` (bind on open),
+  `bindRuntimeNode` (admin runtime-binding change), `failoverRebindConference` (rebind).
+- **Retirement** — UPDATE `status=retired` at exactly two sites:
+  `bindRuntimeNode` (retire prior before admin rebind) and
+  `failoverRebindConference` (retire prior before failover rebind). Both are atomic with the new
+  binding insert inside one `DB::transaction`.
+- **Deletion** — none.
+Reconcilers (`ConferenceReconciler`, `ConferenceParticipantReconciler`) and `ProjectionService`
+only **read** bindings; they never retire.
+
+### Conference closure lifecycle
+`changeConferenceDesiredState('closed')`: sets `desired_state=closed`, `closed_at`, clears
+`failover_state/binding_id/generation/started_at` (so closing a no-capacity conference **does**
+clear pending state), bumps `configuration_generation` — and does **not** touch
+`conference_runtime_bindings`. Runtime cleanup then proceeds asynchronously:
+`ConferenceReconciler` resolves the target node from the **active** binding
+(`activeRuntimeNodeId`; returns `blocked('conference_runtime_binding_missing')` if none), drives
+bridge destruction (`conference.close` operation), and `ProjectionService` sets
+`observed_state='closed'` and calls `markProjectedTargetConverged` when the `bridge_destroyed`
+observation lands (lines 267-275). **The active binding is required until observed closure** —
+both the reconciler node-resolution and the projection's observation→conference routing
+(join on `conference_runtime_bindings.status='active'`) depend on it. Retirement is never called;
+closure succeeds and converges while the binding stays active indefinitely.
+
+### Session-expiry lifecycle
+`expireDueSessions → removeParticipantsForSession` sets participants `desired_state=removed` and
+wakes participant reconciliation. It does **not** close the conference and does **not** touch
+bindings. Session expiry is orthogonal to binding retirement: a conference stays open (and its
+binding authoritative) after its session expires until it is explicitly closed.
+
+### Failover and rebind lifecycle
+`failoverRebindConference` (invoked by `ConferenceFailoverCoordinator`) selects a distinct
+replacement, then in one transaction retires the current active binding, inserts the new active
+binding, bumps generation, clears failover fields, and emits `conference.runtime_binding_replaced`
+(audit + outbox). This is the only working retirement path and correctly preserves exactly one
+active binding across G→G+1→G+2 (verified by existing tests and the T5-A47 live proof).
+
+### No-capacity binding authority (must be preserved)
+While a Conference is `open` with `failover_state=pending_no_capacity` and no replacement, the
+active binding on the failed/fenced former node **remains the current domain authority** until
+atomic rebind. Retirement must key on `desired_state=closed` **and** `observed_state=closed`, so
+it can never touch an open/pending conference, a failed conference awaiting recovery, or a
+disabled-node binding whose Conference is still authoritative. Generation monotonicity, durable
+pending state, capacity-return recovery, atomic replacement, historical retention, and
+stale-operation/event guards are all untouched by this scope.
+
+### Canonical retirement owner
+**Model C — a dedicated automatic retirement authority owned by `TelephonyDomainService`, invoked
+by one scheduled `--once` sweep on the existing everyMinute cadence, parallel to
+`ConferenceFailoverCoordinator`.** Model A (retire inside the closure transaction) is rejected:
+the reconciler and projection require the active binding to complete bridge cleanup and observed
+closure, so retiring at `desired_state=closed` would `block` cleanup. Model B (retire inside the
+`ConferenceReconciler`) is rejected: reconcilers are pure evaluators (the `ReconciliationWorker`
+only creates operations or records results; no reconciler performs domain writes), so binding
+retirement does not fit their contract. Model C keeps a single owner for closure-retirement,
+reuses the canonical domain binding-write authority, and is the same structural pattern already
+used for failover. Rebind-retirement (`failoverRebindConference`) stays a distinct transition and
+is not duplicated.
+
+### Retirement timing
+Retire when `desired_state='closed'` **and** `observed_state='closed'` (i.e. after participant and
+bridge cleanup and observed-closure convergence). This is safe for forward recovery
+(only terminal conferences qualify), stale-event rejection (generation already advanced and node
+fenced), cleanup targeting (runtime cleanup already complete — no unreachable-PBX dependency),
+generation authority, read consistency, and worker restart (idempotent re-selection). Runtime
+cleanup remains best-effort and already-completed by this point; domain authority retirement does
+not wait on any further PBX call. A required companion refinement: `ConferenceReconciler` must
+treat a `desired_state='closed'` conference with no active binding as **converged/terminal**
+rather than `blocked('conference_runtime_binding_missing')`, so retired-and-closed conferences
+stop re-blocking every cycle.
+
+### Historical repair contract
+The same sweep repairs the 114 pre-existing rows: query (tenant-scoped)
+`conferences WHERE desired_state='closed' AND observed_state='closed' AND EXISTS(active binding)`,
+retire each active binding through the canonical domain path, emit one audit+outbox event.
+Idempotent (a retired binding is not re-selected), tenant-scoped, binding- and generation-aware,
+never deletes historical bindings, needs no binding-ID list, no environment gate, no runtime
+allowlist, no routine Artisan trigger, and no direct SQL as the production mechanism. Current and
+historical retirements use the **same event type** with a distinct `reason`
+(`conference_closed` vs `closed_conference_residue`). A read-only Artisan diagnostic (count/list of
+stale-authority conferences) may exist for break-glass, never as the normal cleanup trigger.
+
+### Concurrency and idempotency
+Each retirement runs in a transaction that `lockForUpdate`s the Conference and the candidate active
+binding, then revalidates under lock: Conference still `desired_state=closed` and
+`observed_state=closed`; the binding is still `status='active'`; the binding's id and
+`runtime_node_id` still match the Conference's current `runtime_node_id`; and the Conference
+generation is unchanged from the selected snapshot. Only then does it set `status='retired'`,
+`unbound_at`. The one-active partial index makes a concurrent second active binding impossible; a
+stale sweep holding an older snapshot re-reads and finds the binding already retired or a newer
+authority and no-ops. Repeated close requests are already idempotent (closed→closed is a no-op).
+Closure racing failover/rebind is safe: rebind only runs for `open` conferences, so it cannot race
+a closed-conference retirement; capacity-return rebind likewise requires `open`. A stale worker can
+never retire a newer active binding because retirement is gated on `desired_state=closed` +
+`observed_state=closed` + exact binding-id/node/generation revalidation under lock.
+
+### Event and audit contract
+Add one transition-only event `conference.runtime_binding_retired` (audit + outbox), payload:
+tenant_id, conference_id, binding_id, generation (Conference `configuration_generation`),
+runtime_node_id, reason, source lifecycle transition (`conference_closed`), timestamp. Emitted
+exactly once per retirement — after retirement the Conference has no active binding, so it is not
+re-selected, giving natural per-binding dedup without per-sweep noise. Reuse existing
+`conference.runtime_binding_replaced` for rebind (unchanged). Historical repair reuses the same
+event type with `reason=closed_conference_residue`.
+
+### Web-admin visibility
+Normal retirement is automatic and requires no Kubernetes/PBX/Artisan knowledge. The Conference
+read API already exposes `runtime_node_id` and `configuration_generation` (which reflect the active
+binding). Recommended diagnostic-only additions to the Conference/Admin serializer: current active
+binding id, binding lifecycle state, last retirement reason/timestamp, and a computed
+`stale_binding_authority` flag (closed + observed-closed + active binding). No manual "retire
+binding" button — repository evidence shows binding lifecycle is control-plane automation, not an
+operator decision.
+
+### Existing test coverage
+Present (`TelephonyDomainTest`): atomic rebind retirement
+(`test_open_conference_runtime_rebind_atomically_retires_former_binding_and_wakes_reconciliation`,
+L344), second-generation retirement + one-active preservation (L879), rebind history retention.
+Notably, several tests (L1144/1295/1363) **manually** `UPDATE status=retired` to fabricate a
+closed conference with a retired binding — direct evidence that no closure-retirement path exists.
+**Missing**: normal closure retires the binding; historical-residue repair idempotency;
+pending-no-capacity conference not retired; session-expiry (open conference) not retired; closure
+racing failover/rebind; stale worker cannot retire a newer generation; missing/deleted Conference
+behavior; disabled-node-but-open-authoritative not retired; audit/outbox dedup (one event per
+retirement); tenant isolation; reconciler treats closed + no-active-binding as converged.
+
+### Missing implementation (smallest coherent slice)
+1. `TelephonyDomainService::retireClosedConferenceBindings()` — tenant-scoped, batched, locked,
+   revalidating sweep that retires active bindings on `closed`+`observed-closed` conferences and
+   emits `conference.runtime_binding_retired` (reason `conference_closed`; `closed_conference_residue`
+   for pre-existing rows).
+2. `telephony-domain:retire-closed-bindings --once` Artisan command + `Schedule::command(...)
+   ->everyMinute()->withoutOverlapping()` (mirrors `failover-coordinator`).
+3. `ConferenceReconciler`: closed + no-active-binding → `converged` (terminal), not `blocked`.
+4. New event `conference.runtime_binding_retired` (audit + outbox).
+5. Optional diagnostic serializer fields (active binding id / lifecycle / retirement reason /
+   stale-authority flag).
+6. Tests per the matrix above.
+
+### Fence retry observation
+Both corrected live fences in T5-A47 succeeded on **attempt 2 of 3** (first fence gen-2, second
+fence gen-3). This audit found **no** evidence of a transient post-fix fence failure. No fence
+retry or fence-successor work is recommended, and none is combined with this RuntimeBinding
+retirement scope.
+
+### Implementation-readiness decision
+**A — bounded Codex implementation.** The audit establishes exact stale categories (all Category
+B), current reproducibility, one canonical owner (Model C domain sweep), exact timing
+(closed + observed-closed), unified historical repair, locking/idempotency, no-capacity
+preservation, the event contract, API visibility, and the exact test matrix.
+
+### Ready-to-paste next prompt
+
+```
+# T5-A49 — Implement Canonical Stale RuntimeBinding Retirement
+
+Implement the contract defined in docs/evidence/t2/multi-node-failover-readiness.md §T5-A48.
+
+Starting state: HEAD 9c07568 (or later), branch main, working tree clean, UTCP_PHASE=T1.
+This is a bounded implementation task. Do not begin a new phase; UTCP_PHASE stays T1.
+
+## Scope (smallest coherent slice)
+
+1. Add TelephonyDomainService::retireClosedConferenceBindings(int $batchSize): array
+   - Tenant-scoped, batched sweep. For each conference with desired_state='closed'
+     AND observed_state='closed' AND an active conference_runtime_binding:
+     open a DB::transaction, lockForUpdate the conference and its active binding,
+     REVALIDATE under lock (desired_state still closed; observed_state still closed;
+     binding still status='active'; binding.runtime_node_id == conference.runtime_node_id;
+     conference.configuration_generation unchanged from the selected snapshot), then
+     set status='retired', unbound_at=now(). Emit exactly one audit + one outbox event
+     conference.runtime_binding_retired with payload {tenant_id, conference_id, binding_id,
+     generation, runtime_node_id, reason, source_transition:'conference_closed', occurred_at}.
+   - reason = 'conference_closed' for normal closure; 'closed_conference_residue' for
+     pre-existing rows (distinguish by whether closed_at predates this deployment is NOT
+     required — use a single 'conference_closed' reason unless a residue reason is trivially
+     available; do not add environment gates).
+   - Idempotent: a conference with no active binding is never selected. No deletes.
+
+2. Wire telephony-domain:retire-closed-bindings {--once} Artisan command calling the sweep,
+   and Schedule::command('telephony-domain:retire-closed-bindings --once')->everyMinute()
+   ->withoutOverlapping(), mirroring telephony-domain:failover-coordinator.
+
+3. ConferenceReconciler: when desired_state='closed' and there is no active binding
+   (activeRuntimeNodeId === null), return ReconciliationResult::converged (terminal) instead
+   of blocked('conference_runtime_binding_missing').
+
+4. Add the conference.runtime_binding_retired event to any event/type registries as needed;
+   reuse existing conference.runtime_binding_replaced for rebind (do not change it).
+
+5. Optional (only if trivial and non-breaking): expose active binding id + binding lifecycle
+   state + last retirement reason + computed stale_binding_authority flag in the Conference
+   serializer for diagnostics. No manual "retire binding" endpoint or button.
+
+## Invariants (must hold)
+- Never retire a binding on an open conference, a pending_no_capacity conference, or any
+  conference whose observed_state is not 'closed'.
+- Never retire a newer active binding from a stale snapshot (revalidate binding id + node +
+  generation under lock).
+- Preserve exactly one active binding across failover generations; do not alter
+  failoverRebindConference or bindRuntimeNode retirement.
+- Tenant-scoped; historical bindings never deleted; no env gate, allowlist, or routine
+  direct-SQL production mechanism. A read-only Artisan diagnostic is acceptable; a mutating
+  Artisan command must not be the normal authority (the scheduled sweep is).
+
+## Tests (add/extend TelephonyDomainTest + a focused sweep test)
+- normal closure (desired+observed closed) retires the active binding and emits one event
+- repeated sweep is idempotent (no second event, no re-retire)
+- pending_no_capacity open conference is NOT retired
+- open conference (post session-expiry, participants removed) is NOT retired
+- observed_state not yet 'closed' is NOT retired (binding survives runtime cleanup)
+- closure racing rebind cannot double-retire / cannot retire newer generation
+- stale snapshot cannot retire a newer active binding
+- G -> G+1 -> G+2 then close leaves zero active bindings, all retired
+- missing/deleted conference: no active-binding row references it (guarded)
+- audit + outbox dedup: exactly one event per retirement
+- tenant isolation: sweep for tenant A does not touch tenant B bindings
+- ConferenceReconciler: closed + no active binding => converged (not blocked)
+
+## Verification
+make repository-hygiene workflow-check secret-scan
+make runtime-engine-config-check telephony-domain-config-check asterisk-ari-config-check asterisk-conference-config-check
+make runtime-engine-test telephony-domain-test asterisk-conference-test asterisk-conference-recovery-test
+git diff --check
+
+## Commit
+feat(t5): retire stale RuntimeBindings on canonical conference closure
+Do not push. Keep UTCP_PHASE=T1.
+```
