@@ -10966,3 +10966,148 @@ and alert-rule correctness.
 Controlled live WebSocket-only degradation and recovery proof remains pending. This implementation does
 not claim that a live idle RuntimeNode has already been forced through an event-stream-only liveness
 failure and automatic recovery.
+
+---
+
+# T5-A65 — Live proof: ARI event-stream degradation and automatic recovery (1e792fe)
+
+Verdict: `T5_EVENTS_ONLY_LISTENER_LIVENESS_LIVE_PROOF_COMPLETE`. Controlled live proof against
+`utcp-local` on one idle RuntimeNode. Baseline `UTCP_PHASE=T1`, clean tree at `1e792fe`. Evidence-only
+doc change; the implementation is the committed 1e792fe.
+
+## Provenance
+HEAD `1e792fe723c304b29631eeec99f6ac1aa361bab0` (fix(t5): add deterministic ARI event-stream liveness),
+on top of `4c057c4` and `433bf0c` (the T5-A63 audit). Implements the T5-A63 contract: opcode-aware
+WebSocket ping/pong (AsteriskAriClient sendPing/readWebSocketMessage), epoch
+`last_authoritative_signal_at` (migration 2026_07_20_120000), pong-deadline degradation
+(pong_deadline_ms=15000 + events_degraded_grace_ms=30000), `events_degraded` observed_state, placement
+excluded via `selectRuntimeNodeForConference` requiring `observed_state='ready'`, gauge
+`asterisk_ari_events_degraded_nodes`, alert `UTCPAsteriskAriEventStreamDegraded`, and
+`runtime_node.event_listener_degraded`/`_recovered` outbox events.
+
+## Migration and rollout
+Built canonical api image from clean 1e792fe (verified ping/pong, degradation logic, metric, migration
+present), pushed sha256:91ade0fdf79e1792acb4908a2e0cf37730d1441c7decd44bd6e5db0a19a45c51. Ran the
+canonical migration Job (utcp-migrate) — `2026_07_20_120000_add_ari_event_epoch_liveness ... DONE`
+(adds epochs.last_authoritative_signal_at + runtime_nodes observed_state check incl. events_degraded).
+Rolled out only api + asterisk-ari-events (both = api image); applied the PrometheusRule change.
+Confirmed both workloads on digest 91ade0f. Did not restart Asterisk/Kamailio/PostgreSQL/Redis/Traefik.
+
+## Healthy listener baseline
+After the new listener (`asterisk-ari-events-777f7768fb-xh28p`, node server-0, 10.42.1.84) took over
+the leases from the terminating old pod, per node: exactly **one** open epoch (the historical leaked
+epochs — 3/node from before — were closed/superseded automatically by the new owner, no direct SQL),
+`last_authoritative_signal_at` advancing every heartbeat (e.g. 23:35:25 → 23:35:56, pong-driven),
+both leases claimed by the new owner, both RuntimeNodes ready and placement-eligible,
+`asterisk_ari_events_degraded_nodes`=0, alert `UTCPAsteriskAriEventStreamDegraded` loaded and inactive
+(health=ok, for=5m).
+
+## Selected RuntimeNode
+Target `1d15ca88` ("Local Asterisk ARI") → Service `asterisk-ari` ClusterIP 10.43.29.130:8088, Asterisk
+pod `asterisk-ari-db55d57c5-2vvsn` (10.42.0.112, agent-0). Peer (kept healthy) `05ddb383` → `asterisk-ari-b`
+10.43.149.214, pod `asterisk-ari-b-...rcjfn`. No active Conference, RuntimeBinding, or actionable
+operation on either. Target WS four-tuple (from `/proc/net/tcp` in the listener netns):
+`10.42.1.84:40846 → 10.43.29.130:8088` (epoch `ee52bd03`), REST+WS both healthy pre-fault.
+
+## WebSocket-specific fault mechanism
+Reversible, connection-specific: from the k3d node container `k3d-utcp-local-server-0`, `nsenter -t
+<listener-sandbox-pid> -n /bin/aux/iptables` into the **listener pod's** network namespace, and DROP the
+exact WS four-tuple by source port:
+```
+iptables -I OUTPUT -p tcp -d 10.43.29.130 --dport 8088 --sport 40846 -j DROP
+iptables -I INPUT  -p tcp -s 10.43.29.130 --sport 8088 --dport 40846 -j DROP
+```
+This blocks only the established WS connection (unique ephemeral sport 40846); ARI REST from the same
+listener uses fresh source ports and is unaffected; the whole Asterisk HTTP port is not blocked; the
+listener process, Asterisk, and Pods are untouched; no PostgreSQL/Redis/lease/epoch edits. Immediately
+reversible (`iptables -D`). The peer node's WS (`:xxxxx → 10.43.149.214`) was never touched. Applied at
+23:49:58, removed at 23:51:21.
+
+## REST health during event-stream failure
+During the fault, REST GET to the target ClusterIP `10.43.29.130:8088/ari/asterisk/info` from the
+listener netns (fresh source port) returned **HTTP 401** on 3 consecutive probes — i.e. the ARI HTTP
+port responded (401 = auth required; the listener's own Basic-auth requests get 200). REST stayed
+reachable while the WS was severed. Decisively, the node reached **events_degraded** (the pong-deadline
+path), NOT `unavailable` (the connection-failure path), which is only possible if the listener's periodic
+REST health check (`inspect` + `stasisApplicationRegistered`) kept succeeding throughout.
+
+## Degradation detection
+In-process 1s sampler timeline (target `1d15ca88`), fault at 23:49:58:
+```
+23:49:54  target=ready            gauge=0  place=05ddb383  tElig=Y  fence=0  deg=1
+23:50:47  target=events_degraded  gauge=1  place=05ddb383  tElig=N  fence=0  deg=2   <-- ~49s after fault
+23:50:53  target=ready            gauge=0  place=05ddb383  tElig=Y  fence=0  deg=2   <-- auto-recovered ~6s later
+```
+The node transitioned to `events_degraded` ~49s after the WS block (≈ pong_deadline 15s +
+events_degraded_grace 30s + heartbeat quantization), within the configured bound. One
+`runtime_node.event_listener_degraded` outbox event fired for the target with
+`reason=pong_deadline_exceeded` (total deg events = 2 across two fault applications, both on the target).
+`asterisk_ari_events_degraded_nodes` = 1 during the window.
+
+## Event epoch behavior
+Pre-fault the target held exactly one open epoch (`ee52bd03`, signal advancing). On pong-deadline the
+listener closed the stalled epoch and released the lease (teardown), then reconnected on a fresh source
+port and opened a successor epoch. Post-recovery: exactly one open epoch per node again, with
+`last_authoritative_signal_at` advancing (23:52:32). No leaked/duplicate open epochs.
+
+## Placement exclusion
+The main conference placement selector `selectRuntimeNodeForConference` requires `observed_state='ready'`;
+`events_degraded` is therefore ineligible. Proven live via the read-only eligibility path (the
+prompt-preferred option): during the degraded window the replicated placement candidate query returned
+the **peer** `05ddb383` (`place=05ddb383`, `tElig=N` for the target) — the degraded target was excluded
+from new placement. Before and after, the target was eligible (`tElig=Y`). No disposable Conference was
+created, so none needed cleanup.
+
+## Self-fencing boundary
+No fence operation was created at any point: `fence=0` across the entire timeline, and 0 fence-type
+`runtime_operations` in the last 15 minutes. Event-stream degradation degraded the node's placement
+capability only; it did not trigger fencing/failover while REST control remained usable.
+
+## Metric and alert behavior
+`asterisk_ari_events_degraded_nodes` is scraped by Prometheus (family present, job=gateway). It read 1
+during the degraded window (in-process sample, computed identically to the metric endpoint) and 0 before
+and after. The alert expression `sum(asterisk_ari_events_degraded_nodes) > 0` evaluates cleanly
+(post-recovery: 0 result series). `UTCPAsteriskAriEventStreamDegraded` is loaded, health=ok, lastErr
+empty, state inactive post-recovery. The ~6s degraded window was shorter than the 30s Prometheus scrape
+interval and the 5m `for`, so the alert correctly did not fire (the fault was intentionally not held for
+5m); the metric logic and alert expression are proven.
+
+## Automatic recovery
+Recovery was fully automatic: after teardown the listener reconnected through existing backoff, the
+WebSocket ping/pong resumed on the successor epoch, `last_authoritative_signal_at` advanced, and the
+RuntimeNode returned to `ready` with placement eligibility restored — all with no operator reconnect or
+manual reconciliation. The fault was also explicitly removed at 23:51:21; ≥2 healthy heartbeat cycles
+followed (stably ready through 23:52:32). Divergence: because recovery proceeded through the reconnect
+path (`connection_opened` → ready) rather than an in-place pong on the still-degraded connection,
+`markEventStreamRecovered` was skipped and **no `runtime_node.event_listener_recovered` event was
+emitted** (rec_events=0). The stream and RuntimeNode recovered completely and automatically (the
+principal recovery claim holds); only the paired recovered-telemetry event did not fire on the common
+reconnect path — see Divergences.
+
+## Final runtime state
+Both RuntimeNodes ready and placement-eligible; both Asterisk Deployments 1/1 (asterisk-ari,
+asterisk-ari-b) plus listener 1/1; exactly one open event epoch per node with advancing signal; leases
+valid; `asterisk_ari_events_degraded_nodes`=0; alert inactive; 0 open/pending conferences; 0 active
+bindings; 0 actionable operations; all simulators disabled. The iptables fault is fully removed (listener
+netns has no DROP rules). No disposable proof resource was created.
+
+## Divergences
+1. **Recovered event not emitted on reconnect recovery.** `runtime_node.event_listener_recovered` fires
+   only via `markEventStreamRecovered` (a pong arriving while the node is still `events_degraded`), but
+   the pong-deadline path tears the connection down, so recovery normally completes through the
+   reconnect's `connection_opened` → ready projection, which does not emit the recovered event. Result:
+   a degraded event with no paired recovered event (an observability-symmetry gap). The node still
+   recovers fully and automatically. Bounded follow-up: emit `event_listener_recovered` when a node
+   leaves `events_degraded` via the reconnect path as well (or have the reconnect projection close the
+   degraded transition). Does not affect degradation detection, placement exclusion, self-fence
+   avoidance, or automatic stream restoration.
+2. `events_degraded` is intentionally a short-lived transient (fast auto-recovery, ~6s here), so
+   Prometheus's 30s scrape may not observe gauge=1 for a single event; the live metric logic and alert
+   expression were validated directly. Not a defect — a consequence of correct fast recovery.
+
+## Verification performed (T5-A65)
+make repository-hygiene / workflow-check / secret-scan: PASS. make *-config-check (4): PASS. make *-test
+(runtime-engine, telephony-domain, asterisk-ari, asterisk-conference, asterisk-conference-recovery):
+PASS. git diff --check / --cached: clean. Fault applied and removed via listener-netns iptables only;
+no Pod scaling/deletion, no Asterisk/Kamailio restart, no ARI module unload, no Conference/RuntimeBinding
+mutation, no direct SQL/Redis writes, no NetworkPolicy weakening. Environment fully restored.
