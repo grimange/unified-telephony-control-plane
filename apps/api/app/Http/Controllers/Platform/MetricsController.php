@@ -2,7 +2,10 @@
 
 namespace App\Http\Controllers\Platform;
 
+use App\ControlPlane\RuntimeOperations\FailureClass;
+use App\ControlPlane\RuntimeOperations\OperationStatus;
 use App\RuntimeEngine\Sources\EventSourceRepository;
+use App\Support\Build\BuildInfo;
 use App\TelephonyDomain\Signaling\KamailioRegistrationObserver;
 use App\TelephonyDomain\Signaling\KamailioRegistrationPollHealthRepository;
 use Illuminate\Http\Response;
@@ -12,6 +15,10 @@ use Illuminate\Support\Facades\Schema;
 
 final class MetricsController
 {
+    public function __construct(
+        private readonly BuildInfo $build,
+    ) {}
+
     public function __invoke(): Response
     {
         $lines = [
@@ -84,6 +91,36 @@ final class MetricsController
             '# HELP utcp_conference_recovery_lag_seconds Oldest non-converged conference recovery reconciliation age by resource type.',
             '# TYPE utcp_conference_recovery_lag_seconds gauge',
             ...$this->conferenceRecoveryLagMetrics(),
+            '# HELP utcp_conference_failover_events_total Durable conference failover transition events by bounded event type. Maximum series: 2.',
+            '# TYPE utcp_conference_failover_events_total counter',
+            ...$this->conferenceFailoverEventMetrics(),
+            '# HELP utcp_conference_failover_pending Current conferences pending failover replacement capacity by failover state. Maximum series: 1.',
+            '# TYPE utcp_conference_failover_pending gauge',
+            ...$this->conferenceFailoverPendingMetrics(),
+            '# HELP utcp_conference_failover_pending_oldest_seconds Age in seconds of the oldest conference currently pending failover replacement capacity. Maximum series: 1.',
+            '# TYPE utcp_conference_failover_pending_oldest_seconds gauge',
+            ...$this->conferenceFailoverPendingOldestMetrics(),
+            '# HELP utcp_runtime_resilience_operations_total T5 resilience runtime operation objects by canonical operation type, result, and failure class. Attempts are not counted separately. Maximum series: 432.',
+            '# TYPE utcp_runtime_resilience_operations_total counter',
+            ...$this->runtimeResilienceOperationMetrics(),
+            '# HELP utcp_conference_runtime_binding_retired_total Durable final RuntimeBinding retirements after canonical conference closure by bounded reason. Maximum series: 2.',
+            '# TYPE utcp_conference_runtime_binding_retired_total counter',
+            ...$this->runtimeBindingRetiredMetrics(),
+            '# HELP utcp_conference_stale_active_bindings Closed and observed-closed conferences that still have an active RuntimeBinding.',
+            '# TYPE utcp_conference_stale_active_bindings gauge',
+            ...$this->staleActiveBindingMetrics(),
+            '# HELP utcp_conference_participant_channel_reclaimed_total Durable orphan participant channel reclamation events by bounded classification. Maximum series: 2.',
+            '# TYPE utcp_conference_participant_channel_reclaimed_total counter',
+            ...$this->participantChannelReclaimedMetrics(),
+            '# HELP utcp_conference_orphan_participant_candidates Database-derived upper bound of removed participants on closed conferences with retained final binding history. This does not prove a PBX channel is currently alive.',
+            '# TYPE utcp_conference_orphan_participant_candidates gauge',
+            ...$this->orphanParticipantCandidateMetrics(),
+            '# HELP utcp_conference_runtime_reference_health_total Conference runtime reference inspections by bounded resource type and ARI reference-health classification. Maximum series: 15.',
+            '# TYPE utcp_conference_runtime_reference_health_total counter',
+            ...$this->runtimeReferenceHealthMetrics(),
+            '# HELP utcp_build_info Build information for the application serving this metrics endpoint.',
+            '# TYPE utcp_build_info gauge',
+            ...$this->buildInfoMetrics(),
             '# HELP asterisk_ari_nodes Asterisk ARI runtime nodes by desired and observed state.',
             '# TYPE asterisk_ari_nodes gauge',
             ...$this->asteriskAriNodeMetrics(),
@@ -630,6 +667,226 @@ final class MetricsController
     /**
      * @return list<string>
      */
+    private function conferenceFailoverEventMetrics(): array
+    {
+        if (! Schema::hasTable('control_plane_outbox_messages')) {
+            return [];
+        }
+
+        return DB::table('control_plane_outbox_messages')
+            ->whereIn('event_type', array_keys($this->failoverEventTypeLabels()))
+            ->selectRaw('event_type, count(*) as count')
+            ->groupBy('event_type')
+            ->orderBy('event_type')
+            ->get()
+            ->map(fn (object $row): string => $this->sample('utcp_conference_failover_events_total', [
+                'event_type' => $this->failoverEventTypeLabels()[(string) $row->event_type],
+            ], (int) $row->count))
+            ->all();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conferenceFailoverPendingMetrics(): array
+    {
+        if (! Schema::hasTable('conferences')) {
+            return [$this->sample('utcp_conference_failover_pending', ['failover_state' => 'pending_no_capacity'], 0)];
+        }
+
+        return [$this->sample('utcp_conference_failover_pending', [
+            'failover_state' => 'pending_no_capacity',
+        ], DB::table('conferences')->where('failover_state', 'pending_no_capacity')->count())];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conferenceFailoverPendingOldestMetrics(): array
+    {
+        if (! Schema::hasTable('conferences')) {
+            return [$this->sample('utcp_conference_failover_pending_oldest_seconds', ['failover_state' => 'pending_no_capacity'], 0)];
+        }
+
+        $oldest = DB::table('conferences')
+            ->where('failover_state', 'pending_no_capacity')
+            ->whereNotNull('failover_started_at')
+            ->min('failover_started_at');
+        $age = $oldest === null ? 0 : max(0, (int) now()->diffInSeconds(Carbon::parse((string) $oldest), true));
+
+        return [$this->sample('utcp_conference_failover_pending_oldest_seconds', [
+            'failover_state' => 'pending_no_capacity',
+        ], $age)];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function runtimeResilienceOperationMetrics(): array
+    {
+        if (! Schema::hasTable('runtime_operations')) {
+            return [];
+        }
+
+        return DB::table('runtime_operations')
+            ->whereIn('operation_type', $this->runtimeResilienceOperationTypes())
+            ->selectRaw("operation_type, status as result, coalesce(last_failure_class, 'none') as failure_class, count(*) as count")
+            ->groupBy('operation_type', 'status', 'last_failure_class')
+            ->orderBy('operation_type')
+            ->orderBy('result')
+            ->orderBy('failure_class')
+            ->get()
+            ->map(fn (object $row): string => $this->sample('utcp_runtime_resilience_operations_total', [
+                'operation_type' => $this->boundedValue((string) $row->operation_type, $this->runtimeResilienceOperationTypes()),
+                'result' => $this->boundedValue((string) $row->result, $this->operationStatusValues()),
+                'failure_class' => $this->boundedValue((string) $row->failure_class, $this->failureClassValuesWithNone()),
+            ], (int) $row->count))
+            ->all();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function runtimeBindingRetiredMetrics(): array
+    {
+        if (! Schema::hasTable('control_plane_outbox_messages')) {
+            return [];
+        }
+
+        $counts = [];
+        $rows = DB::table('control_plane_outbox_messages')
+            ->where('event_type', 'conference.runtime_binding_retired')
+            ->orderBy('created_at')
+            ->get(['payload']);
+        foreach ($rows as $row) {
+            $payload = $this->decodeJsonObject($row->payload);
+            $reason = $this->boundedValue((string) ($payload['retirement_reason'] ?? $payload['reason'] ?? 'other'), ['conference_closed']);
+            $counts[$reason] = ($counts[$reason] ?? 0) + 1;
+        }
+
+        return $this->samplesFromCounts('utcp_conference_runtime_binding_retired_total', 'reason', $counts);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function staleActiveBindingMetrics(): array
+    {
+        if (! $this->hasTables(['conferences', 'conference_runtime_bindings'])) {
+            return [$this->sample('utcp_conference_stale_active_bindings', [], 0)];
+        }
+
+        $count = DB::table('conferences')
+            ->join('conference_runtime_bindings', function ($join): void {
+                $join->on('conference_runtime_bindings.conference_id', '=', 'conferences.id')
+                    ->on('conference_runtime_bindings.tenant_id', '=', 'conferences.tenant_id')
+                    ->where('conference_runtime_bindings.status', 'active');
+            })
+            ->where('conferences.desired_state', 'closed')
+            ->where('conferences.observed_state', 'closed')
+            ->count();
+
+        return [$this->sample('utcp_conference_stale_active_bindings', [], $count)];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function participantChannelReclaimedMetrics(): array
+    {
+        if (! Schema::hasTable('control_plane_outbox_messages')) {
+            return [];
+        }
+
+        $counts = [];
+        $rows = DB::table('control_plane_outbox_messages')
+            ->where('event_type', 'conference_participant.channel_reclaimed')
+            ->orderBy('created_at')
+            ->get(['payload']);
+        foreach ($rows as $row) {
+            $payload = $this->decodeJsonObject($row->payload);
+            $classification = $this->boundedValue((string) ($payload['classification'] ?? 'other'), ['post_closure_orphan']);
+            $counts[$classification] = ($counts[$classification] ?? 0) + 1;
+        }
+
+        return $this->samplesFromCounts('utcp_conference_participant_channel_reclaimed_total', 'classification', $counts);
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function orphanParticipantCandidateMetrics(): array
+    {
+        if (! $this->hasTables(['conference_participants', 'conferences', 'conference_runtime_bindings'])) {
+            return [$this->sample('utcp_conference_orphan_participant_candidates', [], 0)];
+        }
+
+        $count = DB::table('conference_participants')
+            ->join('conferences', function ($join): void {
+                $join->on('conferences.id', '=', 'conference_participants.conference_id')
+                    ->on('conferences.tenant_id', '=', 'conference_participants.tenant_id');
+            })
+            ->where('conference_participants.desired_state', 'removed')
+            ->where('conferences.desired_state', 'closed')
+            ->where('conferences.observed_state', 'closed')
+            ->whereNotExists(function ($query): void {
+                $query->selectRaw('1')
+                    ->from('conference_runtime_bindings')
+                    ->whereColumn('conference_runtime_bindings.tenant_id', 'conferences.tenant_id')
+                    ->whereColumn('conference_runtime_bindings.conference_id', 'conferences.id')
+                    ->where('conference_runtime_bindings.status', 'active');
+            })
+            ->whereExists(function ($query): void {
+                $query->selectRaw('1')
+                    ->from('conference_runtime_bindings')
+                    ->whereColumn('conference_runtime_bindings.tenant_id', 'conferences.tenant_id')
+                    ->whereColumn('conference_runtime_bindings.conference_id', 'conferences.id')
+                    ->where('conference_runtime_bindings.status', 'retired')
+                    ->whereNotNull('conference_runtime_bindings.runtime_node_id');
+            })
+            ->count();
+
+        return [$this->sample('utcp_conference_orphan_participant_candidates', [], $count)];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function runtimeReferenceHealthMetrics(): array
+    {
+        if (! Schema::hasTable('conference_recovery_metric_events')) {
+            return [];
+        }
+
+        return DB::table('conference_recovery_metric_events')
+            ->selectRaw('resource_type, reason as health, count(*) as count')
+            ->groupBy('resource_type', 'reason')
+            ->orderBy('resource_type')
+            ->orderBy('health')
+            ->get()
+            ->map(fn (object $row): string => $this->sample('utcp_conference_runtime_reference_health_total', [
+                'resource_type' => $this->boundedValue((string) $row->resource_type, ['conference', 'conference_participant']),
+                'health' => $this->boundedValue((string) $row->health, ['healthy_present', 'healthy_absent', 'degraded_unavailable', 'transport_unavailable']),
+            ], (int) $row->count))
+            ->all();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function buildInfoMetrics(): array
+    {
+        $build = $this->build->toArray();
+
+        return [$this->sample('utcp_build_info', [
+            'version' => $build['version'],
+            'commit' => $build['commit'],
+        ], 1)];
+    }
+
+    /**
+     * @return list<string>
+     */
     private function asteriskAriNodeMetrics(): array
     {
         if (! Schema::hasTable('runtime_nodes')) {
@@ -1022,6 +1279,91 @@ final class MetricsController
     }
 
     /**
+     * @return array<string, string>
+     */
+    private function failoverEventTypeLabels(): array
+    {
+        return [
+            'conference.failover_coordinator.no_replacement' => 'no_replacement',
+            'conference.runtime_binding_replaced' => 'runtime_binding_replaced',
+        ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function runtimeResilienceOperationTypes(): array
+    {
+        return [
+            (string) config('telephony_domain.operation_types.verify_conference_absent', 'runtime.node.verify_conference_absent'),
+            (string) config('telephony_domain.operation_types.runtime_fence', 'runtime.node.runtime.fence'),
+            (string) config('telephony_domain.operation_types.runtime_node_restore', 'runtime.node.restore'),
+            (string) config('telephony_domain.operation_types.participant_remove', 'conference.participant.remove'),
+        ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function operationStatusValues(): array
+    {
+        return array_map(static fn (OperationStatus $status): string => $status->value, OperationStatus::cases());
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function failureClassValuesWithNone(): array
+    {
+        return [
+            'none',
+            ...array_map(static fn (FailureClass $failureClass): string => $failureClass->value, FailureClass::cases()),
+        ];
+    }
+
+    /**
+     * @param  list<string>  $allowed
+     */
+    private function boundedValue(string $value, array $allowed, string $fallback = 'other'): string
+    {
+        return in_array($value, $allowed, true) ? $value : $fallback;
+    }
+
+    /**
+     * @param  array<string, int>  $counts
+     * @return list<string>
+     */
+    private function samplesFromCounts(string $metric, string $label, array $counts): array
+    {
+        ksort($counts);
+
+        return collect($counts)
+            ->map(fn (int $count, string $value): string => $this->sample($metric, [$label => $value], $count))
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function decodeJsonObject(mixed $value): array
+    {
+        if (is_array($value)) {
+            return $value;
+        }
+        if (is_object($value)) {
+            return get_object_vars($value);
+        }
+        if (! is_string($value) || trim($value) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($value, true);
+
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    /**
      * @param  array<string, string>  $labels
      */
     private function sample(string $name, array $labels, int $value): string
@@ -1029,6 +1371,7 @@ final class MetricsController
         $pairs = [];
         foreach ($labels as $key => $label) {
             $safeLabel = preg_replace('/[^A-Za-z0-9_.:-]/', '_', $label) ?? 'unknown';
+            $safeLabel = addcslashes($safeLabel, "\\\"\n");
             $pairs[] = $key.'="'.$safeLabel.'"';
         }
 

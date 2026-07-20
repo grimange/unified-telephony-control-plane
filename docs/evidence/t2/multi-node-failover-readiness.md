@@ -7909,6 +7909,108 @@ feat(t5): retire stale RuntimeBindings on canonical conference closure
 Do not push. Keep UTCP_PHASE=T1.
 ```
 
+## T5-A58 — Resilience metrics and alerts implementation
+
+**Verdict: `T5_RESILIENCE_OBSERVABILITY_IMPLEMENTED_REPOSITORY_ONLY`.**
+Repository implementation at `5b219f1` extended the existing pull-based `/api/metrics` path. No
+Kubernetes resources were deployed, no live Prometheus scrape was observed, no live Conference,
+RuntimeBinding, PBX, or runtime state was mutated, and `UTCP_PHASE` remains `T1`.
+
+### Metrics architecture retained
+All new T5 metric families are emitted by `App\Http\Controllers\Platform\MetricsController` during
+the existing Prometheus text scrape. The sources are durable PostgreSQL rows already written by the
+domain/runtime lifecycle:
+
+- `control_plane_outbox_messages` for failover transitions, binding retirement, and channel reclaim
+  events.
+- `conferences` and `runtime_bindings` for current no-capacity, stale active binding, and
+  orphan-candidate gauges.
+- `runtime_operations` for verify/fence/restore/participant-remove operation outcomes.
+- `conference_recovery_metric_events` for runtime-reference health classifications.
+- `BuildInfo` configuration for the API application build serving `/api/metrics`.
+
+No in-memory counters, Pushgateway integration, Redis metrics state, new metric tables, new queue
+jobs, scheduler/reconciler metric writes, new endpoint, new dependency, environment gate, or
+dashboard were added.
+
+### Implemented metric families
+`utcp_conference_failover_events_total` is a counter with bounded label `event_type` in
+`no_replacement`, `runtime_binding_replaced`; maximum two series. It counts deduplicated durable
+transition events, not coordinator sweeps.
+
+`utcp_conference_failover_pending` is a gauge with bounded label `failover_state` currently limited
+to `pending_no_capacity`; maximum one series. `utcp_conference_failover_pending_oldest_seconds` uses
+the same label and reports `max(0, database scrape time - earliest failover_started_at)`, or zero
+when no Conference is pending.
+
+`utcp_runtime_resilience_operations_total` is a counter with bounded labels `operation_type`,
+`result`, and `failure_class`. The operation allowlist is the repository's canonical strings:
+`runtime.node.verify_conference_absent`, `runtime.node.runtime.fence`, `runtime.node.restore`, and
+`conference.participant.remove`. It counts one `runtime_operations` row as one operation object;
+attempt counts do not create additional samples. Restore predecessor and successor rows each count
+as separate operation objects, so the metric is not a logical restore-request counter. Unknown
+historical status or failure-class values map to `other`; null failure class maps to `none`.
+
+`utcp_conference_runtime_binding_retired_total` is a counter with bounded label `reason`, sourced
+from `conference.runtime_binding_retired` events. The recognized reason is `conference_closed`;
+unexpected durable payload values map to `other`. `utcp_conference_stale_active_bindings` is a
+zero-healthy gauge for the exact stale-retirement invariant: `desired_state=closed`,
+`observed_state=closed`, and an active RuntimeBinding still exists. The metrics path never mutates
+or repairs bindings.
+
+`utcp_conference_participant_channel_reclaimed_total` is a counter with bounded label
+`classification`, sourced from `conference_participant.channel_reclaimed` events. The recognized
+classification is `post_closure_orphan`; unexpected payload values map to `other`.
+`utcp_conference_orphan_participant_candidates` is a gauge for the PostgreSQL-discoverable
+candidate predicate used by `TelephonyDomainService::reclaimOrphanParticipantChannels`: removed
+participant, closed/observed-closed Conference, no active binding, and a retained binding with a
+RuntimeNode. This is documented in HELP text as a database-derived upper bound because a metrics
+scrape must not call ARI or Asterisk to prove a live Local channel remains.
+
+`utcp_conference_runtime_reference_health_total` is a counter with bounded labels `resource_type`
+and `health`, sourced from `conference_recovery_metric_events`. Health values remain distinct:
+`healthy_present`, `healthy_absent`, `degraded_unavailable`, and `transport_unavailable`.
+Unexpected historical values map to `other`. Recognized resource types are `conference` and
+`conference_participant`; unexpected values map to `other`.
+
+`utcp_build_info` is a gauge with value `1` and bounded labels `version` and `commit`, sourced from
+the same `BuildInfo` configuration used by `/api/version`. It identifies the application serving
+`/api/metrics`; it does not prove command-worker or reconciler deployment version by itself. Pod
+name, image digest, build timestamp, runtime hostname, and deployment identity are deliberately not
+labels.
+
+### Alerts implemented
+`utcp-alerts.yaml` now includes six T5 resilience alerts:
+
+- `UTCPConferencePendingNoCapacity`: pending no-capacity failover for 15 minutes.
+- `UTCPRuntimeFenceTerminalFailure`: recent terminal fence failures.
+- `UTCPRuntimeRestoreTerminalFailure`: recent terminal RuntimeNode restore failures.
+- `UTCPStaleActiveRuntimeBindings`: stale closed-conference active bindings for 10 minutes.
+- `UTCPOrphanParticipantCandidates`: database-derived orphan participant candidate upper bound for
+  15 minutes; the annotation states this requires control-plane investigation and is not proof that
+  a channel is currently alive.
+- `UTCPAriReferenceFamilyDegraded`: repeated `degraded_unavailable` runtime-reference health
+  observations over a 10-minute window.
+
+The version-skew alert is intentionally deferred. The repository's Prometheus stack exposes
+`utcp_build_info` from the API metrics endpoint, but no reliable worker build metric source is
+present and the task explicitly forbids inferring worker skew solely from the API metric or adding
+worker HTTP metrics. The T5 dashboard remains deferred.
+
+### Cardinality and safety
+The new labels are fixed vocabularies only. Tenant IDs, Conference IDs, participant IDs, session IDs,
+RuntimeBinding IDs, runtime-operation IDs, RuntimeNode IDs/names, channel IDs, Pod/Deployment UIDs,
+telephone numbers, endpoint URLs, credentials, and raw exception messages are not exposed as metric
+labels. Unexpected durable values are mapped to `other` instead of being passed through.
+
+### Verification coverage
+Focused repository tests cover durable event counters, repeated-scrape idempotency, no-capacity
+current-state and oldest-age gauges, logical operation-row semantics, restore predecessor/successor
+semantics, binding retirement and stale-binding metrics, orphan reclaim and database-only candidate
+metrics, all runtime-reference health states, build-info labels, cardinality/secret safety, and
+PrometheusRule alert names, expressions, durations, and wording. Live Prometheus scrape and alert
+behavior remain pending for deployment proof.
+
 ## T5-A49 — Canonical RuntimeBinding Retirement After Conference Closure
 
 **Verdict:** `T5_STALE_RUNTIME_BINDING_RETIREMENT_IMPLEMENTATION_REPOSITORY_READY`

@@ -128,6 +128,60 @@ spec:
             namespace: utcp-platform
           annotations:
             summary: Conference runtime inspection is failing repeatedly.
+        - alert: UTCPConferencePendingNoCapacity
+          expr: sum(utcp_conference_failover_pending{failover_state="pending_no_capacity"}) > 0
+          for: 15m
+          labels:
+            severity: warning
+            component: telephony-domain
+            namespace: utcp-platform
+          annotations:
+            summary: Conference failover is waiting for replacement runtime capacity.
+        - alert: UTCPRuntimeFenceTerminalFailure
+          expr: sum(increase(utcp_runtime_resilience_operations_total{operation_type="runtime.node.runtime.fence",result="terminal_failed",failure_class!="none"}[10m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+            component: telephony-domain
+            namespace: utcp-platform
+          annotations:
+            summary: Runtime fencing reached terminal failure during recent resilience recovery.
+        - alert: UTCPRuntimeRestoreTerminalFailure
+          expr: sum(increase(utcp_runtime_resilience_operations_total{operation_type="runtime.node.restore",result="terminal_failed",failure_class!="none"}[10m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+            component: telephony-domain
+            namespace: utcp-platform
+          annotations:
+            summary: RuntimeNode restoration reached terminal failure during recent resilience recovery.
+        - alert: UTCPStaleActiveRuntimeBindings
+          expr: sum(utcp_conference_stale_active_bindings) > 0
+          for: 10m
+          labels:
+            severity: warning
+            component: telephony-domain
+            namespace: utcp-platform
+          annotations:
+            summary: Closed conferences still have active RuntimeBindings after the automatic retirement window.
+        - alert: UTCPOrphanParticipantCandidates
+          expr: sum(utcp_conference_orphan_participant_candidates) > 0
+          for: 15m
+          labels:
+            severity: warning
+            component: telephony-domain
+            namespace: utcp-platform
+          annotations:
+            summary: Removed participants match the database-derived upper bound for orphan-channel candidates and need control-plane investigation.
+        - alert: UTCPAriReferenceFamilyDegraded
+          expr: sum(increase(utcp_conference_runtime_reference_health_total{health="degraded_unavailable"}[10m])) > 3
+          for: 10m
+          labels:
+            severity: warning
+            component: telephony-domain
+            namespace: utcp-platform
+          annotations:
+            summary: ARI resource-family health is degrading authoritative runtime-reference inspection.
         - alert: UTCPTelephonyExpiredActiveSessions
           expr: telephony_sessions_expired_active{status="active"} > 0
           for: 5m
