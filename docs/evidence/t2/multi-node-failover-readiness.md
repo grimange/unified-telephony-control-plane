@@ -7518,3 +7518,110 @@ was introduced.
 The live second-generation no-capacity recovery proof has **not** been rerun. The remaining
 T5 live gap is to deploy this ownership fix and rerun the cleaned two-node no-capacity
 capacity-return proof to complete `G+1 -> G+2`.
+
+## T5-A47 — Exact Kubernetes ownership deployed; G+1 → G+2 second-generation live proof COMPLETE
+
+**Verdict: `T5_EXACT_OWNERSHIP_AND_SECOND_GENERATION_LIVE_PROOF_COMPLETE`.**
+Deployed `1820757` (exact controller-owner-reference workload ownership) and completed the
+`G+1 → G+2` second-generation no-capacity recovery proof that T5-A45 left blocked. The
+`asterisk-ari` / `asterisk-ari-b` prefix collision is removed: the second runtime fence of the
+shorter-named `asterisk-ari` node completed with `fence_result=fenced` while the sibling
+`asterisk-ari-b` Pod remained running, and the same node was later restored canonically while
+the sibling ran. No manual scale-up, no direct desired-state or RuntimeBinding writes, no
+break-glass.
+
+### Phase marker
+`versions.env` resolves explicitly to `UTCP_PHASE=T1`; working tree clean at `1820757`.
+
+### RBAC rollout and fencer authorization
+Applied only `infrastructure/kubernetes/components/runtime-fencing/rbac.yaml` (narrow read-only
+ReplicaSet access). Live Role `utcp-runtime-fencer` (namespace `utcp-runtime`) rules after apply:
+`deployments [get,list]`, `replicasets [get,list]`, `deployments/scale [get,patch]`,
+`pods [get,list]`. `kubectl auth can-i` as `system:serviceaccount:utcp-platform:utcp-runtime-fencer`:
+get/list replicasets = yes; create/update/patch/delete replicasets = no;
+get/patch deployments (`--subresource=scale`) = yes (scale authority preserved). Live read-only
+ReplicaSet request from the fence worker Pod returned HTTP 200.
+
+### Application image and code currency
+Built the api image from `1820757` (digest `sha256:5013aec0…`), pushed to the local registry,
+rolled out all app-image workloads. The fence worker Deployment uses `imagePullPolicy=IfNotPresent`,
+so the stale cached `0.1.0-k1-dev` tag was cleared from all three k3d nodes to force a fresh pull;
+the running fence worker (revision 9) then reported digest `sha256:5013aec0…`. Running
+`HttpKubernetesWorkloadClient` code contains `isOwnedByDeploymentUid`, `replicaSetsByUid`, and
+`controllerOwnerReference`, and **zero** `str_starts_with` prefix fallbacks.
+
+### Live ownership isolation (before failure)
+Live owner chains:
+`asterisk-ari` Deployment `94546f77…` → RS `asterisk-ari-db55d57c5` (`b795cef4…`) → its Pod;
+`asterisk-ari-b` Deployment `57617c51…` → RS `asterisk-ari-b-8557bd4d76` (`d93adf9e…`) → its Pod.
+Replicating the exact `listOwnedPods` resolution against the live cluster:
+`listOwnedPods(asterisk-ari)` → only the `asterisk-ari` Pod; `listOwnedPods(asterisk-ari-b)` →
+only the `asterisk-ari-b` Pod. `asterisk-ari` does not own the `asterisk-ari-b` Pod and vice
+versa — the prefix collision is gone.
+
+### Proof conference and first failover (G → G+1)
+Conference `5e16a610` opened bound to node B (gen 2 = G), participant `a117e062` admitted,
+bridge + Local-channel legs on node B. HTTP outage on node B → 300s grace → verify
+`terminal_failed` → fence **succeeded** (attempt 2, `pre_scale_replicas=1`) → node B scaled 1→0
+and `disabled` → atomic rebind to node A (gen 3), old binding retired → bridge + participant
+reconstructed on node A, participant `admitted/joined`.
+
+### G+1 no-capacity and fencing withheld
+HTTP outage on node A with node B disabled and all simulator nodes disabled. Replacement query
+excluding node A returned empty. No gen-3 fence op was created (the coordinator checks
+`hasDistinctEligibleReplacement` before requesting a fence); node A stayed `replicas=1`, Pod UID
+`857b8b88…` unchanged, bridge preserved.
+
+### Durable pending state and deduplication
+`failover_state=pending_no_capacity`, `failover_binding_id=d60fa8de` (active G+1 binding),
+`failover_generation=3`, `failover_started_at=2026-07-19 23:59:03+00`. Observed across **8**
+coordinator sweeps: identical binding, generation, and first-entry timestamp; exactly **one**
+`conference.failover_coordinator.no_replacement` audit event and exactly **one** outbox event;
+no duplicate verify/fence chain, no binding retirement, no scale-to-zero.
+
+### Canonical capacity restoration
+`POST /runtime-nodes/{nodeB}/desired-state {active}` left node B `disabled` and scheduled one
+`runtime.node.restore` op (max 8 attempts). The restore **succeeded** (attempt 3/8): automatic
+scale-up, restore-authorized listener attachment, lease, fresh epoch, observed ready,
+`runtime_node.restored`, `desired_state=active`. No terminal predecessor; no successor needed.
+
+### Automatic second fence with sibling-Pod exclusion (the decisive proof)
+After node B became active/ready, the coordinator resumed automatically and issued one gen-3
+runtime fence against node A. During the fence:
+`asterisk-ari` (target) Deployment replicas 1 → 0, exact target-owned Pods → 0; `asterisk-ari-b`
+(sibling restored) Deployment replicas = 1, sibling Pod running and excluded from the target
+owned-Pod result. The termination predicate was satisfied **while the sibling Pod remained
+present** — impossible under the old prefix rule. Fence **succeeded** (`fence_result=fenced`,
+attempt 2, `pre_scale_replicas=1`); node A `disabled`. No retries were widened and the sibling
+Pod was never manually removed.
+
+### Generation G+1 → G+2 and reconstruction
+Atomic rebind: G+1 (node A) binding retired at 00:06:04, G+2 binding active on the restored node
+B, generation 3 → 4 (incremented once), pending state cleared. Conference read API returns
+`failover_state=null`, `failover_binding_id=null`, `failover_generation=null`. Exactly one active
+G+2 binding; historical G and G+1 bindings retained; no retired binding reactivated.
+`conference.ensure` reconstructed one deterministic bridge `utcp-conf-5e16a610…` on node B and
+`conference.participant.ensure` reconstructed the participant's Local-channel legs on node B only
+(node A has no Pod). Participant stayed `admitted/joined`, session active. Conference `ready` at
+gen 4, stable across 3 further sweeps (gen 4, node B, `failover_state=null`, one active binding,
+single bridge).
+
+### Stale G+1 rejection
+Node A is `disabled`, `replicas=0`, no Pod — no listener attaches, so no delayed G+1 events can
+be emitted or projected. All gen-3 (G+1) operations are terminal (0 actionable). The retired G+1
+binding stays retired (0 active bindings on node A). Across the post-G+2 sweeps the pending state
+remained `null` (no stale worker restored it) and no retired binding reactivated.
+
+### Canonical cleanup and restore-path ownership proof
+Removed the participant, closed the conference, ended the session; bridge and channels
+disappeared. Restored node A canonically via `POST desired-state {active}` — the restore
+**succeeded** (attempt 3/8) **while node B was running**, which the old prefix rule would have
+blocked forever (`runtime_restore_waiting_for_old_pods` never clearing). Session TTL was
+temporarily raised 30→60 for the double-failover proof window and restored to 30 at cleanup.
+
+### Final state
+Both intended Asterisk Deployments 1/1, both RuntimeNodes `active/ready`, both listener leases
+claimed, one open epoch per node, all simulator proof RuntimeNodes disabled, zero open/pending
+conferences, zero failover-state conferences, zero actionable verify/fence/restore operations,
+infrastructure worker Ready and idle. No break-glass or manual Kubernetes mutation was used on
+the successful path.
