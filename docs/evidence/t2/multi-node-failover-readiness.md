@@ -10878,3 +10878,91 @@ make *-test: runtime-engine 21, telephony-domain 60, asterisk-ari 94, asterisk-c
 asterisk-conference-recovery 89: PASS. git diff --check / --cached: clean. No forbidden command run
 (no scale/Pod-delete/Asterisk-restart/ARI-unload/Conference/RuntimeBinding/SQL-write/Redis/migrate/
 lease/epoch mutation).
+
+# T5-A64 - deterministic ARI event-stream liveness repository implementation
+
+## Scope and boundary
+Repository-only implementation. No Kubernetes deployment, Pod mutation, live ServiceMonitor change,
+RuntimeBinding mutation, Conference mutation, PBX mutation, direct SQL update/delete, or live
+WebSocket disruption was performed. The prompt referenced starting commit `433bf0c`; the repository
+was already at `4c057c4` when implementation began, with branch `main`, clean working tree, and
+`UTCP_PHASE=T1`.
+
+## Epoch lifecycle correction
+The ARI event listener now closes same-owner superseded open epochs before opening a successor, while
+retaining the existing stale-owner close path. This removes the same-owner reconnect leak without
+closing an epoch owned by a current different owner outside the existing fencing behavior.
+
+The listener also closes the just-opened epoch when post-open inspection or conference reinspection
+throws before the connection is recorded. All teardown paths close the connection's epoch before
+discarding the connection state.
+
+## Positive event-stream liveness
+The raw ARI WebSocket reader is opcode-aware. Text frames continue through the existing ARI event
+normalization path; ping, pong, and close frames are handled as control frames and are not forwarded as
+telephony events. The client sends a WebSocket ping on the established heartbeat cadence and replies to
+server ping frames with pong frames.
+
+The current epoch carries `last_authoritative_signal_at`. A successful pong on the current connection
+updates process-local liveness immediately and persists the timestamp only at the bounded heartbeat
+cadence, avoiding one durable write per control frame. Telephony event frequency is not used as the
+positive liveness signal.
+
+## Events-degraded projection and recovery
+If the current authoritative connection misses pong beyond the configured pong deadline and events-
+degraded grace, the listener projects the RuntimeNode to `events_degraded` through the existing
+RuntimeNode projection machinery. ARI REST health remains a separate signal. The stale event-stream
+connection and epoch are torn down, existing reconnect backoff continues, and the listener does not
+self-fence the RuntimeNode.
+
+`events_degraded` RuntimeNodes remain listener-eligible for automatic reconnect and REST-based
+verification/cleanup, but are excluded from new Conference placement by the existing placement selector
+that requires `observed_state = ready`. Positive pong liveness after reconnect projects recovery back to
+`ready` automatically and restores placement eligibility.
+
+## Bound-Conference reinspection
+On the first crossing into events-degraded state, the listener discovers active Conference bindings for
+the RuntimeNode through existing binding tables and wakes the existing reconciliation/recovery path via
+REST-based runtime inspection. Repeated observations while already events-degraded do not emit duplicate
+transition events or repeatedly enqueue the same crossing work.
+
+## Transition events, metric, and alert
+State crossings emit bounded outbox events:
+
+```text
+runtime_node.event_listener_degraded
+runtime_node.event_listener_recovered
+```
+
+The metrics endpoint now exposes a database-derived current-state gauge:
+
+```text
+asterisk_ari_events_degraded_nodes
+```
+
+The gauge has no labels and counts active/draining Asterisk ARI RuntimeNodes currently projected as
+`events_degraded`. Metrics scraping performs no ARI, Kubernetes, Redis, or WebSocket I/O.
+
+The Prometheus rule set adds:
+
+```text
+UTCPAsteriskAriEventStreamDegraded
+sum(asterisk_ari_events_degraded_nodes) > 0
+for: 5m
+severity: warning
+```
+
+The alert annotation states that automatic ARI event-stream recovery remains degraded and contains no
+manual recovery instruction.
+
+## Focused tests
+Repository tests cover the same-owner epoch leak, post-open exception cleanup, stale-owner behavior,
+WebSocket ping/pong/close/text control-frame handling, quiet healthy stream behavior, pong-deadline
+degradation, placement exclusion, listener reconnect eligibility, no self-fence, idempotent
+Conference reinspection wake-up, automatic recovery, transition-event deduplication, the bounded gauge,
+and alert-rule correctness.
+
+## Controlled live-proof boundary
+Controlled live WebSocket-only degradation and recovery proof remains pending. This implementation does
+not claim that a live idle RuntimeNode has already been forced through an event-stream-only liveness
+failure and automatic recovery.

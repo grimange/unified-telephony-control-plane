@@ -210,6 +210,16 @@ spec:
             namespace: utcp-platform
           annotations:
             summary: Active Asterisk ARI nodes have no recent listener ownership evidence.
+        - alert: UTCPAsteriskAriEventStreamDegraded
+          expr: sum(asterisk_ari_events_degraded_nodes) > 0
+          for: 5m
+          labels:
+            severity: warning
+            component: asterisk-ari
+            namespace: utcp-platform
+          annotations:
+            summary: Automatic Asterisk ARI event-stream recovery remains degraded.
+            description: One or more Asterisk ARI RuntimeNodes remain events-degraded after automatic event-stream reconnect recovery attempts.
         - alert: UTCPAsteriskAriAuthenticationFailures
           expr: increase(asterisk_ari_authentication_failures_total{failure_class="authentication_failed"}[10m]) > 2
           for: 5m

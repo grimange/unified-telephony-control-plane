@@ -82,6 +82,8 @@ class AppServiceProvider extends ServiceProvider
                 new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('connection_closed')),
                 new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('runtime_info_observed')),
                 new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('authentication_failed')),
+                new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('event_listener_degraded')),
+                new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('event_listener_recovered')),
                 new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('unknown_event_observed')),
                 new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('bridge_created')),
                 new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('bridge_destroyed')),

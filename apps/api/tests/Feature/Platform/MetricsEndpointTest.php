@@ -552,6 +552,62 @@ final class MetricsEndpointTest extends TestCase
         }
     }
 
+    public function test_asterisk_ari_events_degraded_node_metric_counts_current_degraded_nodes_without_identifiers(): void
+    {
+        $now = Carbon::parse('2026-07-21 10:00:00');
+        $tenantId = IdentityIds::new();
+        $userId = IdentityIds::new();
+        $degradedNodeA = IdentityIds::new();
+        $degradedNodeB = IdentityIds::new();
+        $readyNode = IdentityIds::new();
+        $disabledNode = IdentityIds::new();
+
+        $this->insertTenantUserAndNode($tenantId, $userId, $degradedNodeA, $now);
+        foreach ([
+            [$degradedNodeB, 'active', 'events_degraded'],
+            [$readyNode, 'active', 'ready'],
+            [$disabledNode, 'disabled', 'events_degraded'],
+        ] as [$nodeId, $desiredState, $observedState]) {
+            DB::table('runtime_nodes')->insert([
+                'id' => $nodeId,
+                'tenant_id' => $tenantId,
+                'name' => 'Asterisk ARI '.substr($nodeId, 0, 8),
+                'slug' => 'asterisk-ari-'.substr($nodeId, 0, 8),
+                'runtime_family' => 'asterisk',
+                'adapter_key' => 'asterisk-ari',
+                'desired_state' => $desiredState,
+                'observed_state' => $observedState,
+                'configuration_version' => 1,
+                'placement_priority' => 100,
+                'capacity_weight' => 1,
+                'labels' => json_encode([], JSON_THROW_ON_ERROR),
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
+        DB::table('runtime_nodes')->where('id', $degradedNodeA)->update(['observed_state' => 'events_degraded']);
+
+        $first = (string) $this->get('/api/metrics')->assertOk()->getContent();
+        $second = (string) $this->get('/api/metrics')->assertOk()->getContent();
+
+        $this->assertSame($first, $second);
+        $this->assertStringContainsString('# HELP asterisk_ari_events_degraded_nodes Current Asterisk ARI RuntimeNodes whose event stream is degraded while REST inspection can remain available.', $first);
+        $this->assertStringContainsString('# TYPE asterisk_ari_events_degraded_nodes gauge', $first);
+        $this->assertStringContainsString('asterisk_ari_events_degraded_nodes{} 2', $first);
+
+        foreach ([
+            'runtime_node_id=',
+            'tenant_id=',
+            $tenantId,
+            $degradedNodeA,
+            $degradedNodeB,
+            $readyNode,
+            $disabledNode,
+        ] as $forbidden) {
+            $this->assertStringNotContainsString($forbidden, $first);
+        }
+    }
+
     public function test_t5_resilience_alert_rules_are_valid_and_actionable(): void
     {
         $path = base_path('../../infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml');
@@ -564,6 +620,7 @@ final class MetricsEndpointTest extends TestCase
             'UTCPStaleActiveRuntimeBindings' => 'for: 10m',
             'UTCPOrphanReclamationTerminalFailure' => 'utcp_conference_orphan_reclamation_operations_total{result="terminal_failed",failure_class!="none"}[10m]',
             'UTCPAriReferenceFamilyDegraded' => 'health="degraded_unavailable"',
+            'UTCPAsteriskAriEventStreamDegraded' => 'sum(asterisk_ari_events_degraded_nodes) > 0',
         ] as $alert => $requiredText) {
             $this->assertSame(1, substr_count($yaml, 'alert: '.$alert), $alert.' must be declared exactly once.');
             $this->assertStringContainsString($requiredText, $yaml);
@@ -575,10 +632,12 @@ final class MetricsEndpointTest extends TestCase
             'utcp_conference_stale_active_bindings',
             'utcp_conference_orphan_reclamation_operations_total',
             'utcp_conference_runtime_reference_health_total',
+            'asterisk_ari_events_degraded_nodes',
         ] as $metric) {
             $this->assertStringContainsString($metric, $yaml);
         }
 
+        $this->assertMatchesRegularExpression('/alert: UTCPAsteriskAriEventStreamDegraded\s+expr: sum\(asterisk_ari_events_degraded_nodes\) > 0\s+for: 5m\s+labels:\s+severity: warning/s', $yaml);
         $this->assertStringNotContainsString('UTCPOrphanParticipantCandidates', $yaml);
         $this->assertStringNotContainsString('utcp_conference_orphan_participant_candidates', $yaml);
         $this->assertStringContainsString('for: 10m', $yaml);

@@ -148,6 +148,9 @@ final class MetricsController
             '# HELP asterisk_ari_listener_nodes Asterisk ARI nodes currently claimed by listener ownership.',
             '# TYPE asterisk_ari_listener_nodes gauge',
             ...$this->asteriskAriListenerNodeMetrics(),
+            '# HELP asterisk_ari_events_degraded_nodes Current Asterisk ARI RuntimeNodes whose event stream is degraded while REST inspection can remain available.',
+            '# TYPE asterisk_ari_events_degraded_nodes gauge',
+            ...$this->asteriskAriEventsDegradedNodeMetrics(),
             '# HELP kamailio_registration_snapshot_polls_total Kamailio registration observer usrloc snapshot polls by result.',
             '# TYPE kamailio_registration_snapshot_polls_total counter',
             ...$this->kamailioRegistrationPollMetrics(),
@@ -1118,6 +1121,22 @@ final class MetricsController
             ->where('listener_kind', config('asterisk_ari.listener_kind', 'asterisk-ari-events'))
             ->where('status', 'claimed')
             ->where('lease_expires_at', '>', now())
+            ->count())];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function asteriskAriEventsDegradedNodeMetrics(): array
+    {
+        if (! Schema::hasTable('runtime_nodes')) {
+            return [$this->sample('asterisk_ari_events_degraded_nodes', [], 0)];
+        }
+
+        return [$this->sample('asterisk_ari_events_degraded_nodes', [], DB::table('runtime_nodes')
+            ->where('adapter_key', config('asterisk_ari.adapter_key', 'asterisk-ari'))
+            ->whereIn('desired_state', ['active', 'draining'])
+            ->where('observed_state', 'events_degraded')
             ->count())];
     }
 

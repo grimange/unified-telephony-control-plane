@@ -37,6 +37,8 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
             $this->catalog->eventType('connection_opened'),
             $this->catalog->eventType('runtime_info_observed') => 'ready',
             $this->catalog->eventType('connection_closed') => 'unavailable',
+            $this->catalog->eventType('event_listener_degraded') => 'events_degraded',
+            $this->catalog->eventType('event_listener_recovered') => 'ready',
             $this->catalog->eventType('authentication_failed') => 'degraded',
             default => 'degraded',
         };
@@ -45,6 +47,8 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
             $this->catalog->eventType('connection_opened'),
             $this->catalog->eventType('connection_closed') => 'runtime.connection.observed',
             $this->catalog->eventType('runtime_info_observed') => 'runtime.readiness.observed',
+            $this->catalog->eventType('event_listener_degraded'),
+            $this->catalog->eventType('event_listener_recovered') => 'runtime.event_stream.observed',
             default => 'runtime.capability.observed',
         };
 

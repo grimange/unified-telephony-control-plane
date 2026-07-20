@@ -2,10 +2,14 @@
 
 namespace App\RuntimeAdapters\Asterisk;
 
+use App\ControlPlane\Messaging\EventEnvelope;
+use App\ControlPlane\Messaging\OutboxRepository;
 use App\ControlPlane\RuntimeOperations\FailureClass;
 use App\ControlPlane\RuntimeOperations\OperationStatus;
+use App\ControlPlane\Shared\ExecutionContext;
 use App\RuntimeEngine\Events\RuntimeEventReceiptRepository;
 use App\RuntimeEngine\Listeners\RuntimeListenerLeaseRepository;
+use App\RuntimeEngine\Projection\ProjectionService;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -15,7 +19,7 @@ use Throwable;
 final class AsteriskAriEventListener
 {
     /**
-     * @var array<string, array{tenant_id:string,stream:resource,lease_id:string,fencing_token:string,epoch_id:string,configuration_version:int,credential_version:int,worker_id:string,heartbeat_interval_ms:int,next_health_check_at:float}>
+     * @var array<string, array{tenant_id:string,stream:resource,lease_id:string,fencing_token:string,epoch_id:string,configuration_version:int,credential_version:int,worker_id:string,heartbeat_interval_ms:int,next_health_check_at:float,next_ping_at:float,last_pong_at:float,last_signal_persisted_at:float,missed_pong_since:float|null}>
      */
     private array $connections = [];
 
@@ -27,6 +31,8 @@ final class AsteriskAriEventListener
         private readonly RuntimeEventReceiptRepository $receipts,
         private readonly ReconciliationRepository $reconciliation,
         private readonly AsteriskAriReconnectBackoff $backoff = new AsteriskAriReconnectBackoff,
+        private readonly ?OutboxRepository $outbox = null,
+        private readonly ?ProjectionService $projection = null,
     ) {}
 
     public function workOnce(string $workerId, int $batchSize = 5): int
@@ -79,6 +85,19 @@ final class AsteriskAriEventListener
                 continue;
             }
 
+            if (microtime(true) >= $conn['next_ping_at']) {
+                try {
+                    $this->client->sendPing($conn['stream']);
+                    $this->connections[$nodeId]['next_ping_at'] = microtime(true) + ($conn['heartbeat_interval_ms'] / 1000);
+                } catch (AsteriskAriException $exception) {
+                    $this->ingestFailure($node, $conn['epoch_id'], $conn['fencing_token'], $exception);
+                    $this->recordFailureBackoff($conn['tenant_id'], $nodeId, $conn['credential_version'], $conn['configuration_version']);
+                    $this->teardownConnection($nodeId, releaseLease: true);
+
+                    continue;
+                }
+            }
+
             if (microtime(true) >= $conn['next_health_check_at']) {
                 try {
                     $info = $this->client->inspect($conn['tenant_id'], $nodeId);
@@ -112,15 +131,36 @@ final class AsteriskAriEventListener
 
             try {
                 for ($eventsRead = 0, $maxEvents = $this->maxEventsPerCycle(); $eventsRead < $maxEvents; $eventsRead++) {
-                    $event = $this->client->readEvent($conn['stream']);
-                    if ($event === null) {
+                    $message = $this->client->readWebSocketMessage($conn['stream']);
+                    $type = (string) ($message['type'] ?? 'empty');
+                    if ($type === 'empty') {
                         break;
                     }
+                    if ($type === 'pong') {
+                        $this->recordAuthoritativeSignal($node);
 
+                        continue;
+                    }
+                    if ($type !== 'event') {
+                        continue;
+                    }
+
+                    $event = is_array($message['event'] ?? null) ? $message['event'] : null;
+                    if ($event === null) {
+                        continue;
+                    }
                     $this->ingestAriEvent($node, $conn['epoch_id'], $event);
                 }
             } catch (AsteriskAriException $exception) {
                 $this->ingestFailure($node, $conn['epoch_id'], $conn['fencing_token'], $exception);
+                $this->recordFailureBackoff($conn['tenant_id'], $nodeId, $conn['credential_version'], $conn['configuration_version']);
+                $this->teardownConnection($nodeId, releaseLease: true);
+
+                continue;
+            }
+
+            if ($this->pongDeadlineExceeded($nodeId)) {
+                $this->markEventStreamDegraded($node, $conn['epoch_id'], $conn['fencing_token']);
                 $this->recordFailureBackoff($conn['tenant_id'], $nodeId, $conn['credential_version'], $conn['configuration_version']);
                 $this->teardownConnection($nodeId, releaseLease: true);
 
@@ -220,8 +260,16 @@ final class AsteriskAriEventListener
 
         $profile = $this->profiles->requiredProfile((string) $node->tenant_id, $nodeId);
         $this->receipts->closeStaleEpochs($nodeId, $workerId);
+        $this->receipts->closeSupersededOwnerEpochs($nodeId, $workerId);
         $epochId = $this->receipts->openEpoch((string) $node->tenant_id, $nodeId, $this->catalog->adapterKey(), $workerId);
-        $info = $this->client->inspect((string) $node->tenant_id, $nodeId);
+        try {
+            $info = $this->client->inspect((string) $node->tenant_id, $nodeId);
+        } catch (Throwable $exception) {
+            $this->receipts->closeEpoch($epochId, $workerId);
+            $this->client->closeWebSocket($stream);
+
+            throw $exception;
+        }
         $this->ingest($node, $epochId, 'connection:opened:'.(string) $lease->fencing_token, $this->catalog->eventType('connection_opened'), [
             'runtime_node_id' => $nodeId,
             'configuration_generation' => (int) $node->configuration_version,
@@ -234,9 +282,17 @@ final class AsteriskAriEventListener
             'auth_generation' => $info['auth_generation'],
             'occurred_at' => now()->toISOString(),
         ]);
-        $this->ingestConferenceRuntimeInspection($node, $epochId);
+        try {
+            $this->ingestConferenceRuntimeInspection($node, $epochId);
+        } catch (Throwable $exception) {
+            $this->receipts->closeEpoch($epochId, $workerId);
+            $this->client->closeWebSocket($stream);
+
+            throw $exception;
+        }
 
         $heartbeatIntervalMs = max(1000, (int) $profile['heartbeat_interval_ms']);
+        $now = microtime(true);
         $this->connections[$nodeId] = [
             'tenant_id' => (string) $node->tenant_id,
             'stream' => $stream,
@@ -247,7 +303,11 @@ final class AsteriskAriEventListener
             'credential_version' => (int) $info['auth_generation'],
             'worker_id' => $workerId,
             'heartbeat_interval_ms' => $heartbeatIntervalMs,
-            'next_health_check_at' => microtime(true) + ($heartbeatIntervalMs / 1000),
+            'next_health_check_at' => $now + ($heartbeatIntervalMs / 1000),
+            'next_ping_at' => $now,
+            'last_pong_at' => $now,
+            'last_signal_persisted_at' => 0.0,
+            'missed_pong_since' => null,
         ];
     }
 
@@ -462,6 +522,135 @@ final class AsteriskAriEventListener
         $conferenceGeneration = max(1, (int) ($conference->configuration_generation ?? 1));
 
         return ($conferenceGeneration * 2) + ($desiredState === 'removed' ? 1 : 0);
+    }
+
+    private function recordAuthoritativeSignal(object $node): void
+    {
+        $nodeId = (string) $node->id;
+        if (! isset($this->connections[$nodeId])) {
+            return;
+        }
+
+        $now = microtime(true);
+        $this->connections[$nodeId]['last_pong_at'] = $now;
+        $this->connections[$nodeId]['missed_pong_since'] = null;
+
+        $persistIntervalSeconds = max(1, ((int) $this->connections[$nodeId]['heartbeat_interval_ms']) / 1000);
+        if ($now - (float) $this->connections[$nodeId]['last_signal_persisted_at'] >= $persistIntervalSeconds) {
+            if ($this->receipts->recordAuthoritativeSignal($this->connections[$nodeId]['epoch_id'], $this->connections[$nodeId]['worker_id'])) {
+                $this->connections[$nodeId]['last_signal_persisted_at'] = $now;
+            }
+        }
+
+        $this->markEventStreamRecovered($node, $this->connections[$nodeId]['epoch_id'], $this->connections[$nodeId]['fencing_token']);
+    }
+
+    private function pongDeadlineExceeded(string $nodeId): bool
+    {
+        if (! isset($this->connections[$nodeId])) {
+            return false;
+        }
+
+        $conn = $this->connections[$nodeId];
+        $now = microtime(true);
+        $deadlineSeconds = max(1, ((int) config('asterisk_ari.pong_deadline_ms', 15000)) / 1000);
+        $graceSeconds = max($deadlineSeconds, ((int) config('asterisk_ari.events_degraded_grace_ms', 30000)) / 1000);
+
+        if ($now - (float) $conn['last_pong_at'] <= $deadlineSeconds) {
+            $this->connections[$nodeId]['missed_pong_since'] = null;
+
+            return false;
+        }
+
+        if ($conn['missed_pong_since'] === null) {
+            $this->connections[$nodeId]['missed_pong_since'] = $now;
+
+            return false;
+        }
+
+        return $now - (float) $conn['missed_pong_since'] >= $graceSeconds;
+    }
+
+    private function markEventStreamDegraded(object $node, string $epochId, string $fencingToken): void
+    {
+        if ((string) DB::table('runtime_nodes')->where('id', (string) $node->id)->value('observed_state') === 'events_degraded') {
+            return;
+        }
+
+        $receipt = $this->projectRuntimeNodeTransition($node, $epochId, 'event-listener:degraded:'.$fencingToken, 'event_listener_degraded', [
+            'runtime_node_id' => (string) $node->id,
+            'configuration_generation' => (int) $node->configuration_version,
+            'reason' => 'pong_deadline_exceeded',
+            'occurred_at' => now()->toISOString(),
+        ]);
+        $this->appendRuntimeNodeTransition($node, 'runtime_node.event_listener_degraded', [
+            'runtime_node_id' => (string) $node->id,
+            'configuration_generation' => (int) $node->configuration_version,
+            'reason' => 'pong_deadline_exceeded',
+            'source_event_id' => $receipt['id'],
+        ]);
+        $this->ingestConferenceRuntimeInspection($node, $epochId);
+    }
+
+    private function markEventStreamRecovered(object $node, string $epochId, string $fencingToken): void
+    {
+        if ((string) DB::table('runtime_nodes')->where('id', (string) $node->id)->value('observed_state') !== 'events_degraded') {
+            return;
+        }
+
+        $receipt = $this->projectRuntimeNodeTransition($node, $epochId, 'event-listener:recovered:'.$fencingToken, 'event_listener_recovered', [
+            'runtime_node_id' => (string) $node->id,
+            'configuration_generation' => (int) $node->configuration_version,
+            'occurred_at' => now()->toISOString(),
+        ]);
+        $this->appendRuntimeNodeTransition($node, 'runtime_node.event_listener_recovered', [
+            'runtime_node_id' => (string) $node->id,
+            'configuration_generation' => (int) $node->configuration_version,
+            'source_event_id' => $receipt['id'],
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return array{status:string,id:string}
+     */
+    private function projectRuntimeNodeTransition(object $node, string $epochId, string $externalKey, string $eventKey, array $payload): array
+    {
+        $receipt = $this->receipts->ingest(
+            (string) $node->tenant_id,
+            (string) $node->id,
+            $this->catalog->adapterKey(),
+            $epochId,
+            $externalKey,
+            $this->catalog->eventType($eventKey),
+            1,
+            $payload,
+        );
+
+        $receiptRow = $this->receipts->find($receipt['id']);
+        if ($receiptRow !== null) {
+            $observations = (new AsteriskAriEventNormalizer($this->catalog, $this->catalog->eventType($eventKey)))
+                ->normalize($receiptRow, $payload);
+            ($this->projection ?? app(ProjectionService::class))->apply($receiptRow, $observations);
+        }
+
+        return $receipt;
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function appendRuntimeNodeTransition(object $node, string $eventType, array $payload): void
+    {
+        $context = ExecutionContext::system(tenantId: (string) $node->tenant_id, reason: $eventType);
+        ($this->outbox ?? app(OutboxRepository::class))->append(EventEnvelope::forAggregate(
+            $eventType,
+            1,
+            'runtime_node',
+            (string) $node->id,
+            $payload,
+            $context,
+        ));
     }
 
     private function teardownConnection(string $nodeId, bool $releaseLease): void

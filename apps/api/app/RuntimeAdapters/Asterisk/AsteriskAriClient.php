@@ -366,22 +366,36 @@ class AsteriskAriClient
      */
     public function readEvent(mixed $stream): ?array
     {
+        $message = $this->readWebSocketMessage($stream);
+
+        return ($message['type'] ?? null) === 'event' && is_array($message['event'] ?? null)
+            ? $message['event']
+            : null;
+    }
+
+    /**
+     * @return array{type:string,event?:array<string,mixed>}
+     */
+    public function readWebSocketMessage(mixed $stream): array
+    {
         if (! is_resource($stream)) {
-            return null;
+            return ['type' => 'empty'];
         }
         $header = fread($stream, 2);
         if ($header === false || $header === '') {
-            return null;
+            return ['type' => 'empty'];
         }
         if (strlen($header) < 2) {
-            return null;
+            return ['type' => 'empty'];
         }
         $bytes = array_values(unpack('C2', $header));
+        $opcode = $bytes[0] & 0x0F;
+        $masked = ($bytes[1] & 0x80) === 0x80;
         $length = $bytes[1] & 0x7F;
         if ($length === 126) {
             $extended = fread($stream, 2);
             if ($extended === false || strlen($extended) !== 2) {
-                return null;
+                return ['type' => 'empty'];
             }
             $length = unpack('n', $extended)[1];
         } elseif ($length === 127) {
@@ -390,9 +404,37 @@ class AsteriskAriClient
         if ($length > (int) config('asterisk_ari.max_payload_bytes', 32768)) {
             throw new AsteriskAriException(FailureClass::InternalError, 'ari_event_too_large', 'ARI event payload exceeded the configured limit.');
         }
+        $mask = '';
+        if ($masked) {
+            $mask = fread($stream, 4);
+            if ($mask === false || strlen($mask) !== 4) {
+                return ['type' => 'empty'];
+            }
+        }
         $payload = $length > 0 ? fread($stream, $length) : '';
         if (! is_string($payload) || strlen($payload) !== $length) {
-            return null;
+            return ['type' => 'empty'];
+        }
+        if ($masked) {
+            $payload = $this->unmaskPayload($payload, $mask);
+        }
+
+        if ($opcode === 0x9) {
+            $this->sendPong($stream, $payload);
+
+            return ['type' => 'ping'];
+        }
+
+        if ($opcode === 0xA) {
+            return ['type' => 'pong'];
+        }
+
+        if ($opcode === 0x8) {
+            throw new AsteriskAriException(FailureClass::RuntimeUnavailable, 'ari_websocket_closed', 'ARI event WebSocket closed.', true);
+        }
+
+        if ($opcode !== 0x1) {
+            throw new AsteriskAriException(FailureClass::InternalError, 'ari_event_unsupported_frame', 'ARI event WebSocket frame opcode is unsupported.');
         }
         try {
             $decoded = json_decode($payload, true, 512, JSON_THROW_ON_ERROR);
@@ -400,7 +442,14 @@ class AsteriskAriClient
             throw new AsteriskAriException(FailureClass::InternalError, 'ari_event_invalid_json', 'ARI event payload was not valid JSON.');
         }
 
-        return is_array($decoded) ? $this->sanitizeAriEvent($decoded) : null;
+        return is_array($decoded)
+            ? ['type' => 'event', 'event' => $this->sanitizeAriEvent($decoded)]
+            : ['type' => 'empty'];
+    }
+
+    public function sendPing(mixed $stream): void
+    {
+        $this->writeWebSocketFrame($stream, 0x9, 'utcp');
     }
 
     private function node(string $tenantId, string $runtimeNodeId): object
@@ -657,6 +706,45 @@ class AsteriskAriClient
         $class = str_contains(strtolower($message), 'timed out') ? FailureClass::Timeout : FailureClass::RuntimeUnavailable;
 
         return new AsteriskAriException($class, $class === FailureClass::Timeout ? 'ari_connection_timeout' : 'ari_connection_failed', 'ARI transport failed.', true);
+    }
+
+    private function sendPong(mixed $stream, string $payload): void
+    {
+        $this->writeWebSocketFrame($stream, 0xA, $payload);
+    }
+
+    private function writeWebSocketFrame(mixed $stream, int $opcode, string $payload): void
+    {
+        if (! is_resource($stream)) {
+            throw new AsteriskAriException(FailureClass::RuntimeUnavailable, 'ari_websocket_unavailable', 'ARI event WebSocket is unavailable.', true);
+        }
+
+        $length = strlen($payload);
+        if ($length > 125) {
+            throw new AsteriskAriException(FailureClass::InternalError, 'ari_control_frame_too_large', 'ARI WebSocket control frame payload exceeded the supported frame size.');
+        }
+
+        $mask = random_bytes(4);
+        $frame = chr(0x80 | $opcode).chr(0x80 | $length).$mask.$this->maskPayload($payload, $mask);
+        $written = fwrite($stream, $frame);
+        if ($written === false || $written !== strlen($frame)) {
+            throw new AsteriskAriException(FailureClass::RuntimeUnavailable, 'ari_websocket_write_failed', 'ARI event WebSocket write failed.', true);
+        }
+    }
+
+    private function maskPayload(string $payload, string $mask): string
+    {
+        $masked = '';
+        for ($i = 0, $length = strlen($payload); $i < $length; $i++) {
+            $masked .= $payload[$i] ^ $mask[$i % 4];
+        }
+
+        return $masked;
+    }
+
+    private function unmaskPayload(string $payload, string $mask): string
+    {
+        return $this->maskPayload($payload, $mask);
     }
 
     private function safeString(mixed $value): string

@@ -63,8 +63,11 @@ max_events_per_cycle="$(sed -n "s/^[[:space:]]*'max_events_per_cycle'[[:space:]]
 [ -n "$max_events_per_cycle" ] || fail "missing deterministic ARI max_events_per_cycle configuration"
 [ "$max_events_per_cycle" -ge 1 ] && [ "$max_events_per_cycle" -le 1000 ] || fail "ARI max_events_per_cycle must be positive and bounded"
 grep -q "maxEventsPerCycle" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriEventListener.php || fail "listener does not use the configured per-cycle drain cap"
-grep -q "readEvent" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriEventListener.php || fail "listener does not read queued ARI events"
-grep -q 'if ($event === null)' apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriEventListener.php || fail "listener drain does not terminate on empty queue"
+grep -q "readWebSocketMessage" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriEventListener.php || fail "listener does not read queued ARI WebSocket messages"
+grep -q "\$type === 'empty'" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriEventListener.php || fail "listener drain does not terminate on empty queue"
+grep -q "sendPing" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriEventListener.php || fail "listener does not send WebSocket ping control frames"
+grep -q "last_authoritative_signal_at" apps/api/app/RuntimeEngine/Events/RuntimeEventReceiptRepository.php apps/api/database/migrations/*_add_ari_event_epoch_liveness.php || fail "event epoch does not persist authoritative signal evidence"
+grep -q "events_degraded" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriEventNormalizer.php apps/api/database/migrations/*_add_ari_event_epoch_liveness.php || fail "runtime node projection does not include events_degraded"
 if rg -n "UTCP_ASTERISK_ARI_MAX_EVENTS_PER_CYCLE|max_events_per_cycle.*env\\(" apps/api/config apps/api/app infrastructure scripts | rg -v '^scripts/asterisk-ari/config-check:'; then
   fail "ARI max_events_per_cycle must not be controlled by an environment feature gate"
 fi
@@ -120,7 +123,8 @@ for metric in \
   asterisk_ari_reconnects_total \
   asterisk_ari_authentication_failures_total \
   asterisk_ari_listener_claims_total \
-  asterisk_ari_listener_nodes
+  asterisk_ari_listener_nodes \
+  asterisk_ari_events_degraded_nodes
 do
   rg -n -- "$metric" apps/api/app/Http/Controllers/Platform/MetricsController.php infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml >/dev/null ||
     fail "missing T0 metric or alert reference: $metric"
@@ -129,6 +133,7 @@ done
 for alert in \
   UTCPAsteriskAriEventsUnavailable \
   UTCPAsteriskAriNodeWithoutListenerEvidence \
+  UTCPAsteriskAriEventStreamDegraded \
   UTCPAsteriskAriAuthenticationFailures \
   UTCPAsteriskAriReconnectLoop \
   UTCPAsteriskAriReceiptBacklog \

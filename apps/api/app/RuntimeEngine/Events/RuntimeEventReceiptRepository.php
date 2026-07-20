@@ -42,6 +42,7 @@ final class RuntimeEventReceiptRepository
             'owner' => $owner,
             'fencing_token' => EngineIds::token(),
             'opened_at' => now(),
+            'last_authoritative_signal_at' => null,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -196,6 +197,45 @@ final class RuntimeEventReceiptRepository
                 'closed_at' => now(),
                 'updated_at' => now(),
             ]);
+    }
+
+    /**
+     * Close the current owner's previous still-open epoch before opening a successor.
+     */
+    public function closeSupersededOwnerEpochs(string $runtimeNodeId, string $currentOwner): int
+    {
+        $source = DB::table('event_sources')
+            ->where('source_kind', EventSourceRepository::KIND_RUNTIME_NODE)
+            ->where('source_key', $runtimeNodeId)
+            ->first();
+
+        $query = DB::table('runtime_event_connection_epochs')
+            ->where('status', 'open')
+            ->where('owner', $currentOwner);
+
+        if ($source === null) {
+            $query->where('runtime_node_id', $runtimeNodeId);
+        } else {
+            $query->where('event_source_id', $source->id);
+        }
+
+        return $query->update([
+            'status' => 'expired',
+            'closed_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    public function recordAuthoritativeSignal(string $epochId, string $owner): bool
+    {
+        return DB::table('runtime_event_connection_epochs')
+            ->where('id', $epochId)
+            ->where('owner', $owner)
+            ->where('status', 'open')
+            ->update([
+                'last_authoritative_signal_at' => now(),
+                'updated_at' => now(),
+            ]) === 1;
     }
 
     public function find(string $id): ?object

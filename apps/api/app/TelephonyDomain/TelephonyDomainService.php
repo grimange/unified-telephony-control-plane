@@ -1019,7 +1019,7 @@ final class TelephonyDomainService
             ->where('conferences.failover_state', self::FAILOVER_STATE_PENDING_NO_CAPACITY)
             ->whereColumn('conferences.configuration_generation', 'conferences.failover_generation')
             ->where(function ($query) use ($cutoff): void {
-                $query->whereNotIn('runtime_nodes.observed_state', ['unavailable', 'stale'])
+                $query->whereIn('runtime_nodes.observed_state', ['ready', 'degraded'])
                     ->orWhereExists(function ($subquery) use ($cutoff): void {
                         $subquery->selectRaw('1')
                             ->from('runtime_observations')

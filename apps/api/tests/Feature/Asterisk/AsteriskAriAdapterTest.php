@@ -1262,6 +1262,10 @@ final class AsteriskAriAdapterTest extends TestCase
                 'worker_id' => 'listener-subscription',
                 'heartbeat_interval_ms' => 30000,
                 'next_health_check_at' => microtime(true) - 1,
+                'next_ping_at' => microtime(true) + 3600,
+                'last_pong_at' => microtime(true),
+                'last_signal_persisted_at' => 0.0,
+                'missed_pong_since' => null,
             ],
         ]);
 
@@ -1274,6 +1278,210 @@ final class AsteriskAriAdapterTest extends TestCase
             ->where('runtime_node_id', $nodeId)
             ->where('external_event_key', 'like', 'failure:%:ari_stasis_subscription_lost')
             ->count(), 'the subscription loss must be recorded as a failure receipt');
+    }
+
+    public function test_same_owner_reconnect_supersedes_previous_open_epoch_without_closing_other_owner_epoch(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $receipts = new RuntimeEventReceiptRepository;
+
+        $previous = $receipts->openEpoch($tenantId, $nodeId, 'asterisk-ari', 'listener-a');
+        $staleOwner = $receipts->openEpoch($tenantId, $nodeId, 'asterisk-ari', 'listener-b');
+
+        $this->assertSame(1, $receipts->closeSupersededOwnerEpochs($nodeId, 'listener-a'));
+        $successor = $receipts->openEpoch($tenantId, $nodeId, 'asterisk-ari', 'listener-a');
+
+        $this->assertSame('expired', DB::table('runtime_event_connection_epochs')->where('id', $previous)->value('status'));
+        $this->assertSame('open', DB::table('runtime_event_connection_epochs')->where('id', $successor)->value('status'));
+        $this->assertSame('open', DB::table('runtime_event_connection_epochs')->where('id', $staleOwner)->value('status'), 'same-owner reconnect must not close a different owner epoch');
+        $this->assertSame(1, DB::table('runtime_event_connection_epochs')->where('runtime_node_id', $nodeId)->where('owner', 'listener-a')->where('status', 'open')->count());
+    }
+
+    public function test_listener_closes_epoch_when_inspection_fails_after_opening_connection(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $stream = fopen('php://temp', 'rb+');
+        $catalog = new AsteriskCatalog;
+        $client = new class($catalog, app(AsteriskAriProfileService::class), $stream) extends AsteriskAriClient
+        {
+            public bool $webSocketClosed = false;
+
+            public function __construct(AsteriskCatalog $catalog, AsteriskAriProfileService $profiles, private mixed $stream)
+            {
+                parent::__construct($catalog, $profiles);
+            }
+
+            public function openWebSocket(string $tenantId, string $runtimeNodeId)
+            {
+                unset($tenantId, $runtimeNodeId);
+
+                return $this->stream;
+            }
+
+            public function inspect(string $tenantId, string $runtimeNodeId): array
+            {
+                unset($tenantId, $runtimeNodeId);
+
+                throw new AsteriskAriException(FailureClass::RuntimeUnavailable, 'ari_test_inspect_failed', 'inspection failed after epoch open', true);
+            }
+
+            public function closeWebSocket(mixed $stream): void
+            {
+                unset($stream);
+                $this->webSocketClosed = true;
+            }
+        };
+
+        $listener = new AsteriskAriEventListener(
+            $catalog,
+            $client,
+            app(AsteriskAriProfileService::class),
+            new RuntimeListenerLeaseRepository,
+            new RuntimeEventReceiptRepository,
+            new ReconciliationRepository,
+        );
+
+        $listener->workOnce('listener-inspect-fail');
+
+        $this->assertTrue($client->webSocketClosed);
+        $this->assertSame(0, DB::table('runtime_event_connection_epochs')->where('runtime_node_id', $nodeId)->where('status', 'open')->count());
+        $this->assertSame(1, DB::table('runtime_event_receipts')->where('runtime_node_id', $nodeId)->where('external_event_key', 'like', 'failure:%:ari_test_inspect_failed')->count());
+    }
+
+    public function test_raw_websocket_client_handles_ping_pong_close_and_text_frames_without_forwarding_control_frames(): void
+    {
+        $catalog = new AsteriskCatalog;
+        $client = new AsteriskAriClient($catalog, app(AsteriskAriProfileService::class));
+        [$local, $remote] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        $this->assertIsResource($local);
+        $this->assertIsResource($remote);
+
+        $client->sendPing($local);
+        $ping = $this->readClientFrame($remote);
+        $this->assertSame(0x9, $ping['opcode']);
+        $this->assertSame('utcp', $ping['payload']);
+
+        fwrite($remote, $this->serverFrame(0xA, 'ok'));
+        $this->assertSame(['type' => 'pong'], $client->readWebSocketMessage($local));
+
+        fwrite($remote, $this->serverFrame(0x9, 'server-ping'));
+        $this->assertSame(['type' => 'ping'], $client->readWebSocketMessage($local));
+        $pong = $this->readClientFrame($remote);
+        $this->assertSame(0xA, $pong['opcode']);
+        $this->assertSame('server-ping', $pong['payload']);
+
+        fwrite($remote, $this->serverFrame(0x1, json_encode(['type' => 'BridgeCreated', 'timestamp' => '2026-07-21T00:00:00Z'], JSON_THROW_ON_ERROR)));
+        $message = $client->readWebSocketMessage($local);
+        $this->assertSame('event', $message['type']);
+        $this->assertSame('BridgeCreated', $message['event']['type']);
+
+        fwrite($remote, $this->serverFrame(0x8, ''));
+        $this->expectException(AsteriskAriException::class);
+        $this->expectExceptionMessage('ARI event WebSocket closed.');
+        $client->readWebSocketMessage($local);
+    }
+
+    public function test_listener_ping_pong_keeps_quiet_stream_healthy_without_event_receipts(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update(['observed_state' => 'ready']);
+        config()->set('asterisk_ari.max_events_per_cycle', 3);
+
+        $stream = fopen('php://temp', 'rb');
+        $catalog = new AsteriskCatalog;
+        $client = $this->queuedEventClient([
+            (string) get_resource_id($stream) => [
+                ['_ws_type' => 'pong'],
+            ],
+        ]);
+        $leases = new RuntimeListenerLeaseRepository;
+        $receipts = new RuntimeEventReceiptRepository;
+        $listener = new AsteriskAriEventListener($catalog, $client, app(AsteriskAriProfileService::class), $leases, $receipts, new ReconciliationRepository);
+        $this->attachListenerConnection($listener, $leases, $receipts, $tenantId, $nodeId, 'listener-quiet', $stream);
+        $this->setListenerConnectionTimes($listener, $nodeId, ['next_ping_at' => microtime(true) - 1]);
+
+        $listener->workOnce('listener-quiet');
+
+        $this->assertSame(1, $client->pingCount);
+        $this->assertSame('ready', DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_state'));
+        $this->assertSame(0, DB::table('runtime_event_receipts')->where('runtime_node_id', $nodeId)->where('external_event_key', 'like', 'ari:%')->count());
+        $this->assertNotNull(DB::table('runtime_event_connection_epochs')->where('runtime_node_id', $nodeId)->where('status', 'open')->value('last_authoritative_signal_at'));
+    }
+
+    public function test_pong_deadline_degrades_events_wakes_reinspection_and_pong_recovery_restores_eligibility(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $conferenceId = IdentityIds::new();
+        $bindingId = IdentityIds::new();
+        DB::table('conferences')->insert([
+            'id' => $conferenceId,
+            'tenant_id' => $tenantId,
+            'slug' => 'events-degraded-'.substr($conferenceId, 0, 8),
+            'display_name' => 'Events Degraded',
+            'runtime_node_id' => $nodeId,
+            'desired_state' => 'open',
+            'observed_state' => 'ready',
+            'configuration_generation' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('conference_runtime_bindings')->insert([
+            'id' => $bindingId,
+            'tenant_id' => $tenantId,
+            'conference_id' => $conferenceId,
+            'runtime_node_id' => $nodeId,
+            'status' => 'active',
+            'bound_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update(['observed_state' => 'ready']);
+        config()->set('asterisk_ari.pong_deadline_ms', 1000);
+        config()->set('asterisk_ari.events_degraded_grace_ms', 1000);
+
+        $stream = fopen('php://temp', 'rb');
+        $catalog = new AsteriskCatalog;
+        $client = $this->queuedEventClient([(string) get_resource_id($stream) => []]);
+        $leases = new RuntimeListenerLeaseRepository;
+        $receipts = new RuntimeEventReceiptRepository;
+        $listener = new AsteriskAriEventListener($catalog, $client, app(AsteriskAriProfileService::class), $leases, $receipts, new ReconciliationRepository);
+        $lease = $this->attachListenerConnection($listener, $leases, $receipts, $tenantId, $nodeId, 'listener-degrade', $stream);
+        $old = microtime(true) - 10;
+        $this->setListenerConnectionTimes($listener, $nodeId, [
+            'next_ping_at' => microtime(true) + 3600,
+            'last_pong_at' => $old,
+            'missed_pong_since' => $old,
+        ]);
+
+        $listener->workOnce('listener-degrade');
+
+        $this->assertSame('events_degraded', DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_state'));
+        $this->assertSame('released', DB::table('runtime_listener_leases')->where('id', (string) $lease->id)->value('status'));
+        $this->assertSame('waiting', DB::table('runtime_reconciliation_states')->where('target_type', 'conference')->where('target_id', $conferenceId)->value('status'));
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $nodeId)->where('event_type', 'runtime_node.event_listener_degraded')->count());
+        $this->assertSame(0, DB::table('runtime_operations')->where('runtime_node_id', $nodeId)->where('operation_type', 'runtime.node.runtime.fence')->count());
+        $this->assertContains($nodeId, $this->eligibleNodeIds(), 'events-degraded nodes must remain listener-eligible for automatic reconnect');
+        $this->assertNotContains($nodeId, $this->placementEligibleNodeIds($tenantId), 'events-degraded nodes must remain ineligible for new placement');
+
+        $recoveryStream = fopen('php://temp', 'rb');
+        $client = $this->queuedEventClient([
+            (string) get_resource_id($recoveryStream) => [
+                ['_ws_type' => 'pong'],
+                ['_ws_type' => 'pong'],
+            ],
+        ]);
+        $listener = new AsteriskAriEventListener($catalog, $client, app(AsteriskAriProfileService::class), new RuntimeListenerLeaseRepository, new RuntimeEventReceiptRepository, new ReconciliationRepository);
+        $this->attachListenerConnection($listener, new RuntimeListenerLeaseRepository, new RuntimeEventReceiptRepository, $tenantId, $nodeId, 'listener-recovery', $recoveryStream);
+
+        $listener->workOnce('listener-recovery');
+
+        $this->assertSame('ready', DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_state'));
+        $this->assertContains($nodeId, $this->placementEligibleNodeIds($tenantId), 'positive pong recovery must restore placement eligibility');
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $nodeId)->where('event_type', 'runtime_node.event_listener_recovered')->count());
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $nodeId)->where('event_type', 'runtime_node.event_listener_degraded')->count());
     }
 
     public function test_listener_drains_multiple_queued_frames_in_one_cycle_and_wakes_recovery(): void
@@ -1771,6 +1979,35 @@ final class AsteriskAriAdapterTest extends TestCase
         );
     }
 
+    /**
+     * @return list<string>
+     */
+    private function placementEligibleNodeIds(string $tenantId): array
+    {
+        return DB::table('runtime_nodes')
+            ->where('tenant_id', $tenantId)
+            ->whereIn('desired_state', ['active', 'draining'])
+            ->where('observed_state', 'ready')
+            ->whereExists(function ($query): void {
+                $query->selectRaw('1')
+                    ->from('runtime_node_capabilities')
+                    ->whereColumn('runtime_node_capabilities.runtime_node_id', 'runtime_nodes.id')
+                    ->where('runtime_node_capabilities.capability_key', 'conference.lifecycle');
+            })
+            ->whereExists(function ($query): void {
+                $query->selectRaw('1')
+                    ->from('runtime_node_capabilities')
+                    ->whereColumn('runtime_node_capabilities.runtime_node_id', 'runtime_nodes.id')
+                    ->where('runtime_node_capabilities.capability_key', 'conference.participation');
+            })
+            ->orderBy('runtime_family')
+            ->orderBy('adapter_key')
+            ->orderBy('id')
+            ->pluck('id')
+            ->map(static fn (mixed $id): string => (string) $id)
+            ->all();
+    }
+
     private function restoreAuthority(
         string $tenantId,
         string $nodeId,
@@ -1940,6 +2177,8 @@ final class AsteriskAriAdapterTest extends TestCase
 
             public int $readAttempts = 0;
 
+            public int $pingCount = 0;
+
             public bool $webSocketClosed = false;
 
             /**
@@ -1953,6 +2192,13 @@ final class AsteriskAriAdapterTest extends TestCase
 
             public function readEvent(mixed $stream): ?array
             {
+                $message = $this->readWebSocketMessage($stream);
+
+                return ($message['type'] ?? null) === 'event' ? $message['event'] : null;
+            }
+
+            public function readWebSocketMessage(mixed $stream): array
+            {
                 $this->readAttempts++;
                 if ($this->throwOnAttempt !== null && $this->readAttempts === $this->throwOnAttempt) {
                     throw new AsteriskAriException(FailureClass::RuntimeUnavailable, 'ari_test_drain_failure', 'test drain failure', true);
@@ -1960,10 +2206,38 @@ final class AsteriskAriAdapterTest extends TestCase
 
                 $streamId = is_resource($stream) ? (string) get_resource_id($stream) : '';
                 if (! array_key_exists($streamId, $this->eventsByStream)) {
-                    return null;
+                    return ['type' => 'empty'];
                 }
 
-                return array_shift($this->eventsByStream[$streamId]);
+                $next = array_shift($this->eventsByStream[$streamId]);
+                if ($next === null) {
+                    return ['type' => 'empty'];
+                }
+                if (isset($next['_ws_type'])) {
+                    $messageType = (string) $next['_ws_type'];
+                    unset($next['_ws_type']);
+
+                    return $messageType === 'event'
+                        ? ['type' => 'event', 'event' => $next]
+                        : ['type' => $messageType];
+                }
+
+                return ['type' => 'event', 'event' => $next];
+            }
+
+            public function sendPing(mixed $stream): void
+            {
+                unset($stream);
+                $this->pingCount++;
+            }
+
+            public function conferenceRuntimeSummary(string $tenantId, string $runtimeNodeId, string $conferenceId, ?string $participantId = null): array
+            {
+                unset($tenantId, $runtimeNodeId, $conferenceId);
+
+                return $participantId === null
+                    ? ['bridge_exists' => false]
+                    : ['bridge_exists' => false, 'participant_channel_exists' => false, 'participant_channel_in_bridge' => false];
             }
 
             public function closeWebSocket(mixed $stream): void
@@ -2000,10 +2274,62 @@ final class AsteriskAriAdapterTest extends TestCase
             'worker_id' => $workerId,
             'heartbeat_interval_ms' => 30000,
             'next_health_check_at' => microtime(true) + 3600,
+            'next_ping_at' => microtime(true) + 3600,
+            'last_pong_at' => microtime(true),
+            'last_signal_persisted_at' => 0.0,
+            'missed_pong_since' => null,
         ];
         $connections->setValue($listener, $current);
 
         return $lease;
+    }
+
+    /**
+     * @param  array<string, float|null>  $overrides
+     */
+    private function setListenerConnectionTimes(AsteriskAriEventListener $listener, string $nodeId, array $overrides): void
+    {
+        $connections = new ReflectionProperty($listener, 'connections');
+        $current = $connections->getValue($listener);
+        foreach ($overrides as $key => $value) {
+            $current[$nodeId][$key] = $value;
+        }
+        $connections->setValue($listener, $current);
+    }
+
+    private function serverFrame(int $opcode, string $payload): string
+    {
+        $length = strlen($payload);
+        $this->assertLessThanOrEqual(125, $length);
+
+        return chr(0x80 | $opcode).chr($length).$payload;
+    }
+
+    /**
+     * @return array{opcode:int,payload:string}
+     */
+    private function readClientFrame(mixed $stream): array
+    {
+        $header = fread($stream, 2);
+        $this->assertIsString($header);
+        $this->assertSame(2, strlen($header));
+        $bytes = array_values(unpack('C2', $header));
+        $opcode = $bytes[0] & 0x0F;
+        $length = $bytes[1] & 0x7F;
+        $masked = ($bytes[1] & 0x80) === 0x80;
+        $mask = $masked ? fread($stream, 4) : '';
+        $this->assertIsString($mask);
+        $payload = $length > 0 ? fread($stream, $length) : '';
+        $this->assertIsString($payload);
+        if ($masked) {
+            $decoded = '';
+            for ($i = 0; $i < $length; $i++) {
+                $decoded .= $payload[$i] ^ $mask[$i % 4];
+            }
+            $payload = $decoded;
+        }
+
+        return ['opcode' => $opcode, 'payload' => $payload];
     }
 
     /**
