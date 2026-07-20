@@ -65,16 +65,17 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
             $summary = $this->client->conferenceRuntimeSummary($tenantId, $runtimeNodeId, $conferenceId, $participantId);
         } catch (AsteriskAriException $exception) {
             if ($exception->retryable) {
-                return RuntimeConferenceInspectionResult::unavailable($exception->failureClass->value, $exception->failureCode);
+                return RuntimeConferenceInspectionResult::unavailable($exception->failureClass->value, $exception->failureCode, $this->runtimeReferenceHealthFromFailure($exception->failureCode));
             }
 
-            return RuntimeConferenceInspectionResult::failed($exception->failureClass->value, $exception->failureCode);
+            return RuntimeConferenceInspectionResult::failed($exception->failureClass->value, $exception->failureCode, $this->runtimeReferenceHealthFromFailure($exception->failureCode));
         }
 
         return RuntimeConferenceInspectionResult::observed(
             (bool) ($summary['bridge_exists'] ?? false),
             array_key_exists('participant_channel_exists', $summary) ? (bool) $summary['participant_channel_exists'] : null,
             array_key_exists('participant_channel_in_bridge', $summary) ? (bool) $summary['participant_channel_in_bridge'] : null,
+            $this->runtimeReferenceHealth($summary),
         );
     }
 
@@ -360,12 +361,21 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
         if ($conference === null || $binding === null) {
             return $this->failure(FailureClass::InvalidRequest, 'absence_verification_context_not_found', 'Conference absence verification context is not valid.');
         }
+        if ($generation < (int) $conference->configuration_generation) {
+            return $this->completed('runtime_operation.asterisk_conference_stale', $operation, [
+                'conference_id' => (string) $conference->id,
+                'configuration_generation' => (int) $conference->configuration_generation,
+                'runtime_reference_present' => false,
+                'stale_operation' => true,
+            ]);
+        }
 
         $bridgeSummary = $this->client->conferenceRuntimeSummary((string) $node->tenant_id, (string) $node->id, $conferenceId);
         if ((bool) ($bridgeSummary['bridge_exists'] ?? false)) {
             return $this->absenceVerificationCompleted($operation, $conferenceId, $formerBindingId, $formerRuntimeNodeId, $generation, 'present', [
                 'bridge_present' => true,
                 'participant_channel_present' => false,
+                'runtime_reference_health' => $this->runtimeReferenceHealth($bridgeSummary),
             ]);
         }
 
@@ -380,6 +390,7 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
                 return $this->absenceVerificationCompleted($operation, $conferenceId, $formerBindingId, $formerRuntimeNodeId, $generation, 'present', [
                     'bridge_present' => false,
                     'participant_channel_present' => true,
+                    'runtime_reference_health' => $this->runtimeReferenceHealth($participantSummary),
                 ]);
             }
         }
@@ -387,6 +398,7 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
         return $this->absenceVerificationCompleted($operation, $conferenceId, $formerBindingId, $formerRuntimeNodeId, $generation, 'absent', [
             'bridge_present' => false,
             'participant_channel_present' => false,
+            'runtime_reference_health' => 'healthy_absent',
         ]);
     }
 
@@ -451,6 +463,30 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
     private function operationGeneration(array $operation): int
     {
         return (int) data_get($operation, 'payload.configuration_generation', 0);
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     */
+    private function runtimeReferenceHealth(array $summary): string
+    {
+        $health = $summary['runtime_reference_health'] ?? null;
+        if (is_string($health) && in_array($health, ['healthy_present', 'healthy_absent', 'degraded_unavailable', 'transport_unavailable'], true)) {
+            return $health;
+        }
+
+        return (bool) ($summary['bridge_exists'] ?? false) || (bool) ($summary['participant_channel_exists'] ?? false)
+            ? 'healthy_present'
+            : 'healthy_absent';
+    }
+
+    private function runtimeReferenceHealthFromFailure(string $failureCode): ?string
+    {
+        return match ($failureCode) {
+            'ari_resource_family_degraded' => 'degraded_unavailable',
+            'ari_http_transport_failed', 'ari_connection_timeout', 'ari_connection_failed' => 'transport_unavailable',
+            default => null,
+        };
     }
 
     /**

@@ -17,6 +17,8 @@ use App\RuntimeAdapters\Asterisk\AsteriskAriReconnectBackoff;
 use App\RuntimeAdapters\Asterisk\AsteriskCatalog;
 use App\RuntimeAdapters\Asterisk\AsteriskRuntimeAdapter;
 use App\RuntimeAdapters\Asterisk\AsteriskRuntimeNodeReconciler;
+use App\RuntimeEngine\Commands\RuntimeAdapterRegistry;
+use App\RuntimeEngine\Commands\RuntimeConferenceInspectionService;
 use App\RuntimeEngine\Events\RuntimeEventReceiptRepository;
 use App\RuntimeEngine\Listeners\RuntimeListenerLeaseRepository;
 use App\RuntimeEngine\Projection\ProjectionService;
@@ -130,6 +132,277 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertSame('internal_error', $result['failure_class']);
         $this->assertSame('participant_inspection_failed', $result['failure_code']);
         $this->assertArrayNotHasKey('event_payload', $result);
+    }
+
+    public function test_bridge_specific_404_with_healthy_family_is_authoritative_absence(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([
+            ['status' => 404, 'body' => ''],
+            ['status' => 200, 'body' => '[]'],
+        ]);
+
+        $summary = $client->conferenceRuntimeSummary($tenantId, $nodeId, 'conference-healthy-absent');
+
+        $this->assertFalse($summary['bridge_exists']);
+        $this->assertSame('healthy_absent', $summary['runtime_reference_health']);
+        $this->assertSame([
+            ['method' => 'GET', 'resource' => 'bridges/'.$client->conferenceBridgeId('conference-healthy-absent'), 'timeout_ms' => 4000, 'accepted_statuses' => [200, 404]],
+            ['method' => 'GET', 'resource' => 'bridges', 'timeout_ms' => 4000, 'accepted_statuses' => [200]],
+        ], $client->requests);
+    }
+
+    public function test_bridge_specific_404_with_degraded_family_is_retryable_unavailability(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([
+            ['status' => 404, 'body' => ''],
+            ['status' => 500, 'body' => ''],
+        ]);
+
+        try {
+            $client->conferenceRuntimeSummary($tenantId, $nodeId, 'conference-degraded-family');
+            $this->fail('Expected degraded ARI resource family to throw.');
+        } catch (AsteriskAriException $exception) {
+            $this->assertTrue($exception->retryable);
+            $this->assertSame(FailureClass::RuntimeUnavailable, $exception->failureClass);
+            $this->assertSame('ari_resource_family_degraded', $exception->failureCode);
+        }
+
+        $this->assertSame([
+            'bridges/'.$client->conferenceBridgeId('conference-degraded-family'),
+            'bridges',
+        ], array_column($client->requests, 'resource'));
+    }
+
+    public function test_bridge_family_transport_failure_after_specific_404_is_not_absence(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([
+            ['status' => 404, 'body' => ''],
+            ['throw' => new AsteriskAriException(FailureClass::RuntimeUnavailable, 'ari_http_transport_failed', 'ARI HTTP transport failed.', true)],
+        ]);
+
+        $this->expectException(AsteriskAriException::class);
+        $this->expectExceptionMessage('ARI resource family is degraded.');
+
+        $client->conferenceRuntimeSummary($tenantId, $nodeId, 'conference-family-transport');
+    }
+
+    public function test_channel_specific_404_with_healthy_family_is_authoritative_absence(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([
+            ['status' => 200, 'body' => json_encode(['id' => 'utcp-conf-conference-channel-absent', 'channels' => []], JSON_THROW_ON_ERROR)],
+            ['status' => 404, 'body' => ''],
+            ['status' => 200, 'body' => '[]'],
+        ]);
+
+        $summary = $client->conferenceRuntimeSummary($tenantId, $nodeId, 'conference-channel-absent', 'participant-channel-absent');
+
+        $this->assertTrue($summary['bridge_exists']);
+        $this->assertFalse($summary['participant_channel_exists']);
+        $this->assertSame('healthy_present', $summary['runtime_reference_health']);
+        $this->assertSame('healthy_absent', $summary['participant_runtime_reference_health']);
+        $this->assertSame([
+            'bridges/'.$client->conferenceBridgeId('conference-channel-absent'),
+            'channels/'.$client->participantChannelId('participant-channel-absent'),
+            'channels',
+        ], array_column($client->requests, 'resource'));
+    }
+
+    public function test_channel_specific_404_with_degraded_family_is_retryable_unavailability(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([
+            ['status' => 200, 'body' => json_encode(['id' => 'utcp-conf-conference-channel-degraded', 'channels' => []], JSON_THROW_ON_ERROR)],
+            ['status' => 404, 'body' => ''],
+            ['status' => 404, 'body' => ''],
+        ]);
+
+        try {
+            $client->conferenceRuntimeSummary($tenantId, $nodeId, 'conference-channel-degraded', 'participant-channel-degraded');
+            $this->fail('Expected degraded channel resource family to throw.');
+        } catch (AsteriskAriException $exception) {
+            $this->assertTrue($exception->retryable);
+            $this->assertSame('ari_resource_family_degraded', $exception->failureCode);
+        }
+    }
+
+    public function test_existing_bridge_present_does_not_probe_family(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([
+            ['status' => 200, 'body' => json_encode(['id' => 'utcp-conf-conference-present', 'channels' => []], JSON_THROW_ON_ERROR)],
+        ]);
+
+        $summary = $client->conferenceRuntimeSummary($tenantId, $nodeId, 'conference-present');
+
+        $this->assertTrue($summary['bridge_exists']);
+        $this->assertSame('healthy_present', $summary['runtime_reference_health']);
+        $this->assertSame(['bridges/'.$client->conferenceBridgeId('conference-present')], array_column($client->requests, 'resource'));
+    }
+
+    public function test_specific_transport_failure_is_inspection_unavailable_not_absent(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([
+            ['throw' => new AsteriskAriException(FailureClass::RuntimeUnavailable, 'ari_http_transport_failed', 'ARI HTTP transport failed.', true)],
+        ]);
+        $adapter = new AsteriskRuntimeAdapter(new AsteriskCatalog, $client);
+
+        $result = $adapter->inspectConferenceRuntime($tenantId, $nodeId, 'conference-transport');
+
+        $this->assertSame('unavailable', $result->status);
+        $this->assertSame('ari_http_transport_failed', $result->failureCode);
+        $this->assertSame('transport_unavailable', $result->runtimeReferenceHealth);
+    }
+
+    public function test_verification_operation_retries_when_bridge_family_is_degraded_then_recovers(): void
+    {
+        [$tenantId, $nodeId, $conferenceId, $bindingId] = $this->conferenceFenceContext();
+        $this->configureAriNode($tenantId, $nodeId);
+        $catalog = new AsteriskCatalog;
+        $degradedClient = $this->ariClientWithResponses([
+            ['status' => 404, 'body' => ''],
+            ['status' => 500, 'body' => ''],
+        ]);
+        $adapter = new AsteriskRuntimeAdapter($catalog, $degradedClient);
+
+        $degraded = $adapter->execute($this->fenceOperation($tenantId, $nodeId, $conferenceId, $bindingId));
+
+        $this->assertSame('retry_scheduled', $degraded['status']);
+        $this->assertSame('runtime_unavailable', $degraded['failure_class']);
+        $this->assertSame('ari_resource_family_degraded', $degraded['failure_code']);
+        $this->assertArrayNotHasKey('event_payload', $degraded);
+
+        $recoveredClient = $this->ariClientWithResponses([
+            ['status' => 404, 'body' => ''],
+            ['status' => 200, 'body' => '[]'],
+        ]);
+        $recoveredAdapter = new AsteriskRuntimeAdapter($catalog, $recoveredClient);
+
+        $recovered = $recoveredAdapter->execute($this->fenceOperation($tenantId, $nodeId, $conferenceId, $bindingId));
+
+        $this->assertSame('completed', $recovered['status']);
+        $this->assertSame('conference.runtime_fence_verified', $recovered['event_type']);
+        $this->assertSame('absent', $recovered['event_payload']['verification_result']);
+        $this->assertSame('healthy_absent', $recovered['event_payload']['runtime_reference_health']);
+    }
+
+    public function test_wrong_node_absence_verification_fails_before_ari_requests(): void
+    {
+        [$tenantId, $boundNodeId, $conferenceId, $bindingId] = $this->conferenceFenceContext();
+        [, $wrongNodeId] = $this->runtimeNodeForTenant($tenantId);
+        $client = $this->ariClientWithResponses([]);
+        $adapter = new AsteriskRuntimeAdapter(new AsteriskCatalog, $client);
+        $operation = $this->fenceOperation($tenantId, $wrongNodeId, $conferenceId, $bindingId);
+
+        $result = $adapter->execute($operation);
+
+        $this->assertSame('terminal_failure', $result['status']);
+        $this->assertSame('absence_verification_context_not_found', $result['failure_code']);
+        $this->assertSame([], $client->requests);
+        $this->assertNotSame($boundNodeId, $wrongNodeId);
+    }
+
+    public function test_stale_generation_absence_verification_completes_before_ari_requests(): void
+    {
+        [$tenantId, $nodeId, $conferenceId, $bindingId] = $this->conferenceFenceContext();
+        DB::table('conferences')->where('id', $conferenceId)->update([
+            'configuration_generation' => 8,
+            'updated_at' => now(),
+        ]);
+        $client = $this->ariClientWithResponses([]);
+        $adapter = new AsteriskRuntimeAdapter(new AsteriskCatalog, $client);
+
+        $result = $adapter->execute($this->fenceOperation($tenantId, $nodeId, $conferenceId, $bindingId));
+
+        $this->assertSame('completed', $result['status']);
+        $this->assertSame('runtime_operation.asterisk_conference_stale', $result['event_type']);
+        $this->assertTrue($result['event_payload']['stale_operation']);
+        $this->assertSame([], $client->requests);
+    }
+
+    public function test_cleanup_bridge_404_remains_idempotent_without_family_probe(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([
+            ['status' => 404, 'body' => ''],
+        ]);
+
+        $result = $client->closeConferenceBridge($tenantId, $nodeId, 'conference-cleanup', 7);
+
+        $this->assertTrue($result['absent']);
+        $this->assertSame(['bridges/'.$client->conferenceBridgeId('conference-cleanup')], array_column($client->requests, 'resource'));
+    }
+
+    public function test_cleanup_channel_404_remains_idempotent_without_family_probe(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([
+            ['status' => 404, 'body' => ''],
+            ['status' => 404, 'body' => ''],
+        ]);
+
+        $result = $client->removeParticipantChannel($tenantId, $nodeId, 'conference-cleanup', 'participant-cleanup', 7);
+
+        $this->assertTrue($result['absent']);
+        $this->assertSame([
+            'bridges/'.$client->conferenceBridgeId('conference-cleanup').'/removeChannel',
+            'channels/'.$client->participantChannelId('participant-cleanup'),
+        ], array_column($client->requests, 'resource'));
+    }
+
+    public function test_reconstruction_absence_and_create_conflict_remain_idempotent_without_family_probe(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([
+            ['status' => 404, 'body' => ''],
+            ['status' => 409, 'body' => ''],
+        ]);
+
+        $result = $client->ensureConferenceBridge($tenantId, $nodeId, 'conference-reconstruct', 7);
+
+        $this->assertFalse($result['already_existed']);
+        $this->assertSame([
+            'bridges/'.$client->conferenceBridgeId('conference-reconstruct'),
+            'bridges',
+        ], array_column($client->requests, 'resource'));
+        $this->assertSame('POST', $client->requests[1]['method']);
+    }
+
+    public function test_inspection_metric_records_runtime_reference_health_classification(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $registry = app(RuntimeAdapterRegistry::class);
+        $registry->register(new AsteriskRuntimeAdapter(new AsteriskCatalog, $this->ariClientWithResponses([
+            ['status' => 404, 'body' => ''],
+            ['status' => 200, 'body' => '[]'],
+        ])));
+        $service = app(RuntimeConferenceInspectionService::class);
+
+        $result = $service->inspect($tenantId, $nodeId, 'conference-metric');
+
+        $this->assertSame('observed', $result->status);
+        $this->assertSame('healthy_absent', $result->runtimeReferenceHealth);
+        $this->assertDatabaseHas('conference_recovery_metric_events', [
+            'adapter_key' => 'asterisk-ari',
+            'resource_type' => 'conference',
+            'result' => 'observed',
+            'reason' => 'healthy_absent',
+        ]);
     }
 
     public function test_listener_leases_are_node_scoped_and_fenced(): void
@@ -1165,6 +1438,68 @@ final class AsteriskAriAdapterTest extends TestCase
     }
 
     /**
+     * @param  list<array{status?:int,body?:string,throw?:AsteriskAriException}>  $responses
+     */
+    private function ariClientWithResponses(array $responses): AsteriskAriClient
+    {
+        return new class(new AsteriskCatalog, app(AsteriskAriProfileService::class), $responses) extends AsteriskAriClient
+        {
+            /**
+             * @var list<array{method:string,resource:string,timeout_ms:int,accepted_statuses:list<int>}>
+             */
+            public array $requests = [];
+
+            /**
+             * @param  list<array{status?:int,body?:string,throw?:AsteriskAriException}>  $responses
+             */
+            public function __construct(AsteriskCatalog $catalog, AsteriskAriProfileService $profiles, private array $responses)
+            {
+                parent::__construct($catalog, $profiles);
+            }
+
+            protected function ariRequest(string $runtimeNodeId, string $method, string $resource, array $query, int $timeoutMs, array $acceptedStatuses): array
+            {
+                unset($runtimeNodeId, $query);
+                $this->requests[] = [
+                    'method' => $method,
+                    'resource' => $resource,
+                    'timeout_ms' => $timeoutMs,
+                    'accepted_statuses' => $acceptedStatuses,
+                ];
+
+                if ($this->responses === []) {
+                    throw new AsteriskAriException(FailureClass::RuntimeUnavailable, 'ari_test_response_missing', 'ARI fake response was missing.', true);
+                }
+
+                $next = array_shift($this->responses);
+                if (($next['throw'] ?? null) instanceof AsteriskAriException) {
+                    throw $next['throw'];
+                }
+
+                $status = (int) ($next['status'] ?? 200);
+                $response = ['status' => $status, 'body' => (string) ($next['body'] ?? '')];
+                if (in_array($status, $acceptedStatuses, true)) {
+                    return $response;
+                }
+                if ($status === 401) {
+                    throw new AsteriskAriException(FailureClass::AuthenticationFailed, 'ari_authentication_failed', 'ARI authentication failed.');
+                }
+                if ($status === 403) {
+                    throw new AsteriskAriException(FailureClass::AuthorizationFailed, 'ari_authorization_failed', 'ARI authorization failed.');
+                }
+                if ($status === 404) {
+                    throw new AsteriskAriException(FailureClass::Conflict, 'ari_resource_not_found', 'ARI resource was not found.');
+                }
+                if ($status === 409 || $status === 422) {
+                    throw new AsteriskAriException(FailureClass::Conflict, 'ari_resource_conflict', 'ARI resource conflict.');
+                }
+
+                throw new AsteriskAriException(FailureClass::RuntimeUnavailable, 'ari_http_unavailable', 'ARI HTTP request did not return success.', true);
+            }
+        };
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function fenceOperation(string $tenantId, string $nodeId, string $conferenceId, string $bindingId): array
@@ -1285,6 +1620,29 @@ final class AsteriskAriAdapterTest extends TestCase
         return [$tenantId, $nodeId];
     }
 
+    /**
+     * @return array{0:string,1:string}
+     */
+    private function runtimeNodeForTenant(string $tenantId): array
+    {
+        $nodeId = IdentityIds::new();
+        DB::table('runtime_nodes')->insert([
+            'id' => $nodeId,
+            'tenant_id' => $tenantId,
+            'name' => 'Asterisk ARI Sibling',
+            'slug' => 'asterisk-ari-sibling-'.substr($nodeId, 0, 8),
+            'runtime_family' => 'asterisk',
+            'adapter_key' => 'asterisk-ari',
+            'desired_state' => 'active',
+            'observed_state' => 'unobserved',
+            'configuration_version' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return [$tenantId, $nodeId];
+    }
+
     private function configureAriNode(string $tenantId, string $nodeId): void
     {
         foreach ([
@@ -1333,7 +1691,7 @@ final class AsteriskAriAdapterTest extends TestCase
             'configuration_version' => 1,
             'application_name' => 'utcp',
             'connect_timeout_ms' => 5000,
-            'request_timeout_ms' => 10000,
+            'request_timeout_ms' => 4000,
             'websocket_handshake_timeout_ms' => 10000,
             'heartbeat_interval_ms' => 30000,
             'reconnect_min_delay_ms' => 1000,

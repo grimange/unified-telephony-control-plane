@@ -11,16 +11,17 @@ final readonly class RuntimeConferenceInspectionResult
         public ?bool $participantAttached = null,
         public ?string $failureClass = null,
         public ?string $failureCode = null,
+        public ?string $runtimeReferenceHealth = null,
     ) {}
 
-    public static function observed(bool $conferencePresent, ?bool $participantPresent = null, ?bool $participantAttached = null): self
+    public static function observed(bool $conferencePresent, ?bool $participantPresent = null, ?bool $participantAttached = null, ?string $runtimeReferenceHealth = null): self
     {
-        return new self('observed', $conferencePresent, $participantPresent, $participantAttached);
+        return new self('observed', $conferencePresent, $participantPresent, $participantAttached, runtimeReferenceHealth: $runtimeReferenceHealth);
     }
 
-    public static function unavailable(?string $failureClass = null, ?string $failureCode = null): self
+    public static function unavailable(?string $failureClass = null, ?string $failureCode = null, ?string $runtimeReferenceHealth = null): self
     {
-        return new self('unavailable', failureClass: $failureClass, failureCode: $failureCode);
+        return new self('unavailable', failureClass: $failureClass, failureCode: $failureCode, runtimeReferenceHealth: $runtimeReferenceHealth);
     }
 
     public static function unsupported(): self
@@ -28,8 +29,8 @@ final readonly class RuntimeConferenceInspectionResult
         return new self('unsupported');
     }
 
-    public static function failed(?string $failureClass = null, ?string $failureCode = null): self
+    public static function failed(?string $failureClass = null, ?string $failureCode = null, ?string $runtimeReferenceHealth = null): self
     {
-        return new self('failed', failureClass: $failureClass, failureCode: $failureCode);
+        return new self('failed', failureClass: $failureClass, failureCode: $failureCode, runtimeReferenceHealth: $runtimeReferenceHealth);
     }
 }

@@ -8498,3 +8498,115 @@ git diff --check
 fix(t5): gate authoritative ARI absence on resource-family health
 Do not push. Keep UTCP_PHASE=T1.
 ```
+
+## T5-A52 — Health-gated authoritative ARI absence implementation
+
+Status: repository implementation completed; live controlled ARI resource-family degradation proof
+remains pending.
+
+### Confirmed T5-A25 false-404 mechanism
+T5-A51 captured the live failure mode from T5-A25: the Asterisk HTTP endpoint can remain reachable
+while an ARI REST resource family is degraded. In that state a resource-specific request such as
+`GET /ari/bridges/{bridge_id}` may return HTTP 404 even though the live bridge and channels still
+exist. The previous `AsteriskAriClient::getAriResource()` behavior mapped that 404 to `null`, and
+`conferenceRuntimeSummary()` converted it into `bridge_exists=false`. The
+`verify_conference_absent` path could therefore report authoritative absence and allow fence
+verification to succeed from degraded ARI REST evidence.
+
+### Removed unconditional specific-resource 404 authority
+The implementation removes unconditional resource-specific `404 -> absent` authority from the
+authoritative runtime-inspection path. The generic `getAriResource()` helper remains available for
+paths whose existing semantics are intentionally idempotent or reconstruction-oriented, but
+`conferenceRuntimeSummary()` now uses a separate authoritative-inspection helper.
+
+### Bridge and channel family-health probes
+The authoritative-inspection helper now gates a specific bridge or channel 404 with a same-node,
+same-endpoint resource-family probe:
+
+- Bridge absence probe: `GET /ari/bridges`
+- Channel absence probe: `GET /ari/channels`
+
+The probe uses the existing Asterisk ARI profile request timeout (`request_timeout_ms`, default
+4000ms). Only HTTP 200 is healthy. Authentication/authorization failures, 404 on the family
+endpoint, unexpected 4xx/5xx, transport failure, and timeout are treated as degraded or unavailable.
+
+### Healthy-family authoritative absence
+When `GET /ari/bridges/{id}` or `GET /ari/channels/{id}` returns 404 and the matching family endpoint
+returns 200, the resource is classified as authoritatively absent. Successful verification evidence
+records:
+
+```text
+runtime_reference_health=healthy_absent
+```
+
+Existing present resources record:
+
+```text
+runtime_reference_health=healthy_present
+```
+
+### Degraded-family RuntimeUnavailable classification
+When a resource-specific 404 is followed by an unhealthy bridge or channel family probe,
+`AsteriskAriClient` throws retryable runtime unavailability:
+
+```text
+FailureClass::RuntimeUnavailable
+failure_code=ari_resource_family_degraded
+runtime_reference_health=degraded_unavailable
+```
+
+The persisted `verify_conference_absent` operation remains the retry owner. No in-process polling,
+manual retry surface, feature gate, allowlist, or new operation type was added.
+
+### RuntimeNode, binding, and generation preservation
+The family probe uses the same RuntimeNode and ARI endpoint as the resource-specific request. It does
+not reselect another RuntimeNode, consult cluster-wide health, or add fallback endpoints. The
+verification handler still validates the former binding context before ARI I/O, and stale
+configuration generation now short-circuits before any bridge/channel request or family-health
+probe.
+
+### Cleanup and reconstruction invariants
+Cleanup semantics are preserved:
+
+- `DELETE bridges/{id}` accepting 404 remains idempotent success.
+- `bridges/{id}/removeChannel` accepting 404 remains idempotent success.
+- `DELETE channels/{id}` accepting 404 remains idempotent success.
+
+Reconstruction semantics are preserved:
+
+- Deterministic `utcp-conf-*` bridge IDs are unchanged.
+- Deterministic `utcp-part-*` channel IDs are unchanged.
+- Inspect-before-create remains unchanged.
+- Bridge/channel create 409 remains accepted as idempotent existence.
+- The participant `addChannel` loop remains bounded at the existing 8 attempts with 0.2-second
+  default delay.
+
+### Event and inspection classification
+Successful `conference.runtime_fence_verified` payloads now carry `runtime_reference_health`.
+`RuntimeConferenceInspectionResult` also carries the classification so the existing
+`recordInspectionMetric()` path can distinguish legitimate absence, degraded ARI REST family
+unavailability, and transport unavailability through its existing diagnostic `reason` field. No new
+metrics backend or duplicate event type was added.
+
+### Focused and real-handler tests
+Repository tests added in `AsteriskAriAdapterTest` cover:
+
+- Bridge specific 404 with healthy bridge family -> authoritative absence.
+- Bridge specific 404 with degraded bridge family -> retryable `ari_resource_family_degraded`.
+- Bridge family transport failure after a specific 404 -> not absence.
+- Channel specific 404 with healthy channel family -> authoritative channel absence.
+- Channel specific 404 with degraded channel family -> retryable `ari_resource_family_degraded`.
+- Existing bridge present -> no family probe.
+- Specific transport failure -> `transport_unavailable`, not absence.
+- Real `runtime.node.verify_conference_absent` operation retries on degraded bridge family, then
+  succeeds after family recovery.
+- Wrong-node verification fails before ARI requests.
+- Stale-generation verification short-circuits before ARI requests.
+- Cleanup bridge 404 and channel 404 remain idempotent without family probes.
+- Reconstruction 404 followed by create 409 remains idempotent without family probes.
+- Inspection metrics record `runtime_reference_health`.
+
+### Live proof boundary
+No Kubernetes resource, Asterisk module, ARI resource, RuntimeBinding, Conference row, failover,
+fencing, or restoration was mutated during this repository task. The controlled live ARI
+resource-family degradation proof remains pending.

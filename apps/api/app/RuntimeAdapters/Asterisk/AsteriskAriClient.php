@@ -216,7 +216,8 @@ class AsteriskAriClient
         $bridgeId = $this->conferenceBridgeId($conferenceId);
         $bridgeName = $this->conferenceBridgeName($conferenceId);
         $timeoutMs = (int) $profile['request_timeout_ms'];
-        $bridge = $this->getAriResource($runtimeNodeId, 'bridges/'.$bridgeId, $timeoutMs);
+        $bridgeInspection = $this->getAriResourceForAuthoritativeInspection($runtimeNodeId, 'bridges/'.$bridgeId, 'bridges', $timeoutMs);
+        $bridge = $bridgeInspection['resource'];
 
         $channels = [];
         if (is_array($bridge)) {
@@ -231,13 +232,20 @@ class AsteriskAriClient
             'participant_channel_checked' => $participantId !== null,
             'participant_channel_exists' => false,
             'participant_channel_in_bridge' => false,
+            'runtime_reference_health' => $bridgeInspection['runtime_reference_health'],
+            'bridge_runtime_reference_health' => $bridgeInspection['runtime_reference_health'],
         ];
 
         if ($participantId !== null) {
             $channelId = $this->participantChannelId($participantId);
-            $channel = $this->getAriResource($runtimeNodeId, 'channels/'.$channelId, $timeoutMs);
+            $channelInspection = $this->getAriResourceForAuthoritativeInspection($runtimeNodeId, 'channels/'.$channelId, 'channels', $timeoutMs);
+            $channel = $channelInspection['resource'];
             $summary['participant_channel_exists'] = is_array($channel);
             $summary['participant_channel_in_bridge'] = in_array($channelId, $channels, true);
+            $summary['participant_runtime_reference_health'] = $channelInspection['runtime_reference_health'];
+            if (is_array($channel) || ! is_array($bridge)) {
+                $summary['runtime_reference_health'] = $channelInspection['runtime_reference_health'];
+            }
         }
 
         return $summary;
@@ -448,7 +456,7 @@ class AsteriskAriClient
      * @param  list<int>  $acceptedStatuses
      * @return array{status:int,body:string}
      */
-    private function ariRequest(string $runtimeNodeId, string $method, string $resource, array $query, int $timeoutMs, array $acceptedStatuses): array
+    protected function ariRequest(string $runtimeNodeId, string $method, string $resource, array $query, int $timeoutMs, array $acceptedStatuses): array
     {
         $endpoint = $this->endpoint($runtimeNodeId, 'control', ['http', 'https']);
         $credential = $this->credential($runtimeNodeId);
@@ -500,6 +508,62 @@ class AsteriskAriClient
         }
 
         return is_array($decoded) ? $decoded : null;
+    }
+
+    /**
+     * @return array{resource:array<string,mixed>|null,runtime_reference_health:string}
+     */
+    private function getAriResourceForAuthoritativeInspection(string $runtimeNodeId, string $resource, string $familyResource, int $timeoutMs): array
+    {
+        $response = $this->ariRequest($runtimeNodeId, 'GET', $resource, [], $timeoutMs, [200, 404]);
+        if ((int) $response['status'] === 404) {
+            if (! $this->ariResourceFamilyHealthy($runtimeNodeId, $familyResource, $timeoutMs)) {
+                throw new AsteriskAriException(FailureClass::RuntimeUnavailable, 'ari_resource_family_degraded', 'ARI resource family is degraded.', true);
+            }
+
+            return [
+                'resource' => null,
+                'runtime_reference_health' => 'healthy_absent',
+            ];
+        }
+
+        try {
+            $decoded = json_decode((string) $response['body'], true, 512, JSON_THROW_ON_ERROR);
+        } catch (JsonException) {
+            throw new AsteriskAriException(FailureClass::InternalError, 'ari_invalid_json', 'ARI resource response was not valid JSON.');
+        }
+
+        return [
+            'resource' => is_array($decoded) ? $decoded : null,
+            'runtime_reference_health' => 'healthy_present',
+        ];
+    }
+
+    public function bridgeResourceFamilyHealthy(string $tenantId, string $runtimeNodeId): bool
+    {
+        $this->node($tenantId, $runtimeNodeId);
+        $profile = $this->profiles->requiredProfile($tenantId, $runtimeNodeId);
+
+        return $this->ariResourceFamilyHealthy($runtimeNodeId, 'bridges', (int) $profile['request_timeout_ms']);
+    }
+
+    public function channelResourceFamilyHealthy(string $tenantId, string $runtimeNodeId): bool
+    {
+        $this->node($tenantId, $runtimeNodeId);
+        $profile = $this->profiles->requiredProfile($tenantId, $runtimeNodeId);
+
+        return $this->ariResourceFamilyHealthy($runtimeNodeId, 'channels', (int) $profile['request_timeout_ms']);
+    }
+
+    private function ariResourceFamilyHealthy(string $runtimeNodeId, string $familyResource, int $timeoutMs): bool
+    {
+        try {
+            $this->ariRequest($runtimeNodeId, 'GET', $familyResource, [], $timeoutMs, [200]);
+
+            return true;
+        } catch (AsteriskAriException) {
+            return false;
+        }
     }
 
     /**

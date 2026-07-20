@@ -89,7 +89,7 @@ final class RuntimeConferenceInspectionService
                 'resource_type' => in_array($resourceType, ['conference', 'conference_participant'], true) ? $resourceType : 'conference',
                 'result' => in_array($result->status, ['observed', 'unavailable', 'unsupported', 'failed'], true) ? $result->status : 'failed',
                 'failure_class' => $this->boundedMetricValue($result->failureClass ?? 'none', 80),
-                'reason' => $this->boundedMetricValue($result->failureCode ?? 'none', 120),
+                'reason' => $this->boundedMetricValue($result->runtimeReferenceHealth ?? $result->failureCode ?? 'none', 120),
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
