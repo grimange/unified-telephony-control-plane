@@ -9299,3 +9299,360 @@ old pods remained afterward; the identical reclaim-and-event path is fully prove
 orphan run entirely on `62ae45e` (op executed by the new command-worker, event emitted). To obtain
 a historical event without a rollout race, redeploy while ensuring the old command-worker has fully
 terminated before any orphan op is claimed.
+
+## T5-A57 — Coordinator, fencing, and reclamation observability contract (evidence-only)
+
+**Verdict: `T5_RESILIENCE_OBSERVABILITY_CONTRACT_DEFINED`.**
+Read-only audit at `982d14d`. The repository already has a complete pull-based Prometheus
+exposition stack whose metrics are **computed on-scrape from durable PostgreSQL state** (not
+in-process counters). Every proven T5 transition already leaves a durable row (`runtime_operations`,
+`control_plane_outbox_messages`/`control_plane_audit_records`, `conferences.failover_state`,
+`conference_recovery_metric_events`). The minimal, safe contract is therefore to **extend
+`MetricsController` with a small set of on-scrape aggregations plus a `utcp_build_info` gauge, and
+extend the existing PrometheusRule** — no new in-process instrumentation, no new columns, no new
+tables. This inherently prevents double-counting and is restart-safe. The T5-A56 rollout race is an
+observability-only gap requiring deployment sequencing + version-skew visibility, not a repository
+correction. No production code, tests, manifests, dashboards, or runtime state were modified.
+
+### Existing metrics architecture
+`GET /api/metrics` → `App\Http\Controllers\Platform\MetricsController` (single-action, ~48KB) emits
+**Prometheus text exposition** (`# HELP`/`# TYPE`, `name{label="v"} value`). Metrics are recomputed
+each scrape by aggregating PostgreSQL tables (`runtime_operations`, `conference_recovery_metric_events`,
+`runtime_reconciliation_states`, `conferences`, `conference_participants`, `telephony_sessions`,
+event-source/lease tables). 39 metric families exist (simulator, telephony_sessions, conferences,
+`conference_operations_total`, `conference_participant_operations_total`,
+`utcp_conference_runtime_inspections_total`, `utcp_conference_runtime_inspection_failures_total`,
+`utcp_conference_recovery_operations_total`, `utcp_conference_recovery_backlog`,
+`utcp_conference_recovery_lag_seconds`, asterisk_ari_*, kamailio_*). The canonical pattern
+(`conferenceOperationMetrics`): `SELECT operation_type, status AS result, coalesce(last_failure_class,
+'none') AS failure_class, count(*) GROUP BY …` → one `sample()` line per bounded group. `sample()`
+sanitizes every label value to `[A-Za-z0-9_.:-]`.
+
+### Metrics export path
+Pull-based. `ServiceMonitor` `infrastructure/kubernetes/observability/monitors/utcp-application-servicemonitor.yaml`
+scrapes port `http` path `/api/metrics` every 30s. No push/pushgateway. `BuildInfo` (version,
+commit, built_at from `config('utcp.build.*')`) is exposed at `/api/version` but has **no metric**.
+
+### Prometheus scrape boundary
+Scrape ownership is the Prometheus Operator via the ServiceMonitor (label-selected). `/api/metrics`
+is **unauthenticated** but **NetworkPolicy-restricted** (`observability/network-policies/allow-application-metrics.yaml`);
+only Prometheus may reach it. No public exposure. A new slice must reuse `/api/metrics` and add no
+new endpoint or auth surface.
+
+### Grafana and alerting inventory
+Alerts: one `PrometheusRule` `infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml`
+(deployment-availability via `kube_deployment_status_replicas_available`, simulator backlog/terminal,
+conference/participant reconciliation-stuck, conference/participant operation-terminal-failure). **No
+T5-specific alerts** (no fence/restore/no-capacity/binding/orphan/ARI-health). Dashboards:
+ConfigMap-provisioned Grafana dashboards under `infrastructure/kubernetes/observability/dashboards/`
+(`platform-overview.yaml`, `workload-logs.yaml`) — dashboard ownership is Kustomize ConfigMaps. No
+T5 resilience dashboard exists.
+
+### Metric naming convention
+Two families: legacy unprefixed (`conference_operations_total`, `telephony_sessions_active`) and
+`utcp_`-prefixed for newer telephony/recovery/asterisk metrics
+(`utcp_conference_recovery_operations_total`, `utcp_conference_runtime_inspections_total`). New T5
+metrics MUST use the `utcp_` prefix, `_total` for counters, `_seconds` for time gauges, and bounded
+enum labels (`operation_type`, `result`, `failure_class`, `reason`, `resource_type`, `event_type`,
+`health`, `failover_state`).
+
+### Cardinality contract
+Existing MetricsController uses **only bounded enum labels** — no tenant, Conference, participant,
+binding, operation, channel, Pod, node-name, namespace, or Deployment labels; that policy is
+preserved. Proven-bounded vocabularies: `operation_type` (finite config enum), `status`/`result`
+(≤~8 OperationStatus values), `failure_class` (11 FailureClass values), `reason`/`health`
+(4 runtime_reference_health values), `resource_type` (conference|conference_participant),
+`event_type` (finite), `failover_state` (pending_no_capacity). **Static cardinality ceilings** per
+new family below; total new series < ~150. Forbidden as labels (kept only in logs/payload/audit/
+outbox): tenant UUID, Conference/participant/binding/operation/session UUIDs, channel IDs, Pod UID,
+image digest, git hash, raw error messages.
+
+### Failover coordinator metrics
+- `utcp_conference_failover_events_total` (counter): labels `event_type` ∈ {`no_replacement`,
+  `runtime_binding_replaced`}. Source: `control_plane_outbox_messages` grouped by `event_type`
+  (both events already write-time deduplicated). Owner: MetricsController on-scrape. Ceiling: 2.
+  Rebind-completed and pending-cleared are implied by `runtime_binding_replaced`.
+
+### No-capacity metrics
+- `utcp_conference_failover_pending` (gauge): label `failover_state` ∈ {`pending_no_capacity`}.
+  Source: `SELECT failover_state, count(*) FROM conferences WHERE failover_state IS NOT NULL GROUP BY 1`.
+  Owner: MetricsController on-scrape. Changes only with the authoritative `failover_state` column;
+  repeated coordinator sweeps do not change it (idempotent state). Ceiling: 1.
+- `utcp_conference_failover_pending_oldest_seconds` (gauge): `now - min(failover_started_at)` over
+  pending conferences (mirrors the existing `utcp_conference_recovery_lag_seconds` gauge). Duration
+  begins at the stable `failover_started_at` and is read on-scrape, so historical replay cannot
+  double-count. Ceiling: 1. **A duration histogram is deliberately excluded** from this slice: a
+  Prometheus histogram needs per-observation buckets emitted in-process at clear-time, which would
+  break the on-scrape-from-DB pattern; the oldest-pending gauge is the safe analog.
+
+### Verification / Fence / Restore metrics
+- `utcp_runtime_resilience_operations_total` (counter): labels `operation_type` ∈
+  {`runtime.node.verify_conference_absent`, `runtime.node.runtime.fence`, `runtime.node.restore`},
+  `result` (status), `failure_class`. Source: `runtime_operations` grouped (the identical pattern to
+  `conferenceRecoveryOperationMetrics`, which today covers only conference/participant ops — the gap).
+  This counts **operation rows = logical operations**; `attempt_count` is a column, not a new row, so
+  repeated polling attempts never create new series. Verification classifications (present / authoritative
+  absent / degraded / stale / terminal) surface through `result`+`failure_class`
+  (`ari_http_transport_failed`, `absence_verification_context_not_found`, etc., all bounded). Owner:
+  MetricsController. Ceiling ≈ 3 × 8 × 12 = ~90 max, realistically < 30.
+- Fence "owned-Pods present/zero" and "scale initiated" are execution-internal to the fence adapter
+  and are NOT separate operation rows; they are already reflected by fence op `result`
+  (retry_scheduled with `fence_in_progress` vs succeeded `fenced`). No extra metric needed.
+
+### Restore metrics
+`runtime.node.restore` is covered by `utcp_runtime_resilience_operations_total`. **Explicit
+semantics:** this counter counts **operation objects** — a predecessor and its successor
+(`supersedes_restore_operation_id`) each count as one row, so it is NOT a count of logical restore
+requests. That is honest and sufficient for health/rate; a logical-request counter would require
+deduping by (node, source_fence, generation) and is deferred. Successor generation
+(`restore_attempt_generation`) is low-cardinality but is NOT added as a label in this slice (kept in
+the operation payload) to avoid unbounded growth if generations ever climb. Terminal restore
+failures surface as `result="terminal_failed"`.
+
+### RuntimeBinding retirement metrics
+- `utcp_conference_runtime_binding_retired_total` (counter): label `reason` ∈ {`conference_closed`}
+  (the implementation uses a single reason; `closed_conference_residue` was intentionally not
+  implemented, per T5-A48/A50). Source: `control_plane_outbox_messages` event_type
+  `conference.runtime_binding_retired`. Owner: MetricsController. Ceiling: 1–2.
+- `utcp_conference_stale_active_bindings` (gauge): the retire-closed-bindings **candidate invariant**
+  = closed/observed-closed conferences with an active binding (proven-drained to 0 in T5-A50).
+  Source: the same predicate as `retireClosedConferenceBindings`. Valuable as an **invariant alarm**
+  (should always be 0). Owner: MetricsController. Ceiling: 1.
+
+### Orphan-reclamation metrics
+- `utcp_conference_participant_channel_reclaimed_total` (counter): label `classification` ∈
+  {`post_closure_orphan`}. Source: `control_plane_outbox_messages` event_type
+  `conference_participant.channel_reclaimed` (one event per reclaim, write-time deduped). Owner:
+  MetricsController. Ceiling: 1–2.
+- `utcp_conference_orphan_participant_candidates` (gauge): the `reclaimOrphanParticipantChannels`
+  **DB-derivable candidate population** = removed participant + closed/observed-closed conference +
+  retired binding + no active binding. This is a current-state count (idempotent — the same candidate
+  is not counted once per minute; it is present until reclaimed). It is an **upper bound**: DB alone
+  cannot know a Local channel is still present (that needs ARI), so the gauge over-counts by any
+  candidate whose channels are already gone but whose event was missed (e.g., the T5-A56 rollout-race
+  orphan). Owner: MetricsController. Ceiling: 1. Deferred-unavailable / stale / terminal-failure for
+  reclamation surface through the reused `conference.participant.remove` op result (already in
+  `conference_participant_operations_total`), so no orphan-specific failure counter is added
+  (discovered = candidate gauge; reclaimed = the counter; failed = the participant op metric).
+
+### ARI reference-health metrics
+`recordInspectionMetric` writes `conference_recovery_metric_events(adapter_key, resource_type, result,
+failure_class, reason)` where `reason` = `runtime_reference_health` (`healthy_present`,
+`healthy_absent`, `degraded_unavailable`, `transport_unavailable`). The existing
+`utcp_conference_runtime_inspections_total` groups by `result`+`failure_class` only, so
+`healthy_present` vs `healthy_absent` collapse to `result="observed"` (a gap); the failure metric
+already carries `reason` for the unavailable/failed cases. **Add**
+`utcp_conference_runtime_reference_health_total` (counter): labels `resource_type` ∈
+{conference, conference_participant}, `health` ∈ the 4 values above. Source:
+`conference_recovery_metric_events` grouped by `resource_type, reason`. This distinguishes routine
+`healthy_absent` (normal cleanup) from abnormal `degraded_unavailable` (false-404 degradation).
+Counters/gauges, not histograms. Ceiling: 2 × 4 = 8. **No new durable event** is emitted per
+inspection (the metric aggregates the existing telemetry table). NOTE: `conference_recovery_metric_events`
+grows every ~15s per open conference and every scrape reads it whole (an existing pattern); a
+bounded retention/pruning of that table is a **pre-existing** concern worth a separate follow-up, not
+part of this slice.
+
+### Instrumentation ownership
+**Single owner for every metric: `MetricsController` on-scrape.** No update is placed in the
+scheduler, reconciler, operation handler, projection, or event listener — they only continue to
+write their durable rows/events as today. This is why there is no double-count risk across
+components: the metric is a pure read-aggregation of durable state. The only non-DB metric,
+`utcp_build_info{version,commit} 1` (gauge, value 1), is sourced from `BuildInfo` config.
+
+### Deduplication and restart semantics
+Inherent. Counters = `count(*)` over durable rows (one operation row / one deduped outbox event per
+logical transition); a repeated coordinator/retirement/reclaim sweep that produces no new row/event
+does not move the counter. Gauges = current-state `count(*)`/`min(timestamp)`; idempotent across
+sweeps. Process restart does not reset anything (state lives in PostgreSQL, not process memory).
+Historical replay cannot double-count because events are write-time deduplicated and operations are
+idempotency-keyed.
+
+### Rollout-race classification
+**D — observability-only gap.** T5-A56: the NEW reconciler created a `conference.participant.remove`
+op with `orphan_reclamation=true`; a terminating OLD command-worker pod (`5d997465f8`), still within
+its default ~30s termination grace, claimed the op lease and executed it on OLD adapter code, which
+removed both channels correctly but lacks the `recordOrphanParticipantChannelReclaimed` call. The
+**functional outcome was correct**; only the supplementary durable `conference_participant.channel_reclaimed`
+event was missed. Under the metrics contract above, counts are unaffected — the
+`conference.participant.remove` **operation row** is present regardless of executor version and is
+counted by the participant-op metric; only the reclaim-**event** counter would under-read by one for
+that specific orphan. Old/new versions are schema- and event-compatible (the op ran and succeeded).
+This is expected rolling-deployment overlap (an in-flight worker finishing a claimed op during the
+overlap window) — **not** a drain defect (B: claiming a queued op mid-rollout is normal lease
+semantics) and **not** an operation-event compatibility defect that breaks correctness (C). Remedy:
+deployment sequencing/visibility — a `utcp_build_info` gauge + a version-skew alert so operators see
+overlap, plus (optional, low priority) a preStop drain or `stopWhenEmpty` on the command-worker to
+shorten the overlap. No historical event synthesis is warranted (durable event semantics do not
+require it; the op evidence is sufficient).
+
+### Executor-version evidence
+`runtime_operations` already records `lease_owner` (e.g. `telephony-command-worker-668b7fb47-xkchf:command:1`
+— Pod name embedding the ReplicaSet hash as a build proxy, worker kind, and PID), `attempt_count`,
+`started_at`, `completed_at`, `status`, `last_failure_class/code`. This is sufficient durable
+forensic evidence of the executor Pod per operation. It does NOT record the application build
+revision/image digest. Recommendation: add a bounded `utcp_build_info{version,commit} 1` gauge (the
+standard Prometheus build-info pattern; `version`+`commit` are bounded per build, briefly 2 series
+during a rollout) so version skew is observable. Do NOT put image digest or git hash into
+high-cardinality operation-metric labels; they belong in the build-info gauge, `/api/version`, logs,
+and Deployment metadata.
+
+### Security and tenancy
+Preserved. Every proposed label is a bounded operational enum — no secrets, ARI credentials, phone
+numbers, or Conference/participant/session/channel/binding/operation identifiers. No tenant label
+(the repository has no documented bounded-tenancy metrics policy, and existing metrics aggregate
+across tenants). `/api/metrics` stays unauthenticated but NetworkPolicy-restricted to Prometheus; no
+new endpoint. `sample()` label sanitization already strips unexpected characters.
+
+### Alert contract
+Extend `utcp-alerts.yaml` (PrometheusRule), following the existing
+`sum(metric{...}) > N for: Xm severity: …` style:
+- `UTCPConferencePendingNoCapacity`: `sum(utcp_conference_failover_pending) > 0` for 15m, warning —
+  a Conference is stuck with no replacement capacity; operator adds/restores capacity. (15m avoids a
+  transient no-capacity window.)
+- `UTCPRuntimeFenceTerminalFailure`:
+  `sum(utcp_runtime_resilience_operations_total{operation_type="runtime.node.runtime.fence",result="terminal_failed",failure_class!="none"}) > 0`
+  for 10m, warning — fencing stuck; check node/K8s API/NetworkPolicy.
+- `UTCPRuntimeRestoreTerminalFailure`: same for `operation_type="runtime.node.restore"`, 10m, warning.
+- `UTCPStaleActiveBindings`: `sum(utcp_conference_stale_active_bindings) > 0` for 10m, warning —
+  the retirement sweep is not draining; invariant breach.
+- `UTCPOrphanParticipantCandidates`: `sum(utcp_conference_orphan_participant_candidates) > 0` for
+  15m, warning — the reclaim sweep is not draining (note the T5-A56 upper-bound caveat: a missed
+  event can hold this > 0 even after channels are gone; a bounded threshold/for window mitigates
+  false alarms; this alert is a candidate to gate behind the follow-up event-resilience fix).
+- `UTCPAriReferenceDegraded`:
+  `sum(increase(utcp_conference_runtime_reference_health_total{health="degraded_unavailable"}[10m])) > 3`
+  for 10m, warning — sustained false-404-style ARI degradation.
+- `UTCPWorkerVersionSkew`: `count(count by (version) (utcp_build_info)) > 1` for 15m, warning —
+  a rollout is stuck / version skew persists (directly addresses the T5-A56 visibility gap; 15m
+  avoids firing on normal rollouts).
+None require manual reconciliation as normal recovery — each indicates the *automation* is stuck.
+
+### Dashboard contract
+Minimum T5 panels: failover events + pending gauge + oldest-pending seconds; fence/restore/verify
+outcomes (by result); ARI reference-health classifications; binding-retirement total + stale-active
+gauge; orphan reclaimed total + candidate gauge; actionable-operation backlog (reuse existing
+recovery backlog/lag). Ownership = a Kustomize ConfigMap dashboard alongside `platform-overview.yaml`.
+**Recommendation: instrument + alert first, defer the dashboard** (or include one minimal
+`utcp-resilience.yaml` ConfigMap) — visualization is only useful after the series exist, and a
+dashboard is data-only (no code risk).
+
+### Existing test coverage
+`MetricsEndpointTest` (2 tests) asserts the endpoint renders and includes existing families. Recovery
+inspection/operation metrics are indirectly exercised by `AsteriskConferenceRecoveryTest` fixtures.
+**Missing:** on-scrape-from-DB dedup assertions for each new family (create N durable rows → metric =
+N; repeat sweep → unchanged), label-vocabulary assertions (only bounded enums; no UUID/tenant/pod
+labels), `utcp_conference_failover_pending` gauge from `failover_state`, pending-oldest-seconds
+gauge, `utcp_runtime_resilience_operations_total` covering fence/verify/restore, restore
+predecessor+successor both counted as operation objects, binding-retired counter + stale-binding
+gauge invariant, channel-reclaimed counter + orphan-candidate gauge, ARI health 4-value counter,
+`utcp_build_info` gauge, and PrometheusRule expression validity.
+
+### Missing implementation (smallest coherent slice)
+1. `MetricsController`: add 8 on-scrape metric families —
+   `utcp_conference_failover_events_total`, `utcp_conference_failover_pending`,
+   `utcp_conference_failover_pending_oldest_seconds`, `utcp_runtime_resilience_operations_total`
+   (verify/fence/restore), `utcp_conference_runtime_binding_retired_total`,
+   `utcp_conference_stale_active_bindings`, `utcp_conference_participant_channel_reclaimed_total`,
+   `utcp_conference_orphan_participant_candidates`, `utcp_conference_runtime_reference_health_total`
+   — each following the existing `sample()`/GROUP BY pattern, plus `utcp_build_info{version,commit} 1`.
+2. `utcp-alerts.yaml`: add the 7 bounded alerts above.
+3. `MetricsEndpointTest` (+ a focused metrics unit test): the coverage matrix above.
+4. Optional: a minimal `utcp-resilience.yaml` Grafana dashboard ConfigMap (or defer).
+(No new columns, no in-process counters, no new tables, no new endpoint, no env gate.)
+
+### Implementation-readiness decision
+**A — bounded Codex implementation.** The audit establishes the existing on-scrape-from-DB metrics
+architecture and export/scrape/security boundary, exact `utcp_`-prefixed metric names and types,
+finite label vocabularies with static ceilings, a single instrumentation owner (MetricsController)
+that makes double-counting structurally impossible, exact no-capacity/fence/restore/binding/orphan/ARI
+contracts, the executor-version evidence plan (`utcp_build_info` gauge + existing `lease_owner`), the
+rollout-race classification (D, observability-only), bounded actionable alerts, dashboard scope
+(deferrable), and the test matrix.
+
+### Ready-to-paste next prompt
+
+```
+# T5-A58 — Implement T5 Resilience Observability Metrics and Alerts
+
+Implement the contract in docs/evidence/t2/multi-node-failover-readiness.md §T5-A57.
+
+Starting state: HEAD 982d14d (or later), branch main, clean tree, UTCP_PHASE=T1.
+Bounded implementation task. Do not begin a new phase; UTCP_PHASE stays T1.
+
+## Architecture (MUST follow)
+Metrics are computed ON-SCRAPE from durable PostgreSQL in App\Http\Controllers\Platform\
+MetricsController (Prometheus text exposition at /api/metrics). Do NOT add in-process counters,
+new columns, new tables, a new endpoint, or per-component instrumentation. Reuse the existing
+sample() helper and GROUP BY pattern. Every label MUST be a bounded enum — NO tenant/Conference/
+participant/binding/operation/session/channel UUID, Pod UID, image digest, git hash, node name,
+namespace, Deployment, or raw error message labels.
+
+## Metrics to add (all utcp_-prefixed, on-scrape)
+- utcp_conference_failover_events_total (counter) label event_type — from
+  control_plane_outbox_messages where event_type in
+  (conference.failover_coordinator.no_replacement, conference.runtime_binding_replaced) group by event_type
+- utcp_conference_failover_pending (gauge) label failover_state — conferences where failover_state
+  is not null group by failover_state
+- utcp_conference_failover_pending_oldest_seconds (gauge) — now - min(failover_started_at) over
+  pending conferences (0 when none)
+- utcp_runtime_resilience_operations_total (counter) labels operation_type,result,failure_class —
+  runtime_operations where operation_type in (runtime.node.verify_conference_absent,
+  runtime.node.runtime.fence, runtime.node.restore) group by operation_type,status,last_failure_class
+  (counts operation ROWS = logical ops; predecessor+successor restores each count as objects)
+- utcp_conference_runtime_binding_retired_total (counter) label reason — outbox event_type
+  conference.runtime_binding_retired
+- utcp_conference_stale_active_bindings (gauge) — closed/observed-closed conferences with an active
+  binding (same predicate as retireClosedConferenceBindings); expected 0
+- utcp_conference_participant_channel_reclaimed_total (counter) label classification — outbox
+  event_type conference_participant.channel_reclaimed
+- utcp_conference_orphan_participant_candidates (gauge) — removed participant + closed/observed-closed
+  conference + retired binding + no active binding (same predicate as reclaimOrphanParticipantChannels)
+- utcp_conference_runtime_reference_health_total (counter) labels resource_type,health —
+  conference_recovery_metric_events group by resource_type, reason (health in healthy_present,
+  healthy_absent, degraded_unavailable, transport_unavailable)
+- utcp_build_info (gauge, value 1) labels version,commit — from BuildInfo/config('utcp.build.*')
+
+Each family MUST emit a zero/none placeholder sample when its table is absent or empty (match the
+existing pattern). Guard every query with Schema::hasTable.
+
+## Alerts (extend infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml PrometheusRule)
+- UTCPConferencePendingNoCapacity: sum(utcp_conference_failover_pending) > 0 for 15m warning
+- UTCPRuntimeFenceTerminalFailure: sum(utcp_runtime_resilience_operations_total{operation_type=
+  "runtime.node.runtime.fence",result="terminal_failed",failure_class!="none"}) > 0 for 10m warning
+- UTCPRuntimeRestoreTerminalFailure: same for operation_type="runtime.node.restore" 10m warning
+- UTCPStaleActiveBindings: sum(utcp_conference_stale_active_bindings) > 0 for 10m warning
+- UTCPOrphanParticipantCandidates: sum(utcp_conference_orphan_participant_candidates) > 0 for 15m warning
+- UTCPAriReferenceDegraded: sum(increase(utcp_conference_runtime_reference_health_total{health=
+  "degraded_unavailable"}[10m])) > 3 for 10m warning
+- UTCPWorkerVersionSkew: count(count by (version)(utcp_build_info)) > 1 for 15m warning
+
+## Invariants
+- Single owner = MetricsController on-scrape; no double-count; restart-safe (no process state).
+- All labels bounded enums; no high-cardinality identifiers; no tenant label.
+- No new /metrics endpoint, no auth change, no env gate, no manual-recovery surface.
+- Do not change conference.close, binding-retirement, reclaim, fence, or restore behavior.
+
+## Tests (MetricsEndpointTest + a focused metrics test)
+- each new family renders with # HELP/# TYPE and bounded labels only
+- create N durable rows/events -> counter == N; repeat scrape -> unchanged (dedup/idempotent)
+- failover_pending gauge reflects conferences.failover_state; oldest_seconds from failover_started_at
+- resilience_operations covers verify/fence/restore; restore predecessor+successor both counted
+- stale_active_bindings and orphan_participant_candidates gauges reflect their predicates (0 when clean)
+- runtime_reference_health counter carries the 4 bounded health values by resource_type
+- utcp_build_info gauge value 1 with version+commit
+- assert NO UUID/tenant/pod/deployment label appears in any new sample
+- PrometheusRule expressions are syntactically valid (promtool if available in CI, else a fixture check)
+
+## Optional (same slice or deferred)
+- minimal Grafana dashboard ConfigMap infrastructure/kubernetes/observability/dashboards/utcp-resilience.yaml
+
+## Verification
+make repository-hygiene workflow-check secret-scan
+make runtime-engine-config-check telephony-domain-config-check asterisk-ari-config-check asterisk-conference-config-check
+make runtime-engine-test telephony-domain-test asterisk-ari-test asterisk-conference-test asterisk-conference-recovery-test
+git diff --check
+
+## Commit
+feat(t5): add resilience observability metrics and alerts
+Do not push. Keep UTCP_PHASE=T1.
+```
