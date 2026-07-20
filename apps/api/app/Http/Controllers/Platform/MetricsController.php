@@ -115,6 +115,9 @@ final class MetricsController
             '# HELP utcp_conference_orphan_participant_candidates Database-derived upper bound of removed participants on closed conferences with retained final binding history. This does not prove a PBX channel is currently alive.',
             '# TYPE utcp_conference_orphan_participant_candidates gauge',
             ...$this->orphanParticipantCandidateMetrics(),
+            '# HELP utcp_conference_orphan_reclamation_operations_total Durable orphan participant-channel reclamation runtime operation objects by result and failure class. Attempts are not counted separately. Maximum series: 104.',
+            '# TYPE utcp_conference_orphan_reclamation_operations_total counter',
+            ...$this->orphanReclamationOperationMetrics(),
             '# HELP utcp_conference_runtime_reference_health_total Conference runtime reference inspections by bounded resource type and ARI reference-health classification. Maximum series: 15.',
             '# TYPE utcp_conference_runtime_reference_health_total counter',
             ...$this->runtimeReferenceHealthMetrics(),
@@ -858,16 +861,74 @@ final class MetricsController
             return [];
         }
 
-        return DB::table('conference_recovery_metric_events')
-            ->selectRaw('resource_type, reason as health, count(*) as count')
+        $counts = [];
+        $rows = DB::table('conference_recovery_metric_events')
+            ->selectRaw('resource_type, reason, count(*) as count')
             ->groupBy('resource_type', 'reason')
             ->orderBy('resource_type')
-            ->orderBy('health')
-            ->get()
-            ->map(fn (object $row): string => $this->sample('utcp_conference_runtime_reference_health_total', [
-                'resource_type' => $this->boundedValue((string) $row->resource_type, ['conference', 'conference_participant']),
-                'health' => $this->boundedValue((string) $row->health, ['healthy_present', 'healthy_absent', 'degraded_unavailable', 'transport_unavailable']),
-            ], (int) $row->count))
+            ->orderBy('reason')
+            ->get();
+
+        foreach ($rows as $row) {
+            $resourceType = $this->boundedValue((string) $row->resource_type, $this->runtimeReferenceResourceTypes());
+            $health = $this->boundedValue((string) $row->reason, $this->runtimeReferenceHealthValues());
+            $key = $resourceType."\0".$health;
+            $counts[$key] = ($counts[$key] ?? 0) + (int) $row->count;
+        }
+
+        ksort($counts);
+
+        return collect($counts)
+            ->map(function (int $count, string $key): string {
+                [$resourceType, $health] = explode("\0", $key, 2);
+
+                return $this->sample('utcp_conference_runtime_reference_health_total', [
+                    'resource_type' => $resourceType,
+                    'health' => $health,
+                ], $count);
+            })
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function orphanReclamationOperationMetrics(): array
+    {
+        if (! Schema::hasTable('runtime_operations')) {
+            return [];
+        }
+
+        $counts = [];
+        $rows = DB::table('runtime_operations')
+            ->where('operation_type', (string) config('telephony_domain.operation_types.participant_remove', 'conference.participant.remove'))
+            ->where('payload->orphan_reclamation', true)
+            ->selectRaw("status as result, coalesce(last_failure_class, 'none') as failure_class, count(*) as count")
+            ->groupBy('status', 'last_failure_class')
+            ->orderBy('result')
+            ->orderBy('failure_class')
+            ->get();
+
+        foreach ($rows as $row) {
+            $result = $this->boundedValue((string) $row->result, $this->operationStatusValues());
+            $failureClass = $this->boundedValue((string) $row->failure_class, $this->failureClassValuesWithNone());
+            $key = $result."\0".$failureClass;
+            $counts[$key] = ($counts[$key] ?? 0) + (int) $row->count;
+        }
+
+        ksort($counts);
+
+        return collect($counts)
+            ->map(function (int $count, string $key): string {
+                [$result, $failureClass] = explode("\0", $key, 2);
+
+                return $this->sample('utcp_conference_orphan_reclamation_operations_total', [
+                    'result' => $result,
+                    'failure_class' => $failureClass,
+                ], $count);
+            })
+            ->values()
             ->all();
     }
 
@@ -1300,6 +1361,22 @@ final class MetricsController
             (string) config('telephony_domain.operation_types.runtime_node_restore', 'runtime.node.restore'),
             (string) config('telephony_domain.operation_types.participant_remove', 'conference.participant.remove'),
         ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function runtimeReferenceResourceTypes(): array
+    {
+        return ['conference', 'conference_participant'];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function runtimeReferenceHealthValues(): array
+    {
+        return ['healthy_present', 'healthy_absent', 'degraded_unavailable', 'transport_unavailable'];
     }
 
     /**

@@ -10293,8 +10293,96 @@ hostname access proof (200 now, will be 404 post-cutoff); internal scrape-altern
 D1 mapped-aggregation trace with live durable reason grouping; orphan candidate classification (121);
 orphan-reclamation operation payload inventory (2 succeeded, 0 actionable); reclamation-event inventory
 (1); alert actionability analysis (defect C); cardinality/sensitive-data scan; env-gate/allowlist scan;
-manual-recovery wording scan; phase-marker inspection.
-make repository-hygiene / workflow-check / secret-scan: PASS. make *-config-check (4): PASS.
-make *-test (runtime-engine 21, telephony-domain 60, asterisk-ari 94, asterisk-conference 109,
-asterisk-conference-recovery 89): PASS. git diff --check / --cached --check: clean.
-No mutating command run (no apply/scale/delete/PBX/Conference/RuntimeBinding/SQL-write/migrate).
+
+---
+
+# T5-A61 — Repository implementation: corrected metrics aggregation, internal scrape path, and orphan alert replacement
+
+Repository-only implementation started from `b64791d` on `main` at `UTCP_PHASE=T1`.
+No live Kubernetes resources, runtime bindings, conferences, PBX resources, PostgreSQL rows, or Redis
+state were mutated.
+
+## Implemented corrections
+
+- D1: `MetricsController::runtimeReferenceHealthMetrics()` now reads durable
+  `conference_recovery_metric_events` counts, maps `resource_type` to the bounded
+  `conference|conference_participant|other` vocabulary and `reason` to the bounded
+  `healthy_present|healthy_absent|degraded_unavailable|transport_unavailable|other` vocabulary, sums by
+  the final label pair, sorts deterministically, and emits one sample per final pair. Unknown raw reasons
+  now collapse into the same `health="other"` bucket for the mapped resource type; no raw reason is
+  exposed as a label.
+- New metric:
+  `utcp_conference_orphan_reclamation_operations_total{result,failure_class}`. It is sourced from
+  durable `runtime_operations` rows where the canonical participant-remove operation payload has
+  `orphan_reclamation=true`. One row is one counted operation object; `attempt_count` is not counted
+  separately. `result` uses the existing operation-status vocabulary and unexpected values map to
+  `other`; `failure_class` uses `none`, the existing failure-class vocabulary, and `other`.
+- `utcp_conference_orphan_participant_candidates` remains a database-derived upper-bound inventory gauge.
+  Its predicate was not narrowed and the scrape still performs only database reads. It is not treated as
+  proof that a PBX channel currently exists.
+- `UTCPOrphanParticipantCandidates` was removed from the repository PrometheusRule.
+- `UTCPOrphanReclamationTerminalFailure` was added with:
+  `sum(increase(utcp_conference_orphan_reclamation_operations_total{result="terminal_failed",failure_class!="none"}[10m])) > 0`,
+  `for: 10m`, and `severity: warning`. Its annotations refer to automatic orphan participant-channel
+  reclamation reaching terminal failure and do not instruct manual Artisan, PBX, PostgreSQL, Redis,
+  Kubernetes scaling, gate, allowlist, or channel-deletion actions.
+
+## Scrape-path repository state
+
+- The canonical application metrics authority remains
+  `GET /api/metrics -> MetricsController -> durable PostgreSQL aggregation on scrape`.
+- `infrastructure/docker/gateway/nginx.conf` now has a dedicated internal transport listener on
+  `8081`. Only exact `location = /api/metrics` is forwarded to the existing FastCGI/API path; unrelated
+  paths on that listener return `404`.
+- The public `8080` server now has exact `location = /api/metrics { return 404; }` before the general
+  `location ^~ /api/` FastCGI route. Public `/api/version`, health, and non-metrics API paths remain on
+  the existing general API route.
+- The gateway Deployment exposes named container port `metrics:8081`; the gateway Service exposes
+  ClusterIP port `metrics:8081 -> targetPort: metrics` while preserving `http:8080`.
+- The application ServiceMonitor now scrapes `port: metrics` with path `/api/metrics`; selector,
+  namespace selector, interval, and timeout were preserved.
+- The Prometheus-only application metrics NetworkPolicy ingress and matching Prometheus egress rules now
+  use port `8081` with the same namespace and pod selectors. The Traefik-to-gateway `8080` policy was not
+  changed.
+- HTTPRoute resources were not modified and no route targets port `8081`.
+
+## Test coverage added
+
+- D1 regression seeds multiple raw reasons (`ari_http_transport_failed`, `ari_http_unavailable`, `none`,
+  and another unknown value) that map to `other`, asserts exactly one final `health="other"` sample per
+  mapped resource type, verifies summed values, preserves recognized health classifications, rejects raw
+  reason labels, and confirms repeated scrapes are stable.
+- Orphan-reclamation metric regression seeds two successful tagged reclamation operation rows, a normal
+  participant removal without the marker, retrying and terminal-failed tagged operations, nonzero
+  `attempt_count`, missing and unknown failures, and payload UUIDs. It verifies row-count semantics,
+  `none`/`other` failure mapping, normal-operation exclusion, repeated-scrape stability, and absence of
+  tenant, conference, participant, session, binding, operation, runtime-node, channel, or payload labels.
+- PrometheusRule fixture assertions prove the orphan-candidate alert is absent, the replacement alert is
+  present once, the expression references the implemented metric and 10-minute lookback, duration and
+  severity match the contract, candidate gauge is not alert-referenced, and manual recovery wording is
+  absent.
+- Gateway and manifest fixture assertions prove the public exact cutoff, internal exact metrics-only
+  listener, unrelated-path 404 behavior, public API FastCGI route preservation, Deployment/Service
+  metrics ports, ServiceMonitor named-port cutover, metrics NetworkPolicy port cutover, unchanged
+  Traefik-to-8080 policy, and absence of HTTPRoute metrics exposure.
+
+## Live rollout status
+
+Staged live rollout remains pending. This repository slice does not claim that public metrics access is
+already blocked in `utcp-local`, that Prometheus is already scraping `8081`, or that the corrected
+PrometheusRule is already loaded by the cluster.
+
+## Repository verification
+
+- `make repository-hygiene`, `make workflow-check`, and `make secret-scan` passed.
+- `make runtime-engine-config-check`, `make telephony-domain-config-check`,
+  `make asterisk-ari-config-check`, and `make asterisk-conference-config-check` passed.
+- `make runtime-engine-test`, `make telephony-domain-test`, `make asterisk-ari-test`,
+  `make asterisk-conference-test`, and `make asterisk-conference-recovery-test` passed.
+- `php artisan test tests/Feature/Platform/MetricsEndpointTest.php` passed and covers the D1
+  duplicate-series regression, orphan-reclamation operation metric, gateway metrics transport,
+  Kubernetes manifest cutover, alert replacement, sensitive-label scan, and manual-recovery wording scan.
+- `make test`, `make check`, and `make build` passed.
+- Phase-marker inspection confirmed `versions.env` declares `UTCP_PHASE=T1`.
+- No mutating command was run against Kubernetes, PBX/runtime resources, conferences, RuntimeBindings,
+  PostgreSQL business rows, Redis, or live ServiceMonitor/NetworkPolicy state.

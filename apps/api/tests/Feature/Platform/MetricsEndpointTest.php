@@ -357,6 +357,16 @@ final class MetricsEndpointTest extends TestCase
         $this->insertRuntimeOperation('runtime.node.restore', 'retry_scheduled', 'timeout', $tenantId, $conferenceId, $nodeId, $now);
         $this->insertRuntimeOperation('runtime.node.restore', 'succeeded', null, $tenantId, $conferenceId, $nodeId, $now);
         $this->insertRuntimeOperation('conference.participant.remove', 'terminal_failed', 'surprise_failure_value', $tenantId, $participantId, $nodeId, $now, $operationId, 8, $rawErrorText);
+        $this->insertRuntimeOperation('conference.participant.remove', 'succeeded', null, $tenantId, $participantId, $nodeId, $now, null, 3, null, [
+            'conference_id' => $orphanConferenceId,
+            'participant_id' => $participantId,
+            'telephony_session_id' => $sessionId,
+            'runtime_node_id' => $nodeId,
+            'configuration_generation' => 4,
+            'desired_state' => 'removed',
+            'historical_runtime_binding_id' => $retiredBindingId,
+            'orphan_reclamation' => true,
+        ]);
         $this->insertRuntimeOperation('conference.ensure', 'succeeded', null, $tenantId, $conferenceId, $nodeId, $now);
 
         $first = (string) $this->get('/api/metrics')->assertOk()->getContent();
@@ -379,6 +389,7 @@ final class MetricsEndpointTest extends TestCase
         $this->assertStringContainsString('utcp_conference_participant_channel_reclaimed_total{classification="post_closure_orphan"} 1', $first);
         $this->assertStringContainsString('utcp_conference_participant_channel_reclaimed_total{classification="other"} 1', $first);
         $this->assertStringContainsString('utcp_conference_orphan_participant_candidates{} 1', $first);
+        $this->assertStringContainsString('utcp_conference_orphan_reclamation_operations_total{result="succeeded",failure_class="none"} 1', $first);
         $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference",health="healthy_present"} 1', $first);
         $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference",health="healthy_absent"} 1', $first);
         $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference_participant",health="degraded_unavailable"} 1', $first);
@@ -416,6 +427,131 @@ final class MetricsEndpointTest extends TestCase
         }
     }
 
+    public function test_runtime_reference_health_aggregates_after_bounded_label_mapping(): void
+    {
+        $now = Carbon::parse('2026-07-20 13:00:00');
+
+        foreach ([
+            ['conference', 'ari_http_transport_failed'],
+            ['conference', 'ari_http_unavailable'],
+            ['conference', 'none'],
+            ['conference', 'another unknown value'],
+            ['conference', 'healthy_present'],
+            ['conference', 'healthy_absent'],
+            ['conference_participant', 'ari_http_transport_failed'],
+            ['conference_participant', 'none'],
+            ['conference_participant', 'degraded_unavailable'],
+            ['conference_participant', 'transport_unavailable'],
+            ['future_resource', 'none'],
+        ] as [$resourceType, $reason]) {
+            DB::table('conference_recovery_metric_events')->insert([
+                'id' => EngineIds::new(),
+                'adapter_key' => 'asterisk-ari',
+                'resource_type' => $resourceType,
+                'result' => 'observed',
+                'failure_class' => 'none',
+                'reason' => $reason,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+        }
+
+        $first = (string) $this->get('/api/metrics')->assertOk()->getContent();
+        $second = (string) $this->get('/api/metrics')->assertOk()->getContent();
+
+        $this->assertSame($first, $second);
+        $this->assertSame(1, $this->sampleLineCount($first, 'utcp_conference_runtime_reference_health_total{resource_type="conference",health="other"}'));
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference",health="other"} 4', $first);
+        $this->assertSame(1, $this->sampleLineCount($first, 'utcp_conference_runtime_reference_health_total{resource_type="conference_participant",health="other"}'));
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference_participant",health="other"} 2', $first);
+        $this->assertSame(1, $this->sampleLineCount($first, 'utcp_conference_runtime_reference_health_total{resource_type="other",health="other"}'));
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="other",health="other"} 1', $first);
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference",health="healthy_present"} 1', $first);
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference",health="healthy_absent"} 1', $first);
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference_participant",health="degraded_unavailable"} 1', $first);
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference_participant",health="transport_unavailable"} 1', $first);
+
+        foreach (['ari_http_transport_failed', 'ari_http_unavailable', 'another unknown value'] as $rawReason) {
+            $this->assertStringNotContainsString($rawReason, $first);
+        }
+    }
+
+    public function test_orphan_reclamation_operation_metric_counts_bounded_operation_rows_only(): void
+    {
+        $now = Carbon::parse('2026-07-20 14:00:00');
+        $tenantId = IdentityIds::new();
+        $userId = IdentityIds::new();
+        $nodeId = IdentityIds::new();
+        $conferenceId = IdentityIds::new();
+        $participantId = IdentityIds::new();
+        $sessionId = IdentityIds::new();
+        $bindingId = IdentityIds::new();
+        $operationId = EngineIds::new();
+
+        $this->insertTenantUserAndNode($tenantId, $userId, $nodeId, $now);
+        $this->insertConference($conferenceId, $tenantId, $nodeId, 'closed', 'closed', 4, $now);
+        $this->insertBinding($bindingId, $tenantId, $conferenceId, $nodeId, 'retired', $now->copy()->subMinutes(20), $now->copy()->subMinutes(10));
+        $this->insertSessionAndParticipant($sessionId, $participantId, $tenantId, $userId, $conferenceId, $now);
+
+        $orphanPayload = [
+            'conference_id' => $conferenceId,
+            'participant_id' => $participantId,
+            'telephony_session_id' => $sessionId,
+            'runtime_node_id' => $nodeId,
+            'configuration_generation' => 4,
+            'desired_state' => 'removed',
+            'historical_runtime_binding_id' => $bindingId,
+            'orphan_reclamation' => true,
+        ];
+
+        $this->insertRuntimeOperation('conference.participant.remove', 'succeeded', null, $tenantId, $participantId, $nodeId, $now, null, 0, null, $orphanPayload);
+        $this->insertRuntimeOperation('conference.participant.remove', 'succeeded', null, $tenantId, $participantId, $nodeId, $now, null, 2, null, $orphanPayload);
+        $this->insertRuntimeOperation('conference.participant.remove', 'retry_scheduled', 'runtime_unavailable', $tenantId, $participantId, $nodeId, $now, null, 9, 'retry contains '.$participantId, $orphanPayload);
+        $this->insertRuntimeOperation('conference.participant.remove', 'terminal_failed', 'surprise_failure_value', $tenantId, $participantId, $nodeId, $now, $operationId, 8, 'failure contains '.$operationId, $orphanPayload);
+        $this->insertRuntimeOperation('conference.participant.remove', 'succeeded', null, $tenantId, $participantId, $nodeId, $now, null, 0, null, [
+            'conference_id' => $conferenceId,
+            'participant_id' => $participantId,
+            'telephony_session_id' => $sessionId,
+            'runtime_node_id' => $nodeId,
+            'configuration_generation' => 4,
+            'desired_state' => 'removed',
+            'historical_runtime_binding_id' => null,
+            'orphan_reclamation' => false,
+        ]);
+
+        $first = (string) $this->get('/api/metrics')->assertOk()->getContent();
+        $second = (string) $this->get('/api/metrics')->assertOk()->getContent();
+
+        $this->assertSame($first, $second);
+        $this->assertStringContainsString('# HELP utcp_conference_orphan_reclamation_operations_total Durable orphan participant-channel reclamation runtime operation objects by result and failure class. Attempts are not counted separately.', $first);
+        $this->assertStringContainsString('# TYPE utcp_conference_orphan_reclamation_operations_total counter', $first);
+        $this->assertStringContainsString('utcp_conference_orphan_reclamation_operations_total{result="succeeded",failure_class="none"} 2', $first);
+        $this->assertStringContainsString('utcp_conference_orphan_reclamation_operations_total{result="retry_scheduled",failure_class="runtime_unavailable"} 1', $first);
+        $this->assertStringContainsString('utcp_conference_orphan_reclamation_operations_total{result="terminal_failed",failure_class="other"} 1', $first);
+        $this->assertStringNotContainsString('utcp_conference_orphan_reclamation_operations_total{result="succeeded",failure_class="none"} 3', $first);
+
+        foreach ([
+            'tenant_id=',
+            'conference_id=',
+            'participant_id=',
+            'session_id=',
+            'runtime_binding_id=',
+            'runtime_node_id=',
+            'operation_id=',
+            'channel_id=',
+            'payload=',
+            $tenantId,
+            $conferenceId,
+            $participantId,
+            $sessionId,
+            $bindingId,
+            $nodeId,
+            $operationId,
+        ] as $forbidden) {
+            $this->assertStringNotContainsString($forbidden, $first);
+        }
+    }
+
     public function test_t5_resilience_alert_rules_are_valid_and_actionable(): void
     {
         $path = base_path('../../infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml');
@@ -426,7 +562,7 @@ final class MetricsEndpointTest extends TestCase
             'UTCPRuntimeFenceTerminalFailure' => 'operation_type="runtime.node.runtime.fence"',
             'UTCPRuntimeRestoreTerminalFailure' => 'operation_type="runtime.node.restore"',
             'UTCPStaleActiveRuntimeBindings' => 'for: 10m',
-            'UTCPOrphanParticipantCandidates' => 'database-derived upper bound',
+            'UTCPOrphanReclamationTerminalFailure' => 'utcp_conference_orphan_reclamation_operations_total{result="terminal_failed",failure_class!="none"}[10m]',
             'UTCPAriReferenceFamilyDegraded' => 'health="degraded_unavailable"',
         ] as $alert => $requiredText) {
             $this->assertSame(1, substr_count($yaml, 'alert: '.$alert), $alert.' must be declared exactly once.');
@@ -437,17 +573,59 @@ final class MetricsEndpointTest extends TestCase
             'utcp_conference_failover_pending',
             'utcp_runtime_resilience_operations_total',
             'utcp_conference_stale_active_bindings',
-            'utcp_conference_orphan_participant_candidates',
+            'utcp_conference_orphan_reclamation_operations_total',
             'utcp_conference_runtime_reference_health_total',
         ] as $metric) {
             $this->assertStringContainsString($metric, $yaml);
         }
 
+        $this->assertStringNotContainsString('UTCPOrphanParticipantCandidates', $yaml);
+        $this->assertStringNotContainsString('utcp_conference_orphan_participant_candidates', $yaml);
+        $this->assertStringContainsString('for: 10m', $yaml);
+        $this->assertStringContainsString('severity: warning', $yaml);
         $this->assertStringNotContainsString('UTCPWorkerVersionSkew', $yaml);
         $this->assertStringNotContainsString('manual reconciliation', strtolower($yaml));
         $this->assertStringNotContainsString('artisan', strtolower($yaml));
+        $this->assertStringNotContainsString('delete channel', strtolower($yaml));
+        $this->assertStringNotContainsString('asterisk cli', strtolower($yaml));
         $this->assertStringNotContainsString('tenant_id', $yaml);
         $this->assertMatchesRegularExpression('/apiVersion: monitoring\.coreos\.com\/v1\s+kind: PrometheusRule/s', $yaml);
+    }
+
+    public function test_gateway_metrics_transport_is_internalized_without_public_route_exposure(): void
+    {
+        $nginx = (string) file_get_contents(base_path('../../infrastructure/docker/gateway/nginx.conf'));
+
+        $this->assertMatchesRegularExpression('/server\s*\{(?:(?!server\s*\{).)*listen 8080;(?:(?!server\s*\{).)*location = \/api\/metrics\s*\{\s*return 404;\s*\}(?:(?!server\s*\{).)*location \^~ \/api\/\s*\{(?:(?!server\s*\{).)*fastcgi_pass api:9000;/s', $nginx);
+        $this->assertMatchesRegularExpression('/server\s*\{(?:(?!server\s*\{).)*listen 8081;(?:(?!server\s*\{).)*location = \/api\/metrics\s*\{(?:(?!server\s*\{).)*fastcgi_pass api:9000;(?:(?!server\s*\{).)*location \/\s*\{\s*return 404;\s*\}/s', $nginx);
+        $this->assertDoesNotMatchRegularExpression('/listen 8081;(?:(?!server\s*\{).)*location \^~ \/api\//s', $nginx);
+        $this->assertDoesNotMatchRegularExpression('/listen 8081;(?:(?!server\s*\{).)*location = \/healthz/s', $nginx);
+
+        $deployment = (string) file_get_contents(base_path('../../infrastructure/kubernetes/base/platform/gateway-deployment.yaml'));
+        $service = (string) file_get_contents(base_path('../../infrastructure/kubernetes/base/platform/gateway-service.yaml'));
+        $serviceMonitor = (string) file_get_contents(base_path('../../infrastructure/kubernetes/observability/monitors/utcp-application-servicemonitor.yaml'));
+        $metricsPolicy = (string) file_get_contents(base_path('../../infrastructure/kubernetes/observability/network-policies/allow-application-metrics.yaml'));
+        $gatewayPolicy = (string) file_get_contents(base_path('../../infrastructure/kubernetes/security/platform/allow-gateway.yaml'));
+        $httpRoutes = implode("\n", [
+            (string) file_get_contents(base_path('../../infrastructure/kubernetes/gateway-api/httproute-app.yaml')),
+            (string) file_get_contents(base_path('../../infrastructure/kubernetes/gateway-api/httproute-root.yaml')),
+            (string) file_get_contents(base_path('../../infrastructure/kubernetes/gateway-api/httproute-sip.yaml')),
+        ]);
+
+        $this->assertMatchesRegularExpression('/- name: metrics\s+containerPort: 8081/', $deployment);
+        $this->assertMatchesRegularExpression('/- name: metrics\s+port: 8081\s+targetPort: metrics/', $service);
+        $this->assertStringContainsString('type: ClusterIP', $service);
+        $this->assertStringNotContainsString('NodePort', $service);
+        $this->assertMatchesRegularExpression('/endpoints:\s+- port: metrics\s+path: \/api\/metrics\s+interval: 30s\s+scrapeTimeout: 10s/s', $serviceMonitor);
+        $this->assertStringNotContainsString('port: http', $serviceMonitor);
+        $this->assertStringContainsString('kubernetes.io/metadata.name: utcp-observability', $metricsPolicy);
+        $this->assertStringContainsString('app.kubernetes.io/name', $metricsPolicy);
+        $this->assertSame(2, substr_count($metricsPolicy, 'port: 8081'));
+        $this->assertStringNotContainsString('port: 8080', $metricsPolicy);
+        $this->assertStringContainsString('port: 8080', $gatewayPolicy);
+        $this->assertStringNotContainsString('port: 8081', $gatewayPolicy);
+        $this->assertStringNotContainsString('port: 8081', $httpRoutes);
+        $this->assertStringNotContainsString('/api/metrics', $httpRoutes);
     }
 
     /**
@@ -571,7 +749,10 @@ final class MetricsEndpointTest extends TestCase
         ]);
     }
 
-    private function insertRuntimeOperation(string $operationType, string $status, ?string $failureClass, string $tenantId, string $aggregateId, string $nodeId, Carbon $now, ?string $operationId = null, int $attemptCount = 0, ?string $failureMessage = null): void
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    private function insertRuntimeOperation(string $operationType, string $status, ?string $failureClass, string $tenantId, string $aggregateId, string $nodeId, Carbon $now, ?string $operationId = null, int $attemptCount = 0, ?string $failureMessage = null, array $payload = []): void
     {
         DB::table('runtime_operations')->insert([
             'id' => $operationId ?? EngineIds::new(),
@@ -581,7 +762,7 @@ final class MetricsEndpointTest extends TestCase
             'aggregate_id' => $aggregateId,
             'runtime_node_id' => $nodeId,
             'payload_version' => 1,
-            'payload' => json_encode([], JSON_THROW_ON_ERROR),
+            'payload' => json_encode($payload, JSON_THROW_ON_ERROR),
             'status' => $status,
             'idempotency_key' => 'metrics-'.EngineIds::new(),
             'correlation_id' => EngineIds::new(),
@@ -594,5 +775,12 @@ final class MetricsEndpointTest extends TestCase
             'created_at' => $now,
             'updated_at' => $now,
         ]);
+    }
+
+    private function sampleLineCount(string $body, string $prefix): int
+    {
+        return collect(explode("\n", $body))
+            ->filter(static fn (string $line): bool => str_starts_with($line, $prefix))
+            ->count();
     }
 }

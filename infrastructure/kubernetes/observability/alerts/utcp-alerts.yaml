@@ -164,15 +164,16 @@ spec:
             namespace: utcp-platform
           annotations:
             summary: Closed conferences still have active RuntimeBindings after the automatic retirement window.
-        - alert: UTCPOrphanParticipantCandidates
-          expr: sum(utcp_conference_orphan_participant_candidates) > 0
-          for: 15m
+        - alert: UTCPOrphanReclamationTerminalFailure
+          expr: sum(increase(utcp_conference_orphan_reclamation_operations_total{result="terminal_failed",failure_class!="none"}[10m])) > 0
+          for: 10m
           labels:
             severity: warning
             component: telephony-domain
             namespace: utcp-platform
           annotations:
-            summary: Removed participants match the database-derived upper bound for orphan-channel candidates and need control-plane investigation.
+            summary: Automatic orphan participant channel reclamation reached terminal failure during recent recovery.
+            description: Automatic orphan participant-channel reclamation has reached a terminal failure according to the bounded orphan reclamation operation metric.
         - alert: UTCPAriReferenceFamilyDegraded
           expr: sum(increase(utcp_conference_runtime_reference_health_total{health="degraded_unavailable"}[10m])) > 3
           for: 10m
