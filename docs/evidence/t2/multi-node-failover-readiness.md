@@ -8080,3 +8080,131 @@ php artisan test --filter=AsteriskConferenceRecoveryTest
 
 Broad required Make verification and live deployment proof are recorded in the task completion
 report. The live automatic retirement and historical-residue repair proof remains pending.
+
+## T5-A50 — Automatic RuntimeBinding retirement and historical residue repair: LIVE PROOF COMPLETE
+
+**Verdict: `T5_AUTOMATIC_RUNTIME_BINDING_RETIREMENT_LIVE_PROOF_COMPLETE`.**
+Deployed `4740290` and proved both the historical residue repair (114 closed/closed conferences
+with active bindings retired automatically to zero) and the forward lifecycle (a freshly opened
+conference closed canonically, its final binding retired only after observed closure). All
+retirement was driven by the everyMinute scheduler; no manual command, no direct SQL, no manual
+management surface.
+
+### Phase marker
+`versions.env` line 7 resolves explicitly to `UTCP_PHASE=T1`; working tree clean at `4740290`.
+
+### Application image build and rollout
+Built the api image from `4740290` (digest `sha256:0985ac41…`), pushed to the local registry,
+rolled out api, scheduler, telephony-reconciler, worker, telephony-command-worker,
+telephony-event-normalizer, control-plane-outbox-dispatcher, asterisk-ari-events,
+simulator-event-source, kamailio-registration-observer. Asterisk, Kamailio, PostgreSQL, Redis,
+RBAC, NetworkPolicy, and the runtime-fencer were not rolled. Every rolled workload runs the new
+digest; the scheduler pod (`scheduler-67996d4b9-…`, revision 44) confirmed on `sha256:0985ac41…`.
+
+### Live retirement-code currency
+The image contains `retireClosedConferenceBindings`, the
+`telephony-domain:retire-closed-bindings` command, the everyMinute `withoutOverlapping` schedule,
+the `conference.runtime_binding_retired` event, and the ConferenceReconciler closed/closed
+no-active-binding convergence branch.
+
+### Scheduler registration
+`php artisan schedule:list` (read-only) shows
+`* * * * *  php artisan telephony-domain:retire-closed-bindings --once` — automatic, every minute,
+overlap-protected, batch-bounded (`--batch=100` default).
+
+### No-manual-command proof
+Retirement was never invoked manually. Only read-only `schedule:list` and normal authenticated
+Conference/session APIs were used. The historical repair (114→0) occurred through scheduler
+sweeps before any manual action, proving automatic normal operation.
+
+### Historical candidate baseline
+Canonical predicate `desired_state='closed' AND observed_state='closed' AND active binding`
+returned **114** candidates pre-rollout (single tenant `local`), matching the expected ~114. The
+inventory (conference id, tenant, binding id, node, generation, binding created_at, status,
+unbound_at) was captured read-only for evidence only; the scheduler discovered candidates itself.
+Pre-rollout: 114 active bindings, 8 retired, 0 `conference.runtime_binding_retired` events.
+
+### Automatic historical repair and batch progression
+The scheduler retired the historical population in two batch-bounded sweeps with no manual command:
+- Sweep 1: candidates 114 → 14 (retired exactly 100 = batch size).
+- Sweep 2: candidates 14 → 0 (retired the remaining 14).
+Result: closed/closed conferences with active binding = 0. Each processed candidate changed
+`status active → retired` and `unbound_at null → timestamp`; 0 retired rows have a null
+`unbound_at`. Binding rows remained present (total retired grew 8 → 122; nothing deleted),
+conferences stayed closed/closed, and each binding retained its `runtime_node_id` and generation
+evidence.
+
+### Historical retirement events
+Exactly **114 audit** and **114 outbox** `conference.runtime_binding_retired` records — one per
+retirement. Payload carries tenant_id, conference_id, runtime_binding_id, runtime_node_id,
+conference_generation, reason, `source_transition='conference_closed'`, `unbound_at`, occurred_at.
+The implementation uses a single structured reason `conference_closed` for both historical and
+forward retirements (the residue-specific reason was intentionally not implemented; the T5-A48
+contract permitted a single reason).
+
+### Post-repair deduplication
+Across 3+ additional everyMinute sweeps (observed 01:14:52 → 01:16:22): candidates stayed 0,
+audit stayed 114, outbox stayed 114, active bindings stayed 0, retired stayed 122, and
+`max(unbound_at)` was unchanged (`01:14:03`). Zero additional status changes, zero duplicate
+events, zero duplicate outbox rows, no rewritten `unbound_at`, no row deletion.
+
+### Open-conference binding preservation
+A fresh conference was created after historical repair. Across 3 retirement sweeps
+(01:18:10 → 01:19:30) with the conference `open/ready`, its binding stayed `active`, no
+`conference.runtime_binding_retired` event was emitted for it, and the total event count stayed
+114. This proves the sweep uses neither age, RuntimeNode readiness, nor sweep frequency as
+retirement authority — only `desired_state=closed AND observed_state=closed`. No open or
+pending-no-capacity binding was retired by historical repair (there were none during repair, and
+the fresh open binding was preserved); retired failover-generation history was unchanged.
+
+### Fresh proof conference
+Through normal authenticated APIs: session `8bb8f624` (expiry 01:47:37), conference `a90bac34`
+(gen 2 on open), participant `91b59874` admitted, one active binding `0efc6e14` on node B
+(`05ddb383`), conference `open/ready`, deterministic bridge `utcp-conf-a90bac34…` with participant
+Local-channel legs on node B. No SQL/Redis creation.
+
+### Canonical closure timeline and binding preservation during cleanup
+Close requested via the Conference API at `01:20:26` (desired=closed, observed=ready, gen 3). The
+reconciler drove bridge destruction; the projection set `observed_state='closed'` at `01:20:30`.
+The binding remained `active` through observed closure (sampled `closed/closed` with `binding=active`,
+0 retirement events, node-B bridge gone) — it did **not** retire before observed closure.
+
+### Forward automatic retirement and event
+The next scheduler sweep retired the final binding at `01:21:04` (34s after observed closure):
+`status=retired`, `unbound_at=01:21:04`, 0 active bindings for the conference. Ordering proof:
+`unbound_at (01:21:04) ≥ observed_at (01:20:30)` = true. Exactly one audit + one outbox
+`conference.runtime_binding_retired` event for the conference, with tenant, conference, binding,
+runtime_node_id (`05ddb383`), generation 3, `reason=conference_closed`,
+`source_transition=conference_closed`, `unbound_at`, and timestamp. Across 4 later sweeps
+(01:21:54 → 01:23:40) the event count stayed 1/1 and `unbound_at` was not rewritten — no
+duplicate event or binding mutation.
+
+### Reconciler convergence without a binding
+After retirement the conference's reconciliation state is `converged` with an empty
+`blocked_reason` (not `conference_runtime_binding_missing`), stable across 4 sweeps. The
+closed/closed conference with no active binding reconciles as converged under normal scheduled
+reconciliation, with no binding recreated.
+
+### Session-expiry boundary
+Ending session `8bb8f624` through the normal lifecycle left the retired binding **unchanged**
+(`status=retired`, `unbound_at=01:21:04`), 0 active bindings, and the retirement event count at 1.
+Session handling neither created, reactivated, nor altered the retired binding; session expiry is
+not reinterpreted as closure authority.
+
+### Tenant isolation and write-authority
+The candidate query and per-candidate revalidation both filter by `tenant_id`, and the service
+accepts an optional tenant scope; all live data is single-tenant `local`, so isolation is
+established by code scoping rather than a second live tenant. RuntimeBinding write authority is
+unchanged from the T5-A48 inventory: creation via `writeBinding`, retirement via `bindRuntimeNode`,
+`failoverRebindConference`, and now the closure-retirement sweep — all in `TelephonyDomainService`;
+no direct SQL repair, no DELETE, no manual management surface. A mutating Artisan command exists
+only as the scheduled `--once` entry point (the scheduler is the authority), not as an operator
+workflow.
+
+### Final runtime state
+closed/closed conferences with active bindings = 0; open = 0; pending_no_capacity = 0; actionable
+verify/fence/restore operations = 0; both intended RuntimeNodes active/ready; both Asterisk
+Deployments 1/1; all simulator proof RuntimeNodes disabled; scheduler and workers Ready. Total
+retired bindings = 123 (8 pre-existing + 114 historical + 1 forward), all rows retained; total
+active bindings = 0; 115 audit and 115 outbox retirement events (one per retirement); no duplicate
+event; no manual retirement command executed; no direct RuntimeBinding or Conference database write.
