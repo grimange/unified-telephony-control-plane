@@ -10386,3 +10386,167 @@ PrometheusRule is already loaded by the cluster.
 - Phase-marker inspection confirmed `versions.env` declares `UTCP_PHASE=T1`.
 - No mutating command was run against Kubernetes, PBX/runtime resources, conferences, RuntimeBindings,
   PostgreSQL business rows, Redis, or live ServiceMonitor/NetworkPolicy state.
+
+---
+
+# T5-A62 — Live proof: internal metrics scraping, public cutoff, D1 aggregation, actionable orphan alert (e87d1c7)
+
+Verdict: `T5_METRICS_SECURITY_AND_ORPHAN_ALERT_LIVE_PROOF_COMPLETE`. Staged live cutover of the T5-A61
+implementation against `utcp-local`. Baseline `UTCP_PHASE=T1`, clean tree at `e87d1c7`. Evidence-only
+doc change; production code/manifests are the committed e87d1c7, not modified here.
+
+## Environment recovery before cutover (infrastructure only)
+Post-host-restart the apiserver moved to 172.24.0.5 while the apiserver-egress NetworkPolicies were
+pinned to 172.24.0.2, crash-looping the Prometheus operator, kube-state-metrics, and grafana sidecar
+(operator: `10.43.0.1:443 connection refused`). Recovered canonically via
+`scripts/security/render-apiserver-policy` + apply of the three rendered `.runtime/...` egress files;
+drift check then passed `endpoint=172.24.0.5/32:6443`; restarted the three crash-looped pods. No policy
+weakened; the metrics NetworkPolicy under test was not touched by recovery. `.runtime/` is gitignored.
+
+## Pre-cutover baseline (live)
+API image digest sha256:0d96195... (b78a0b5, rev 79); gateway rev 11 (http:8080 only); ServiceMonitor
+port `http`; metrics NetworkPolicy port 8080; target up on http://<gw>:8080/api/metrics; ARI other
+duplicate-collapsed (conference 326, participant 7604→433); orphan gauge 121; `UTCPOrphanParticipantCandidates`
+loaded; public `https://app.utcp.local.test/api/metrics` → 200. Wider runtime healthy: 2 asterisk nodes
+active/ready, both Asterisk Deployments 1/1, 0 open/pending conferences, 0 active bindings, 0 actionable
+ops, all simulators disabled.
+
+## Corrected image build
+Built canonical api and gateway images from the clean e87d1c7 tree. Verified in the api image:
+utcp_conference_orphan_reclamation_operations_total (name+method), `payload->orphan_reclamation` filter,
+D1 map-then-aggregate helper. Verified in the gateway image nginx: public `location = /api/metrics {
+return 404 }`, internal `listen 8081` server, 8081 `location / { return 404 }`. Pushed via the local
+registry: api sha256:505239983832dda184e674e540cfdab6e924afb462bca0802bd7557ccffa348a,
+gateway sha256:1591593a614cefe788d34415bb980c3f5eef028d0d661d5a986505c82415ad68.
+
+## Stage 1 — API rollout (8080 path preserved), D1 + orphan metric
+Rolled out only `deployment/api` → pod api-57648d76c5-z57kg, rev 80, digest sha256:505239...
+Through the still-8080 scrape path: `/api/metrics` HTTP 200, no exceptions, new orphan metric present,
+and utcp_conference_runtime_reference_health_total emits exactly one series per resource_type×health
+(no duplicate label sets). Prometheus ingested the corrected aggregation while still on 8080.
+
+## D1 corrected aggregation (durable comparison)
+Live == durable, mapped and summed, one series per final label pair:
+| resource_type | health | live | durable |
+|---|---|---|---|
+| conference | healthy_present | 20 | 20 |
+| conference | healthy_absent | 4 | 4 |
+| conference | degraded_unavailable | 11 | 11 |
+| conference | other | 3870 | 3870 (ari_http_transport_failed 326 + ari_http_unavailable 1 + none 3543) |
+| conference_participant | healthy_present | 21 | 21 |
+| conference_participant | healthy_absent | 27 | 27 |
+| conference_participant | degraded_unavailable | 11 | 11 |
+| conference_participant | transport_unavailable | 2712 | 2712 |
+| conference_participant | other | 7604 | 7604 (433 + 1 + 7170) |
+Prometheus `count(...{health="other"})` = 2 (one per resource_type); no duplicate-sample warning;
+recognized classifications unchanged. Family went 13→9 series (4 duplicate `other` lines collapsed).
+
+## Orphan-reclamation operation metric (durable comparison)
+`utcp_conference_orphan_reclamation_operations_total{result="succeeded",failure_class="none"} 2`.
+Durable: runtime_operations where operation_type=conference.participant.remove AND
+payload->>'orphan_reclamation'='true' → 2 tagged, both succeeded/none; 0 terminal_failed. Total
+participant.remove ops = 644, so the 642 normal removals are correctly excluded. One operation row = one
+count (attempts not multiplied); missing failure → `none`; bounded result/failure_class labels only.
+
+## Stage 2 — gateway dual-listener + cutover
+Applied gateway Service+Deployment (added metrics:8081) and rolled out the new gateway image →
+gateway-bdc69cd5b-b4qtx, rev 13, digest sha256:1591593..., Service ports http:8080 + metrics:8081.
+Internal listener proof (from gateway pod):
+- 8081 /api/metrics → 200; /api/version → 404; / → 404; /arbitrary → 404 (metrics-only).
+- 8080 /api/metrics → 404; /api/version → 200 (public cutoff live, normal API preserved).
+8081 is ClusterIP-only: no NodePort, no LoadBalancer, no HTTPRoute→8081 (only the Traefik LB exposes
+80/443→8080).
+Then applied the metrics NetworkPolicy (ingress utcp-platform + egress utcp-observability, 8080→8081,
+Prometheus-only) and the ServiceMonitor (port http→metrics, path /api/metrics preserved). Target
+transitioned to http://10.42.1.81:8081/api/metrics, endpoint=metrics, job=gateway, health=up,
+lastError="", interval 30s/timeout 10s, scrape duration ~0.22–0.26s. Cutover window: the operator took
+~60–70s to regenerate the scrape config (target briefly showed `down` 404 on 8080 while nginx already
+served 8081); this is the operator config-reload latency, not a sustained outage — scraping resumed on
+8081 immediately after reload. 10 successful scrapes over 15m on 8081 with 0 flaps.
+
+## Public metrics authority cutoff (all forms)
+`/api/metrics` returns 404 on every public form:
+- https app.utcp.local.test → 404; https utcp.local.test → 404.
+- http (both hosts) → 301 → https → 404.
+- Traefik NodePort https (:32417) via agent node IPs 172.24.0.3/.4 → 404 (server node has no svclb pod).
+Normal public API unchanged: /api/version 200, /api/health/live 200, /api/health/ready 200 (both hosts).
+No NetworkPolicy weakened; no auth exception, token, feature gate, or IP allowlist added.
+
+## Internal metrics-only listener
+From an authorized cluster context, port 8081: /api/metrics → 200; /api/version → 404; /api/health/live
+→ 404; / → 404; /arbitrary → 404. No server_name or public route exposes the listener; no extra
+application route/controller added.
+
+## ServiceMonitor and NetworkPolicy cutover (live)
+ServiceMonitor utcp-application endpoint port=metrics, path=/api/metrics (selector/nsSelector/interval/
+timeout unchanged). allow-application-metrics-from-prometheus ingress port 8081 from utcp-observability/
+prometheus only; allow-prometheus-egress-to-application-metrics egress port 8081. allow-gateway-required-
+traffic (Traefik→8080) unchanged. Prometheus scrapes only named port `metrics`.
+
+## Candidate gauge inventory boundary
+utcp_conference_orphan_participant_candidates = 121 (queryable), == DB predicate. Documented as a
+database-derived historical upper bound that does NOT prove live PBX channels (HELP retains the caveat).
+No alert rule references this metric (verified: `UTCPOrphanParticipantCandidates` absent).
+
+## Alerts — swap, loading, evaluation, false-positive elimination
+PrometheusRule generation 9. `UTCPOrphanParticipantCandidates` ABSENT. `UTCPOrphanReclamationTerminalFailure`
+present exactly once. All six T5 alerts loaded, health=ok, lastError="":
+| alert | for | state | expr |
+|---|---|---|---|
+| UTCPConferencePendingNoCapacity | 900s | inactive | sum(utcp_conference_failover_pending{failover_state="pending_no_capacity"}) > 0 |
+| UTCPRuntimeFenceTerminalFailure | 600s | inactive | sum(increase(utcp_runtime_resilience_operations_total{operation_type="runtime.node.runtime.fence",result="terminal_failed",failure_class!="none"}[10m])) > 0 |
+| UTCPRuntimeRestoreTerminalFailure | 600s | inactive | sum(increase(...operation_type="runtime.node.restore"...[10m])) > 0 |
+| UTCPStaleActiveRuntimeBindings | 600s | inactive | sum(utcp_conference_stale_active_bindings) > 0 |
+| UTCPOrphanReclamationTerminalFailure | 600s | inactive | sum(increase(utcp_conference_orphan_reclamation_operations_total{result="terminal_failed",failure_class!="none"}[10m])) > 0 |
+| UTCPAriReferenceFamilyDegraded | 600s | inactive | sum(increase(utcp_conference_runtime_reference_health_total{health="degraded_unavailable"}[10m])) > 3 |
+New alert contract confirmed: references only utcp_conference_orphan_reclamation_operations_total; result
+filter terminal_failed; failure_class!="none"; lookback 10m; for 10m; severity warning; component
+telephony-domain; annotations summary+description with no artisan/manual/PBX/tenant wording. Direct
+PromQL of the alert expr → 0 result series. False-positive elimination (D3 core): candidate gauge = 121
+(positive) yet `ALERTS{alertname=~"UTCPOrphan.*"}` = NONE and no pending/firing orphan alert. No terminal
+failure was manufactured. 40 rules loaded total, 0 with eval error.
+
+## Cardinality and sensitive-data proof
+Live series for utcp_conference_runtime_reference_health_total, utcp_conference_orphan_reclamation_operations_total,
+utcp_conference_orphan_participant_candidates: metric-emitted labels are bounded enums only
+(failure_class, health, resource_type, result). Standard SD target metadata (instance/pod/container/job/
+endpoint/service/namespace) present as on every series (pod name, not UID). Scan for UUID / 7+ digit id /
+`@` / password|secret|token → NONE. No tenant/conference/participant/session/binding/operation/node/
+channel id, phone number, credential, or raw error.
+
+## Existing metrics compatibility
+Family inventory: 54 (A59) → 55; 0 removed/renamed; exactly 1 added
+(utcp_conference_orphan_reclamation_operations_total). All prior T5 families queryable; existing five T5
+alerts remain healthy. Gateway+api 1/1; /api/version, /api/health/live, /api/health/ready all 200; no
+API-routing regression in probes.
+
+## Metrics security boundary
+ServiceMonitor scrapes only named port metrics; metrics NetworkPolicy permits Prometheus→8081 only and
+does not broadly expose 8081; Traefik uses 8080 only; no HTTPRoute targets metrics; no NodePort/LB
+exposes 8081; public /api/metrics → 404; internal scrape up; no token/gate/allowlist/public fallback.
+
+## Final runtime state
+Prometheus target up on 8081; 10 stable scrapes / 0 flaps over 15m; public exact /api/metrics 404;
+ordinary API healthy; corrected ARI aggregates match durable; candidate gauge inventory-only (121);
+terminal orphan alert loaded+healthy+inactive; invalid candidate alert absent; 0 rule eval errors.
+Wider runtime unchanged: 2 asterisk nodes active/ready, both Asterisk Deployments 1/1, 0 open/pending
+conferences, 0 active bindings, 0 actionable ops, all simulators disabled. No telephony state mutated.
+
+## Verification performed (T5-A62)
+make repository-hygiene / workflow-check / secret-scan: PASS. make *-config-check (4): PASS.
+make *-test: runtime-engine 21, telephony-domain 60, asterisk-ari 94, asterisk-conference 109,
+asterisk-conference-recovery 89: PASS. MetricsEndpointTest 7 passed (180 assertions), including the new
+D1-aggregation, orphan-reclamation-metric, and gateway-internalization tests. git diff --check /
+--cached: clean. No forbidden mutating command run (no failover/fencing/ARI-unload/Conference/
+RuntimeBinding/PBX/SQL-write/migrate/public-fallback/NetworkPolicy-weakening).
+
+## Outcome
+`T5_METRICS_SECURITY_AND_ORPHAN_ALERT_LIVE_PROOF_COMPLETE`. All 28 completion criteria met: e87d1c7
+metrics code deployed; gateway 8081 live and metrics-only; ServiceMonitor on named port metrics; metrics
+NetworkPolicy Prometheus→8081; ≥3 internal scrapes; public /api/metrics 404 on every form; ordinary API
+functional; ARI one-sample-per-final-label-pair with `other` summed and no duplicate-sample issue;
+orphan-reclamation metric matches durable ops with normal removals excluded; candidate gauge visible as
+inventory and unreferenced by any alert; invalid candidate alert absent; replacement terminal-failure
+alert loaded once and evaluating; no healthy inventory causes an orphan alert; bounded non-sensitive
+labels; existing families compatible; existing T5 alerts healthy; no public route exposes 8081; no token/
+allowlist/gate/public fallback; wider runtime healthy. UTCP_PHASE remains T1; commit not pushed.
