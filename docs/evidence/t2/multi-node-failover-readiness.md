@@ -8208,3 +8208,293 @@ Deployments 1/1; all simulator proof RuntimeNodes disabled; scheduler and worker
 retired bindings = 123 (8 pre-existing + 114 historical + 1 forward), all rows retained; total
 active bindings = 0; 115 audit and 115 outbox retirement events (one per retirement); no duplicate
 event; no manual retirement command executed; no direct RuntimeBinding or Conference database write.
+
+## T5-A51 — Authoritative ARI not-found handling contract (evidence-only)
+
+**Verdict: `T5_AUTHORITATIVE_ARI_FALSE_404_CONTRACT_DEFINED`.**
+Read-only audit at `a2db639`. Inventoried every production ARI 404 handler, confirmed one real
+false-404 mechanism (already live-observed in T5-A25), reclassified the remaining categories as
+already-safe, and defined the smallest safe hardening: gate *authoritative absence* on the health
+of the same ARI resource-family list endpoint. No production code, tests, manifests, or runtime
+state were modified.
+
+### Baseline
+Clean at `a2db639`, `UTCP_PHASE=T1`. Both intended RuntimeNodes active/ready; both Asterisk
+Deployments 1/1 (Asterisk 20.20.1); zero open/pending conferences; zero actionable operations;
+both listener leases claimed; one open epoch per node; app image `sha256:0985ac41`. ARI config:
+`request_timeout_ms=4000`, `connect_timeout_ms=2000`, `participant_attach_attempts=8`,
+`participant_attach_retry_microseconds=200000` (0.2s), `poll_seconds=5`, `lease_seconds=45`.
+
+### ARI 404 call-site inventory
+All ARI I/O flows through `AsteriskAriClient::ariRequest(method, resource, query, timeout,
+acceptedStatuses)`. 404 is handled two ways:
+- **Accepted 404** (listed in `acceptedStatuses`): returned to the caller.
+  - `closeConferenceBridge` — `DELETE bridges/{id}` `[200,202,204,404]` → `absent=true` (cleanup).
+  - `removeParticipantChannel` — `POST bridges/{id}/removeChannel` `[200,202,204,404,409,422]` and
+    `DELETE channels/{id}` `[200,202,204,404,409]` → `absent=true` (cleanup).
+  - `getAriResource` — `GET {resource}` `[200,404]` → **returns null on 404** (inspection).
+- **Unexpected 404** (not accepted): `ariRequest` throws
+  `AsteriskAriException(FailureClass::Conflict, 'ari_resource_not_found')`. `FailureClass::Conflict`
+  is **not retryable** (`FailureClass::retryable()` = TransientTransport, RuntimeUnavailable,
+  Timeout, InternalError only; `config/runtime_engine.php` lists `conflict` under
+  `terminal_failure_classes`). A single unexpected 404 → operation `terminal_failed`.
+- `inspectRuntimeInfo` — `GET /asterisk/info`; 404 → `ari_info_unsupported`
+  (UnsupportedCapability, terminal). This is a stable REST-health reference.
+
+Create/mutate accept-lists: `POST bridges` `[200,201,204,409]`; `POST channels` (originate)
+`[200,201,202,204,409]`; `POST bridges/{id}/addChannel` `[200,202,204,409]` (404 **not** accepted,
+but wrapped in a bounded in-process retry loop — see below). None of the create endpoints
+reference another resource by id in a way that yields a legitimate 404, so create-path false-404 is
+absorbed by the `409 already-exists` accept.
+
+### Consumers of `getAriResource` absence (`bridge_exists=false`)
+`conferenceRuntimeSummary` maps a bridge/channel `GET → 404 → null` to `bridge_exists=false` /
+`participant_channel_exists=false`. Consumers:
+1. **`AsteriskRuntimeAdapter::inspectConferenceRuntime`** → `RuntimeConferenceInspectionResult`:
+   a 404 → `observed`/`conferencePresent=false` (authoritative absence); a **retryable**
+   `AsteriskAriException` (e.g. `ari_http_unavailable`, RuntimeUnavailable) → `unavailable`
+   (retry). Consumed by `ConferenceReconciler` (open → `conference_bridge_missing` → idempotent
+   `conference.ensure`; closed → converge).
+2. **`AsteriskRuntimeAdapter::verify_conference_absent`** → `bridge_exists=false` and no
+   participant channel present → `verification_result='absent'`.
+
+### Confirmed false-404 occurrence (live-observed, T5-A25)
+Documented in this file (§T5-A25/A26, "Retained ARI false-404 hardening gap"): unloading the ARI
+**REST resource modules** (`res_ari_bridges`, etc.) while the HTTP server stays up makes
+`GET /ari/bridges/{id}` return **HTTP 404** (route gone) even though the bridge is **alive**
+(confirmed via the Asterisk control socket: bridge present with 2 channels, Pod UID unchanged,
+replicas 1/1). `getAriResource` (accepts `[200,404]`) read this as `bridge_exists=false` — a **false
+absence**. T5-A25 rejected this as a failover trigger precisely because it is a false-404 rather
+than a faithful transport outage. This is a real, live-observed mechanism, not a theoretical race.
+
+### Legitimate not-found categories present in UTCP
+- **Legitimate authoritative 404** — bridge/channel genuinely absent (before create, after
+  destroy). Present and correct.
+- **Cleanup 404** — accepted → idempotent success. Present and correct (see Cleanup Semantics).
+- **Replacement-window 404** — after failover rebind commits, the deterministic bridge does not yet
+  exist on the new node; `GET → 404` drives the correct idempotent `conference.ensure` create.
+  Legitimate, not false.
+- **Transient visibility 404 (addChannel)** — handled by the existing bounded in-process loop.
+- **Stale-generation / wrong-node 404** — **prevented before the ARI call** (see authority).
+- **Adapter/routing defect** — none: deterministic ids are pre-sanitized to `[A-Za-z0-9_.:-]`
+  (`safeRuntimeReference`), query uses `PHP_QUERY_RFC3986`, node/endpoint/credential resolved from
+  the authoritative RuntimeNode.
+
+### Bridge lifecycle findings
+`ensureConferenceBridge` inspects (`GET bridges/{id}`) then `POST bridges` `[200,201,204,409]` —
+false-404 on inspect → create → `409 already-exists` accepted → idempotent, benign.
+`closeConferenceBridge` `DELETE bridges/{id}` accepts 404 → `absent=true` — idempotent cleanup.
+Post-rebind reconstruction: 404 on the new node is legitimate (bridge not created yet) → ensure.
+
+### Participant lifecycle findings
+`ensureParticipantChannel`: ensure bridge → inspect channel (`GET channels/{id}`) → originate if
+absent (`POST channels` accepts 409) → `addChannel` in a loop of `attempts=8 × 0.2s` catching
+`FailureClass::Conflict` (covers a transient bridge/channel 404 or 409), then a
+`participantAttachedToBridge` check; a non-attach becomes `ari_participant_attach_pending`
+(RuntimeUnavailable, **retryable** → persisted operation retry). The only terminal path is
+`addChannel` throwing `Conflict` on the final attempt (bounded exhaustion). `removeParticipantChannel`
+accepts 404 on both removeChannel and channel delete → idempotent cleanup. No duplicate originate:
+deterministic `channelId` + inspect-before-originate + `409` accept.
+
+### RuntimeNode authority
+Every ARI request receives the authoritative `runtime_node_id` explicitly from the operation
+payload; the adapter never reselects a node. `conferenceFromOperation` re-reads the Conference and
+throws terminal `conference_not_bound_to_node` when the operation's node differs from the
+Conference's current `runtime_node_id` at the current-or-newer generation. The reconciler and
+projection resolve the target node from the **current active binding** (`activeRuntimeNodeId`), so
+inspection is always directed at the current node, never the former node after rebind.
+
+### RuntimeBinding and generation authority
+Each conference/participant handler short-circuits when
+`operationGeneration < conference.configuration_generation` (returns stale/converged) **before any
+ARI call**, so a stale-generation worker never issues an ARI mutation or absence query for an old
+generation. There is **no post-response generation revalidation**, but it is unnecessary: the
+projection is generation-gated (`observed_generation <= generation`) and the event normalizer joins
+the active-binding node, so a late in-flight response from a former node cannot advance the current
+projection. Deterministic ids (`utcp-conf-<conferenceId>`, `utcp-part-<participantId>`) are
+generation-independent, so no stale-id mismatch exists. No hardening weakens these guards.
+
+### Wrong-node requests
+Prevented: `conferenceFromOperation` rejects an operation whose node is not the Conference's current
+bound node (`conference_not_bound_to_node`, terminal). A cleanup/inspection therefore only executes
+against the authoritative node.
+
+### Stale-generation requests
+Prevented: per-handler generation short-circuit before the ARI call; stale ops converge without
+mutating or inspecting the runtime.
+
+### Cleanup 404 semantics
+Cleanup (`bridge destroy`, `channel hangup`, `removeChannel`, former-generation cleanup) accepts 404
+as `absent=true` (desired-absent satisfied). This is safe **because cleanup only runs on the
+authoritative node/generation** (guarded by `conferenceFromOperation` + generation short-circuit); a
+cleanup 404 therefore never proves that a current-generation resource on another node is absent.
+Unchanged by this contract.
+
+### Reconstruction 404 semantics
+Create/ensure is idempotent: inspect-before-create + `409 already-exists` accept. A 404 during
+initial ensure, post-rebind reconstruction, or channel inspect → create/originate → 409 → benign.
+Deterministic ids guarantee idempotent reconstruction; **no compatibility fallback ids**. Unchanged.
+
+### The hardening contract (verify/inspect absence only)
+Only the **absence-determination** path is unsafe: `conferenceRuntimeSummary` (used by
+`verify_conference_absent` and the reconciler inspection) cannot distinguish a *legitimate* bridge
+404 (healthy REST stack, resource genuinely gone) from a *false* bridge 404 (REST resource module
+degraded, resource alive). The danger is `verify_conference_absent`: a false `absent` drives the
+coordinator's `absent_verified` rebind path, which rebinds **without** the destructive
+`runtime.node.runtime.fence` scale-to-zero → split-brain (bridge alive on former node + reconstructed
+on replacement).
+
+**Fix:** before classifying a bridge/channel `GET → 404` as authoritative absence, confirm the same
+ARI resource **family list** endpoint is healthy — `GET /ari/bridges` for a bridge, `GET /ari/channels`
+for a channel — expecting HTTP 200. If the list endpoint returns 404/error/transport-failure, the
+resource module is degraded → classify the specific-resource 404 as **`unavailable`**
+(`FailureClass::RuntimeUnavailable`, retryable) rather than absence. If the list is healthy (200) and
+the specific resource 404s → authoritative absence. This makes `verify_conference_absent`
+**fail-safe**: degraded REST → `unavailable` → the existing external-fence path (which scales the
+former node to zero) instead of a false `absent` → unfenced rebind. The list endpoint is the
+tightest possible reference because it is served by the *same* resource module whose absence causes
+the false-404 (a core-only endpoint such as `/asterisk/info` could stay healthy while
+`res_ari_bridges` alone is unloaded).
+
+### Retry ownership
+The persisted operation lifecycle already owns recovery. The fix reclassifies a false-absence as
+`RuntimeUnavailable`, which the **existing** `verify_conference_absent` operation retry handles (as
+proven in T5-A47, where a genuine transport failure retried then took the external-fence path). No
+new retry loop, no in-client polling for absence, no environment retry gate. The one existing
+in-process loop (`addChannel`, 8×0.2s) is bounded and correct and is left unchanged.
+
+### Evidence-derived retry window
+No new retry window is introduced. The bridge/channel-list health probe is a single extra GET on the
+same node with the existing `request_timeout_ms=4000`; on unhealthy it returns `unavailable`, and the
+already-configured operation retry cadence (verify op, generation-gated) governs re-evaluation. The
+`addChannel` window remains `attempts=8 × 0.2s = 1.6s` (evidence: in-process attach latency), which is
+untouched.
+
+### Duplicate-prevention contract
+Unchanged and already sufficient: deterministic `utcp-conf-`/`utcp-part-` ids, inspect-before-create,
+`409 already-exists` accept, and `participantAttachedToBridge` verification prevent duplicate bridge
+creation and duplicate participant originate even under a false-404.
+
+### Events and observability
+Reuse existing hooks. `verify_conference_absent` already emits `conference.runtime_fence_verified`
+with `verification_result` and `runtime_reference_present`; add a `runtime_reference_health`
+classification (`healthy_absent` vs `degraded_unavailable`) so a false-404-driven `unavailable` is
+observable. Extend the existing `recordInspectionMetric` (adapter_key/resource_type/result) to
+distinguish `legitimate_absence`, `degraded_rest_unavailable`, and `transport_unavailable`. Do not
+emit an event on every reconciliation poll while the condition is unchanged (the verify op already
+fires once per evaluation). Metrics are proposed, **not implemented** here.
+
+### Web-admin authority boundary
+Unchanged: ARI recovery is runtime automation. No Admin user retries an ARI operation, recreates a
+bridge, re-originates channels, or runs Artisan/Asterisk-CLI/Kubernetes. The Admin UI may surface
+diagnostic failure state; no manual "retry ARI" button is warranted (no business decision is
+required — the fail-safe classification is deterministic automation).
+
+### Existing test coverage
+`AsteriskAriAdapterTest` covers `verify_conference_absent` via an injected
+`conferenceRuntimeSummary` returning `bridge_exists=true/false` → `present`/`absent`, and participant
+present/absent. `AsteriskConferenceRecoveryTest` covers stale-projection-vs-live-bridge. **Missing:**
+- bridge 404 with a healthy bridges-list → authoritative `absent`
+- bridge 404 with an unhealthy/404 bridges-list → `unavailable` (false-404 fail-safe, **not** absent)
+- participant channel 404 gated on channels-list health
+- transport failure still → `unavailable` (regression)
+- create-path false-404 → `409` idempotent (regression)
+- cleanup 404 idempotent AND node/generation-gated (regression)
+- wrong-node op rejected before any ARI call
+- stale-generation op short-circuits before any ARI call
+- no duplicate bridge creation / participant originate under a false-404
+- `conference.runtime_fence_verified` carries the reference-health classification
+- tenant isolation of the inspection/verification path
+
+### Missing implementation (smallest coherent slice)
+1. `AsteriskAriClient`: a `bridgeResourceFamilyHealthy()` / `channelResourceFamilyHealthy()` probe
+   (`GET /ari/bridges` / `GET /ari/channels`, expect 200); on a specific-resource 404, consult the
+   probe and throw `RuntimeUnavailable('ari_resource_family_degraded')` instead of returning null
+   when the family is unhealthy. Scope this to the **absence-determination** callers
+   (`conferenceRuntimeSummary` / `verify_conference_absent`), not the create/cleanup accept-lists.
+2. Carry a `runtime_reference_health` classification into `conference.runtime_fence_verified` and the
+   inspection result.
+3. Tests per the matrix above.
+(No change to node/generation guards, cleanup accept-lists, create idempotency, or the addChannel
+loop.)
+
+### Implementation-readiness decision
+**A — bounded Codex implementation.** The audit establishes the confirmed affected endpoints
+(`verify_conference_absent` and reconciler inspection via `conferenceRuntimeSummary` bridge/channel
+GET), a live-observed reproducible mechanism (T5-A25 module-unload 404 with the bridge alive), exact
+node/generation authority (unchanged and not weakened), the legitimate-vs-false classification
+(same-family list health), the correct retry owner (existing operation lifecycle), bounded timing (a
+single same-node probe; no new window), cleanup and reconstruction semantics (unchanged), event
+behavior (reuse + one classification field), and the exact tests. No unresolved wrong-node or
+stale-generation ambiguity remains.
+
+### Ready-to-paste next prompt
+
+```
+# T5-A52 — Implement Health-Gated Authoritative ARI Absence
+
+Implement the contract in docs/evidence/t2/multi-node-failover-readiness.md §T5-A51.
+
+Starting state: HEAD a2db639 (or later), branch main, working tree clean, UTCP_PHASE=T1.
+Bounded implementation task. Do not begin a new phase; UTCP_PHASE stays T1.
+
+## Problem
+A bridge/channel `GET /ari/bridges|channels/{id}` can return HTTP 404 while the resource is
+alive when the ARI REST resource module is degraded (HTTP up, route gone) — live-observed in
+T5-A25. AsteriskAriClient::getAriResource maps that 404 to null -> bridge_exists=false, which
+verify_conference_absent turns into verification_result='absent', driving an UNFENCED rebind
+(split-brain). Cleanup 404 and create-path 404 are already safe and MUST stay unchanged.
+
+## Scope (smallest slice)
+1. AsteriskAriClient: add resource-family health probes
+   - bridgeResourceFamilyHealthy(runtimeNodeId): GET /ari/bridges expects 200
+   - channelResourceFamilyHealthy(runtimeNodeId): GET /ari/channels expects 200
+   Use only for ABSENCE determination. When conferenceRuntimeSummary's specific-resource
+   GET returns 404, consult the same-family probe:
+     - probe 200  -> authoritative absence (bridge_exists=false as today)
+     - probe 404/error/transport-fail -> throw AsteriskAriException(
+         FailureClass::RuntimeUnavailable, 'ari_resource_family_degraded', retryable=true)
+   Do NOT change the create accept-lists ([...,409]) or the cleanup accept-lists
+   ([...,404,...]); a false-404 on create is absorbed by 409, and cleanup 404 stays
+   idempotent (it is already node/generation-gated by conferenceFromOperation).
+2. inspectConferenceRuntime: a thrown ari_resource_family_degraded (retryable) already maps to
+   RuntimeConferenceInspectionResult::unavailable — verify no code path swallows it into
+   'observed'/absent.
+3. verify_conference_absent: because conferenceRuntimeSummary now throws RuntimeUnavailable on a
+   degraded family, the verify operation retries instead of returning 'absent'. Add a
+   runtime_reference_health field ('healthy_absent' | 'degraded_unavailable') to the
+   conference.runtime_fence_verified event / inspection result.
+
+## Invariants
+- Never weaken node authority (conference_not_bound_to_node) or generation short-circuits.
+- Never turn a genuine absence (healthy family + resource 404) into unavailable.
+- Never turn a transport failure into absence (regression guard).
+- Cleanup 404 stays idempotent success; create path stays 409-idempotent.
+- Deterministic ids unchanged; no fallback ids; no duplicate bridge/originate.
+- No env gate, allowlist, in-client absence polling, or new retry loop. The persisted
+  operation lifecycle owns retries.
+
+## Tests (AsteriskAriAdapterTest + AsteriskConferenceRecoveryTest)
+- bridge 404 + bridges-list 200 -> verification_result='absent'
+- bridge 404 + bridges-list 404 -> ari_resource_family_degraded, RuntimeUnavailable,
+  verify does NOT return 'absent'
+- participant channel 404 gated on channels-list health
+- transport failure -> unavailable (regression)
+- create path false-404 -> 409 idempotent (regression)
+- cleanup 404 -> idempotent success, only on authoritative node/generation (regression)
+- wrong-node op -> conference_not_bound_to_node before any ARI call
+- stale-generation op -> short-circuits before any ARI call
+- no duplicate bridge creation / participant originate under a false-404
+- conference.runtime_fence_verified carries runtime_reference_health
+- tenant isolation of inspection/verification
+
+## Verification
+make repository-hygiene workflow-check secret-scan
+make runtime-engine-config-check telephony-domain-config-check asterisk-ari-config-check asterisk-conference-config-check
+make runtime-engine-test telephony-domain-test asterisk-ari-test asterisk-conference-test asterisk-conference-recovery-test
+git diff --check
+
+## Commit
+fix(t5): gate authoritative ARI absence on resource-family health
+Do not push. Keep UTCP_PHASE=T1.
+```
