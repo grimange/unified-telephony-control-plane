@@ -9758,3 +9758,225 @@ git diff --check
 feat(t5): add resilience observability metrics and alerts
 Do not push. Keep UTCP_PHASE=T1.
 ```
+
+---
+
+# T5-A59 — Live proof: resilience metrics and Prometheus alerts (b78a0b5)
+
+Verdict: `T5_RESILIENCE_OBSERVABILITY_LIVE_PROOF_INCOMPLETE`. The b78a0b5 deliverable
+(10 new metric families + 6 Prometheus alert rules) is deployed and substantially
+proven live and correct, but two verified divergences prevent an unqualified pass:
+(D1) `utcp_conference_runtime_reference_health_total` emits duplicate `health="other"`
+series so Prometheus under-reports the aggregated `other` bucket; (D2) `/api/metrics`
+is publicly reachable through the catch-all Traefik/Gateway route. Both are
+pre-existing (not b78a0b5 regressions); details below.
+
+## Phase marker
+- `versions.env` `UTCP_PHASE=T1` (read from file). HEAD `b78a0b5a5ccf3cdd1e9fea3e8a916b2b59c9f7cd`,
+  branch `main`, working tree clean at start. `UTCP_CONTRACT_VERSION=0.1.0-dev`.
+
+## Environment recovery performed before the proof (infrastructure only)
+The `utcp-local` cluster was in a post-host-restart crash state (documented node-IP-shuffle):
+- k3s agent-0/agent-1 containers crash-looped with `unable to initialize network policy
+  controller: error getting node subnet: failed to find interface with specified node ip`.
+  Recovered with `k3d cluster stop utcp-local && k3d cluster start utcp-local` (utcp-local only;
+  apntalk-local untouched). Agents came back stable; node IPs consistent
+  (server 172.24.0.2, agent-0 172.24.0.4, agent-1 172.24.0.3).
+- apiserver-egress NetworkPolicies had stale pinned IPs (`allow-runtime-fencer-kubernetes-api`
+  172.24.0.4, `allow-observability-kubernetes-api-egress` 172.24.0.5) vs the live endpoint
+  172.24.0.2, blocking the Prometheus Operator + Prometheus SD (operator CrashLoopBackOff on
+  `10.43.0.1:443 connection refused`). Recovered canonically via `scripts/security/render-apiserver-policy`
+  + `kubectl apply` of the three rendered `.runtime/...` egress files; `check-apiserver-policy-drift`
+  then passed `endpoint=172.24.0.2/32:6443`. This restored the intended posture (pinned to the live
+  apiserver) — no policy was weakened, and the application-metrics ingress policy was not touched.
+  Rendered files live under gitignored `.runtime/`; working tree stayed clean.
+
+## Application image build and rollout
+- Built the canonical API image from the clean tree: `docker build -f infrastructure/docker/api/Dockerfile
+  --target app-prod` with the script's args plus the real `BUILD_COMMIT=b78a0b5`
+  (`BUILD_VERSION=0.1.0-dev`, `BUILD_CREATED=2026-07-20T10:55:13Z`, `IMAGE_SOURCE=local`).
+- Verified the built image's `MetricsController.php` contains all 10 new metric names before push.
+- Pushed via the existing local-registry workflow to `127.0.0.1:5001/utcp/api:0.1.0-k1-dev`
+  (== in-cluster `utcp-local-registry:5000/utcp/api:0.1.0-k1-dev`). Registry manifest digest
+  `sha256:0d96195969767d6d1c4e801b7ff4413b97115faade00f54bdd01f75459ea2d9f`.
+- Rolled out ONLY `deployment/api` (imagePullPolicy=Always). New pod `api-7684684b5b-s24sl` on
+  `k3d-utcp-local-server-0`, imageID `...@sha256:0d96195...`, Deployment revision 79, Ready.
+  Asterisk/Kamailio/PostgreSQL/Redis/runtime-fencer/ServiceMonitor/NetworkPolicy/dashboards/RBAC
+  were not rolled or modified.
+- Build-info note: the `utcp-application-config` ConfigMap sets `UTCP_BUILD_COMMIT=unknown`,
+  `UTCP_APP_VERSION=0.1.0-dev` via envFrom, which overrides the image ENV. Per the "do not change
+  their configuration" constraint the ConfigMap was left unchanged, so the deployed runtime reports
+  commit `unknown`. The baked image commit `b78a0b5` is therefore not surfaced by the metric; live
+  code currency is proven instead by (a) the running pod's `MetricsController.php` containing all 10
+  new metric names, (b) the 10 new families being scraped (absent from the prior image), and
+  (c) the new image digest on the pod.
+
+## Live metrics-code currency
+- Running pod `MetricsController.php` grep returned all 10 new metric names.
+- `GET /api/version` (via gateway) → HTTP 200 `{"service":"utcp-api","version":"0.1.0-dev","commit":"unknown","built_at":"unknown"}`.
+- `GET /api/metrics` → HTTP 200, `Content-Type: text/plain; version=0.0.4; charset=utf-8`,
+  no exception/SQLSTATE/HTML/stack-trace in the body.
+
+## Metrics endpoint / exposition validation
+- Each of the 10 new families has exactly one `# HELP` and one `# TYPE` (no duplicate declarations).
+- Sample counts at scrape: failover_events 2, failover_pending 1, failover_pending_oldest_seconds 1,
+  runtime_resilience_operations 8, runtime_binding_retired 1, stale_active_bindings 1,
+  participant_channel_reclaimed 1, runtime_reference_health 13 (incl. duplicate `other`), build_info 1.
+- Prometheus itself parsed and ingested the exposition (authoritative live validation); `promtool` not used.
+
+## ServiceMonitor target health / scrape stability
+- Target pool `serviceMonitor/utcp-observability/utcp-application/0`, scrapeUrl
+  `http://10.42.2.160:8080/api/metrics` (the `gateway` pod, `job=gateway`, endpoint `http`),
+  interval 30s / timeout 10s. `health=up`, `lastError=""`, lastScrapeDuration ~0.12–0.18s.
+- `changes(up{job="gateway"}[12m]) = 0` (no flapping); `count_over_time(up[12m]) = 24` successful
+  scrapes (>>3 post-rollout; the scrape target is the unchanged gateway pod, so the api rollout
+  never interrupted scraping). New families queryable across observed scrapes at 10:59/11:04/11:07.
+
+## Durable-source comparison (read-only, exact MetricsController queries)
+| Family / label | Durable source | Metric | Match |
+|---|---|---|---|
+| failover_events no_replacement | outbox conference.failover_coordinator.no_replacement = 3 | 3 | yes |
+| failover_events runtime_binding_replaced | outbox conference.runtime_binding_replaced = 8 | 8 | yes |
+| failover_pending pending_no_capacity | conferences.failover_state = 0 | 0 | yes |
+| failover_pending_oldest_seconds | min(failover_started_at)=NULL → 0 | 0 | yes |
+| resilience participant.remove/succeeded/none | 615 | 615 | yes |
+| resilience participant.remove/succeeded/runtime_unavailable | 11 | 11 | yes |
+| resilience participant.remove/terminal_failed/runtime_unavailable | 18 | 18 | yes |
+| resilience restore/succeeded/runtime_unavailable | 5 | 5 | yes |
+| resilience restore/terminal_failed/runtime_unavailable | 4 | 4 | yes |
+| resilience fence/succeeded/runtime_unavailable | 9 | 9 | yes |
+| resilience fence/terminal_failed/runtime_unavailable | 2 | 2 | yes |
+| resilience verify_conference_absent/terminal_failed/runtime_unavailable | 12 | 12 | yes |
+| runtime_binding_retired reason=conference_closed | 117 (all rows) | 117 | yes |
+| stale_active_bindings | join predicate = 0 | 0 | yes |
+| participant_channel_reclaimed post_closure_orphan | 1 | 1 | yes |
+| orphan_participant_candidates | DB predicate = 121 | 121 | yes |
+- Resilience operations count runtime_operations ROWS (logical operation objects), not attempts;
+  `conference.ensure` is correctly absent from the resilience set; restore predecessor/successor rows
+  are each counted (5 succeeded + 4 terminal_failed = 9 restore rows).
+- `runtime_reference_health` distinct bounded classifications match durable per-group counts exactly:
+  conference{degraded_unavailable=11, healthy_absent=4, healthy_present=20},
+  conference_participant{degraded_unavailable=11, healthy_absent=27, healthy_present=21,
+  transport_unavailable=2712}. See D1 for the `other` bucket.
+
+## Build information
+- `utcp_build_info{version="0.1.0-dev",commit="unknown"} 1` — exactly one sample, matches `/api/version`.
+  No image-digest, pod-name, or build-timestamp label. Represents the API metrics-serving build only.
+
+## Cardinality and sensitive-data proof
+- All exposition labels across the 10 new families use bounded vocabularies only:
+  classification{post_closure_orphan}, event_type{no_replacement,runtime_binding_replaced},
+  failover_state{pending_no_capacity}, failure_class{none,runtime_unavailable},
+  health{healthy_present,healthy_absent,degraded_unavailable,transport_unavailable,other},
+  operation_type{4 resilience types}, reason{conference_closed}, resource_type{conference,
+  conference_participant}, result{succeeded,terminal_failed}, version{0.1.0-dev}, commit{unknown}.
+- Programmatic scan of all live series for the 10 families: NONE match UUID / 7+ digit id / `@` /
+  password|secret|token. No tenant/conference/participant/session/binding/operation/node/channel id,
+  phone number, ARI/DB credential, or raw failure message. The instance/pod/job/namespace/service
+  labels are standard Prometheus SD target metadata on every series (pod name, not UID), pre-existing.
+- Unmapped historical enum values appear only as bounded `other` (as designed).
+
+## Existing metrics compatibility
+- Pre-rollout inventory (job=gateway): 44 families. Post-rollout: 54. Diff: 0 baseline families
+  missing/renamed/removed; exactly the 10 new T5 families added. Existing samples remain parseable;
+  existing alert rules remain loaded.
+
+## PrometheusRule deployment / alert loading
+- `kubectl diff` before apply: change limited to the six new alerts + generation bump (no existing
+  rule changed). Applied the single file `infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml`;
+  PrometheusRule `utcp-platform-alerts` generation 8. Operator reconciled; all six loaded (~42s).
+- All six: group `utcp.platform`, `health=ok`, `lastError=""`.
+  | Alert | for | expr (as loaded) | state |
+  |---|---|---|---|
+  | UTCPConferencePendingNoCapacity | 900s | sum(utcp_conference_failover_pending{failover_state="pending_no_capacity"}) > 0 | inactive |
+  | UTCPRuntimeFenceTerminalFailure | 600s | sum(increase(utcp_runtime_resilience_operations_total{operation_type="runtime.node.runtime.fence",result="terminal_failed",failure_class!="none"}[10m])) > 0 | inactive |
+  | UTCPRuntimeRestoreTerminalFailure | 600s | sum(increase(...operation_type="runtime.node.restore"...[10m])) > 0 | inactive |
+  | UTCPStaleActiveRuntimeBindings | 600s | sum(utcp_conference_stale_active_bindings) > 0 | inactive |
+  | UTCPOrphanParticipantCandidates | 900s | sum(utcp_conference_orphan_participant_candidates) > 0 | pending (1 active) |
+  | UTCPAriReferenceFamilyDegraded | 600s | sum(increase(utcp_conference_runtime_reference_health_total{health="degraded_unavailable"}[10m])) > 3 | inactive |
+
+## Alert expression evaluation
+- Every expression executed without parse/evaluation error (lastError empty on all six).
+- Pending-no-capacity, stale-binding, fence-terminal, restore-terminal, ARI-degraded: inactive.
+  (Fence/restore/ARI-degraded historical rows are older than the 10m lookback → increase()=0.)
+- UTCPOrphanParticipantCandidates: PENDING because `utcp_conference_orphan_participant_candidates=121`,
+  which equals the exact DB candidate predicate (accumulated closed-conference participant history —
+  removed participants on closed/observed-closed conferences with a retained final binding and no
+  active binding). This is a truthful upper-bound signal, NOT manufactured; it does not prove any PBX
+  channel is alive. No runtime state was mutated to change it. (Relates to the deferred
+  conference-recovery retention/pruning gap.)
+
+## Alert annotation boundary
+- The six new rules carry only a `summary`. No artisan, manual-reconciliation, kubectl/Kubernetes,
+  PBX, feature-gate, or tenant/customer text. Summaries clearly indicate automatic recovery appearing
+  stuck/degraded (waiting for capacity, terminal failure during resilience recovery, active bindings
+  after the automatic retirement window, orphan upper-bound needs investigation, ARI family degrading).
+
+## Version-skew alert decision
+- No `UTCPWorkerVersionSkew` rule exists (the contract's planned version-skew alert is intentionally
+  deferred). No worker HTTP metrics server / `metrics`-named service port exists. `utcp_build_info`
+  proves the API metrics-serving build only; worker version-skew visibility remains a deferred
+  follow-up pending a reliable Prometheus source.
+
+## Metrics security boundary
+- ServiceMonitor path remains `/api/metrics`, port `http` — unchanged.
+- `allow-application-metrics-from-prometheus` NetworkPolicy unchanged (created 2026-07-14): ingress to
+  gateway pods port 8080 from utcp-observability/prometheus only. Scrape target reachable (up=1).
+  No new broad namespace ingress rule added (the only NetworkPolicy edits were re-pinning the
+  apiserver EGRESS policies to the correct live IP during recovery).
+- DIVERGENCE D2 (pre-existing): `/api/metrics` is ALSO publicly reachable through Traefik. The
+  `app-https`/`root-https` HTTPRoutes are catch-all `PathPrefix:/ → gateway`; the gateway nginx serves
+  `location ^~ /api/` (incl. /api/metrics) unauthenticated on 8080; `allow-gateway-required-traffic`
+  permits Traefik→8080. Functional test:
+  `curl -k -H 'Host: app.utcp.local.test' https://127.0.0.1/api/metrics` → HTTP 200 with full metric
+  content (same for `utcp.local.test`). No dedicated metrics route/Ingress exists, but the catch-all
+  app route incidentally exposes the endpoint. b78a0b5 metrics carry no sensitive data (see cardinality
+  proof), so no sensitive leak; nonetheless this contradicts the intended "Prometheus-only" scrape
+  posture implied by the dedicated NetworkPolicy. Not introduced by b78a0b5 (routes/nginx/route-auth/
+  netpols all predate it and were unchanged); not remediated here (out of scope for a docs-only commit
+  and forbidden by the "do not modify routes/NetworkPolicy" constraints). Recommended follow-up: block
+  `/api/metrics` on the public server block or serve metrics on an internal-only listener.
+
+## Divergence D1 — reference-health duplicate `other` series
+- `runtimeReferenceHealthMetrics()` groups `conference_recovery_metric_events` by raw `reason` and maps
+  unmapped reasons to `other` in PHP. Under real data multiple raw reasons map to `other`:
+  conference{ari_http_transport_failed=326, ari_http_unavailable=1, none=3543}→other (true total 3870),
+  conference_participant{ari_http_transport_failed=433, ari_http_unavailable=1, none=7170}→other
+  (true total 7604). The exposition therefore emits duplicate `{...,health="other"}` series; Prometheus
+  keeps the FIRST (conference 326, participant 433) and silently drops the rest, so the aggregated
+  `other` bucket is under-reported. The 4 mapped classifications match durable state exactly.
+- This is the SAME pre-existing exposition convention already present in unchanged metrics
+  (`simulator_operations_total`, `asterisk_ari_events_received_total`), tolerated by this Prometheus
+  (target stayed up, no scrape error). b78a0b5 is purely additive (343 insertions, 0 deletions) so it
+  introduced no regression, but the new metric inherits the limitation. It affects the durable-aggregate
+  match and "distinct classification" expectation for the `other` bucket only.
+- Recommended follow-up: aggregate AFTER bounding (group by the mapped health value, summing counts) so
+  `other` collapses to a single series. The unit test only seeds one unmapped reason, so it does not
+  catch this; the live proof did.
+
+## Final runtime state
+- RuntimeNodes: 2 active/ready (asterisk-ari); 22 disabled + 3 draft (historical), all simulator nodes
+  disabled (83 disabled, 0 enabled). Asterisk deployments asterisk-ari 1/1 and asterisk-ari-b 1/1
+  (asterisk-ari-events listener 1/1). Conferences: 0 with non-closed observed state, 0 pending_no_capacity.
+  RuntimeBindings: 0 active. Actionable runtime_operations (pending/leased/retry_scheduled): 0.
+- Non-converged reconciliation states (accumulated history, unrelated to b78a0b5): 115
+  `signaling_registration` `waiting` (normal idle T1 — no live SIP registrations) + 1
+  `conference_participant` `blocked`. No runtime state was mutated for the proof.
+
+## Verification performed
+- make repository-hygiene / workflow-check / secret-scan: PASS.
+- make runtime-engine-config-check / telephony-domain-config-check / asterisk-ari-config-check /
+  asterisk-conference-config-check: PASS.
+- make runtime-engine-test (21), telephony-domain-test (60), asterisk-ari-test (94),
+  asterisk-conference-test (109), asterisk-conference-recovery-test (89): PASS.
+- MetricsEndpointTest (4 tests, 114 assertions): PASS (note: seeds a single unmapped reason, so it does
+  not exercise the D1 duplicate-`other` case).
+- git diff --check / git diff --cached --check: clean.
+
+## Outcome
+`T5_RESILIENCE_OBSERVABILITY_LIVE_PROOF_INCOMPLETE` — deployment, exposition, target health, scrape
+stability, 9/10 durable-source matches, bounded labels, no sensitive data, all six alerts loaded and
+evaluating cleanly, build-info consistency, existing-metrics compatibility, and ServiceMonitor/
+NetworkPolicy preservation all PASS; blocked on D1 (reference-health `other` aggregate does not match
+durable totals due to duplicate series) and D2 (public `/api/metrics` route). Both are pre-existing and
+not b78a0b5 regressions. UTCP_PHASE remains T1; commit not pushed.
