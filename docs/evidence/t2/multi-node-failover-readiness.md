@@ -12308,3 +12308,123 @@ Focused commands already observed passing during repository implementation:
 Controlled live proof of scheduled aged-row pruning, recent-row preservation, metric correctness, and
 final cleanup remains pending. This repository update does not claim live scheduled pruning has already
 been observed.
+
+---
+
+# T5-A75 — Live proof: scheduled recovery-event retention and pruning (3f89dc0)
+
+Verdict: `T5_CONFERENCE_RECOVERY_EVENT_RETENTION_LIVE_PROOF_COMPLETE`. Controlled live proof against
+`utcp-local`. Baseline `UTCP_PHASE=T1`, clean tree at `3f89dc0`. Evidence-only doc change.
+
+## Image and alert rollout
+Built canonical api image from clean `3f89dc0` (verified pruner + _10m metrics + prune command baked in),
+pushed sha256:80b5847da2f27d598152ee09a71f18970fa2f40014d3ddbc0a8cbcf51a8cc466. No migration in the
+commit. Rolled out only api + scheduler (both = api image; scheduler executes the scheduled prune
+command); confirmed both on digest 80b5847. Applied the changed PrometheusRule. Did not restart
+Asterisk/Kamailio/PostgreSQL/Redis/Traefik/rtpengine/unrelated workers.
+
+## Scheduler baseline
+`schedule:list` in the new scheduler pod: `0 * * * * php artisan runtime-engine:
+prune-conference-recovery-metric-events --once` (Next Due ~33 min → 04:00 UTC). Scheduler runs
+`php artisan schedule:work` (long-running), so the hourly entry fires at minute 0. api 1/1, scheduler 1/1.
+
+## Metric contract
+Live /api/metrics (internal 8081) and Prometheus confirmed the replacement gauges present with one HELP +
+one TYPE=gauge each: `utcp_conference_runtime_inspections_10m`, `utcp_conference_runtime_inspection_
+failures_10m`, `utcp_conference_runtime_reference_health_10m`, `utcp_conference_recovery_metric_event_
+prune_eligible_backlog`, `utcp_conference_recovery_metric_event_prune_oldest_age_seconds`. The previous
+whole-history counters `utcp_conference_runtime_inspections_total` / `_inspection_failures_total` /
+`_reference_health_total` are ABSENT from the metrics output AND from Prometheus series (0 each). Alerts
+now evaluate the gauges DIRECTLY (no increase()): `UTCPTelephonyConferenceRuntimeInspectionFailures` =
+`sum(utcp_conference_runtime_inspection_failures_10m) > 3`; `UTCPAriReferenceFamilyDegraded` =
+`sum(utcp_conference_runtime_reference_health_10m{health="degraded_unavailable"}) > 3`;
+`UTCPConferenceRecoveryMetricEventPruneBacklog` = `utcp_conference_recovery_metric_event_prune_eligible_
+backlog > 10000` (loaded, health=ok, inactive).
+
+## Fixture boundary
+Baseline (pre-fixture): table TOTAL=14,327 rows, eligible-backlog=0 (oldest existing row 2026-07-17, only
+~4 days old vs 7-day cutoff), 10m inspections gauge = only the {none,none,none,none} 0 placeholder. Live
+proof direct-insert was confined to the single noncanonical `conference_recovery_metric_events` table
+(no FK, no runtime consumer); no other table was written. Unique marker `t5_a75_<suffix>` stored only in
+the diagnostic `reason` column (which is NOT a Prometheus label on the inspections_10m gauge, so the
+marker never became a label). Chosen bounded combination adapter_key=simulator-deterministic (maps to
+bounded label `other`), resource_type=conference, result=observed, failure_class=none — a zero-baseline
+low-noise series while simulators are disabled.
+
+## Aged fixture
+12 rows inserted in one transaction at created_at = now-8d (2026-07-13 03:52:09), all older than the
+7-day cutoff (2026-07-14 03:52). Captured all 12 IDs.
+
+## Recent fixture
+4 rows inserted in the same transaction at created_at = now (2026-07-21 03:52:09), inside retention and
+inside the 10-minute metric window. Captured all 4 IDs
+(38bc1fdd…, 0d5fa88b…, 21b36022…, d091cded…). Fixture created at 03:52, ~8 min before the 04:00 prune, so
+the recent rows remained inside the 10m window at prune time.
+
+## Pre-prune backlog
+At 03:52 (before the 04:00 run): all 16 captured IDs present; the 12 aged satisfy created_at < cutoff, the
+4 recent do not; DB eligible-backlog = 12 (baseline 0 → +12 exactly); live gauge
+`prune_eligible_backlog = 12`, `prune_oldest_age_seconds = 691237` (~8 days); the fixture 10m series
+`utcp_conference_runtime_inspections_10m{adapter_key="other",resource_type="conference",result="observed",
+failure_class="none"} = 4` (baseline 0 → +4, the recent rows only); the 12 aged rows contributed 0 to the
+10m window (MARKER_AGED_IN_10M=0). No Conference/binding/operation/RuntimeNode state changed
+(OPEN=0 BIND=0 OPS=0 NODES_READY=2).
+
+## Scheduled pruning invocation
+The normal `schedule:work` scheduler invoked the command automatically — NOT run manually. Scheduler log:
+`2026-07-21 04:00:01 Running ['artisan' runtime-engine:prune-conference-recovery-metric-events --once]
+298.89ms DONE`. This natural hourly run is the deletion authority.
+
+## Selective deletion
+After the 04:00:01 run: all 12 captured aged IDs ABSENT (AGED_STILL_PRESENT=0); all 4 captured recent IDs
+PRESENT (RECENT_STILL_PRESENT=4); marker total now 4 (only the recent rows). Eligible-backlog returned to
+the pre-fixture baseline 0 (no unrelated rows were yet eligible). No unbounded deletion (batched pruner,
+12 rows « batch cap). No non-fixture recent row deleted (table TOTAL after prune = 14,331 = 14,327
+baseline + 4 surviving recent). No canonical table changed.
+
+## Recent-row preservation
+The 4 recent fixture rows survived pruning (still present by captured ID), confirming retention-window
+protection.
+
+## Rolling-window metric behavior
+Immediately post-prune (04:01): the fixture 10m gauge series still read 4 — deleting the 12 aged (8-day-old)
+rows did NOT change it (the aged rows were never inside the 10m window). The metric remained declared a
+gauge; no `_total` replacement series appeared. `prune_eligible_backlog` = 0, `prune_oldest_age_seconds`
+= 0 after pruning. All three recovery/prune alerts remained inactive + health=ok.
+
+## Alert behavior
+`UTCPTelephonyConferenceRuntimeInspectionFailures`, `UTCPAriReferenceFamilyDegraded`, and
+`UTCPConferenceRecoveryMetricEventPruneBacklog` all inactive, health=ok, empty lastError before, during,
+and after the proof. No alert applied a counter function to a gauge.
+
+## Cleanup
+Deleted only the 4 remaining recent fixture rows by their exact captured IDs (whereIn id, not a time
+predicate). After cleanup: 0 rows with the proof marker; all 16 captured IDs absent; table TOTAL back to
+14,327 (the exact pre-fixture baseline); eligible-backlog = 0; the fixture 10m series gone (back to the
+{none} placeholder at 0) after the next scrape.
+
+## Runtime authority preservation
+No Conference, RuntimeBinding, RuntimeOperation, RuntimeNode, receipt, epoch, or outbox state changed at
+any point (OPEN=0 BIND=0 OPS=0 NODES_READY=2 throughout). Pruning touched only the diagnostic table.
+
+## Final runtime state
+Both Asterisk Deployments 1/1 (asterisk-ari, asterisk-ari-b) + listener 1/1; api 1/1, scheduler 1/1;
+0 open/pending conferences; 0 active bindings; 0 actionable operations; 2 RuntimeNodes ready;
+prune_eligible_backlog = 0; recovery/prune alerts inactive+healthy; table at pre-fixture baseline; no
+disposable state; port-forward stopped; no temporary shell session left.
+
+## Divergences
+None. The fixture 10m series carries `adapter_key="other"` rather than `simulator-deterministic` because
+the inspections_10m metric maps adapter_key through its bounded vocabulary — expected bounded-label
+behavior, not a defect; the series count (4 = the recent rows) is exactly correct. Cleanup delete-by-ID
+output line was buffered off screen but the follow-up MARKER_REMAINING=0 and TOTAL=14,327 confirm the
+deletion.
+
+## Verification performed (T5-A75)
+Natural scheduled prune observed (no manual command as principal proof); scheduler log captured; row-level
+selective-deletion proof by captured IDs; live metric + Prometheus gauge/alert queries; canonical-state
+checks throughout. make repository-hygiene / workflow-check / secret-scan: PASS. make *-config-check (4):
+PASS. make *-test (runtime-engine 25, telephony-domain 66, asterisk-ari 102, asterisk-conference 123,
+asterisk-conference-recovery 97): PASS. git diff --check / --cached: clean. Direct inserts/deletes were
+confined to the noncanonical conference_recovery_metric_events table (fixture rows only, by ID); no other
+Kubernetes/runtime/Conference/RuntimeBinding/PostgreSQL/Redis/Asterisk/Kamailio mutation.
