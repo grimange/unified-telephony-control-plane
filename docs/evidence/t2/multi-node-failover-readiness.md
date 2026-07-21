@@ -11153,3 +11153,104 @@ returning to zero, and unchanged degraded-event behavior.
 A short targeted live proof remains pending to observe exactly one
 `runtime_node.event_listener_recovered` event during reconnect recovery after this code change. This
 repository implementation does not claim that live recovered-event observation has already occurred.
+
+---
+
+# T5-A67 — Live proof: listener reconnect recovery event (f90e266)
+
+Verdict: `T5_LISTENER_RECONNECT_RECOVERY_EVENT_LIVE_PROOF_COMPLETE`. Targeted live proof against
+`utcp-local` closing the T5-A65 divergence (recovered event not emitted on the reconnect path).
+Baseline `UTCP_PHASE=T1`, clean tree at `f90e266`. Evidence-only doc change.
+
+## Listener image rollout
+Built the canonical api image from clean `f90e266` (verified `appendEventStreamRecovered` +
+`previousObservedState` reconnect guard present), pushed
+sha256:7052af210559b11279e23bd97fe8d5c76204b01e3091f4c83b64f17c6f570843. No new migration in this
+commit. Rolled out only api + asterisk-ari-events (both = api image); confirmed both workloads on the
+new digest (listener pod `asterisk-ari-events-59cb6f98f7-b5wmz`, node server-0, 10.42.1.85). Did not
+restart Asterisk/Kamailio/PostgreSQL/Redis/Traefik. After the new listener took over the leases from the
+terminating old pod, both RuntimeNodes were `ready`, exactly one open epoch per node, signal advancing
+via ping/pong (e.g. 00:35:50 → 00:36:05), degraded gauge 0, alert inactive. Boundary check: the initial
+connection after rollout emitted NO recovered event (`REC_TOTAL` stayed 0 — the nodes were `ready`, so
+`previousObservedState` at connect was not `events_degraded`).
+
+## Selected RuntimeNode
+Target `1d15ca88` → Service `asterisk-ari` ClusterIP 10.43.29.130:8088; peer `05ddb383` (kept healthy).
+No active Conference, RuntimeBinding, or actionable operation. Target WS four-tuple (from
+`/proc/net/tcp` in the listener netns): `10.42.1.85:60032 → 10.43.29.130:8088`, epoch `2730627b`.
+
+## Event baseline
+Before the transition: `runtime_node.event_listener_degraded` = 2, `runtime_node.event_listener_recovered`
+= **0**, target epoch `2730627b` with advancing `last_authoritative_signal_at`.
+
+## WebSocket fault
+Reused the proven T5-A65 mechanism: from k3d node `k3d-utcp-local-server-0`, `nsenter -t 90071 -n
+/bin/aux/iptables` into the listener pod netns and DROP the exact WS four-tuple by source port:
+```
+iptables -I OUTPUT -p tcp -d 10.43.29.130 --dport 8088 --sport 60032 -j DROP
+iptables -I INPUT  -p tcp -s 10.43.29.130 --sport 8088 --dport 60032 -j DROP
+```
+Blocks only the established WS (unique sport 60032); ARI REST from the listener uses fresh ports and
+stayed available (HTTP 401 to `.../ari/asterisk/info` from the listener netns during the fault = port
+alive); listener process, Asterisk, and Pods untouched; peer WS untouched; no DB/Redis/lease/epoch
+edits; immediately reversible. Applied 00:36:35, removed 00:37:39.
+
+## Degraded transition
+In-process 1s sampler (target `1d15ca88`):
+```
+00:36:30  target=ready            gauge=0  epoch=2730627b  deg=2  rec=0  fence=0
+00:37:20  target=events_degraded  gauge=1  epoch=2730627b  deg=3  rec=0  fence=0   <-- ~45s after fault
+00:37:21  target=events_degraded  gauge=1  epoch=none       deg=3  rec=0  fence=0   <-- stalled epoch closed
+00:37:27  target=events_degraded  gauge=1  epoch=a59a1958   deg=3  rec=1  fence=0   <-- reconnect + recovered
+00:37:28  target=ready            gauge=0  epoch=a59a1958   deg=3  rec=1  fence=0   <-- ready
+```
+Exactly one new degraded event (deg 2→3), stalled epoch closed on teardown, no self-fence (fence=0),
+peer remained `ready`.
+
+## Reconnect recovery
+The listener reconnected automatically through backoff on a fresh source port, a successor epoch
+`a59a1958` opened (its `connection_opened` receipt), and — because `previousObservedState` at reconnect
+was `events_degraded` — the fix emitted the recovered event at that moment, then the RuntimeNode returned
+to `ready`. (Recovery completed at 00:37:27, before the explicit fault removal at 00:37:39, because the
+reconnect used an unblocked port; the fault was then removed and the environment confirmed clean.)
+
+## Recovered event
+Exactly one `runtime_node.event_listener_recovered` (REC_TOTAL 0 → 1). Its record:
+- aggregate `runtime_node:1d15ca88` — the selected RuntimeNode. ✓
+- `payload.source_event_id` = `bfb31e0cdcbd8462862f5b398c23dcc7`, which is a
+  `asterisk.ari.connection.opened` receipt for node `1d15ca88` — i.e. it references the reconnect
+  `connection_opened` receipt per repository convention. ✓
+- created 00:37:26, after the degraded transition at 00:37:20. ✓
+- emitted exactly once. ✓
+
+## Duplicate suppression
+After recovery the sampler observed `rec=1` held constant from 00:37:28 through 00:38:35 (>=13 healthy
+1s cycles, ~68s, many `connection_opened`/heartbeat cycles) with the node stably `ready` — no additional
+recovered event. `deg` also held at 3. The reconnect guard fired once (on the events_degraded→ready
+reconnect) and healthy cycles do not re-emit it, because `previousObservedState` is `ready` on every
+subsequent connect.
+
+## Event epoch state
+Post-recovery: exactly one open epoch per node (target `a59a1958`), `last_authoritative_signal_at`
+advancing (00:39:36), listener leases valid. No leaked/duplicate open epochs.
+
+## Final runtime state
+Both RuntimeNodes ready and eligible; both Asterisk Deployments 1/1 (asterisk-ari, asterisk-ari-b) plus
+listener 1/1; one open epoch per node with advancing signal; leases valid;
+`asterisk_ari_events_degraded_nodes`=0 (Prometheus) with alert `UTCPAsteriskAriEventStreamDegraded`
+inactive; 0 open/pending conferences; 0 active bindings; 0 actionable operations; all simulators
+disabled; 0 fence operations created; iptables fault fully removed (no residual DROP rules). No
+disposable proof resource created.
+
+## Divergences
+None. The T5-A65 divergence (recovered event not emitted on reconnect recovery) is resolved: recovery
+via the reconnect `connection_opened` path now emits exactly one `runtime_node.event_listener_recovered`
+referencing that receipt, with no duplicates.
+
+## Verification performed (T5-A67)
+make repository-hygiene / workflow-check / secret-scan: PASS. make *-config-check (4): PASS. make *-test
+(runtime-engine, telephony-domain, asterisk-ari, asterisk-conference, asterisk-conference-recovery):
+PASS. git diff --check / --cached: clean. Fault applied/removed via listener-netns iptables only; no
+Pod scale/delete, no Asterisk/Kamailio restart, no ARI module unload, no Conference/RuntimeBinding
+mutation, no direct SQL/Redis writes, no NetworkPolicy weakening. Broader placement/failover/observability
+corridors not rerun (no regression observed). Environment fully restored.
