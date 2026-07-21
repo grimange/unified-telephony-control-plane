@@ -141,7 +141,7 @@ Run natural Playwright browser proof for applicable route flows after implementa
 
 ## UI-B — Design System and Reusable Component Library
 
-Status: In Progress
+Status: Complete
 
 ### Objective
 
@@ -169,12 +169,11 @@ Create a reusable frontend presentation foundation that keeps styling, layout pr
 - UI-B2 remaining-view repository implementation (evidence: [`docs/evidence/ui/ui-b2-remaining-view-component-adoption.md`](../evidence/ui/ui-b2-remaining-view-component-adoption.md)) migrated Login, Change Password, Tenants, Memberships, Runtime Nodes, and User Detail to the shared token/component authority, removed duplicate screen-local visual-control styling in those views, corrected the Users mobile metadata overflow contract, preserved existing backend API/domain behavior, and added focused component-adoption, role-catalog, adapter-seam, credential-storage, and responsive-layout regression coverage.
 - UI-B3 controlled natural browser proof (evidence: [`docs/evidence/ui/ui-b3-management-view-browser-proof.md`](../evidence/ui/ui-b3-management-view-browser-proof.md), deployed web digest `sha256:4ab3349e…`) live-proved the `f375dd7` frontend through Playwright MCP: natural login, forced change-password, Tenants, Memberships (with server `admin/roles` catalog authority and no hard-coded role list), Runtime Nodes (server `runtime-node-catalog`; write-only credential secrecy with fingerprint-only readback), Users, User Detail (capability- and session-gated controls), light/dark with zero theme API requests and preserved route/tenant/session state, core component and keyboard semantics, and logout with post-logout protection. It also completed the page-level `scrollWidth` proof UI-B2 left pending and found the **Users 375px page-level overflow is not corrected** (`documentElement.scrollWidth 691` vs `innerWidth 375`): the `@media (max-width: 720px)` `.data-row { flex-direction: column }` rule does not reset the base `flex-wrap: wrap`, so per-row metadata wraps into a second off-viewport column. Tenants, Memberships, Runtime Nodes, User Detail, Dashboard, and Login all measured 0 page overflow at 375px. This is a blocking UI-B completion defect.
 - UI-B4 repository correction (evidence: [`docs/evidence/ui/ui-b4-users-mobile-overflow-fix.md`](../evidence/ui/ui-b4-users-mobile-overflow-fix.md)) removed the conflicting Users mobile row wrap behavior by setting narrow `.data-row` rows to `flex-wrap: nowrap` and `height: auto` under the existing `@media (max-width: 720px)` vertical-column contract. A focused repository-hygiene check now verifies the narrow `.data-row` contract and rejects root-level overflow masking.
+- UI-B5 controlled focused browser proof (evidence: [`docs/evidence/ui/ui-b5-users-mobile-overflow-live-proof.md`](../evidence/ui/ui-b5-users-mobile-overflow-live-proof.md), deployed web digest `sha256:fd9d2201…`) live-proved the `53f0f32` frontend through Playwright MCP: natural login, Users loaded through the normal navigation, and `/admin/users` at a 375px viewport with **no page-level horizontal overflow** in both Light (`documentElement.scrollWidth 375` == `innerWidth 375`) and Dark (`375` == `375`). Computed narrow `.data-row` resolves to `flex-direction: column` / `flex-wrap: nowrap`, the metadata `.subgrid` stays in a single vertical column within the row and viewport (right 350 ≤ 375), the offending-element scan returned zero out-of-bounds elements with no root-level overflow clipping, long identity text wraps, badges and actions remain usable, user-detail navigation and return preserve the layout, theme switching made zero API requests and did not change the dataset/tenant/session, and the desktop 1280px layout (`.data-row` `flex-direction: row`, three-column subgrid) remained intact. This closes the page-level `scrollWidth` gap UI-B3 identified.
 
 ### Remaining Implementation
 
-- Standardize telephony and runtime status presentation.
-- Re-run the focused Users 375px `scrollWidth` proof in light and dark themes.
-- UI-B remains In Progress until the Users narrow-layout page-level overflow is re-proven in a real browser; component adoption, server-catalog authority, credential secrecy, theme, keyboard, component semantics, logout, and the repository-side Users responsive correction are already complete.
+- None for UI-B. Standardizing additional telephony and runtime status presentation is deferred to UI-C/UI-D domain work that reuses this component foundation.
 
 ### Test Contract
 
