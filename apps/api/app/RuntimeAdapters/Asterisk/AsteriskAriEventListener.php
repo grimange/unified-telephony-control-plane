@@ -262,6 +262,7 @@ final class AsteriskAriEventListener
         $this->receipts->closeStaleEpochs($nodeId, $workerId);
         $this->receipts->closeSupersededOwnerEpochs($nodeId, $workerId);
         $epochId = $this->receipts->openEpoch((string) $node->tenant_id, $nodeId, $this->catalog->adapterKey(), $workerId);
+        $previousObservedState = $this->currentObservedState($nodeId);
         try {
             $info = $this->client->inspect((string) $node->tenant_id, $nodeId);
         } catch (Throwable $exception) {
@@ -270,11 +271,14 @@ final class AsteriskAriEventListener
 
             throw $exception;
         }
-        $this->ingest($node, $epochId, 'connection:opened:'.(string) $lease->fencing_token, $this->catalog->eventType('connection_opened'), [
+        $connectionOpened = $this->ingest($node, $epochId, 'connection:opened:'.(string) $lease->fencing_token, $this->catalog->eventType('connection_opened'), [
             'runtime_node_id' => $nodeId,
             'configuration_generation' => (int) $node->configuration_version,
             'occurred_at' => now()->toISOString(),
         ]);
+        if ($previousObservedState === 'events_degraded') {
+            $this->appendEventStreamRecovered($node, $connectionOpened['id']);
+        }
         $this->ingest($node, $epochId, 'runtime-info:'.(string) $node->configuration_version.':'.(string) $lease->fencing_token, $this->catalog->eventType('runtime_info_observed'), [
             'runtime_node_id' => $nodeId,
             'configuration_generation' => (int) $node->configuration_version,
@@ -573,7 +577,7 @@ final class AsteriskAriEventListener
 
     private function markEventStreamDegraded(object $node, string $epochId, string $fencingToken): void
     {
-        if ((string) DB::table('runtime_nodes')->where('id', (string) $node->id)->value('observed_state') === 'events_degraded') {
+        if ($this->currentObservedState((string) $node->id) === 'events_degraded') {
             return;
         }
 
@@ -594,7 +598,7 @@ final class AsteriskAriEventListener
 
     private function markEventStreamRecovered(object $node, string $epochId, string $fencingToken): void
     {
-        if ((string) DB::table('runtime_nodes')->where('id', (string) $node->id)->value('observed_state') !== 'events_degraded') {
+        if ($this->currentObservedState((string) $node->id) !== 'events_degraded') {
             return;
         }
 
@@ -603,11 +607,14 @@ final class AsteriskAriEventListener
             'configuration_generation' => (int) $node->configuration_version,
             'occurred_at' => now()->toISOString(),
         ]);
-        $this->appendRuntimeNodeTransition($node, 'runtime_node.event_listener_recovered', [
-            'runtime_node_id' => (string) $node->id,
-            'configuration_generation' => (int) $node->configuration_version,
-            'source_event_id' => $receipt['id'],
-        ]);
+        $this->appendEventStreamRecovered($node, $receipt['id']);
+    }
+
+    private function currentObservedState(string $nodeId): ?string
+    {
+        $state = DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_state');
+
+        return is_string($state) ? $state : null;
     }
 
     /**
@@ -651,6 +658,15 @@ final class AsteriskAriEventListener
             $payload,
             $context,
         ));
+    }
+
+    private function appendEventStreamRecovered(object $node, string $sourceEventId): void
+    {
+        $this->appendRuntimeNodeTransition($node, 'runtime_node.event_listener_recovered', [
+            'runtime_node_id' => (string) $node->id,
+            'configuration_generation' => (int) $node->configuration_version,
+            'source_event_id' => $sourceEventId,
+        ]);
     }
 
     private function teardownConnection(string $nodeId, bool $releaseLease): void
@@ -855,10 +871,11 @@ final class AsteriskAriEventListener
 
     /**
      * @param  array<string, mixed>  $payload
+     * @return array{status:string,id:string}
      */
-    private function ingest(object $node, string $epochId, string $externalKey, string $eventType, array $payload): void
+    private function ingest(object $node, string $epochId, string $externalKey, string $eventType, array $payload): array
     {
-        $this->receipts->ingest(
+        return $this->receipts->ingest(
             (string) $node->tenant_id,
             (string) $node->id,
             $this->catalog->adapterKey(),

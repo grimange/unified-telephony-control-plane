@@ -19,6 +19,7 @@ use App\RuntimeAdapters\Asterisk\AsteriskRuntimeAdapter;
 use App\RuntimeAdapters\Asterisk\AsteriskRuntimeNodeReconciler;
 use App\RuntimeEngine\Commands\RuntimeAdapterRegistry;
 use App\RuntimeEngine\Commands\RuntimeConferenceInspectionService;
+use App\RuntimeEngine\Events\EventNormalizerWorker;
 use App\RuntimeEngine\Events\RuntimeEventReceiptRepository;
 use App\RuntimeEngine\Listeners\RuntimeListenerLeaseRepository;
 use App\RuntimeEngine\Projection\ProjectionService;
@@ -1484,6 +1485,92 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $nodeId)->where('event_type', 'runtime_node.event_listener_degraded')->count());
     }
 
+    public function test_reconnect_from_events_degraded_emits_one_recovered_event_and_restores_state(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update(['observed_state' => 'events_degraded']);
+
+        $stream = fopen('php://temp', 'rb');
+        $catalog = new AsteriskCatalog;
+        $client = $this->queuedEventClient([], openStreamsByNode: [$nodeId => $stream]);
+        $listener = new AsteriskAriEventListener($catalog, $client, app(AsteriskAriProfileService::class), new RuntimeListenerLeaseRepository, new RuntimeEventReceiptRepository, new ReconciliationRepository);
+
+        $listener->workOnce('listener-reconnect');
+        app(EventNormalizerWorker::class)->workOnce('listener-reconnect-normalizer', 10);
+
+        $this->assertSame('ready', DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_state'));
+        $this->assertSame(1, DB::table('runtime_event_connection_epochs')->where('runtime_node_id', $nodeId)->where('status', 'open')->count());
+        $this->assertContains($nodeId, $this->placementEligibleNodeIds($tenantId), 'connection-opened recovery must restore placement eligibility');
+        $this->assertStringContainsString('asterisk_ari_events_degraded_nodes{} 0', (string) $this->get('/api/metrics')->assertOk()->getContent());
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $nodeId)->where('event_type', 'runtime_node.event_listener_recovered')->count());
+        $recoveredPayload = json_decode((string) DB::table('control_plane_outbox_messages')
+            ->where('aggregate_id', $nodeId)
+            ->where('event_type', 'runtime_node.event_listener_recovered')
+            ->value('payload'), true, flags: JSON_THROW_ON_ERROR);
+        $this->assertSame(
+            DB::table('runtime_event_receipts')->where('runtime_node_id', $nodeId)->where('external_event_key', 'like', 'connection:opened:%')->value('id'),
+            $recoveredPayload['source_event_id'] ?? null,
+        );
+    }
+
+    public function test_repeated_connection_opened_recovery_does_not_duplicate_recovered_event(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update(['observed_state' => 'events_degraded']);
+        $catalog = new AsteriskCatalog;
+
+        $firstStream = fopen('php://temp', 'rb');
+        $listener = new AsteriskAriEventListener(
+            $catalog,
+            $this->queuedEventClient([], openStreamsByNode: [$nodeId => $firstStream]),
+            app(AsteriskAriProfileService::class),
+            new RuntimeListenerLeaseRepository,
+            new RuntimeEventReceiptRepository,
+            new ReconciliationRepository,
+        );
+        $listener->workOnce('listener-reconnect-a');
+        app(EventNormalizerWorker::class)->workOnce('listener-reconnect-normalizer-a', 10);
+
+        DB::table('runtime_listener_leases')->update(['status' => 'released', 'released_at' => now()]);
+        DB::table('runtime_event_connection_epochs')->update(['status' => 'closed', 'closed_at' => now()]);
+
+        $secondStream = fopen('php://temp', 'rb');
+        $listener = new AsteriskAriEventListener(
+            $catalog,
+            $this->queuedEventClient([], openStreamsByNode: [$nodeId => $secondStream]),
+            app(AsteriskAriProfileService::class),
+            new RuntimeListenerLeaseRepository,
+            new RuntimeEventReceiptRepository,
+            new ReconciliationRepository,
+        );
+        $listener->workOnce('listener-reconnect-b');
+        app(EventNormalizerWorker::class)->workOnce('listener-reconnect-normalizer-b', 10);
+
+        $this->assertSame('ready', DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_state'));
+        $this->assertSame(1, DB::table('runtime_event_connection_epochs')->where('runtime_node_id', $nodeId)->where('status', 'open')->count());
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')->where('aggregate_id', $nodeId)->where('event_type', 'runtime_node.event_listener_recovered')->count());
+    }
+
+    public function test_initial_connection_from_non_degraded_state_does_not_emit_recovered_event(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+
+        $stream = fopen('php://temp', 'rb');
+        $catalog = new AsteriskCatalog;
+        $client = $this->queuedEventClient([], openStreamsByNode: [$nodeId => $stream]);
+        $listener = new AsteriskAriEventListener($catalog, $client, app(AsteriskAriProfileService::class), new RuntimeListenerLeaseRepository, new RuntimeEventReceiptRepository, new ReconciliationRepository);
+
+        $listener->workOnce('listener-initial');
+        app(EventNormalizerWorker::class)->workOnce('listener-initial-normalizer', 10);
+
+        $this->assertSame('ready', DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_state'));
+        $this->assertSame(1, DB::table('runtime_event_connection_epochs')->where('runtime_node_id', $nodeId)->where('status', 'open')->count());
+        $this->assertSame(0, DB::table('control_plane_outbox_messages')->where('aggregate_id', $nodeId)->where('event_type', 'runtime_node.event_listener_recovered')->count());
+    }
+
     public function test_listener_drains_multiple_queued_frames_in_one_cycle_and_wakes_recovery(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode();
@@ -2167,10 +2254,11 @@ final class AsteriskAriAdapterTest extends TestCase
 
     /**
      * @param  array<string, list<array<string, mixed>>>  $eventsByStream
+     * @param  array<string, mixed>  $openStreamsByNode
      */
-    private function queuedEventClient(array $eventsByStream, ?int $throwOnAttempt = null): AsteriskAriClient
+    private function queuedEventClient(array $eventsByStream, ?int $throwOnAttempt = null, array $openStreamsByNode = []): AsteriskAriClient
     {
-        return new class(new AsteriskCatalog, app(AsteriskAriProfileService::class), $eventsByStream, $throwOnAttempt) extends AsteriskAriClient
+        return new class(new AsteriskCatalog, app(AsteriskAriProfileService::class), $eventsByStream, $throwOnAttempt, $openStreamsByNode) extends AsteriskAriClient
         {
             /** @var array<string, list<array<string, mixed>>> */
             public array $eventsByStream;
@@ -2183,11 +2271,26 @@ final class AsteriskAriAdapterTest extends TestCase
 
             /**
              * @param  array<string, list<array<string, mixed>>>  $eventsByStream
+             * @param  array<string, mixed>  $openStreamsByNode
              */
-            public function __construct(AsteriskCatalog $catalog, AsteriskAriProfileService $profiles, array $eventsByStream, private readonly ?int $throwOnAttempt)
+            public function __construct(AsteriskCatalog $catalog, AsteriskAriProfileService $profiles, array $eventsByStream, private readonly ?int $throwOnAttempt, private readonly array $openStreamsByNode)
             {
                 parent::__construct($catalog, $profiles);
                 $this->eventsByStream = $eventsByStream;
+            }
+
+            public function openWebSocket(string $tenantId, string $runtimeNodeId)
+            {
+                unset($tenantId);
+
+                return $this->openStreamsByNode[$runtimeNodeId] ?? fopen('php://temp', 'rb');
+            }
+
+            public function inspect(string $tenantId, string $runtimeNodeId): array
+            {
+                unset($tenantId, $runtimeNodeId);
+
+                return ['asterisk_version' => '20.0.0', 'auth_generation' => 1];
             }
 
             public function readEvent(mixed $stream): ?array

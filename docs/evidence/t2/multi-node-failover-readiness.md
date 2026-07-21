@@ -11111,3 +11111,45 @@ make repository-hygiene / workflow-check / secret-scan: PASS. make *-config-chec
 PASS. git diff --check / --cached: clean. Fault applied and removed via listener-netns iptables only;
 no Pod scaling/deletion, no Asterisk/Kamailio restart, no ARI module unload, no Conference/RuntimeBinding
 mutation, no direct SQL/Redis writes, no NetworkPolicy weakening. Environment fully restored.
+
+---
+
+# T5-A66 - reconnect recovery event symmetry repository implementation
+
+## Scope and boundary
+Repository-only correction for the T5-A65 observability-symmetry gap. No listener-liveness redesign,
+ping/pong timing change, lease behavior change, epoch ownership change, placement-rule change,
+Conference reinspection change, metric rename, alert expression change, live Kubernetes mutation, PBX
+mutation, or direct data repair was performed.
+
+## Reconnect recovery gap
+T5-A65 proved that an idle ARI event-stream fault degrades the RuntimeNode to `events_degraded` and then
+recovers automatically after the listener reconnects. The remaining gap was that the common reconnect
+path records `connection_opened`; that receipt projects the RuntimeNode back to `ready`, but the
+`runtime_node.event_listener_recovered` outbox event was only emitted by the in-place pong recovery path.
+The result was correct runtime behavior with asymmetric transition evidence.
+
+## Shared recovered transition
+The listener now snapshots the RuntimeNode's canonical projected state before ingesting
+`connection_opened`. If the previous state was `events_degraded`, the reconnect path emits one
+`runtime_node.event_listener_recovered` event whose source points at the `connection_opened` receipt.
+The existing pong recovery path and reconnect recovery path share the same recovered outbox payload
+builder, so event construction remains single-sourced.
+
+## Idempotency behavior
+Initial connection from `unobserved`, `unknown`, `connecting`, `ready`, `degraded`, `unavailable`, or
+`stale` is not represented as event-stream recovery. Once the first reconnect recovery projects the node
+back to `ready`, later `connection_opened` observations do not emit duplicate recovered events because
+the previous canonical state is no longer `events_degraded`. Existing epoch, reconnect, placement,
+metric, and degradation behavior remains unchanged.
+
+## Focused tests
+Focused repository tests cover `events_degraded -> connection_opened -> ready` recovery event emission,
+duplicate suppression across repeated reconnects, the initial-connection boundary, in-place pong
+recovery, one-current-epoch recovery state, restored placement eligibility, the degraded-node gauge
+returning to zero, and unchanged degraded-event behavior.
+
+## Controlled live-proof boundary
+A short targeted live proof remains pending to observe exactly one
+`runtime_node.event_listener_recovered` event during reconnect recovery after this code change. This
+repository implementation does not claim that live recovered-event observation has already occurred.
