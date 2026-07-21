@@ -11254,3 +11254,250 @@ PASS. git diff --check / --cached: clean. Fault applied/removed via listener-net
 Pod scale/delete, no Asterisk/Kamailio restart, no ARI module unload, no Conference/RuntimeBinding
 mutation, no direct SQL/Redis writes, no NetworkPolicy weakening. Broader placement/failover/observability
 corridors not rerun (no regression observed). Environment fully restored.
+
+---
+
+# T5-A68 — Contract: deterministic capacity and placement authority (evidence-only)
+
+Verdict: `T5_DETERMINISTIC_CAPACITY_AND_PLACEMENT_CONTRACT_DEFINED`. Narrow contract audit; no production
+code changed. Baseline `UTCP_PHASE=T1`, clean tree at `4068362`.
+
+## Current placement authority
+There is exactly **one** canonical node selector: `TelephonyDomainService::selectRuntimeNodeForConference(
+tenantId, capabilities, excludeRuntimeNodeId=null, desiredStates=['active','draining'])`
+(TelephonyDomainService.php:1315). Three call sites, all routed through it:
+1. **Initial placement** — `changeConferenceDesiredState(...'open')` L270: `$runtimeNodeId ??=
+   selectRuntimeNodeForConference($tenantId, 'conference.lifecycle')`, inside a `DB::transaction` with
+   `lockForUpdate()` on the conference row; then `writeBinding()`.
+2. **Failover replacement** — `reconstructOpenConferenceBinding()` L426 (capabilities = conference
+   lifecycle+participation, excludes the former node), retires the old active binding and writes the new
+   one atomically.
+3. **Replacement eligibility probe** — `hasDistinctEligibleReplacement()` L870 (desiredStates=['active']),
+   used by `RuntimeFencingCoordinator` L239 and `RuntimeFenceOperationHandler` L61 to decide whether to
+   fence at all.
+`createConference()` L216 only binds when the caller passes an explicit `runtime_node_id` (draft); it
+does not auto-select. Participant admission (`admitParticipant`/`admitSelf`) does **not** select a node —
+participants inherit the conference's existing binding. The Simulator has no independent placement path.
+Answer: **one canonical selector; no competing placement authority.** No authority needs removal — only
+the selector's internals need extension.
+
+## Placement entry points
+Initial open (API `changeConferenceDesiredState`), failover replacement (fencing coordinator →
+`reconstructOpenConferenceBinding` via a runtime operation), and the pre-fence eligibility probe. All
+converge on `selectRuntimeNodeForConference`. Binding creation is always `writeBinding()` (single writer)
+under the DB partial unique index `conference_runtime_bindings_one_active on (conference_id) where
+status='active'` (one active binding per conference, enforced by PostgreSQL).
+
+## Hard eligibility filters (current)
+In `selectRuntimeNodeForConference`: `tenant_id = tenant` (tenant isolation); `desired_state IN
+{active,draining}` (or {active} for the probe); `observed_state = 'ready'` (strict — so `events_degraded`,
+`degraded`, `stale`, `unavailable`, `connecting`, `unobserved` are all excluded); `id <> excluded` when
+replacing; and an `EXISTS` per required `runtime_node_capabilities.capability_key`. The `assert*`
+helpers re-validate the same filters before mutation (`assertRuntimeNodeSupportsConference`:
+active/draining + capability; `assertRuntimeNodeEligibleForConferenceRebind`: active/draining + ready +
+capabilities). These are all **hard eligibility**. There is currently **no capacity filter and no
+preference/ranking** beyond ordering. Not filtered today (candidates for the contract): runtime pool,
+provider-node state, active-binding-count/capacity, reserved capacity, fenced/restoring exclusion
+(handled indirectly via desired_state=disabled during fence, and via the `exclude` arg on replacement).
+
+## Existing candidate ordering
+`orderBy('runtime_family')->orderBy('adapter_key')->orderBy('id')` then `->first()`. The final
+tie-breaker is `id` (the RuntimeNode UUID primary key) — a **stable persisted value**, so repeated
+selection against identical state is **deterministic** (same node every time). This is already
+non-random and not dependent on Pod/hostname/response ordering. The gap is that ordering is purely
+lexical identity, not capacity- or load-aware: it always fills the lowest-`id` ready node first and never
+spreads load or respects a per-node limit.
+
+## Capacity evidence
+- **canonical desired limit**: none exists today. `runtime_nodes.capacity_weight` (default 100) and
+  `placement_priority` (default 100) columns exist (runtime registry migration) but are **unused** by
+  any selector. `asterisk_ari_profiles` has no channel/conference limit. No capacity config in
+  `telephony_domain`/`runtime_registry`.
+- **durable reservation**: `conference_runtime_bindings` with `status='active'` and the partial unique
+  index is the durable reservation of a conference→node assignment (one active per conference).
+- **derived database usage**: `COUNT(conference_runtime_bindings WHERE runtime_node_id=? AND
+  status='active')` = current active conference assignments per node (authoritative, transactional).
+- **observed runtime usage**: `runtime_observations` / ARI reconnect inspection report bridge/channel
+  presence, but are point-in-time observations — diagnostic, not placement authority.
+- **pending operations**: `runtime_operations` (conference.ensure etc.) exist but are not a capacity
+  ledger.
+Classification: declared limit = **must be introduced** (reuse `capacity_weight` as the declared max, or
+add an explicit `max_active_conferences`); durable usage = **active-binding count** (canonical, already
+transactional); observed runtime counts = diagnostic only; provider-node limits = not present, defer.
+
+## Selected capacity unit — Model A (Conference slots)
+`available = declared_max_active_conferences(node) − active_conference_bindings(node)`. Declared max: use
+`runtime_nodes.capacity_weight` as the canonical per-node conference-slot limit (it already exists,
+defaults to 100, is tenant-owned registry state, and needs no new column or migration; 0 or a sentinel
+can mean "unlimited/legacy" to preserve current behavior until operators set a real limit). Usage:
+count of `conference_runtime_bindings.status='active'` for the node. This is the smallest model that
+deterministically prevents oversubscription for the Asterisk Conference workload. Model B
+(participant/channel slots) deferred — no durable per-node channel-limit authority exists. Model C
+(weighted) deferred — no existing weight contract beyond the single scalar. No CPU/memory/K8s metrics.
+
+## Reservation and concurrency authority
+Reuse the existing transactional pattern. Initial placement already runs inside `DB::transaction` with
+`lockForUpdate()` on the conference; replacement runs in the operation handler's transaction. The
+contract: within the placement transaction, (1) select the candidate with `available > 0` computed from
+a **locked** count, (2) revalidate eligibility, (3) `writeBinding()` (the partial unique index
+`conference_runtime_bindings_one_active` guarantees no double active binding per conference), (4) commit.
+For per-node slot contention between two different conferences racing for the last slot on one node, add
+a `SELECT ... FOR UPDATE` on the candidate `runtime_nodes` row (or a per-node advisory lock keyed on the
+node id) so the active-binding count is evaluated under a row lock; the loser re-evaluates the next
+candidate or falls to pending_no_capacity. No Redis capacity authority, no process-local mutex, no manual
+placement command. Idempotency: conference creation/open already flows through `IdempotencyKey`
+(`telephony.conferences.create`) and the one-active-binding index makes a repeated open a no-op.
+
+## Deterministic ranking
+Explicit pipeline for the future selector:
+```
+1. Hard eligibility filters (tenant, desired_state, observed_state='ready', capabilities, exclude,
+   available_slots > 0)
+2. placement_priority ASC        (lower number = preferred; existing column, default 100)
+3. available_slots DESC          (most free capacity first — spreads load, avoids hot-filling one node)
+4. active_binding_count ASC      (least-loaded)
+5. id ASC                        (stable persisted UUID tie-breaker — already the current final order)
+```
+All keys are persisted/derived deterministically; no randomness, no Pod/hostname/DB-natural/timing
+order. This preserves today's `id` tie-breaker as the terminal key, so behavior stays deterministic and,
+when all priorities/capacities are equal (current default state), reduces to the existing lowest-`id`
+choice — a safe superset of current behavior.
+
+## Initial and replacement placement alignment
+Already aligned: initial (L270), failover replacement (L426), and the eligibility probe (L870) all call
+the same `selectRuntimeNodeForConference`, so adding the capacity filter + ranking there applies
+uniformly. Replacement already adds the extra exclusion (`excludeRuntimeNodeId` = former node) and a
+tighter desired-state set (`['active']` for the probe). Retain those replacement-only exclusions;
+otherwise identical eligibility + capacity policy. No separate replacement balancer.
+
+## No-capacity behavior
+Reuse the existing `conferences.failover_state = 'pending_no_capacity'` (DB check-constrained to null or
+that value). Writers: `markConferenceFailoverPendingNoCapacity` (TelephonyDomainService, called by
+`ConferenceFailoverCoordinator` L58 when `hasDistinctEligibleReplacement` is false). The conference
+retains `desired_state='open'`; failover_binding_id/generation/started_at record the pending authority.
+Extend the SAME state to **initial** placement: when `selectRuntimeNodeForConference` finds no eligible
+node with `available>0` at open time, the open transition should record a durable pending state (rather
+than today's 422 abort for the no-node case) so the conference stays desired-open and retries
+automatically. Retry ownership is the persisted conference row + reconciliation, never an operator.
+
+## Automatic retry triggers
+`clearRecoveredFailoverPendingNoCapacity(graceSeconds)` (L994), scheduled via
+`ConferenceFailoverCoordinator` L37, already re-activates pending conferences when their bound node
+returns to `ready`/`degraded` or a recent ready `runtime_observations` row exists. Extend the wake
+predicate to fire when **capacity frees** as well: a conference closes / active binding retires (slots
+return), a RuntimeNode becomes ready or recovers from `events_degraded`, a node's `capacity_weight`
+increases, or restoration/fence-clear makes a node eligible. Reuse the existing coordinator sweep +
+reconciliation `ensureTarget`/`wakeTarget` and operation idempotency — do NOT add one scheduler or
+command per trigger.
+
+## Conflicting authority to remove
+None. There is a single selector and a single binding writer; the one-active-binding partial unique index
+is the durable guard. The only "conflict" is the **absence** of a capacity dimension in the one selector,
+not a competing authority. Implementation extends `selectRuntimeNodeForConference` and its transaction in
+place.
+
+## First implementation slice
+- Extend `selectRuntimeNodeForConference` into a capacity-aware, deterministically-ranked selector
+  (hard filters incl. `available_slots>0`; ranking priority→available→load→id).
+- Declared limit via `runtime_nodes.capacity_weight` (0/sentinel = unlimited for back-compat); derived
+  usage via active-binding count.
+- Per-node row lock (or advisory lock on node id) inside the existing placement transaction to prevent
+  last-slot oversubscription; keep `writeBinding` + one-active index.
+- Shared initial/replacement/probe policy (retain replacement-only exclusions).
+- Durable `pending_no_capacity` for initial placement too; automatic wake on capacity/eligibility change
+  via the existing coordinator sweep.
+- Metrics: the existing `utcp_conference_failover_pending{pending_no_capacity}` gauge already covers the
+  pending signal; optionally expose per-node available slots later. No new alert required.
+Defer: weighted provider economics, predictive load, K8s autoscaling, multi-region affinity, media-relay
+topology, queue fairness, per-tenant billing quotas, Provider Node Admin UI.
+
+## Test contract
+- Identical state always selects the same node (deterministic id tie-breaker).
+- Ineligible nodes excluded (wrong tenant / desired_state / missing capability).
+- `events_degraded` node excluded (observed_state != 'ready').
+- Node with 0 available slots excluded.
+- Least-loaded / most-available eligible node wins over a busier equal-priority node.
+- Stable tie-breaker resolves equal candidates (lowest id).
+- Concurrent final-slot requests on one node do not oversubscribe (row/advisory lock; loser goes pending
+  or next candidate).
+- Repeated open is idempotent (idempotency key + one-active index → no second active binding).
+- Initial and replacement placement use the same policy.
+- Failed/former node excluded during replacement (exclude arg).
+- No eligible capacity → durable `pending_no_capacity`, conference stays desired-open.
+- Capacity release (conference close/binding retire/node ready) wakes automatic retry; no manual path.
+- Tenant isolation enforced (never selects another tenant's node).
+- Simulator and Asterisk adapters both obey the same domain selector (no adapter-specific placement).
+
+## Implementation-readiness decision — bounded Codex implementation
+One canonical selector, one capacity unit (conference slots via capacity_weight + active-binding count),
+one durable capacity source (active bindings), one reservation mechanism (placement transaction +
+per-node lock + one-active index), one deterministic ranking (priority→available→load→id), one
+no-capacity outcome (pending_no_capacity), automatic retry ownership (coordinator sweep + reconciliation),
+and exact tests are all established. No blocker. Live capacity-exhaustion proof is not required before
+implementation.
+
+## Ready-to-paste next prompt (Codex — bounded implementation)
+```
+T5-A69 — Implement deterministic capacity-aware conference placement
+
+Repo state: HEAD 4068362, branch main, clean, UTCP_PHASE=T1. Implement exactly the T5-A68 contract in
+docs/evidence/t2/multi-node-failover-readiness.md. Do not begin V0. Keep UTCP_PHASE=T1. No manual
+placement command, no Redis capacity authority, no process-local mutex, no feature gate. Do not push.
+
+1. Capacity source: treat runtime_nodes.capacity_weight as the canonical per-node max active-conference
+   slot count; 0 means unlimited (back-compat with today's behavior). Derived usage = COUNT of
+   conference_runtime_bindings WHERE runtime_node_id=? AND status='active'. No new column/migration
+   required (reuse capacity_weight); if a clearer name is warranted, add max_active_conferences via a
+   registry migration defaulting to 0=unlimited and read that instead — pick one, document it.
+
+2. Selector: extend TelephonyDomainService::selectRuntimeNodeForConference to (a) keep the current hard
+   filters (tenant, desired_state, observed_state='ready', capabilities, exclude), (b) exclude nodes with
+   0 available slots when a finite limit is set, (c) rank deterministically:
+   placement_priority ASC, available_slots DESC, active_binding_count ASC, id ASC. Preserve the id
+   terminal tie-breaker so equal-config state reduces to today's lowest-id choice.
+
+3. Reservation: within the existing placement DB::transaction, take a row lock on the chosen
+   runtime_nodes row (SELECT ... FOR UPDATE) or a pg advisory lock keyed on the node id before counting
+   active bindings and calling writeBinding(); rely on the existing partial unique index
+   conference_runtime_bindings_one_active for the per-conference guard. Loser of a last-slot race
+   re-evaluates the next candidate, else pending_no_capacity.
+
+4. No-capacity: when no eligible node has a free slot at initial open (changeConferenceDesiredState
+   'open'), record durable failover_state='pending_no_capacity' authority (reuse
+   markConferenceFailoverPendingNoCapacity / an initial-placement equivalent) with the conference
+   remaining desired_state='open', instead of a hard 422 for the no-eligible-node case. Keep the 422
+   only for genuinely invalid explicit runtime_node_id requests.
+
+5. Automatic retry: extend clearRecoveredFailoverPendingNoCapacity (and the ConferenceFailoverCoordinator
+   sweep) so pending conferences also re-attempt when capacity frees — conference close / active binding
+   retire / node ready / events_degraded recovery / capacity_weight increase — reusing reconciliation
+   ensureTarget/wakeTarget and operation idempotency. No new scheduler/command per trigger.
+
+6. Alignment: initial, failover replacement, and hasDistinctEligibleReplacement all go through the same
+   extended selector; retain replacement-only exclusions (former node, ['active'] desired states).
+
+7. Tests (extend telephony-domain + asterisk-conference suites) — the full T5-A68 Test contract:
+   deterministic identical-state selection; ineligible/events_degraded/zero-capacity exclusion;
+   least-loaded/most-available wins; stable id tie-breaker; concurrent last-slot no oversubscription;
+   idempotent repeat open; initial==replacement policy; former-node excluded on replacement; no-capacity
+   durable pending; capacity-release wakes retry; tenant isolation; simulator+asterisk share the policy.
+
+Verify: make repository-hygiene workflow-check secret-scan; make runtime-engine-config-check
+telephony-domain-config-check asterisk-ari-config-check asterisk-conference-config-check; make
+runtime-engine-test telephony-domain-test asterisk-ari-test asterisk-conference-test
+asterisk-conference-recovery-test; git diff --check. Commit
+feat(t5): deterministic capacity-aware conference placement. Do not push. Then hand to Claude Code for a
+controlled live capacity-exhaustion + automatic-retry proof.
+```
+
+## Verification performed (T5-A68)
+Read-only: traced all placement entry points and the single selector + 3 call sites; enumerated hard
+eligibility filters and the assert* revalidators; confirmed the id-based deterministic ordering;
+inventoried capacity evidence (unused capacity_weight/placement_priority columns, active-binding count,
+one-active partial unique index, runtime_observations as diagnostic, no declared limit anywhere);
+confirmed no competing placement authority (participant admission inherits binding; simulator has none);
+traced pending_no_capacity write + clearRecoveredFailoverPendingNoCapacity retry + coordinator schedule.
+make repository-hygiene / workflow-check / secret-scan: PASS. make *-config-check (4): PASS. make *-test
+(runtime-engine 21, telephony-domain 60, asterisk-ari 102, asterisk-conference 117,
+asterisk-conference-recovery 97): PASS. git diff --check / --cached: clean. No live Conference/failover/
+capacity/SQL/RuntimeNode/Kubernetes mutation performed.
