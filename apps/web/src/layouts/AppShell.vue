@@ -114,20 +114,20 @@
       </aside>
 
       <section class="shell-content">
-        <p
+        <UiAlert
           v-if="error"
-          class="form-error"
-          role="alert"
+          variant="error"
+          title="Request failed"
         >
           {{ error }}
-        </p>
-        <p
+        </UiAlert>
+        <UiAlert
           v-if="message"
-          class="form-success"
-          role="status"
+          variant="success"
+          title="Request complete"
         >
           {{ message }}
-        </p>
+        </UiAlert>
         <RouterView />
       </section>
     </div>
@@ -137,6 +137,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import UiAlert from '../components/ui/UiAlert.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiFormField from '../components/ui/UiFormField.vue'
 import UiSelect from '../components/ui/UiSelect.vue'

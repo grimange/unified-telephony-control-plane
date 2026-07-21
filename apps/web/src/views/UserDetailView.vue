@@ -11,40 +11,41 @@
         <RouterLink to="/admin/users">
           Back to users
         </RouterLink>
-        <button
+        <UiButton
           type="button"
+          variant="secondary"
           @click="load"
         >
           Refresh
-        </button>
+        </UiButton>
       </span>
     </div>
-    <p
+
+    <UiLoadingState
       v-if="!selectedUserDetail"
-      class="meta"
-      role="status"
-      aria-live="polite"
-    >
-      Loading user detail.
-    </p>
+      label="Loading user detail."
+    />
     <div
       v-else
       class="detail-stack"
     >
-      <section
-        class="detail-section"
-        aria-labelledby="user-account-title"
+      <UiPanel
+        id="user-account-title"
+        title="Account"
+        label="Identity"
       >
-        <h3 id="user-account-title">
-          Account
-        </h3>
         <dl class="definition-grid">
           <dt>Display name</dt>
           <dd>{{ selectedUserDetail.user.display_name }}</dd>
           <dt>Email</dt>
           <dd>{{ selectedUserDetail.user.email }}</dd>
           <dt>Account status</dt>
-          <dd>{{ selectedUserDetail.user.status }}</dd>
+          <dd>
+            <UiStatusBadge
+              :label="selectedUserDetail.user.status"
+              :category="accountStatusCategory(selectedUserDetail.user.status)"
+            />
+          </dd>
           <dt>Forced password change</dt>
           <dd>{{ selectedUserDetail.user.password_change_required ? 'required' : 'not required' }}</dd>
           <dt>Created</dt>
@@ -52,34 +53,40 @@
           <dt>Updated</dt>
           <dd>{{ selectedUserDetail.user.updated_at }}</dd>
         </dl>
-      </section>
+      </UiPanel>
 
-      <section
-        class="detail-section"
-        aria-labelledby="user-memberships-title"
+      <UiPanel
+        id="user-memberships-title"
+        title="Tenant memberships"
+        label="Tenant access"
       >
-        <h3 id="user-memberships-title">
-          Tenant memberships
-        </h3>
+        <UiEmptyState
+          v-if="selectedUserDetail.memberships.length === 0"
+          title="No memberships"
+          message="No tenant memberships were returned."
+        />
         <div
           v-for="membership in selectedUserDetail.memberships"
+          v-else
           :key="membership.id"
           class="data-row"
         >
           <span>
             <strong>{{ membership.tenant_display_name }}</strong>
-            <small>{{ membership.tenant_slug }} · {{ membership.status }} · roles {{ membership.roles.join(', ') || 'none' }}</small>
+            <small>{{ membership.tenant_slug }} · roles {{ membership.roles.join(', ') || 'none' }}</small>
+            <UiStatusBadge
+              :label="membership.status"
+              :category="accountStatusCategory(membership.status)"
+            />
           </span>
         </div>
-      </section>
+      </UiPanel>
 
-      <section
-        class="detail-section"
-        aria-labelledby="user-roles-title"
+      <UiPanel
+        id="user-roles-title"
+        title="Roles and capabilities"
+        label="Authorization"
       >
-        <h3 id="user-roles-title">
-          Roles and capabilities
-        </h3>
         <p class="meta">
           Platform roles: {{ selectedUserDetail.platform_roles.join(', ') || 'None' }}
         </p>
@@ -89,27 +96,29 @@
         <p class="meta">
           Active tenant capabilities: {{ selectedUserDetail.effective_capabilities.tenant.join(', ') || 'None' }}
         </p>
-      </section>
+      </UiPanel>
 
-      <section
-        class="detail-section"
-        aria-labelledby="telephony-session-title"
+      <UiPanel
+        id="telephony-session-title"
+        title="Active TelephonySession"
+        label="Telephony"
       >
-        <h3 id="telephony-session-title">
-          Active TelephonySession
-        </h3>
-        <p
+        <UiEmptyState
           v-if="!selectedUserDetail.active_telephony_session"
-          class="meta"
-        >
-          No active TelephonySession. Signaling registration is unavailable.
-        </p>
+          title="No active TelephonySession"
+          message="Signaling registration is unavailable."
+        />
         <div v-else>
           <dl class="definition-grid">
             <dt>Session</dt>
             <dd>{{ shortId(selectedUserDetail.active_telephony_session.id) }}</dd>
             <dt>Status</dt>
-            <dd>{{ selectedUserDetail.active_telephony_session.status }}</dd>
+            <dd>
+              <UiStatusBadge
+                :label="selectedUserDetail.active_telephony_session.status"
+                :category="telephonyStatusCategory(selectedUserDetail.active_telephony_session.status)"
+              />
+            </dd>
             <dt>Issued</dt>
             <dd>{{ selectedUserDetail.active_telephony_session.issued_at }}</dd>
             <dt>Expiry</dt>
@@ -117,27 +126,30 @@
             <dt>Ended</dt>
             <dd>{{ displayValue(selectedUserDetail.active_telephony_session.ended_at) }}</dd>
           </dl>
-          <button
+          <UiButton
             v-if="can('telephony.sessions.manage') && selectedUserDetail.active_telephony_session.status === 'active'"
             type="button"
+            variant="danger"
             @click="run(endSelectedTelephonySession)"
           >
             End TelephonySession
-          </button>
+          </UiButton>
 
           <section
-            class="detail-section nested"
+            class="detail-block nested"
             aria-labelledby="signaling-registration-title"
           >
-            <h4 id="signaling-registration-title">
-              Signaling registration
-            </h4>
-            <p
-              v-if="!selectedUserDetail.signaling"
-              class="meta"
-            >
-              No signaling credential has been issued. Registration is not yet available to a SIP client.
+            <p class="panel-label">
+              SIP access
             </p>
+            <h3 id="signaling-registration-title">
+              Signaling registration
+            </h3>
+            <UiEmptyState
+              v-if="!selectedUserDetail.signaling"
+              title="No signaling credential"
+              message="Registration is not yet available to a SIP client."
+            />
             <div v-else>
               <dl class="definition-grid">
                 <dt>Signaling identity</dt>
@@ -163,18 +175,22 @@
                 <dt>Reconciliation reason</dt>
                 <dd>{{ displayValue(selectedUserDetail.signaling.registration.reconciliation_reason) }}</dd>
               </dl>
-              <p class="meta">
+              <UiAlert
+                variant="info"
+                title="Signaling lifecycle"
+              >
                 {{ signalingLifecycleText(selectedUserDetail.signaling) }}
-              </p>
+              </UiAlert>
             </div>
-            <button
+            <UiButton
               v-if="can('telephony.signaling.manage') && selectedUserDetail.active_telephony_session?.status === 'active'"
               ref="issueCredentialButton"
               type="button"
+              variant="secondary"
               @click="run(issueSelectedSignalingCredential)"
             >
               {{ selectedUserDetail.signaling?.credential ? 'Reissue signaling credential' : 'Issue signaling credential' }}
-            </button>
+            </UiButton>
             <section
               v-if="oneTimeSignalingCredential"
               ref="oneTimeSecretPanel"
@@ -184,12 +200,15 @@
               aria-labelledby="one-time-signaling-title"
               tabindex="-1"
             >
-              <h4 id="one-time-signaling-title">
+              <h3 id="one-time-signaling-title">
                 Temporary SIP credential issued
-              </h4>
-              <p class="meta">
+              </h3>
+              <UiAlert
+                variant="warning"
+                title="One-time secret"
+              >
                 This temporary SIP secret cannot be retrieved again. Reissuing invalidates the previous credential.
-              </p>
+              </UiAlert>
               <dl class="definition-grid">
                 <dt>SIP username</dt>
                 <dd>{{ oneTimeSignalingCredential.username }}</dd>
@@ -202,24 +221,26 @@
                 <dt>Temporary SIP secret</dt>
                 <dd>
                   <code>{{ signalingSecretVisible ? oneTimeSignalingCredential.sip_secret : 'hidden' }}</code>
-                  <button
+                  <UiButton
                     type="button"
+                    variant="secondary"
                     @click="signalingSecretVisible = !signalingSecretVisible"
                   >
                     {{ signalingSecretVisible ? 'Hide secret' : 'Reveal secret' }}
-                  </button>
+                  </UiButton>
                 </dd>
               </dl>
-              <button
+              <UiButton
                 type="button"
+                variant="secondary"
                 @click="closeOneTimeSignalingCredential"
               >
                 Close credential
-              </button>
+              </UiButton>
             </section>
           </section>
         </div>
-      </section>
+      </UiPanel>
     </div>
   </section>
 </template>
@@ -227,6 +248,12 @@
 <script setup lang="ts">
 import { onMounted, watch, watchEffect } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
+import UiAlert from '../components/ui/UiAlert.vue'
+import UiButton from '../components/ui/UiButton.vue'
+import UiEmptyState from '../components/ui/UiEmptyState.vue'
+import UiLoadingState from '../components/ui/UiLoadingState.vue'
+import UiPanel from '../components/ui/UiPanel.vue'
+import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
 import {
   can,
   closeOneTimeSignalingCredential,
@@ -247,6 +274,21 @@ import {
 } from '../state/appState'
 
 const route = useRoute()
+
+function accountStatusCategory(status: string): 'success' | 'warning' | 'neutral' {
+  if (status === 'active') return 'success'
+  if (status === 'suspended') return 'warning'
+
+  return 'neutral'
+}
+
+function telephonyStatusCategory(status: string): 'success' | 'warning' | 'danger' | 'neutral' {
+  if (status === 'active') return 'success'
+  if (['ended', 'expired'].includes(status)) return 'warning'
+  if (['failed', 'revoked'].includes(status)) return 'danger'
+
+  return 'neutral'
+}
 
 watchEffect(() => {
   void issueCredentialButton.value

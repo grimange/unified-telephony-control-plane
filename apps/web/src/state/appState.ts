@@ -12,6 +12,7 @@ import {
   type RuntimeHistoryResponse,
   type RuntimeManagementCatalog,
   type RuntimeNode,
+  type RoleCatalog,
   type SignalingMetadata,
 } from '../api/platform'
 import { hasCapability, visibleNavigationEntries } from '../navigation'
@@ -26,6 +27,7 @@ export const signalingSecretVisible = ref(false)
 export const oneTimeSecretPanel = ref<HTMLElement | null>(null)
 export const issueCredentialButton = ref<HTMLButtonElement | null>(null)
 export const memberships = ref<AdminMembership[]>([])
+export const roleCatalog = ref<RoleCatalog | null>(null)
 export const runtimeNodes = ref<RuntimeNode[]>([])
 export const runtimeCatalog = ref<RuntimeManagementCatalog | null>(null)
 export const runtimeCapabilitySelections = reactive<Record<string, string[]>>({})
@@ -40,12 +42,12 @@ export const temporaryPassword = ref('')
 export const tenantContextVersion = ref(0)
 
 export const loginForm = reactive({ email: '', password: '' })
-export const passwordForm = reactive({ current: '', next: '' })
+export const passwordForm = reactive({ current: '', next: '', confirm: '' })
 export const tenantForm = reactive({ slug: '', displayName: '' })
 export const userForm = reactive({ email: '', displayName: '' })
 export const userFilters = reactive({ search: '', status: '', page: 1, perPage: 20 })
 export const userPagination = reactive({ page: 1, per_page: 20, total: 0, has_more: false })
-export const membershipForm = reactive({ userId: '', roleKey: 'tenant-member' })
+export const membershipForm = reactive({ userId: '', roleKey: '' })
 export const runtimeNodeForm = reactive({ name: '', slug: '', runtimeFamily: 'asterisk', adapterKey: 'asterisk-ari' })
 export const endpointForm = reactive({ purpose: 'control', transport: 'https', host: '', port: 8089, path: '', tlsMode: 'verify' })
 export const credentialForm = reactive({ type: 'control-api', identifier: '', secret: '' })
@@ -62,6 +64,15 @@ export const runtimeFamilyOptions = computed(() =>
     key,
     label: family.display_name,
   })),
+)
+
+export const tenantRoleOptions = computed(() =>
+  Object.entries(roleCatalog.value?.roles ?? {})
+    .filter(([, role]) => role.scope === 'tenant')
+    .map(([key, role]) => ({
+      key,
+      label: role.display_name,
+    })),
 )
 
 export function can(capability: string): boolean {
@@ -143,9 +154,15 @@ export async function savePasswordChange(): Promise<IdentitySession | null> {
   busy.value = true
   error.value = ''
   try {
+    if (passwordForm.next !== passwordForm.confirm) {
+      error.value = 'New password and confirmation must match.'
+
+      return null
+    }
     await identityApi.changePassword(passwordForm.current, passwordForm.next)
     passwordForm.current = ''
     passwordForm.next = ''
+    passwordForm.confirm = ''
 
     return await ensureSession(true)
   } catch (errorValue) {
@@ -293,6 +310,10 @@ export async function refreshSelectedUser(userId: string): Promise<void> {
 }
 
 export async function refreshMemberships(): Promise<void> {
+  roleCatalog.value = await identityApi.roles()
+  if (!membershipForm.roleKey && tenantRoleOptions.value.length > 0) {
+    membershipForm.roleKey = tenantRoleOptions.value[0].key
+  }
   memberships.value = (await identityApi.memberships()).memberships
   if (users.value.length === 0 && canViewUsers.value) await refreshUsers()
 }
@@ -484,6 +505,7 @@ export function resetAppStateForTests(): void {
   oneTimeSignalingCredential.value = null
   signalingSecretVisible.value = false
   memberships.value = []
+  roleCatalog.value = null
   runtimeNodes.value = []
   runtimeCatalog.value = null
   error.value = ''
@@ -495,6 +517,7 @@ export function resetAppStateForTests(): void {
   loginForm.password = ''
   passwordForm.current = ''
   passwordForm.next = ''
+  passwordForm.confirm = ''
   tenantForm.slug = ''
   tenantForm.displayName = ''
   userForm.email = ''
@@ -505,7 +528,7 @@ export function resetAppStateForTests(): void {
   userFilters.perPage = 20
   Object.assign(userPagination, { page: 1, per_page: 20, total: 0, has_more: false })
   membershipForm.userId = ''
-  membershipForm.roleKey = 'tenant-member'
+  membershipForm.roleKey = ''
   runtimeNodeForm.name = ''
   runtimeNodeForm.slug = ''
   runtimeNodeForm.runtimeFamily = 'asterisk'

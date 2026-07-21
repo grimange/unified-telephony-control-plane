@@ -5,6 +5,13 @@ import App from './App.vue'
 import { createUtcpRouter, router } from './router'
 import { resetAppStateForTests } from './state/appState'
 import { appearanceStorageKey, resetAppearanceForTests } from './state/theme'
+import changePasswordViewSource from './views/ChangePasswordView.vue?raw'
+import loginViewSource from './views/LoginView.vue?raw'
+import membershipsViewSource from './views/MembershipsView.vue?raw'
+import runtimeNodesViewSource from './views/RuntimeNodesView.vue?raw'
+import tenantsViewSource from './views/TenantsView.vue?raw'
+import userDetailViewSource from './views/UserDetailView.vue?raw'
+import usersViewSource from './views/UsersView.vue?raw'
 
 const session = {
   user: {
@@ -181,6 +188,16 @@ const runtimeCatalog = {
   endpoint_purposes: {},
   endpoint_transports: {},
   endpoint_tls_modes: {},
+}
+
+const roleCatalog = {
+  catalog_version: 'roles.v1',
+  roles: {
+    'tenant-member': { scope: 'tenant', display_name: 'Tenant member', capabilities: [] },
+    'tenant-admin': { scope: 'tenant', display_name: 'Tenant admin', capabilities: [] },
+    'platform-admin': { scope: 'platform', display_name: 'Platform admin', capabilities: [] },
+  },
+  capabilities: [],
 }
 
 const runtimeNode = {
@@ -385,7 +402,7 @@ describe('C1 App shell', () => {
     expect(wrapper.text()).toContain('Retire')
     expect(wrapper.text()).not.toContain('super-secret')
     expect(wrapper.text()).not.toContain('Start Listener')
-    expect(wrapper.text()).not.toContain('Connect')
+    expect(wrapper.findAll('button').some((button) => button.text() === 'Connect')).toBe(false)
     expect(wrapper.text()).not.toContain('Retry')
     expect(wrapper.text()).not.toContain('Reconcile')
     expect(wrapper.text()).not.toContain('Mark Ready')
@@ -741,5 +758,195 @@ describe('C1 App shell', () => {
     await flushPromises()
     await flushPromises()
     expect(historyRouter.currentRoute.value.path).toBe('/admin/users')
+  })
+
+  it('keeps login errors associated and preserves intended redirects without credential persistence', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString()
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse({ message: 'Unauthenticated.' }, 401))
+      if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+      if (url.endsWith('/api/v1/auth/login')) return Promise.resolve(jsonResponse({ message: 'Invalid credentials.' }, 422))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/login?redirect=/admin/users')
+    await wrapper.find('#login-email').setValue('admin@utcp.local.test')
+    await wrapper.find('#login-password').setValue('wrong-password')
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(wrapper.find('#login-password').attributes('aria-describedby')).toContain('login-password-error')
+    expect(wrapper.find('#login-password').attributes('aria-invalid')).toBe('true')
+    expect(wrapper.find('[role="alert"]').text()).toContain('Invalid credentials.')
+    expect(window.localStorage.getItem('wrong-password')).toBeNull()
+    expect(window.sessionStorage.getItem('wrong-password')).toBeNull()
+    expect(calls.some((call) => call.url.endsWith('/api/v1/auth/login') && JSON.stringify(call.body).includes('wrong-password'))).toBe(true)
+
+    wrapper.unmount()
+    resetAppStateForTests()
+    vi.restoreAllMocks()
+    let authenticated = false
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString()
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (url.endsWith('/api/v1/auth/session')) {
+        return authenticated
+          ? Promise.resolve(jsonResponse(session))
+          : Promise.resolve(jsonResponse({ message: 'Unauthenticated.' }, 401))
+      }
+      if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+      if (url.endsWith('/api/v1/auth/login')) {
+        authenticated = true
+
+        return Promise.resolve(jsonResponse({ message: 'Authenticated.' }))
+      }
+      if (url.includes('/api/v1/admin/users?')) {
+        return Promise.resolve(jsonResponse({ users: [], pagination: { page: 1, per_page: 20, total: 0, has_more: false } }))
+      }
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const successWrapper = await mountApp('/login?redirect=/admin/users')
+    await successWrapper.find('#login-email').setValue('admin@utcp.local.test')
+    await successWrapper.find('#login-password').setValue('correct-password')
+    await successWrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/admin/users')
+    expect(window.localStorage.getItem('correct-password')).toBeNull()
+    expect(window.sessionStorage.getItem('correct-password')).toBeNull()
+  })
+
+  it('keeps change-password validation and redirect behavior component-backed', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString()
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+      if (url.endsWith('/api/v1/auth/change-password')) {
+        const body = JSON.parse(String(init?.body))
+        if (body.new_password === 'too-short') {
+          return Promise.resolve(jsonResponse({ message: 'The new password must be at least 12 characters.' }, 422))
+        }
+
+        return Promise.resolve(jsonResponse({ message: 'Password changed.' }))
+      }
+      if (url.includes('/api/v1/admin/users?')) {
+        return Promise.resolve(jsonResponse({ users: [], pagination: { page: 1, per_page: 20, total: 0, has_more: false } }))
+      }
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/change-password?redirect=/admin/users')
+    await wrapper.find('#current-password').setValue('current-password')
+    await wrapper.find('#new-password').setValue('new-valid-password')
+    await wrapper.find('#confirm-password').setValue('different-password')
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(wrapper.find('#confirm-password').attributes('aria-describedby')).toContain('confirm-password-error')
+    expect(wrapper.text()).toContain('New password and confirmation must match.')
+
+    await wrapper.find('#new-password').setValue('too-short')
+    await wrapper.find('#confirm-password').setValue('too-short')
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('The new password must be at least 12 characters.')
+
+    await wrapper.find('#new-password').setValue('new-valid-password')
+    await wrapper.find('#confirm-password').setValue('new-valid-password')
+    await wrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/admin/users')
+  })
+
+  it('renders tenants, memberships, and server role catalog controls through shared components', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    const managementSession = {
+      ...session,
+      capabilities: [...session.capabilities, 'platform.tenants.manage'],
+    }
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString()
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(managementSession))
+      if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+      if (url.endsWith('/api/v1/admin/tenants') && init?.method === 'POST') {
+        return Promise.resolve(jsonResponse({ tenant: { id: 'tenant-2', slug: 'proof', display_name: 'Proof Tenant', status: 'active' } }, 201))
+      }
+      if (url.endsWith('/api/v1/admin/tenants')) return Promise.resolve(jsonResponse({ tenants: [] }))
+      if (url.endsWith('/api/v1/admin/roles')) return Promise.resolve(jsonResponse(roleCatalog))
+      if (url.endsWith('/api/v1/admin/memberships') && init?.method === 'POST') {
+        return Promise.resolve(jsonResponse({ membership_id: 'membership-3' }, 201))
+      }
+      if (url.endsWith('/api/v1/admin/memberships')) {
+        return Promise.resolve(jsonResponse({ memberships: [{ id: 'membership-2', user_id: 'user-2', email: adminUser.email, display_name: adminUser.display_name, status: 'active' }] }))
+      }
+      if (url.includes('/api/v1/admin/users?')) {
+        return Promise.resolve(jsonResponse({ users: [adminUser], pagination: { page: 1, per_page: 20, total: 1, has_more: false } }))
+      }
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const tenantsWrapper = await mountApp('/admin/tenants')
+    expect(tenantsWrapper.find('#tenant-slug').exists()).toBe(true)
+    expect(tenantsWrapper.findComponent({ name: 'UiEmptyState' }).exists()).toBe(true)
+    await tenantsWrapper.find('#tenant-slug').setValue('proof')
+    await tenantsWrapper.find('#tenant-display-name').setValue('Proof Tenant')
+    await tenantsWrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/tenants') && JSON.stringify(call.body) === JSON.stringify({ slug: 'proof', display_name: 'Proof Tenant' }))).toBe(true)
+
+    const membershipsWrapper = await mountApp('/admin/memberships')
+    expect(membershipsWrapper.find('#membership-role').text()).toContain('Tenant member')
+    expect(membershipsWrapper.find('#membership-role').text()).toContain('Tenant admin')
+    expect(membershipsWrapper.find('#membership-role').text()).not.toContain('Platform admin')
+    await membershipsWrapper.find('#membership-user').setValue('user-2')
+    await membershipsWrapper.find('#membership-role').setValue('tenant-admin')
+    await membershipsWrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/memberships') && JSON.stringify(call.body) === JSON.stringify({ user_id: 'user-2', role_key: 'tenant-admin' }))).toBe(true)
+  })
+
+  it('keeps UI-B2 static adoption boundaries and the Users narrow metadata layout contract', () => {
+    const viewSources = {
+      'LoginView.vue': loginViewSource,
+      'ChangePasswordView.vue': changePasswordViewSource,
+      'TenantsView.vue': tenantsViewSource,
+      'MembershipsView.vue': membershipsViewSource,
+      'RuntimeNodesView.vue': runtimeNodesViewSource,
+      'UserDetailView.vue': userDetailViewSource,
+    }
+
+    for (const source of Object.values(viewSources)) {
+      expect(source).toContain("components/ui/Ui")
+      expect(source).not.toMatch(/<button[\s>]/)
+      expect(source).not.toMatch(/<select[\s>]/)
+    }
+    expect(viewSources['RuntimeNodesView.vue'].match(/<input[\s>]/g)).toHaveLength(1)
+    expect(viewSources['RuntimeNodesView.vue']).toContain('type="checkbox"')
+    for (const source of Object.entries(viewSources).filter(([viewName]) => viewName !== 'RuntimeNodesView.vue').map(([, source]) => source)) {
+      expect(source).not.toMatch(/<input[\s>]/)
+    }
+
+    const membershipSource = viewSources['MembershipsView.vue']
+    expect(membershipSource).not.toContain('<option value="tenant-member">')
+    expect(membershipSource).not.toContain('<option value="tenant-admin">')
+    expect(membershipSource).toContain('tenantRoleOptions')
+
+    const runtimeSource = viewSources['RuntimeNodesView.vue']
+    expect(runtimeSource.match(/adapter_key === 'asterisk-ari'/g)).toHaveLength(1)
+    expect(runtimeSource).not.toContain('feature gate')
+
+    expect(usersViewSource).toContain('class="subgrid"')
+    expect(usersViewSource).toContain('Memberships:')
+    expect(usersViewSource).toContain('TelephonySession:')
   })
 })

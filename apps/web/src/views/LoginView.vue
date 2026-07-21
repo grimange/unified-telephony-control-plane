@@ -1,57 +1,81 @@
 <template>
   <main class="app-shell">
-    <section
+    <UiPanel
+      id="login-title"
       class="auth-panel"
-      aria-labelledby="login-title"
+      label="Unified Telephony Control Plane"
+      title="Sign in"
     >
-      <p class="eyebrow">
-        Unified Telephony Control Plane
-      </p>
-      <h1 id="login-title">
-        Sign in
-      </h1>
       <form
         class="form-stack"
         @submit.prevent="login"
       >
-        <label>
-          Email
-          <input
-            v-model="loginForm.email"
-            autocomplete="username"
-            type="email"
-            required
-          >
-        </label>
-        <label>
-          Password
-          <input
-            v-model="loginForm.password"
-            autocomplete="current-password"
-            type="password"
-            required
-          >
-        </label>
-        <p
+        <UiFormField
+          id="login-email"
+          label="Email"
+          required
+        >
+          <template #default="{ id, describedBy, invalid }">
+            <UiTextInput
+              :id="id"
+              v-model="loginForm.email"
+              :aria-describedby="describedBy"
+              :invalid="invalid"
+              autocomplete="username"
+              type="email"
+              required
+            />
+          </template>
+        </UiFormField>
+        <UiFormField
+          id="login-password"
+          label="Password"
+          :error="error"
+          required
+        >
+          <template #default="{ id, describedBy, invalid }">
+            <UiTextInput
+              :id="id"
+              v-model="loginForm.password"
+              :aria-describedby="describedBy"
+              :invalid="invalid"
+              autocomplete="current-password"
+              type="password"
+              required
+            />
+          </template>
+        </UiFormField>
+        <UiAlert
           v-if="error"
-          class="form-error"
-          role="alert"
+          variant="error"
+          title="Authentication failed"
         >
           {{ error }}
-        </p>
-        <button
+        </UiAlert>
+        <UiLoadingState
+          v-if="busy"
+          label="Signing in."
+        />
+        <UiButton
           type="submit"
-          :disabled="busy"
+          :loading="busy"
+          loading-label="Signing in"
         >
-          {{ busy ? 'Signing in' : 'Sign in' }}
-        </button>
+          Sign in
+        </UiButton>
       </form>
-    </section>
+    </UiPanel>
   </main>
 </template>
 
 <script setup lang="ts">
 import { useRoute, useRouter } from 'vue-router'
+import UiAlert from '../components/ui/UiAlert.vue'
+import UiButton from '../components/ui/UiButton.vue'
+import UiFormField from '../components/ui/UiFormField.vue'
+import UiLoadingState from '../components/ui/UiLoadingState.vue'
+import UiPanel from '../components/ui/UiPanel.vue'
+import UiTextInput from '../components/ui/UiTextInput.vue'
 import { authenticate, busy, error, loginForm } from '../state/appState'
 import { authorizedRedirectTarget } from '../router'
 

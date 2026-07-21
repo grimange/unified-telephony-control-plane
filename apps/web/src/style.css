@@ -359,6 +359,7 @@ h3 {
 
 .data-row {
   flex-wrap: wrap;
+  min-width: 0;
   min-height: 58px;
   padding: var(--space-3);
   border: 1px solid var(--color-border-subtle);
@@ -369,6 +370,8 @@ h3 {
 .data-row span:first-child {
   display: grid;
   gap: 3px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .data-row small,
@@ -384,13 +387,45 @@ h3 {
 
 .subgrid {
   flex-basis: 100%;
+  min-width: 0;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--space-3);
+}
+
+.subgrid > *,
+.subgrid .meta {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.badge-row,
+.inline-record {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.inline-record span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .detail-section.nested {
   margin-top: var(--space-3);
   background: var(--color-surface);
+}
+
+.detail-block {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.detail-block.nested {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border-subtle);
 }
 
 .definition-grid {
@@ -645,5 +680,9 @@ h3 {
   .subgrid,
   .definition-grid {
     grid-template-columns: 1fr;
+  }
+
+  .subgrid {
+    width: 100%;
   }
 }

@@ -1,5 +1,6 @@
 <template>
   <section
+    ref="panelElement"
     class="ui-panel"
     :aria-labelledby="titleId"
   >
@@ -34,7 +35,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, useId } from 'vue'
+import { computed, ref, useId } from 'vue'
 
 const props = withDefaults(defineProps<{
   title?: string
@@ -50,4 +51,9 @@ const props = withDefaults(defineProps<{
 
 const generatedId = useId()
 const titleId = computed(() => props.id ?? `panel-${generatedId}`)
+const panelElement = ref<HTMLElement | null>(null)
+
+defineExpose({
+  focus: () => panelElement.value?.focus(),
+})
 </script>

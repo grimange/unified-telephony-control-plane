@@ -166,13 +166,12 @@ Create a reusable frontend presentation foundation that keeps styling, layout pr
 - `AppShell`, Dashboard, and `/admin/users` have adopted the token and component system.
 - Focused frontend tests now cover theme state, theme control behavior, core component contracts, AppShell regressions, Dashboard regressions, and representative management-view adoption.
 - UI-B2 controlled natural browser proof (evidence: [`docs/evidence/ui/ui-b2-themes-components-browser-proof.md`](../evidence/ui/ui-b2-themes-components-browser-proof.md)) live-proved the deployed `3b643d0` frontend (web image digest `sha256:f3e23437…`) through Playwright MCP: the system/light/dark contract, runtime media-query response, explicit light/dark persistence across reload and navigation, invalid-value recovery to system, the `utcp.appearance`-only storage boundary, an accessible keyboard-operable theme control that makes no API request, AppShell/Dashboard/Users adoption in both themes, core component semantics, responsive behavior, reduced-motion, WCAG-AA core-token contrast in both themes, and no material wrong-theme flash.
+- UI-B2 remaining-view repository implementation (evidence: [`docs/evidence/ui/ui-b2-remaining-view-component-adoption.md`](../evidence/ui/ui-b2-remaining-view-component-adoption.md)) migrated Login, Change Password, Tenants, Memberships, Runtime Nodes, and User Detail to the shared token/component authority, removed duplicate screen-local visual-control styling in those views, corrected the Users mobile metadata overflow contract, preserved existing backend API/domain behavior, and added focused component-adoption, role-catalog, adapter-seam, credential-storage, and responsive-layout regression coverage.
 
 ### Remaining Implementation
 
-- Broaden component adoption across the remaining management views (Tenants, Memberships, Runtime nodes, User detail, Change password, Login) without changing domain behavior.
-- Stack the `/admin/users` list-row metadata subgrid on narrow viewports so the Users view has no page-level horizontal overflow at mobile widths (Dashboard already reflows cleanly; observed as a non-blocking UI-B2 responsive finding).
 - Standardize telephony and runtime status presentation.
-- UI-B remains In Progress until component adoption spans the remaining management views; the token/theme/core-component foundation and its browser acceptance are proven.
+- UI-B remains In Progress until controlled natural browser proof covers the migrated authentication and management surfaces, including the corrected Users narrow-layout overflow behavior in light and dark themes.
 
 ### Test Contract
 
@@ -223,8 +222,9 @@ Provide reusable data-management patterns so UTCP operator workflows present can
 - Pagination and forms exist.
 - `ApiRequestError` provides a typed API failure boundary.
 - Several management pages already operate.
+- UI-B2 migrated the existing Runtime Nodes adapter form to shared visual primitives while keeping one bounded view-local `asterisk-ari` rendering seam.
 - Shared table, form, validation, and notification systems do not yet exist.
-- One Asterisk-specific adapter-form branch remains in `App.vue`.
+- One Asterisk-specific adapter-form branch remains in the Runtime Nodes view.
 
 ### Boundary
 
@@ -236,7 +236,7 @@ It must not introduce checked-in capability catalogs, runtime-management authori
 
 - Extract shared table, pagination, filter, sorting, form, validation, confirmation, and notification patterns.
 - Standardize API error and state presentation.
-- Replace the Asterisk-specific adapter-form branch with server-catalog-driven rendering.
+- Replace the bounded Asterisk-specific adapter-form branch with server-catalog-driven adapter form rendering once the catalog contract supports it.
 - Preserve one-time and write-only secret handling.
 
 ### Test Contract
