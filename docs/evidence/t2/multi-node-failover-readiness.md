@@ -11582,3 +11582,112 @@ as the accepted unlimited slot value.
 ## Pending proof
 No live capacity exhaustion, peer selection, pending-no-capacity dwell, slot release, or automatic retry
 proof was performed in this repository-only slice. That controlled live proof remains pending.
+
+---
+
+# T5-A70 — Live proof: deterministic capacity exhaustion and automatic retry (97b56d6)
+
+Verdict: `T5_DETERMINISTIC_CAPACITY_AND_PLACEMENT_LIVE_PROOF_COMPLETE`. Live proof against `utcp-local`
+through canonical authenticated APIs. Baseline `UTCP_PHASE=T1`, clean tree at `97b56d6`. Evidence-only
+doc change.
+
+## Image rollout
+Built canonical api image from clean `97b56d6` (verified capacity-aware selector present: 8 hits for
+runtimeNodeHasConferenceCapacity/conferenceAvailableSlotRank/retryInitialPendingNoCapacityConference),
+pushed sha256:ee2e6c7bc9e7472d03d00baae2b8e1ab42ac780cd5416f681ba8333d6d742b81. No migration in the
+commit. Rolled out only the workloads executing the changed placement/coordinator code: api, scheduler,
+worker, telephony-command-worker — all confirmed on digest ee2e6c7. Did not restart Asterisk/Kamailio/
+PostgreSQL/Redis/Traefik. The failover coordinator runs `Schedule::command('telephony-domain:
+failover-coordinator --once')->everyMinute()`, so automatic retry cadence is <=60s per sweep.
+
+## Runtime baseline
+Two asterisk-ari RuntimeNodes, both active/ready with conference capabilities: A=`1d15ca88` (Local
+Asterisk ARI), B=`05ddb383` (Local Asterisk ARI B), tenant `7be59d2a-07c8-4b4e-a86d-c97771a670b9`. Both
+Asterisk Deployments 1/1 (+ listener 1/1). 0 open/pending conferences, 0 active bindings, 0 actionable
+operations, all simulators disabled.
+
+## Original placement configuration
+Node A: capacity_weight=10, placement_priority=100. Node B: capacity_weight=10, placement_priority=100.
+
+## Temporary capacity configuration
+Authenticated normally through the public gateway (app.utcp.local.test): GET /api/v1/auth/csrf → POST
+/api/v1/auth/login (email/password; credential obtained via the canonical break-glass
+`utcp:user-access:reset-password --show-password` for the existing `admin@utcp.local.test` tenant-admin)
+→ POST /api/v1/auth/change-password (required) → POST /api/v1/auth/tenant-context. Session projection
+confirmed `runtime.nodes.manage` + `telephony.conferences.manage`. No injected/DB/Redis session, no auth
+bypass, no direct service invocation. Via PATCH /api/v1/admin/runtime-nodes/{id}: node A →
+capacity_weight=1, placement_priority=10; node B → capacity_weight=1, placement_priority=20. Persisted
+read model confirmed (A cw=1/pp=10 ready, B cw=1/pp=20 ready); capabilities and active/ready state
+preserved. No direct SQL.
+
+## Conference 1 placement
+Created + opened a disposable Conference (no runtime_node_id) via POST /api/v1/admin/conferences +
+/desired-state open. Result: desired_state=open, failover_state=null, bound to **node A** (preferred,
+lowest priority 10). Usage: A=1/1, B=0/1, total active bindings=1, one binding, not pending.
+
+## Conference 2 peer placement
+Created + opened a second disposable Conference. Node A full → the selector **skipped the preferred
+node** and bound to **node B**. Result: desired_state=open, failover_state=null, node=05ddb383. Usage:
+A=1/1, B=1/1. No oversubscription.
+
+## Capacity exhaustion / Pending-no-capacity state
+Created + opened a third disposable Conference (no explicit node) with both nodes full. Open returned
+HTTP 200 with desired_state=**open** and failover_state=**pending_no_capacity** (durable pending
+lifecycle; no hidden fallback). Conf3 had **0 bindings**; A=1/1, B=1/1 (neither exceeded one active
+binding); pending total=1. The `utcp_conference_failover_pending{failover_state="pending_no_capacity"}`
+metric read **1** after the next Prometheus scrape.
+
+## Oversubscription proof
+At every step neither node exceeded its 1-slot limit: after Conf1 A=1/B=0; after Conf2 A=1/B=1; after
+Conf3 A=1/B=1 with Conf3 unbound; after retry A=1/B=1 with Conf3 holding the single freed A slot. Total
+active bindings never exceeded 2 (the two available slots).
+
+## Slot release
+Closed Conference 1 via POST /api/v1/admin/conferences/{id}/desired-state {closed} at 01:51:59 UTC
+(HTTP 200). Conference 1 → desired_state=closed; its active RuntimeBinding retired through the canonical
+reconciliation lifecycle (asynchronous). Node A usage observed dropping to 0/1 at ~01:53:17 once the
+binding retired. Conference 3 remained desired=open + pending_no_capacity until automatic retry. No row
+deletion or direct state mutation.
+
+## Automatic retry
+No manual coordinator/reconciliation command was invoked. The scheduled everyMinute failover coordinator
+sweep automatically re-attempted the initial-pending conference once node A freed. Timeline (release
+01:51:59): pending held while A still occupied; A freed ~01:53:17; **Conf3 automatically placed on node
+A at ~01:54:18** — failover_state cleared to null, one active binding on 1d15ca88, A=1/1, B=1/1.
+Elapsed release→automatic placement ≈ **2m19s** (bounded by the everyMinute coordinator + binding-retire
+reconciliation). Exactly one active binding for Conf3 (1 total, no duplicate operation/binding); node B
+unchanged at 1/1; the pending-no-capacity metric returned to **0** after the next scrape. The retry used
+the same canonical `selectRuntimeNodeForConference` + `writeBinding` path (no separate balancer).
+
+## Explicit-node boundary
+Not repeated live; covered by focused tests. (An exploratory explicit-node request did not cleanly
+execute and created no stray state — verified no `t5a70-explicit-%` conference row and total active
+bindings unchanged. The explicit-selection/no-fallback boundary is covered by the focused
+telephony-domain/asterisk-conference regression suites.)
+
+## Cleanup and configuration restoration
+Closed Conferences 2 and 3 via the normal authenticated API (HTTP 200 each); all proof bindings retired
+through reconciliation (proof active bindings → 0). Restored node A and node B to the original
+capacity_weight=10, placement_priority=100 via PATCH (HTTP 200). No direct SQL.
+
+## Final runtime state
+Both RuntimeNodes ready with restored cw=10/pp=100; both Asterisk Deployments 1/1 (+ listener 1/1);
+0 open proof conferences; 0 pending; 0 active bindings (total); 0 actionable operations; all simulators
+disabled. Network/config fault-free; no disposable resource remains.
+
+## Divergences
+None material. Binding retirement and pending-retry are asynchronous (reconciliation/coordinator
+cadence), so the release→placement latency (~2m19s) reflects the everyMinute schedule, not a defect —
+the principal claims (preferred→peer→pending→automatic retry, no oversubscription, no manual
+reconciliation) all held. The admin runtime-node GET projection does not surface capacity_weight/
+placement_priority under those key names (persisted values confirmed via the DB read and honored by the
+selector); not a placement defect.
+
+## Verification performed (T5-A70)
+Canonical API login/change-password/tenant-context; Admin API capacity config + conference create/open/
+close; DB read-only observation of bindings/usage/pending; Prometheus pending-metric queries. make
+repository-hygiene / workflow-check / secret-scan: PASS. make *-config-check (4): PASS. make *-test
+(runtime-engine 21, telephony-domain 66, asterisk-ari 102, asterisk-conference 123,
+asterisk-conference-recovery 97): PASS. git diff --check / --cached: clean. No manual coordinator/
+reconciliation invocation, no direct SQL write, no RuntimeNode/Kubernetes mutation beyond the canonical
+Admin API capacity config (restored), no Pod scale/delete, no Asterisk/Kamailio restart.
