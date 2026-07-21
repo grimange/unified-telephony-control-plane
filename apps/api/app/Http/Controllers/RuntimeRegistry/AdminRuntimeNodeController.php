@@ -67,7 +67,7 @@ final class AdminRuntimeNodeController extends Controller
             'placement_region' => ['nullable', 'string', 'max:80'],
             'placement_zone' => ['nullable', 'string', 'max:80'],
             'placement_priority' => ['sometimes', 'integer', 'min:1', 'max:100000'],
-            'capacity_weight' => ['sometimes', 'integer', 'min:1', 'max:100000'],
+            'capacity_weight' => ['sometimes', 'integer', 'min:0', 'max:100000'],
             'labels' => ['sometimes', 'array'],
         ]);
 
@@ -274,7 +274,7 @@ final class AdminRuntimeNodeController extends Controller
             'placement_region' => ['nullable', 'string', 'max:80'],
             'placement_zone' => ['nullable', 'string', 'max:80'],
             'placement_priority' => ['sometimes', 'integer', 'min:1', 'max:100000'],
-            'capacity_weight' => ['sometimes', 'integer', 'min:1', 'max:100000'],
+            'capacity_weight' => ['sometimes', 'integer', 'min:0', 'max:100000'],
             'labels' => ['sometimes', 'array'],
         ];
     }

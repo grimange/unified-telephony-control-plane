@@ -109,6 +109,24 @@ final class RuntimeRegistryTest extends TestCase
         $this->assertStringNotContainsString($secret.'-rotated', $serialized);
     }
 
+    public function test_runtime_node_capacity_weight_zero_is_accepted_as_unlimited_slots(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin();
+        $payload = $this->nodePayload('unlimited-capacity');
+        $payload['capacity_weight'] = 0;
+
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $payload)
+            ->assertCreated()
+            ->assertJsonPath('runtime_node.placement.capacity_weight', 0)
+            ->json('runtime_node');
+
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->patchJson("/api/v1/admin/runtime-nodes/{$node['id']}", ['capacity_weight' => 0])
+            ->assertOk()
+            ->assertJsonPath('runtime_node.placement.capacity_weight', 0);
+    }
+
     public function test_tenant_member_cross_tenant_access_and_invalid_inputs_fail_closed(): void
     {
         [$admin, $tenantId] = $this->createTenantAdmin('admin-two@utcp.local.test');

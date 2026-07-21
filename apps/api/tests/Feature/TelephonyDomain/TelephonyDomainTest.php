@@ -384,7 +384,7 @@ final class TelephonyDomainTest extends TestCase
             'observed_state' => 'stale',
             'configuration_version' => 1,
             'placement_priority' => 100,
-            'capacity_weight' => 1,
+            'capacity_weight' => 0,
             'labels' => json_encode(['purpose' => 'stale-binding-regression'], JSON_THROW_ON_ERROR),
             'created_at' => now(),
             'updated_at' => now(),
@@ -429,6 +429,212 @@ final class TelephonyDomainTest extends TestCase
                 ->where('runtime_node_id', $staleNodeId)
                 ->count(),
         );
+    }
+
+    public function test_capacity_aware_selector_uses_deterministic_ranking(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('capacity-ranking');
+        $nodeB = $this->runtimeNode($tenantId, 'capacity-ranking-b');
+        $nodeC = $this->runtimeNode($tenantId, 'capacity-ranking-c');
+
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['placement_priority' => 5, 'capacity_weight' => 1]);
+        DB::table('runtime_nodes')->where('id', $nodeB)->update(['placement_priority' => 10, 'capacity_weight' => 100]);
+        DB::table('runtime_nodes')->where('id', $nodeC)->update(['placement_priority' => 10, 'capacity_weight' => 100]);
+        $this->assertSame($nodeA, $this->selectConferenceRuntimeNode($tenantId));
+        $this->assertSame($nodeA, $this->selectConferenceRuntimeNode($tenantId));
+
+        $this->insertActiveConferenceBinding($tenantId, $nodeB, 'capacity-ranking-b-bound');
+        $this->insertActiveConferenceBinding($tenantId, $nodeC, 'capacity-ranking-c-bound-one');
+        $this->insertActiveConferenceBinding($tenantId, $nodeC, 'capacity-ranking-c-bound-two');
+
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['placement_priority' => 50, 'capacity_weight' => 1]);
+        DB::table('runtime_nodes')->where('id', $nodeB)->update(['placement_priority' => 10, 'capacity_weight' => 3]);
+        DB::table('runtime_nodes')->where('id', $nodeC)->update(['placement_priority' => 10, 'capacity_weight' => 4]);
+        $this->assertSame($nodeB, $this->selectConferenceRuntimeNode($tenantId), 'lower active binding count must break equal available-capacity ties');
+
+        DB::table('runtime_nodes')->where('id', $nodeC)->update(['capacity_weight' => 5]);
+        $this->assertSame($nodeC, $this->selectConferenceRuntimeNode($tenantId), 'greater available capacity must win when priority is equal');
+
+        $nodeD = $this->runtimeNode($tenantId, 'capacity-ranking-d');
+        $nodeE = $this->runtimeNode($tenantId, 'capacity-ranking-e');
+        DB::table('runtime_nodes')->whereIn('id', [$nodeA, $nodeB, $nodeC])->update(['placement_priority' => 100, 'capacity_weight' => 1]);
+        DB::table('runtime_nodes')->whereIn('id', [$nodeD, $nodeE])->update(['placement_priority' => 10, 'capacity_weight' => 0]);
+        $expectedUnlimitedTieWinner = min($nodeD, $nodeE);
+        $this->assertSame($expectedUnlimitedTieWinner, $this->selectConferenceRuntimeNode($tenantId), 'unlimited nodes sort deterministically above finite capacity and then by RuntimeNode ID');
+
+        $conference = $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson('/api/v1/admin/conferences', [
+                'slug' => 'capacity-ranking-auto',
+                'display_name' => 'Capacity Ranking Auto',
+            ])
+            ->assertCreated()
+            ->json('conference');
+        $opened = $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/admin/conferences/{$conference['id']}/desired-state", ['desired_state' => 'open'])
+            ->assertOk()
+            ->json('conference');
+        $this->assertSame($expectedUnlimitedTieWinner, $opened['runtime_node_id']);
+    }
+
+    public function test_capacity_eligibility_excludes_full_non_ready_events_degraded_missing_capability_and_other_tenant_nodes(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('capacity-eligibility');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['capacity_weight' => 1]);
+        $this->openConference($admin, $tenantId, $nodeA, 'capacity-eligibility-occupied');
+        $this->runtimeNode($tenantId, 'capacity-eligibility-events', 'events_degraded');
+        $this->runtimeNode($tenantId, 'capacity-eligibility-missing-capability', 'ready', 'active', ['conference.lifecycle']);
+        [, , $otherTenantId, $otherTenantNode] = $this->fixture('capacity-eligibility-other');
+        DB::table('runtime_nodes')->where('id', $otherTenantNode)->update(['capacity_weight' => 0]);
+
+        $conference = $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson('/api/v1/admin/conferences', [
+                'slug' => 'capacity-eligibility-pending',
+                'display_name' => 'Capacity Eligibility Pending',
+            ])
+            ->assertCreated()
+            ->json('conference');
+        $pending = $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/admin/conferences/{$conference['id']}/desired-state", ['desired_state' => 'open'])
+            ->assertOk()
+            ->json('conference');
+
+        $this->assertSame('open', $pending['desired_state']);
+        $this->assertNull($pending['runtime_node_id']);
+        $this->assertSame('pending_no_capacity', DB::table('conferences')->where('id', $conference['id'])->value('failover_state'));
+        $this->assertSame(0, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+
+        $unlimitedNode = $this->runtimeNode($tenantId, 'capacity-eligibility-unlimited');
+        DB::table('runtime_nodes')->where('id', $unlimitedNode)->update(['capacity_weight' => 0, 'placement_priority' => 1]);
+        $conference = $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson('/api/v1/admin/conferences', [
+                'slug' => 'capacity-eligibility-unlimited-open',
+                'display_name' => 'Capacity Eligibility Unlimited',
+            ])
+            ->assertCreated()
+            ->json('conference');
+        $opened = $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/admin/conferences/{$conference['id']}/desired-state", ['desired_state' => 'open'])
+            ->assertOk()
+            ->json('conference');
+
+        $this->assertSame($unlimitedNode, $opened['runtime_node_id']);
+        $this->assertNotSame($otherTenantId, $tenantId);
+    }
+
+    public function test_explicit_runtime_node_requests_cannot_bypass_capacity(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('capacity-explicit');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['capacity_weight' => 1]);
+        $occupied = $this->openConference($admin, $tenantId, $nodeA, 'capacity-explicit-occupied');
+
+        $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson('/api/v1/admin/conferences', [
+                'slug' => 'capacity-explicit-full',
+                'display_name' => 'Capacity Explicit Full',
+                'runtime_node_id' => $nodeA,
+            ])
+            ->assertUnprocessable();
+
+        $draft = $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson('/api/v1/admin/conferences', [
+                'slug' => 'capacity-explicit-draft',
+                'display_name' => 'Capacity Explicit Draft',
+            ])
+            ->assertCreated()
+            ->json('conference');
+        $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/admin/conferences/{$draft['id']}/runtime-binding", ['runtime_node_id' => $nodeA])
+            ->assertUnprocessable();
+
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('runtime_node_id', $nodeA)->where('status', 'active')->count());
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $occupied['id'])->value('runtime_node_id'));
+    }
+
+    public function test_initial_pending_no_capacity_retries_after_slot_release(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('capacity-retry');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['capacity_weight' => 1]);
+        $occupied = $this->openConference($admin, $tenantId, $nodeA, 'capacity-retry-occupied');
+
+        $pendingConference = $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson('/api/v1/admin/conferences', [
+                'slug' => 'capacity-retry-pending',
+                'display_name' => 'Capacity Retry Pending',
+            ])
+            ->assertCreated()
+            ->json('conference');
+        $pending = $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/admin/conferences/{$pendingConference['id']}/desired-state", ['desired_state' => 'open'])
+            ->assertOk()
+            ->json('conference');
+        $this->assertNull($pending['runtime_node_id']);
+        $this->assertSame('pending_no_capacity', DB::table('conferences')->where('id', $pending['id'])->value('failover_state'));
+
+        $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/admin/conferences/{$occupied['id']}/desired-state", ['desired_state' => 'closed'])
+            ->assertOk();
+        DB::table('conferences')->where('id', $occupied['id'])->update(['observed_state' => 'closed', 'updated_at' => now()]);
+        $retired = app(TelephonyDomainService::class)->retireClosedConferenceBindings(10, $tenantId);
+        $this->assertSame(1, $retired['retired']);
+
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('capacity-retry-sweep', 10);
+        $retried = DB::table('conferences')->where('id', $pending['id'])->first();
+        $this->assertSame($nodeA, (string) $retried->runtime_node_id);
+        $this->assertNull($retried->failover_state);
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $pending['id'])->where('runtime_node_id', $nodeA)->where('status', 'active')->count());
+
+        app(ConferenceFailoverCoordinator::class)->sweepOnce('capacity-retry-idempotent-sweep', 10);
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $pending['id'])->where('status', 'active')->count());
+    }
+
+    public function test_replacement_recounts_after_lock_and_continues_to_next_candidate_when_final_slot_is_consumed(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('capacity-race');
+        $nodeB = $this->runtimeNode($tenantId, 'capacity-race-b');
+        $nodeC = $this->runtimeNode($tenantId, 'capacity-race-c');
+        DB::table('runtime_nodes')->where('id', $nodeB)->update(['placement_priority' => 10, 'capacity_weight' => 1]);
+        DB::table('runtime_nodes')->where('id', $nodeC)->update(['placement_priority' => 20, 'capacity_weight' => 1]);
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'capacity-race-bound');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['observed_state' => 'unavailable', 'updated_at' => now()]);
+
+        $consumedFinalSlot = false;
+        DB::listen(function (object $query) use (&$consumedFinalSlot, $tenantId, $nodeB): void {
+            if ($consumedFinalSlot || ! str_contains($query->sql, 'active_bindings')) {
+                return;
+            }
+            $consumedFinalSlot = true;
+            $this->insertActiveConferenceBinding($tenantId, $nodeB, 'capacity-race-competing');
+        });
+
+        $result = app(TelephonyDomainService::class)->failoverRebindConference(
+            ExecutionContext::system(tenantId: $tenantId, reason: 'capacity race test'),
+            $tenantId,
+            $conference['id'],
+            'capacity-race',
+        );
+
+        $this->assertTrue($consumedFinalSlot);
+        $this->assertSame('rebound', $result['status']);
+        $this->assertSame($nodeC, $result['runtime_node_id']);
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('runtime_node_id', $nodeB)->where('status', 'active')->count());
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('runtime_node_id', $nodeC)->where('status', 'active')->count());
+    }
+
+    public function test_idempotent_open_does_not_consume_another_slot_and_participant_inherits_binding(): void
+    {
+        [$admin, $member, $tenantId, $nodeA] = $this->fixture('capacity-idempotent');
+        DB::table('runtime_nodes')->where('id', $nodeA)->update(['capacity_weight' => 1]);
+        $conference = $this->openConference($admin, $tenantId, $nodeA, 'capacity-idempotent-open');
+
+        $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/admin/conferences/{$conference['id']}/desired-state", ['desired_state' => 'open'])
+            ->assertOk();
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('conference_id', $conference['id'])->where('status', 'active')->count());
+
+        $participant = $this->admitParticipantFor($member, $tenantId, $conference['id']);
+        $this->assertSame($conference['id'], $participant['conference_id']);
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $conference['id'])->value('runtime_node_id'));
+        $this->assertSame(1, DB::table('conference_runtime_bindings')->where('runtime_node_id', $nodeA)->where('status', 'active')->count());
     }
 
     public function test_open_conference_runtime_rebind_atomically_retires_former_binding_and_wakes_reconciliation(): void
@@ -1736,7 +1942,7 @@ final class TelephonyDomainTest extends TestCase
             'observed_state' => 'ready',
             'configuration_version' => 1,
             'placement_priority' => 100,
-            'capacity_weight' => 1,
+            'capacity_weight' => 0,
             'labels' => json_encode(['purpose' => 'c5-test'], JSON_THROW_ON_ERROR),
             'created_at' => now(),
             'updated_at' => now(),
@@ -1796,7 +2002,7 @@ final class TelephonyDomainTest extends TestCase
             'observed_state' => $observedState,
             'configuration_version' => 1,
             'placement_priority' => 100,
-            'capacity_weight' => 1,
+            'capacity_weight' => 0,
             'labels' => json_encode(['purpose' => 't5-rebind-test'], JSON_THROW_ON_ERROR),
             'created_at' => now(),
             'updated_at' => now(),
@@ -1812,6 +2018,52 @@ final class TelephonyDomainTest extends TestCase
         }
 
         return $nodeId;
+    }
+
+    private function selectConferenceRuntimeNode(string $tenantId): ?string
+    {
+        $selector = new \ReflectionMethod(TelephonyDomainService::class, 'selectRuntimeNodeForConference');
+        $selector->setAccessible(true);
+
+        return $selector->invokeArgs(app(TelephonyDomainService::class), [
+            $tenantId,
+            ['conference.lifecycle', 'conference.participation'],
+            null,
+            ['active', 'draining'],
+            null,
+            null,
+            false,
+        ]);
+    }
+
+    private function insertActiveConferenceBinding(string $tenantId, string $runtimeNodeId, string $slug): string
+    {
+        $conferenceId = IdentityIds::new();
+        DB::table('conferences')->insert([
+            'id' => $conferenceId,
+            'tenant_id' => $tenantId,
+            'slug' => $slug,
+            'display_name' => 'Capacity Fixture '.$slug,
+            'runtime_node_id' => $runtimeNodeId,
+            'desired_state' => 'open',
+            'observed_state' => 'ready',
+            'configuration_generation' => 1,
+            'opened_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('conference_runtime_bindings')->insert([
+            'id' => IdentityIds::new(),
+            'tenant_id' => $tenantId,
+            'conference_id' => $conferenceId,
+            'runtime_node_id' => $runtimeNodeId,
+            'status' => 'active',
+            'bound_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $conferenceId;
     }
 
     private function assertFailoverCoordinatorRevalidatesRecoveredStateBeforeCutoff(string $recoveredState): void

@@ -11501,3 +11501,84 @@ make repository-hygiene / workflow-check / secret-scan: PASS. make *-config-chec
 (runtime-engine 21, telephony-domain 60, asterisk-ari 102, asterisk-conference 117,
 asterisk-conference-recovery 97): PASS. git diff --check / --cached: clean. No live Conference/failover/
 capacity/SQL/RuntimeNode/Kubernetes mutation performed.
+
+# T5-A69 — Repository implementation: deterministic capacity-aware Conference placement
+
+Status: repository implementation completed; controlled live capacity proof remains pending.
+
+## Capacity semantics
+`runtime_nodes.capacity_weight` is now the declared Conference-slot limit for the first capacity slice.
+`capacity_weight > 0` means at most that many active Conference RuntimeBindings may reserve the node.
+`capacity_weight = 0` means unlimited capacity for backward compatibility. Current usage is derived only
+from `conference_runtime_bindings` rows with `status='active'`; participant count, channel count, PBX
+bridge count, Kubernetes resources, provider economics, and runtime observations remain outside this
+capacity unit.
+
+## Canonical selector extension
+`TelephonyDomainService::selectRuntimeNodeForConference()` remains the single Conference placement
+selector. Initial open, failover replacement, replacement eligibility probes, and explicit RuntimeNode
+binding all route through that selector. The selector preserves the existing hard filters for tenant,
+desired state, `observed_state='ready'`, required capabilities, replacement exclusions, and requested
+RuntimeNode constraints, then applies the capacity check as another hard eligibility condition. Non-ready
+states, including `events_degraded`, remain excluded from new placement.
+
+## Deterministic ranking and reservation
+Eligible candidates are ranked explicitly by:
+
+```text
+placement_priority ASC
+available slots DESC
+active binding count ASC
+RuntimeNode ID ASC
+```
+
+Unlimited-capacity nodes use a deterministic available-slot rank greater than any finite node. The
+selector does not depend on natural database order, runtime response timing, Kubernetes Pod order,
+hostnames, or randomness.
+
+Placement still occurs inside the existing Conference transaction. The selector computes candidate usage
+from active bindings, locks each selected `runtime_nodes` row with `FOR UPDATE`, revalidates tenant,
+desired state, readiness, capabilities, replacement exclusion, and requested-node constraints, recounts
+active bindings after the row lock, and only then returns the reservation candidate. If the candidate's
+last slot was consumed by a concurrent transaction, the selector continues to the next deterministic
+candidate. The existing active-binding writer and PostgreSQL one-active-binding constraint remain the
+binding authority; idempotent placement reuses the existing active binding instead of consuming another
+slot.
+
+## Explicit-node boundary
+An explicit `runtime_node_id` is treated as a constrained placement request. The requested node must pass
+the same tenant, lifecycle, readiness, capability, exclusion, locking, and capacity checks. A full or
+otherwise ineligible requested node returns the existing explicit-selection error behavior and does not
+fall back to another node.
+
+## Initial and replacement alignment
+Initial placement and failover/restoration replacement now share the same capacity-aware selector and
+reservation policy. Replacement retains only the established extra exclusions, including the failed or
+retired former node and the active-only desired-state probe where already required. Participant admission
+continues to inherit the Conference binding and performs no independent node selection.
+
+## Durable pending-no-capacity and retry
+Automatic initial open with no eligible capacity persists `conferences.failover_state =
+pending_no_capacity`, keeps `desired_state='open'`, and creates no active RuntimeBinding. This is the
+same durable pending state already used for replacement no-capacity, so the existing
+`utcp_conference_failover_pending{failover_state="pending_no_capacity"}` observability remains the
+current signal. The existing failover coordinator sweep now also reconsiders initial pending-no-capacity
+Conferences by rerunning the canonical selector and binding writer. Capacity release through binding
+retirement, Conference close, RuntimeNode readiness or `events_degraded` recovery, restoration, or a
+capacity-weight increase can be picked up by the same idempotent sweep path without a manual command or
+new scheduler.
+
+## Focused test coverage
+Repository tests now cover deterministic repeated selection, priority ordering, greater available
+capacity ordering, lower active-binding count ordering, RuntimeNode ID tie-breaking, unlimited-capacity
+ordering, exclusion of non-ready and `events_degraded` nodes, missing-capability exclusion, finite full
+node exclusion, unlimited-node eligibility, tenant isolation, explicit-node capacity enforcement,
+initial pending-no-capacity without an active binding, automatic retry after slot release, successful
+pending retry clearing state and creating one active binding, idempotent repeated sweeps, replacement
+former-node exclusion, final-slot recount with next-candidate fallback, idempotent repeated open, and
+participant admission inheriting the Conference binding. Runtime registry tests cover `capacity_weight=0`
+as the accepted unlimited slot value.
+
+## Pending proof
+No live capacity exhaustion, peer selection, pending-no-capacity dwell, slot release, or automatic retry
+proof was performed in this repository-only slice. That controlled live proof remains pending.
