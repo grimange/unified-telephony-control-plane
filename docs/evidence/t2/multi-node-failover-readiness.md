@@ -11907,3 +11907,291 @@ and application-dialog routing. The implementation roadmap remains the sequencin
 plus completed-phase evidence remain implemented-authority records. Existing phase-identifier
 reconciliation supersedes the initial plan's broad T1 sequencing without inventing another phase
 numbering scheme.
+
+---
+
+# T5-A73 — Contract: conference-recovery metric-event retention and pruning (evidence-only)
+
+Verdict: `T5_CONFERENCE_RECOVERY_EVENT_RETENTION_CONTRACT_DEFINED`. Narrow evidence-only audit; no
+production code changed. Baseline `UTCP_PHASE=T1`, clean tree at `2620225`.
+
+## Recovery data stores
+The in-scope store is exactly **one** table: `conference_recovery_metric_events`
+(migration 2026_07_17_140000). Columns: `id` (char32 PK), `adapter_key`, `resource_type`, `result`,
+`failure_class`, `reason`, `created_at`, `updated_at`. Indexes: `created_at`, `(resource_type,result)`,
+`(adapter_key,result)`. **No foreign keys in or out; no tenant/conference/participant/node/operation
+IDs** — only bounded enum-ish diagnostic columns. Writer: `RuntimeConferenceInspectionService::
+recordInspectionMetric()` — insert-only, best-effort, wrapped in try/catch that swallows all errors with
+the comment "Recovery telemetry is diagnostic evidence; it must not affect reconciliation authority."
+Every row is immutable and terminal at insert (never updated, never reopened).
+Classification of adjacent stores (explicitly OUT of this slice):
+- `runtime_operations` / operation attempts — **canonical lifecycle state + idempotency + retry
+  authority** (read by ReconciliationWorker, IdempotencyStore). Not pruneable telemetry.
+- `control_plane_outbox_messages` — **canonical audit/event evidence** (also read by MetricsController
+  for failover/binding-retired/reclaim counters). Canonical; separate retention question, not this slice.
+- `runtime_event_receipts` / `runtime_event_connection_epochs` / `runtime_listener_leases` /
+  `conference_runtime_bindings` — canonical reconciliation/listener/binding authority. Not in scope.
+Only `conference_recovery_metric_events` is a pure derived metric-event source with no runtime authority.
+
+## Canonical state versus historical evidence
+- Canonical active state: none in this table (no row ever gates a runtime decision).
+- Terminal audit evidence: every row (terminal-on-insert diagnostic inspection outcome).
+- Derived metric events: 100% of rows — used solely to derive Prometheus counters.
+- Disposable duplicate evidence: the aggregate meaning (counts by adapter/resource/result/failure/reason)
+  is what matters; individual raw rows past a retention window are disposable once their contribution to
+  the bounded alert windows has elapsed.
+No second summary store is required for correctness IF the cumulative-counter queries are corrected (see
+Metric preservation) — the compact canonical value each metric needs is derivable from the retained
+recent window, and the historical trend lives in Prometheus's own TSDB, not in the source rows.
+
+## Consumers and dependencies
+Verified the ONLY readers are `MetricsController` (three methods) — no runtime service, reconciler,
+idempotency check, admin API, or FK references the table (grep confirms only writer +
+MetricsController). Answer to "Can deletion of a row change a future runtime decision?": **No.** Deletion
+affects only the value of three Prometheus metric families and (transitively) two 10-minute-window
+alerts. Consumers:
+- `conferenceRecoveryInspectionMetrics()` → `utcp_conference_runtime_inspections_total`
+  (COUNT(*) GROUP BY adapter_key,resource_type,result,failure_class — **whole-table cumulative**).
+- `conferenceRecoveryInspectionFailureMetrics()` → `utcp_conference_runtime_inspection_failures_total`
+  (COUNT(*) WHERE result IN (unavailable,failed) GROUP BY ... — **whole-table cumulative**).
+- `runtimeReferenceHealthMetrics()` → `utcp_conference_runtime_reference_health_total`
+  (COUNT(*) GROUP BY resource_type,reason mapped to health — **whole-table cumulative**; this is the
+  T5-A62 corrected aggregation).
+Alerts: `UTCPTelephonyConferenceRuntimeInspectionFailures` = `sum(increase(...inspection_failures_total
+[10m])) > 3`; `UTCPAsteriskAriReferenceFamilyDegraded` = `sum(increase(...reference_health_total
+{health="degraded_unavailable"}[10m])) > 3`. Both use `increase()` over a 10m window.
+
+## Terminal eligibility
+Every row is terminal at insert (no status column, no retry, no reconciliation reuse, no idempotency
+participation, no child records, immutable). Therefore the eligibility predicate collapses to pure age:
+```
+row.created_at < now() - retention_cutoff  → eligible for pruning
+```
+There is no "still-retryable" or "still-active" subset to protect within this table. (The generic guard
+"terminal + no retry/reconciliation authority + no active dependency + older than cutoff" is satisfied
+for every row once older than the cutoff, because the first three conditions hold for all rows by
+construction.) The one operational constraint: the cutoff must be strictly larger than the alert
+evaluation window so pruning can never remove rows an active `increase([10m])` alert still needs.
+
+## Current growth evidence (read-only, live)
+Live `conference_recovery_metric_events`: ~14,327 rows spanning OLDEST 2026-07-17 12:31 → NEWEST
+2026-07-21 01:54 (~3.5 days); LAST_24H = 4,526; LAST_1H = 47 (~1.1k–4.5k/day, steady ~47/hr under idle
+proof load). Results: observed = 10,827, unavailable = 3,500 (plus smaller failed/unsupported). Existing
+`created_at` index already supports an age-based retention query. The table grows unbounded today and the
+three counters scan the entire history on every scrape (increasingly expensive). No other in-scope table
+has accumulated stale proof data at this rate.
+
+## Existing retention conventions
+No existing prune/retention service, no chunked-delete helper, and no retention config key for durable
+tables exist (only `logging.php` daily-file `days` and `runtime_engine.stale_observation_seconds`, which
+is a marker not a deleter). The reusable convention is the **thin-command + bounded-sweep + scheduler**
+pattern: e.g. `runtime-engine:derive-stale-observations` (→ `ProjectionService::markStale(config(
+'runtime_engine.stale_observation_seconds',300))`, scheduled `everyFiveMinutes()->withoutOverlapping()`)
+and `telephony-domain:expire-sessions` / `retire-closed-bindings` / `reclaim-orphan-participant-channels`
+(each a thin console command delegating to a domain method, scheduled `everyMinute()->
+withoutOverlapping()`). This slice reuses that exact shape; there is no generic retention framework and
+none should be added.
+
+## Retention authority and defaults
+Retention here is operational infrastructure policy (diagnostic telemetry volume), NOT tenant/operator
+product configuration, so it belongs in stable application config with a validated deterministic default,
+mirroring `runtime_engine.stale_observation_seconds`. Add one key, e.g.
+`runtime_engine.conference_recovery_metric_event_retention_days` (default **7**), validated as a positive
+integer with a sane floor (must exceed the 10m alert window by a wide margin; 7 days keeps roughly a week
+of raw diagnostic history — ~30–35k rows at current rate — for investigation while bounding growth).
+Single record family (one table) → one default; no arbitrary global multi-table duration needed. No env
+feature gate, no allowlist, no per-tenant control (the table has no tenant column).
+
+## Pruning ownership and schedule
+One automatic owner: a new thin console command `runtime-engine:prune-conference-recovery-metric-events
+--once` delegating to a single idempotent service method (e.g. `RuntimeConferenceInspectionService::
+pruneExpiredMetricEvents(retentionDays, batchSize, maxBatches)` or a dedicated small pruner), scheduled
+`Schedule::command('...--once')->hourly()->withoutOverlapping()`. Hourly is proportional (age-based, ~4.5k
+rows/day; no need for per-minute). `withoutOverlapping()` provides single-owner/overlap protection at the
+scheduler; no DB lease is required because deletes are age-filtered and idempotent (a row deleted by one
+run is simply absent for the next). Redis is NOT the deletion authority.
+
+## Batch and transaction behavior
+Bounded batches: delete up to `batch_size` (e.g. 1,000) eligible rows per statement, loop up to
+`max_batches` (e.g. 10) per run → at most ~10k rows/run, then stop and let the next hourly run continue
+(catch-up is automatic since the age filter re-selects). Each batch is its own short transaction
+(`DELETE FROM conference_recovery_metric_events WHERE id IN (SELECT id ... WHERE created_at < cutoff
+ORDER BY created_at LIMIT batch_size)` or equivalent keyset delete on the `created_at` index). No long
+unbounded deletion transaction in the scheduler. Concurrent inserts are unaffected (new rows have
+`created_at >= now()`, never within the `< cutoff` predicate).
+
+## Dependency-safe deletion
+Trivial: the table has no foreign keys in either direction and no child/parent evidence tables, so there
+is no ordering constraint and no cascade. The pruner deletes only from `conference_recovery_metric_events`
+and touches nothing else. Proven cannot delete: active RuntimeOperations, current RuntimeBindings, open
+Conferences, pending recovery work, listener epochs, idempotency authority, or alert-required rows — none
+of those live in this table, and the age cutoff (>> 10m alert window) protects the rows the two
+`increase([10m])` alerts still read.
+
+## Metric and alert preservation (the one design decision)
+Classification of the three metrics:
+- `utcp_conference_runtime_inspections_total` — declared a Prometheus **counter**, but implemented as a
+  whole-table cumulative COUNT. Pruning old rows would make it **decrease**, violating counter
+  monotonicity and corrupting any `rate()/increase()` over a window crossing a prune.
+- `utcp_conference_runtime_inspection_failures_total` — same (counter, whole-table cumulative).
+- `utcp_conference_runtime_reference_health_total` — same (counter, whole-table cumulative).
+The alerts only ever use `increase(...[10m])`, i.e. bounded-window deltas; they do NOT need unbounded
+history. Required correction in the SAME bounded implementation (do not retain unlimited raw history to
+preserve an accidentally unbounded counter): make each of the three queries **window-bounded** to a span
+that (a) safely exceeds the alert window and (b) is <= the retention cutoff, e.g.
+`WHERE created_at > now() - reference_window` with `reference_window` << `retention_days`. This turns the
+three families into honest bounded-window metrics whose value is stable across prunes (the pruner only
+removes rows already outside the reference window), so pruning never changes a metric's meaning and the
+`increase([10m])` alerts remain exactly correct. (Alternative accepted only if the reference window would
+be operationally awkward: keep them cumulative but document bounded-history semantics AND set retention
+>> any dashboard rate window — the window-bounded correction is preferred and is what this contract
+selects.) No compact summary table is needed under the window-bounded correction.
+
+## Pruning observability
+Add bounded metrics from durable pruner state (all labels bounded enums, no IDs/tenant/table-from-input/
+raw-exception):
+- `utcp_recovery_metric_prune_runs_total{result}` (result ∈ succeeded|failed|noop).
+- `utcp_recovery_metric_prune_rows_total{}` (cumulative rows pruned — genuinely monotonic).
+- `utcp_recovery_metric_prune_eligible_backlog{}` (gauge: COUNT rows older than cutoff — current state).
+- `utcp_recovery_metric_prune_oldest_age_seconds{}` (gauge: now - min(created_at)).
+- `utcp_recovery_metric_prune_last_success_timestamp{}` (gauge) — optional.
+One alert only, for a demonstrated failure mode: eligible-backlog growth, e.g.
+`utcp_recovery_metric_prune_eligible_backlog > <threshold> for 30m` (warning), meaning automatic pruning
+is falling behind. Annotation must NOT instruct running a manual prune command (recovery is automatic via
+the hourly schedule). No per-run durable table is required if the backlog gauge derives from the same
+age predicate the pruner uses.
+
+## Failure and retry behavior
+The pruner is isolated from runtime authority: a prune failure cannot block Conference operation,
+recovery, placement, listener processing, or API readiness (it runs in the scheduler, touches only the
+diagnostic table, and the writer already tolerates the table's absence). On failure: log + increment
+`prune_runs_total{result="failed"}`, do not partially corrupt (each batch is transactional), and the next
+hourly run retries (age predicate re-selects). Single-table scope means there is no cross-family
+corruption risk. Do not silently skip permanently-failing rows without evidence — a persistently growing
+`eligible_backlog` gauge + failed-run counter surface the condition.
+
+## First implementation slice
+- Age-only terminal eligibility predicate (`created_at < now() - retention_days`).
+- Validated config default `runtime_engine.conference_recovery_metric_event_retention_days` = 7 (positive
+  int, floored well above the alert window).
+- One idempotent pruner method + thin console command
+  `runtime-engine:prune-conference-recovery-metric-events --once`, scheduled `hourly()->
+  withoutOverlapping()`.
+- Bounded batch deletion (batch_size 1000, max_batches 10/run) on the existing `created_at` index.
+- Correct the three MetricsController recovery queries to a bounded reference window (<= retention).
+- Bounded pruning metrics + one eligible-backlog alert.
+- Focused tests.
+Defer: external archive/object storage, compliance immutable archives, tenant-configurable retention,
+CDR retention, table partitioning, cross-region archival, general data-lifecycle framework, and any
+retention policy for the canonical `runtime_operations`/`control_plane_outbox_messages` stores (separate
+future question).
+
+## Test contract
+- Terminal row inside retention is preserved; terminal row older than cutoff is pruned.
+- (Vacuously) no active/retryable row is pruned — assert a just-inserted row (created_at=now) is never
+  eligible even with retention_days=0-guard-floor.
+- Idempotency/runtime authority intact: pruning N rows does not change any runtime_operations/binding/
+  conference state (assert counts unchanged) and no FK error occurs.
+- Dependency-safe deletion succeeds (single table, no cascade) — delete runs cleanly.
+- Batch limit enforced: with >batch_size*max_batches eligible rows, one run deletes exactly the cap and
+  leaves the remainder; a second run deletes more (catch-up).
+- Repeated runs idempotent: running twice with no new eligible rows deletes 0 the second time.
+- Concurrent new rows not deleted: insert a fresh row mid-retention, prune, assert it survives.
+- Failure in a batch is observable/retryable (simulate a delete error → failed-run metric increments,
+  no partial-corruption, next run proceeds).
+- Scheduler wiring: assert the command is registered and scheduled `hourly withoutOverlapping` (no manual
+  enablement, no feature gate).
+- Metrics bounded labels only; the three recovery metrics equal the bounded-window count before and
+  after pruning rows outside that window (semantics unchanged); `increase([10m])` alert inputs unchanged.
+- Tenant isolation: N/A here (no tenant column) — assert the table has none so no tenant leakage is
+  possible; document that this store is tenant-agnostic diagnostic telemetry.
+Use a controllable clock (Carbon::setTestNow) rather than real sleeps to age fixtures.
+
+## Live acceptance contract (deferred — do not run now)
+1. Insert disposable terminal recovery metric events via the normal inspection path (or a local proof
+   fixture), including some aged beyond the cutoff using Carbon::setTestNow / a safe fixture (not direct
+   production-row edits).
+2. Preserve active/recent events (created within the window).
+3. Run the normal scheduled `runtime-engine:prune-conference-recovery-metric-events` lifecycle (no manual
+   invocation beyond triggering the scheduled command).
+4. Prove bounded deletion (only >cutoff rows removed, batch cap respected, backlog gauge falls).
+5. Prove the three recovery metrics and the two increase([10m]) alerts remain correct after pruning.
+6. Leave no disposable state (remove proof rows).
+
+## Implementation-readiness decision — bounded Codex implementation
+Exact record family (one table), canonical-vs-pruneable authority (100% pruneable diagnostic, no runtime
+dependency, no FK), terminal eligibility (pure age), retention default (7 days), scheduling owner (hourly
+withoutOverlapping thin command + idempotent service), dependency-safe deletion (single table),
+batch/retry behavior, metric preservation (window-bound the three cumulative queries), exact tests, and
+live acceptance are all established. No blocker.
+
+## Ready-to-paste next prompt (Codex — bounded implementation)
+```
+T5-A74 — Implement conference-recovery metric-event retention and pruning
+
+Repo state: HEAD 2620225, branch main, clean, UTCP_PHASE=T1. Implement exactly the T5-A73 contract in
+docs/evidence/t2/multi-node-failover-readiness.md. Do not begin V0. Keep UTCP_PHASE=T1. No feature gate,
+no allowlist, no manual-enablement; normal pruning runs via the scheduler. Do not push. Scope is ONLY
+conference_recovery_metric_events; do not touch runtime_operations or control_plane_outbox_messages
+retention.
+
+1. Config: add runtime_engine.conference_recovery_metric_event_retention_days (default 7) and a bounded
+   reference window runtime_engine.conference_recovery_metric_reference_window_days (default 1) —
+   validated positive ints, reference_window << retention_days and both >> the 10m alert window. Follow
+   the config-check validation pattern used for stale_observation_seconds.
+
+2. Pruner: add an idempotent service method (RuntimeConferenceInspectionService::
+   pruneExpiredMetricEvents(int retentionDays, int batchSize=1000, int maxBatches=10): array or a small
+   dedicated pruner) that deletes conference_recovery_metric_events rows with created_at < now()-retention
+   in bounded batches on the created_at index (keyset/LIMIT delete), each batch its own transaction, at
+   most batchSize*maxBatches rows/run; returns {rows_deleted, batches, eligible_remaining}. No long
+   unbounded transaction; new rows (created_at>=now) never match.
+
+3. Command + schedule: thin console command runtime-engine:prune-conference-recovery-metric-events
+   {--once}, delegating to the service, printing rows_deleted; Schedule::command('...--once')->hourly()
+   ->withoutOverlapping(). No DB lease needed.
+
+4. Metric correction: bound the three MetricsController recovery queries
+   (conferenceRecoveryInspectionMetrics, conferenceRecoveryInspectionFailureMetrics,
+   runtimeReferenceHealthMetrics) to created_at > now()-reference_window so pruning rows outside the
+   window never changes their value; the two increase([10m]) alerts stay correct. Keep the existing
+   bounded-label/aggregation behavior (incl. the T5-A62 map-then-aggregate for reference_health).
+
+5. Pruning observability (MetricsController): add utcp_recovery_metric_prune_eligible_backlog (gauge =
+   COUNT rows older than cutoff), utcp_recovery_metric_prune_oldest_age_seconds (gauge), and, if a
+   durable per-run record is added, utcp_recovery_metric_prune_runs_total{result} +
+   utcp_recovery_metric_prune_rows_total. Bounded labels only; no IDs/tenant/table-from-input/raw-error.
+   Add one alert: eligible_backlog > <threshold> for 30m (warning), annotation without any manual-prune
+   instruction.
+
+6. Tests (telephony/runtime-engine + asterisk-conference-recovery suites): the full T5-A73 Test contract
+   — inside/outside-retention, just-inserted never eligible, runtime state unchanged after prune, batch
+   cap + catch-up, idempotent repeat, concurrent-new-row survives, failure observable/retryable,
+   scheduler wiring (hourly withoutOverlapping, no gate), bounded-window metric semantics unchanged
+   across prune, increase([10m]) inputs unchanged, tenant-agnostic (no tenant column). Use
+   Carbon::setTestNow to age fixtures, not sleeps.
+
+Verify: make repository-hygiene workflow-check secret-scan; make runtime-engine-config-check
+telephony-domain-config-check asterisk-ari-config-check asterisk-conference-config-check; make
+runtime-engine-test telephony-domain-test asterisk-ari-test asterisk-conference-test
+asterisk-conference-recovery-test; git diff --check. Commit
+feat(t5): prune conference-recovery metric events with bounded retention. Do not push. Then hand to
+Claude Code for the T5-A75 controlled live retention/pruning proof.
+```
+
+## Verification performed (T5-A73)
+Read-only: recovery data-store inventory (single table conference_recovery_metric_events; schema/indexes;
+no FK); consumer + FK trace (only writer RuntimeConferenceInspectionService + reader MetricsController;
+no runtime/idempotency/reconciler reader; deletion cannot change a runtime decision); canonical-vs-
+historical classification (runtime_operations/outbox/receipts/epochs/bindings canonical and out of scope;
+this table 100% diagnostic); metric+alert dependency trace (three whole-table cumulative counters; two
+increase([10m]) alerts); existing pruning-pattern inventory (no prune service/chunked-delete/retention
+config; reuse derive-stale-observations/expire-sessions thin-command+scheduler pattern); scheduler +
+overlap-protection trace (Schedule::command(...--once)->everyN->withoutOverlapping); retention-config
+scan (none for durable tables; stale_observation_seconds precedent); manual-command + feature-gate scan
+(none required; thin scheduled command only); phase-marker inspection (UTCP_PHASE=T1); live read-only
+growth inspection (~14.3k rows / 3.5 days, ~4.5k/day, observed 10827 + unavailable 3500).
+make repository-hygiene / workflow-check / secret-scan: PASS. make *-config-check (4): PASS. make *-test
+(runtime-engine 21, telephony-domain 66, asterisk-ari 102, asterisk-conference 123,
+asterisk-conference-recovery 97): PASS. git diff --check / --cached: clean. No cluster/DB/runtime/
+Conference/RuntimeBinding/PostgreSQL/Redis mutation.
