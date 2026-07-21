@@ -12770,3 +12770,117 @@ registration-only and has no runtime dialog route.
 Controlled live PSA application, compliant-workload admission, privileged-workload rejection,
 drift-correction, and final-health proof remain pending. This repository implementation does not claim
 those live results.
+
+## T5-A78 controlled live Namespace PSA reconciliation proof
+
+The pending live results above were subsequently proven on the `utcp-local` k3d cluster.
+
+### Environment and applied authority
+
+- Context `k3d-utcp-local`; Kubernetes server `v1.35.3+k3s1` (client `v1.36.2`); repository `HEAD 2ec8fd2`,
+  `UTCP_PHASE=T1`.
+- Applied commit `2ec8fd2` through its canonical declarative source
+  `infrastructure/kubernetes/security/namespaces/pod-security-labels.yaml`, the sole file the security
+  kustomization references for Namespace resources. The kustomization renders exactly five UTCP-owned
+  Namespaces (one each), and `base/runtime` and `overlays/local-two-asterisk` now render zero Namespaces.
+  No imperative `kubectl label` and no manual per-namespace patch was used as the apply authority. The
+  broader `make security-apply` path (which re-renders API-server NetworkPolicies, restarts data/platform
+  workloads, and reruns the migration Job) was deliberately not used, to keep the change scoped to
+  Namespace reconciliation without restarting unrelated workloads or touching NetworkPolicies.
+- Baseline `make repository-hygiene`, `make security-config-check`
+  (`namespace_psa_authority=ok`, `restricted_workload_compatibility=ok`), and `make k8s-config-check`
+  all passed before application.
+
+### Namespace labels before and after
+
+Before application, `utcp-platform`, `utcp-data`, `utcp-observability`, and `traefik-system` already
+carried `restricted` + `v1.35` pins for enforce/audit/warn. `utcp-runtime` carried
+`enforce/audit/warn=restricted` but was missing all three version pins
+(`enforce-version`, `audit-version`, `warn-version` absent) and used
+`app.kubernetes.io/part-of=unified-telephony-control-plane`.
+
+`kubectl apply` reported four namespaces `unchanged` and only `namespace/utcp-runtime configured`. After
+application all five UTCP-owned namespaces carry exactly:
+
+```text
+pod-security.kubernetes.io/enforce=restricted
+pod-security.kubernetes.io/enforce-version=v1.35
+pod-security.kubernetes.io/audit=restricted
+pod-security.kubernetes.io/audit-version=v1.35
+pod-security.kubernetes.io/warn=restricted
+pod-security.kubernetes.io/warn-version=v1.35
+```
+
+No UTCP namespace uses `baseline` or `privileged`; no mode version is omitted; `utcp-runtime` is now the
+pinned canonical labels and `app.kubernetes.io/part-of=utcp`. A canonical reapply reported all five
+namespaces `unchanged` (idempotent). The system namespaces `default`, `kube-system`, `kube-public`, and
+`kube-node-lease` carry no PSA or UTCP labels and were not modified.
+
+### Existing workload health
+
+All UTCP Deployments and StatefulSets remained at full readiness across the apply
+(`api`, `web`, `worker`, `scheduler`, `telephony-command-worker`, `asterisk-ari-events`,
+`telephony-reconciler`, `telephony-event-normalizer`, `control-plane-outbox-dispatcher`,
+`utcp-runtime-fence-worker`, `kamailio`, `kamailio-registration-observer`, `simulator-event-source`,
+`gateway`, `postgres`, `redis`, `asterisk-ari`, `asterisk-ari-b`, Prometheus, Alertmanager, Loki, Alloy,
+`kube-state-metrics`, monitoring operator, and Traefik). No PSA admission events appeared in
+`utcp-runtime`, and its two Asterisk runtime pods kept their baseline restart counts (4 and 3) with no
+increase. No workload security context was altered. The pin change is admission-time only and does not
+affect already-running pods.
+
+Divergence (pre-existing, unrelated): `kube-prometheus-stack-grafana` ran `1/2` in CrashLoopBackOff both
+before and after the apply. Its main `grafana` container is Ready; only the `grafana-sc-dashboard` sidecar
+crashes, failing to reach the API server at `10.43.0.1:443` (connection refused) — the documented
+API-server-egress NetworkPolicy endpoint-pin drift after a node-IP shuffle, not a PSA effect. Namespace
+reconciliation does not touch NetworkPolicies and neither caused nor changed this condition.
+
+### Compliant Pod admission
+
+A disposable restricted-compliant Pod `t5a78-psa-compliant` (image
+`utcp-local-registry:5000/utcp/api:0.1.0-k1-dev`, `runAsNonRoot`, `runAsUser/Group=33`,
+`seccompProfile.type=RuntimeDefault`, `allowPrivilegeEscalation=false`, `capabilities.drop=[ALL]`,
+`automountServiceAccountToken=false`) was admitted in `utcp-runtime` under `restricted:v1.35`, ran a
+harmless bounded command, and reached phase `Succeeded` (exit 0) with no PSA warning annotations. It was
+then deleted.
+
+### Violating Pod rejection
+
+A disposable `privileged: true` Pod submitted with `--dry-run=server` in `utcp-runtime` was rejected:
+
+```text
+pods "t5a78-psa-violating" is forbidden: violates PodSecurity "restricted:v1.35":
+privileged (container "reject" must not set securityContext.privileged=true), ...
+```
+
+The rejection was explicitly attributed to `restricted:v1.35`, and the Pod was never created
+(subsequent `get` returned `NotFound`). The namespace policy was not weakened to force any result.
+
+### Migration and maintenance Job admissibility
+
+`infrastructure/kubernetes/base/migration/migration-job.yaml` is the only UTCP-owned one-shot Job; no
+separate maintenance Job template exists in the repository. A server-side dry-run of the migration overlay
+reported `job.batch/utcp-migrate unchanged`, and the Job's exact pod template, extracted to a bare Pod and
+dry-run-created in `utcp-platform`, passed `restricted:v1.35` enforce with no violation. The real
+`utcp-migrate` Job had already completed (`succeeded=1`) under the enforced namespace with no PSA warn
+annotations. Migrations were not rerun for this proof.
+
+### Drift introduction and declarative correction
+
+`pod-security.kubernetes.io/audit-version` was removed from `utcp-runtime` (proof-only imperative drift;
+enforce untouched). Canonical reapply of the manifest reported `namespace/utcp-runtime configured` and
+restored `audit-version=v1.35` exactly, with the other four namespaces `unchanged`. A second reapply was
+fully idempotent (`unchanged`). Restoration used the declarative manifest, not an imperative label.
+
+### NetworkPolicy and runtime authority preservation
+
+NetworkPolicy count was `30` before and after, with the same name set across all namespaces; the apply
+output shows only `namespace/...` objects, so no NetworkPolicy, PostgreSQL, Redis, Conference,
+RuntimeBinding, RuntimeOperation, RuntimeNode, Asterisk, or Kamailio state was touched. No workload was
+restarted.
+
+### Phase boundary and cleanup
+
+`docs/roadmap/phase-status.md` still records `T2 … Complete` and `T5 … In Progress`; `UTCP_PHASE=T1` is
+unchanged. The compliant proof Pod was deleted, the violating Pod was never created, no temporary
+manifest remains applied, and no port-forward remains. Final state: the five UTCP-owned namespaces enforce,
+audit, and warn at `restricted:v1.35`.
