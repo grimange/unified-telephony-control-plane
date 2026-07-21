@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+
+def fail(message: str) -> None:
+    print(f"phase status validation failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def table_cells(line: str) -> list[str]:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return []
+    cells = [cell.strip() for cell in stripped.strip("|").split("|")]
+    if len(cells) < 3:
+        return []
+    if all(set(cell) <= {"-", ":"} for cell in cells):
+        return []
+    return cells
+
+
+if len(sys.argv) != 4:
+    fail("usage: validate-phase-status <path> <phase> <status>")
+
+path = Path(sys.argv[1])
+phase = sys.argv[2]
+expected_status = sys.argv[3]
+
+matches: list[tuple[int, str]] = []
+for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    cells = table_cells(line)
+    if not cells:
+        continue
+    if cells[0] == phase:
+        matches.append((line_number, cells[1]))
+
+if len(matches) != 1:
+    fail(f"expected exactly one row for {phase!r}, found {len(matches)}")
+
+line_number, actual_status = matches[0]
+if actual_status != expected_status:
+    fail(
+        f"row for {phase!r} at line {line_number} has status {actual_status!r}, "
+        f"expected {expected_status!r}"
+    )

@@ -11,6 +11,201 @@ ensure_kubeconfig
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 render_security > "$tmp"
+python3 - "$tmp" "$ROOT" <<'PY'
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+security_render = Path(sys.argv[1])
+root = Path(sys.argv[2])
+
+expected_namespaces = {
+    "utcp-platform",
+    "utcp-data",
+    "utcp-observability",
+    "utcp-runtime",
+    "traefik-system",
+}
+psa_expected = {
+    "pod-security.kubernetes.io/enforce": "restricted",
+    "pod-security.kubernetes.io/enforce-version": "v1.35",
+    "pod-security.kubernetes.io/audit": "restricted",
+    "pod-security.kubernetes.io/audit-version": "v1.35",
+    "pod-security.kubernetes.io/warn": "restricted",
+    "pod-security.kubernetes.io/warn-version": "v1.35",
+}
+system_namespaces = {"default", "kube-system", "kube-public", "kube-node-lease"}
+authority_renders = {
+    "security": "infrastructure/kubernetes/security",
+    "base/runtime": "infrastructure/kubernetes/base/runtime",
+    "overlays/local/runtime": "infrastructure/kubernetes/overlays/local/runtime",
+    "overlays/local-two-asterisk": "infrastructure/kubernetes/overlays/local-two-asterisk",
+}
+workload_renders = {
+    "base": "infrastructure/kubernetes/base",
+    "overlays/local": "infrastructure/kubernetes/overlays/local",
+    "overlays/local/runtime": "infrastructure/kubernetes/overlays/local/runtime",
+    "overlays/local-two-asterisk": "infrastructure/kubernetes/overlays/local-two-asterisk",
+    "components/runtime-fencing": "infrastructure/kubernetes/components/runtime-fencing",
+    "components/asterisk-instance": "infrastructure/kubernetes/components/asterisk-instance",
+}
+workload_kinds = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"}
+
+
+def fail(message: str) -> None:
+    print(f"security config check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def load_yaml_documents(content: str) -> list[dict[str, Any]]:
+    return [doc for doc in yaml.safe_load_all(content) if isinstance(doc, dict)]
+
+
+def render(path: str) -> list[dict[str, Any]]:
+    output = subprocess.check_output(["kubectl", "kustomize", path], cwd=root, text=True)
+    return load_yaml_documents(output)
+
+
+def namespace_documents(docs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [doc for doc in docs if doc.get("kind") == "Namespace"]
+
+
+def labels(doc: dict[str, Any]) -> dict[str, Any]:
+    return doc.get("metadata", {}).get("labels") or {}
+
+
+def has_psa_labels(doc: dict[str, Any]) -> bool:
+    doc_labels = labels(doc)
+    return any(key in doc_labels for key in psa_expected)
+
+
+def pod_template_spec(doc: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    kind = doc.get("kind")
+    name = doc.get("metadata", {}).get("name", "<unnamed>")
+    namespace = doc.get("metadata", {}).get("namespace", "default")
+    identifier = f"{kind}/{namespace}/{name}"
+    if kind == "Pod":
+        return identifier, doc.get("spec") or {}
+    if kind == "CronJob":
+        spec = (
+            doc.get("spec", {})
+            .get("jobTemplate", {})
+            .get("spec", {})
+            .get("template", {})
+            .get("spec")
+        )
+        return identifier, spec or {}
+    if kind == "Job":
+        spec = doc.get("spec", {}).get("template", {}).get("spec")
+        return identifier, spec or {}
+    if kind in {"Deployment", "StatefulSet", "DaemonSet"}:
+        spec = doc.get("spec", {}).get("template", {}).get("spec")
+        return identifier, spec or {}
+    return None
+
+
+def validate_container_security(identifier: str, name: str, container: dict[str, Any]) -> None:
+    security_context = container.get("securityContext") or {}
+    if security_context.get("privileged") is True:
+        fail(f"{identifier} container {name} is privileged")
+    if security_context.get("allowPrivilegeEscalation") is not False:
+        fail(f"{identifier} container {name} must set allowPrivilegeEscalation=false")
+    capabilities = security_context.get("capabilities") or {}
+    if capabilities.get("add"):
+        fail(f"{identifier} container {name} adds Linux capabilities")
+    if capabilities.get("drop") != ["ALL"]:
+        fail(f"{identifier} container {name} must drop all Linux capabilities")
+    run_as_user = security_context.get("runAsUser")
+    if run_as_user == 0:
+        fail(f"{identifier} container {name} runs as UID 0")
+    seccomp_type = (security_context.get("seccompProfile") or {}).get("type")
+    if seccomp_type == "Unconfined":
+        fail(f"{identifier} container {name} uses unconfined seccomp")
+
+
+def validate_pod_security(identifier: str, pod_spec: dict[str, Any]) -> None:
+    for field in ("hostNetwork", "hostPID", "hostIPC"):
+        if pod_spec.get(field) is True:
+            fail(f"{identifier} enables {field}")
+    for volume in pod_spec.get("volumes") or []:
+        if "hostPath" in volume:
+            fail(f"{identifier} uses hostPath volume {volume.get('name', '<unnamed>')}")
+    pod_security = pod_spec.get("securityContext") or {}
+    if pod_security.get("runAsNonRoot") is not True:
+        fail(f"{identifier} must set pod runAsNonRoot=true")
+    if pod_security.get("runAsUser") == 0:
+        fail(f"{identifier} runs as UID 0")
+    if (pod_security.get("seccompProfile") or {}).get("type") != "RuntimeDefault":
+        fail(f"{identifier} must set pod seccompProfile RuntimeDefault")
+    for container_key in ("initContainers", "containers"):
+        for container in pod_spec.get(container_key) or []:
+            validate_container_security(identifier, container.get("name", "<unnamed>"), container)
+
+
+security_docs = load_yaml_documents(security_render.read_text(encoding="utf-8"))
+security_namespaces = namespace_documents(security_docs)
+if {doc.get("metadata", {}).get("name") for doc in security_namespaces} != expected_namespaces:
+    fail("security render must define exactly the five UTCP-owned namespaces")
+
+for doc in security_namespaces:
+    name = doc.get("metadata", {}).get("name")
+    doc_labels = labels(doc)
+    for key, expected_value in psa_expected.items():
+        if doc_labels.get(key) != expected_value:
+            fail(f"Namespace/{name} {key} must be {expected_value}")
+    if name in system_namespaces:
+        fail(f"security render must not claim system namespace {name}")
+
+if any(doc.get("metadata", {}).get("name") in system_namespaces for doc in security_namespaces):
+    fail("security render claims a system namespace")
+
+authority_hits: list[str] = []
+for label, path in authority_renders.items():
+    for doc in namespace_documents(render(path)):
+        name = doc.get("metadata", {}).get("name")
+        doc_labels = labels(doc)
+        if name == "utcp-runtime":
+            authority_hits.append(label)
+        if has_psa_labels(doc):
+            if name not in expected_namespaces:
+                fail(f"{label} sets PSA labels on unexpected namespace {name}")
+            for key, expected_value in psa_expected.items():
+                if doc_labels.get(key) != expected_value:
+                    fail(f"{label} Namespace/{name} {key} is not {expected_value}")
+        for key in (
+            "pod-security.kubernetes.io/enforce",
+            "pod-security.kubernetes.io/audit",
+            "pod-security.kubernetes.io/warn",
+        ):
+            if doc_labels.get(key) in {"baseline", "privileged"}:
+                fail(f"{label} Namespace/{name} downgrades {key} to {doc_labels[key]}")
+
+if authority_hits != ["security"]:
+    fail(f"utcp-runtime Namespace authority must render only from security, found {authority_hits}")
+
+first_security = yaml.safe_dump_all(security_namespaces, sort_keys=True)
+second_security = yaml.safe_dump_all(namespace_documents(render("infrastructure/kubernetes/security")), sort_keys=True)
+if first_security != second_security:
+    fail("repeated security rendering changed namespace labels")
+
+for label, path in workload_renders.items():
+    for doc in render(path):
+        if doc.get("kind") not in workload_kinds:
+            continue
+        template = pod_template_spec(doc)
+        if template is None:
+            continue
+        identifier, pod_spec = template
+        validate_pod_security(f"{label}:{identifier}", pod_spec)
+
+print("namespace_psa_authority=ok")
+print("restricted_workload_compatibility=ok")
+PY
 render_apiserver_policy >/dev/null
 kube apply --dry-run=server -f "$tmp" >/dev/null
 "$SCRIPT_DIR/check-apiserver-policy-drift" >/dev/null

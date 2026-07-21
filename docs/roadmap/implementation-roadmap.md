@@ -199,9 +199,11 @@ Corridor naming used informally during development (`T1-A` generic C3 event-sour
 
 ## Future Call-Lifecycle and Call-Control Roadmap
 
-### T2 - Asterisk Conference Execution — Planned (next actionable phase)
+### T2 - Asterisk Conference Execution — Complete
 
-Objective: map the already-canonical C5 conference operations (`conference.ensure`, `conference.close`, `conference.participant.ensure`, `conference.participant.remove`) onto Asterisk. Implement conference creation/resolution, participant channel creation, bridge/conference membership, join/leave operations, runtime-event normalization (`StasisStart`, `ChannelEnteredBridge`, `ChannelLeftBridge`, `ChannelDestroyed`, `BridgeCreated` -> `participant.channel.created`, `participant.conference.joined`, `participant.conference.left`, `conference.created`), membership reconciliation, timeout/partial-failure handling, stale-channel cleanup. Non-goals: SIP/PJSIP, RTP/media, trunks, PSTN, browser calling, FreeSWITCH. Completion criteria: Asterisk conference joins use generic C5 application operations; observed membership is driven by normalized runtime events; retries do not create duplicate participants; conference state reconciles after event-stream interruption.
+Objective: map the already-canonical C5 conference operations (`conference.ensure`, `conference.close`, `conference.participant.ensure`, `conference.participant.remove`) onto Asterisk. Implement conference creation/resolution, participant channel creation, bridge/conference membership, join/leave operations, runtime-event normalization (`StasisStart`, `ChannelEnteredBridge`, `ChannelLeftBridge`, `ChannelDestroyed`, `BridgeCreated` -> `participant.channel.created`, `participant.conference.joined`, `participant.conference.left`, `conference.created`), membership reconciliation, timeout/partial-failure handling, stale-channel cleanup. Non-goals: SIP/PJSIP, RTP/media, trunks, PSTN, browser calling, FreeSWITCH.
+
+**Status: Complete.** Repository and live T2 evidence prove the Asterisk conference execution corridor: generic C5 conference operations execute through the Asterisk adapter, observed membership is driven by normalized ARI events, retries do not create duplicate participants, stale/wrong-node protection is enforced, and conference state reconciles after runtime interruption and recovery. Browser media and Kamailio application-dialog routing remain T3/V0 scope, not T2 exit criteria. See `docs/evidence/t2/asterisk-conference-recovery.md` and `docs/evidence/t2/multi-node-failover-readiness.md`.
 
 ### T3 - rtpengine Browser Media — Planned
 
@@ -215,9 +217,11 @@ The first user-facing telephony milestone (see "First User-Facing Vertical Slice
 
 Objective: prove the same registration, call-control, bridge, conference, and observation contracts work against a second execution runtime (`FreeSwitchEslClient`, `FreeSwitchCommandAdapter`, `FreeSwitchEventListener`, `FreeSwitchEventNormalizer`, `FreeSwitchHealthInspector`). Critical proof: the same login page, telephony-session API, SIP registration path, conference-admission API, frontend state machine, and normalized domain events; only adapter selection and runtime execution differ. Completion criteria: both nodes register independently; unsupported capabilities are reported explicitly; Kamailio can route to either runtime; V0 behavior reproduces against FreeSWITCH; no FreeSWITCH-specific branch in application-facing services.
 
-### T5 - Multi-Runtime Convergence, Failover, and Recovery — Planned
+### T5 - Multi-Runtime Convergence, Failover, and Recovery — In Progress
 
 Objective: harden runtime behavior after both runtime adapters work. Implement event-stream reconnection/replay, stale-registration expiry, orphan-channel cleanup, conference-membership reconciliation, runtime-node draining/unavailability handling, eligible-node reselection, replay-safe operations, failed-operation recovery, cross-runtime recovery where technically supported. Do not promise seamless active-call migration unless signaling/runtime/media behavior actually prove it. Completion criteria: control-plane state recovers after runtime interruption; duplicate operations remain safe; stale runtime resources are detected and reconciled; runtime-node failure behavior is explicit and observable.
+
+**Status: In Progress.** T5 evidence now proves the multi-RuntimeNode Asterisk topology, deterministic failover and recovery, listener ownership/liveness/degradation/automatic recovery, symmetric degraded/recovered evidence, deterministic capacity-aware placement, pending-no-capacity and automatic retry, recovery metric-event retention with scheduled pruning, and repository Namespace PSA authority reconciliation. The current Kamailio signaling-cutoff item was re-sequenced out of active T5 because T1 Kamailio is registration-only and has no runtime dialog route to cut off. Remaining T5 exit work is the controlled live Namespace PSA application/admission/rejection/drift-correction/final-health proof and final phase-closure evidence.
 
 ### C6 - Call Lifecycle and Normalized Call-Control Domain — Planned (extended scope)
 
@@ -243,7 +247,7 @@ Objective: prove that applications can build on UTCP call, route, trunk, registr
 
 ## Next-Phase Ordering
 
-The next actionable phase is **T2 — Asterisk conference execution**, immediately after T1 closure, exactly as `CLAUDE.md`'s phase-dependency order and both upstream plans agree. C6/C7/T6/V1/A0 remain future extended-scope phases positioned after T5 and before R0 (see Phase Order); they are not scheduled ahead of T2-T5/V0 because no repository evidence, ADR, or `CLAUDE.md` text currently orders them earlier, and doing so would contradict `CLAUDE.md`'s binding sequence for phases already in flight.
+T2 is complete and T5 hardening is currently in progress without advancing `UTCP_PHASE` beyond T1. T3/V0 browser media and internal application-dialog routing remain planned future work, as do T4 FreeSWITCH parity and the C6/C7/T6/V1/A0 extended-scope phases. C6/C7/T6/V1/A0 remain positioned after T5 and before R0 (see Phase Order); they are not scheduled ahead of T3-T5/V0 because no repository evidence, ADR, or `CLAUDE.md` text currently orders them earlier, and doing so would contradict `CLAUDE.md`'s binding sequence for phases already in flight.
 
 ## Phase R0 — Portfolio Release — Planned
 

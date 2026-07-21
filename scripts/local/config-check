@@ -10,7 +10,10 @@ fail() {
 }
 
 grep -qx 'UTCP_PHASE=T1' versions.env || fail 'versions.env must declare UTCP_PHASE=T1'
-grep -Fq '| T1 Kamailio SIP-over-WSS signaling | Complete |' docs/roadmap/phase-status.md ||
+python3 scripts/validate-phase-status \
+  docs/roadmap/phase-status.md \
+  'T1 Kamailio SIP-over-WSS signaling' \
+  'Complete' ||
   fail 'phase-status must mark T1 complete when UTCP_PHASE=T1'
 
 grep -Eq '^local-up:' Makefile || fail 'Makefile must expose local-up'

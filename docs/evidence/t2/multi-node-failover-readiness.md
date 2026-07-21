@@ -12678,3 +12678,95 @@ git diff --check / --cached: clean. make repository-hygiene: FAIL — pre-existi
 intervening commit fd36cd6 (phase-status table reformat) which broke the check's literal grep for
 '| T1 Kamailio SIP-over-WSS signaling | Complete |'; hygiene PASSES at the task's stated start b56de3c;
 not caused by this audit (tree clean, evidence-only) and out of this audit's modification scope.
+
+---
+
+# T5-A77 — Namespace PSA authority and phase-status reconciliation
+
+Repository implementation at `UTCP_PHASE=T1`; no Kubernetes apply, label mutation, workload rollout,
+runtime mutation, or live admission proof was performed.
+
+## Single Namespace PSA authority
+
+`infrastructure/kubernetes/security/namespaces/pod-security-labels.yaml` is now the only declarative
+Pod Security Admission label authority for the five UTCP-owned namespaces:
+
+- `utcp-platform`
+- `utcp-data`
+- `utcp-observability`
+- `utcp-runtime`
+- `traefik-system`
+
+All five namespaces render with the same pinned policy:
+
+- `pod-security.kubernetes.io/enforce: restricted`
+- `pod-security.kubernetes.io/enforce-version: v1.35`
+- `pod-security.kubernetes.io/audit: restricted`
+- `pod-security.kubernetes.io/audit-version: v1.35`
+- `pod-security.kubernetes.io/warn: restricted`
+- `pod-security.kubernetes.io/warn-version: v1.35`
+
+## Duplicate utcp-runtime definitions removed
+
+The duplicate `utcp-runtime` Namespace resources were removed from the runtime manifests:
+
+- `infrastructure/kubernetes/base/runtime/namespace.yaml`
+- `infrastructure/kubernetes/overlays/local-two-asterisk/namespace.yaml`
+
+Their kustomizations no longer render a second `utcp-runtime` Namespace authority. The previous unpinned
+restricted base definition and the latent baseline local-two-asterisk downgrade path are gone rather than
+retained as a fallback or overlay-specific compatibility mode. The security kustomization remains the
+single place that creates and labels `utcp-runtime`.
+
+## Workload boundary
+
+No workload security context was changed. The repository validation confirms rendered application and init
+containers remain restricted-compatible: no privileged containers, host namespaces, hostPath volumes,
+added Linux capabilities, UID 0 execution, missing `allowPrivilegeEscalation=false`, missing `drop: ALL`,
+or unconfined seccomp profile are introduced. NetworkPolicy manifests were not modified.
+
+## Focused manifest validation
+
+`scripts/security/config-check` now parses rendered YAML and validates:
+
+- exactly five UTCP-owned Namespace resources are governed by the PSA policy;
+- every governed namespace uses `restricted` for enforce/audit/warn and pins each mode to `v1.35`;
+- system namespaces are not claimed;
+- `utcp-runtime` renders as a Namespace only from the security kustomization;
+- runtime overlays do not render baseline, privileged, divergent, or unpinned PSA labels;
+- repeated security rendering produces the same namespace labels;
+- rendered workload pod templates remain restricted-compatible.
+
+The existing server-side dry-run, API-server policy drift check, and required NetworkPolicy assertions
+remain in place.
+
+## Repository-hygiene correction
+
+The brittle phase-status guard was replaced with `scripts/validate-phase-status`, a small Markdown-table
+parser used by both `scripts/check-repository-hygiene` and `scripts/local/config-check`. It tolerates
+normal Markdown table padding while still failing missing, duplicate, wrong-name, or wrong-status rows for
+`T1 Kamailio SIP-over-WSS signaling | Complete`.
+
+## T2 and T5 phase status
+
+`docs/roadmap/phase-status.md` no longer claims `T2 Asterisk conference execution` is planned or that no
+live conference execution exists. T2 is marked `Complete` because the established T2 evidence proves the
+Asterisk conference execution corridor; T3 browser media and Kamailio application-dialog routing remain
+separate future authorities.
+
+T5 is marked `In Progress`, not complete. Its status now records the already-proven multi-RuntimeNode
+Asterisk topology, deterministic failover and recovery, listener liveness and automatic recovery,
+symmetric degraded/recovered evidence, capacity-aware placement, pending-no-capacity automatic retry,
+recovery metric-event retention with scheduled pruning, and this repository Namespace PSA reconciliation.
+The remaining T5 exit item is the controlled live Namespace PSA application/admission/rejection/
+drift-correction/final-health proof plus final phase-closure evidence. The re-sequenced Kamailio
+signaling-cutoff item is not an active T5 gap because the current T1 Kamailio authority is
+registration-only and has no runtime dialog route.
+
+`UTCP_PHASE` remains `T1`; this reconciliation is non-phase-advancing.
+
+## Live proof boundary
+
+Controlled live PSA application, compliant-workload admission, privileged-workload rejection,
+drift-correction, and final-health proof remain pending. This repository implementation does not claim
+those live results.

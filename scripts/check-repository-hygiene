@@ -38,7 +38,10 @@ if [ "$declared_phase" != "T1" ]; then
   exit 1
 fi
 
-if ! grep -Fq '| T1 Kamailio SIP-over-WSS signaling | Complete |' docs/roadmap/phase-status.md; then
+if ! python3 scripts/validate-phase-status \
+  docs/roadmap/phase-status.md \
+  'T1 Kamailio SIP-over-WSS signaling' \
+  'Complete'; then
   printf 'phase-status document does not mark T1 complete while UTCP_PHASE=%s\n' "$declared_phase" >&2
   exit 1
 fi
