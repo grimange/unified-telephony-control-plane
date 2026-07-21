@@ -11691,3 +11691,180 @@ repository-hygiene / workflow-check / secret-scan: PASS. make *-config-check (4)
 asterisk-conference-recovery 97): PASS. git diff --check / --cached: clean. No manual coordinator/
 reconciliation invocation, no direct SQL write, no RuntimeNode/Kubernetes mutation beyond the canonical
 Admin API capacity config (restored), no Pod scale/delete, no Asterisk/Kamailio restart.
+
+---
+
+# T5-A71 — Audit: deterministic Kamailio signaling cutoff authority (evidence-only)
+
+Verdict: `T5_KAMAILIO_SIGNALING_CUTOFF_CONTRACT_NOT_DEFINED` — one precise material blocker. Narrow
+evidence-only audit; no production code changed. Baseline `UTCP_PHASE=T1`, clean tree at `d8a53e9`.
+
+## Material blocker (decisive)
+The contract's objective — "ensure Kamailio cannot route new SIP signaling to a RuntimeNode UTCP has
+made ineligible" — presupposes a Kamailio→RuntimeNode SIP routing authority. **That routing authority
+does not exist in the repository.** Kamailio's `request_route` (kamailio-configmap.yaml) handles only
+REGISTER (+ an OPTIONS keepalive) and returns `405 Method Not Allowed` for every other method including
+INVITE. There is no `dispatcher` module loaded, no destination/dispatcher table, no `lookup("location")`
+for inbound INVITE, and no `t_relay` to any runtime. Per ADR-019 (Accepted for T1): "T1 does not add
+Asterisk signaling, media, or conference execution … those remain T2/T3." Conference participants reach
+Asterisk via **ARI originate** (control-plane HTTP to `asterisk-ari*:8088`, Local channels), not via
+routed SIP; Asterisk Services expose only `ari=8088/TCP` (no SIP/5060 listener, no UDP), and
+`scripts/kamailio-signaling/runtime-proof` itself asserts `no_asterisk_sip_scope=true`. A "new-dialog
+signaling cutoff" therefore has nothing to cut off: there is no routed SIP application-dialog path to a
+RuntimeNode, and building one is the deferred T2/T3 Asterisk-signaling phase, explicitly out of scope
+for this audit ("Do not expand into … complete SBC behavior … FreeSWITCH parity"). The invariant is
+currently satisfied **by construction** (Kamailio cannot route to any runtime, and no direct SIP path to
+Asterisk exists), but that is the absence of the routing feature, not an implementable cutoff contract.
+
+## Registration authority
+Kamailio is the sole live SIP registrar (T1/ADR-019). `request_route`: maxfwd + sanity_check → reject
+non-`sip.utcp.local.test` domains (403) → OPTIONS keepalive (200) → non-REGISTER (405) → `www_authorize`
+against DB view `kamailio_signaling_auth_view` → auth-identity match (`$au == $fU`) → `save("location")`
+into `usrloc` (db_mode 1, use_domain 1). WSS is terminated at Traefik and upgraded via the
+`event_route[xhttp:request]` websocket path. **Signaling-eligibility authority for registration is C5**:
+`TelephonySession` + `telephony_signaling_credentials` (PostgreSQL) — one active session issues one
+short-lived SIP credential; `kamailio_signaling_auth_view` is the read model Kamailio authenticates
+against. RuntimeNode state does NOT participate in registration.
+
+## New-dialog routing authority
+None. Kamailio does not route SIP application dialogs to any RuntimeNode (405 on INVITE). The only
+path by which a caller's media/among-participants reaches a telephony runtime today is control-plane
+**ARI originate** (TelephonyDomainService → AsteriskAriClient → `POST /channels` originate with Local
+channels), selected by the canonical `selectRuntimeNodeForConference` placement authority (T5-A68/69)
+and bound via `conference_runtime_bindings`. This is not SIP signaling and does not traverse Kamailio.
+
+## Existing-dialog authority
+N/A. No SIP dialogs are routed through Kamailio to runtimes (no Record-Route/loose_route/dialog module
+for application dialogs; the config has no in-dialog routing). Existing-dialog preservation is moot until
+the routing path exists.
+
+## Current RuntimeNode signaling eligibility
+RuntimeNode `desired_state ∈ {draft, active, draining, disabled}`; `observed_state ∈ {unobserved,
+unknown, connecting, ready, degraded, events_degraded, unavailable, stale}`. The canonical placement
+eligibility (T5-A69) is `desired ∈ {active,draining} AND observed='ready' AND capacity AND capability`.
+**None of these states currently affect any SIP signaling decision** — verified: no
+`eligible_for_*sip*` / `routable` / signaling-eligibility concept referencing RuntimeNode exists in the
+codebase. RuntimeNode state affects only ARI-driven conference placement/recovery.
+
+## Cutoff state contract
+Cannot be defined as implementable today (no routing authority to bind it to). The intended future
+mapping (for when the T2/T3 routing path exists) would consume the SAME shared eligibility contract as
+placement: active+ready → eligible for new SIP application dialogs; draining+ready → existing dialogs
+continue, new excluded; degraded/stale/unavailable/fenced/disabled → new excluded; events_degraded →
+excluded from event-observation-dependent runtime behavior but NOT marked absent; recovered active+ready
+→ eligibility restored automatically. This is documented as the target, not an implementable slice now.
+
+## Existing-dialog preservation
+Deferred with the routing path. When routing exists, the deterministic policy should be: cut off new
+dialogs at the route-selection authority; preserve established dialogs (Record-Route/route-set pinning)
+and let the canonical Conference/failover lifecycle decide termination or replacement; never delete
+routes to force-drop live calls.
+
+## Projection authority
+Today UTCP projects only registration OBSERVATION from Kamailio, not routing eligibility TO Kamailio:
+`KamailioRegistrationObserver` is a read-only poller of the `location` (usrloc) rows → normalized
+receipts → UTCP projection (one-directional, Kamailio→UTCP). There is no UTCP→Kamailio routing
+projection (no dispatcher rows, no generated route include, no reconciliation operation writing routes)
+because there are no routes. A future cutoff would need a NEW projection authority (e.g. dispatcher/
+destination rows or a generated include reconciled from the shared eligibility contract) — that is part
+of the deferred routing-path work.
+
+## Automatic restoration
+N/A today. Registration eligibility "restoration" is credential/session issuance (C5), already
+automatic and RuntimeNode-independent. Routing-eligibility restoration is deferred with the routing path.
+
+## Projection failure and retry
+N/A for routing (no projection). The registration observer already has durable poll-health
+(`kamailio_registration_poll_health`) + checkpoint + lease + automatic retry via the scheduled observer
+(everyMinute), and metrics/alerts (`kamailio_registration_*`). No routine operator reload command exists
+for signaling; `kamailio-registration:observer` runs on the scheduler.
+
+## Conflicting authority to remove
+None found. There is no static Asterisk destination, no dispatcher fallback, no unconditional failover
+route, no direct Asterisk SIP listener, no browser/client config pointing around Kamailio, and no
+direct-runtime SIP selection in application code. Asterisk Services expose only ARI 8088/TCP; the
+`allow-kamailio-signaling` NetworkPolicy permits ingress only from Traefik→8080 and egress only to
+postgres + DNS. So there is no stale/conflicting signaling authority to destroy — the current posture is
+already conflict-free (by absence of routing).
+
+## Direct runtime bypass
+None. Participants reach Asterisk exclusively via control-plane ARI originate; no SIP path to Asterisk
+exists (no SIP listener, no Service port, no NetworkPolicy allowance). No bypass to remove.
+
+## First implementation slice
+Not applicable as a signaling-cutoff slice. The prerequisite (a separate, larger, T2/T3-scoped item) is:
+define and build the Kamailio→runtime SIP application-dialog routing path (dispatcher/destination or
+generated route include) AND, in the same design, bind its new-dialog route selection to the shared
+RuntimeNode eligibility contract so the cutoff is intrinsic from day one (rather than retrofitted).
+Only after that path exists does the bounded cutoff slice in this prompt become implementable.
+
+## Test contract
+Deferred with the routing path. When implemented, the T5-A71 §13 tests apply (ready+active routable;
+draining/events-degraded per policy; degraded/unavailable/stale/fenced/disabled excluded;
+existing-dialog correctness; registration stays with Kamailio; automatic restoration; idempotent
+projection retry; no stale authoritative projection; no static bypass; tenant isolation; no direct
+Asterisk bypass; no manual reconciliation; no feature gate). None are implementable against the current
+registration-only config.
+
+## Live acceptance contract
+Deferred. The §14 controlled proof (eligible→routes, made-ineligible→no new routing, existing dialog
+follows contract, restored→resumes) requires the routing path first; it cannot be exercised against a
+registrar that 405s all non-REGISTER methods.
+
+## Implementation-readiness decision — blocked (neither bounded implementation nor more evidence)
+The evidence is conclusive, so additional Claude Code evidence is NOT needed. A bounded Codex
+implementation of a signaling *cutoff* is NOT possible, because the SIP routing authority the cutoff
+would constrain does not exist and building it is the deferred T2/T3 Asterisk-signaling phase (explicitly
+out of scope here). The item should be re-sequenced: it depends on the Kamailio→runtime routing path.
+
+## Ready-to-paste next prompt (prerequisite — evidence/design, NOT the cutoff yet)
+```
+T5-A72 — Define the Kamailio→runtime SIP application-dialog routing authority (prerequisite for
+signaling cutoff)
+
+Repo state: HEAD d8a53e9, branch main, clean, UTCP_PHASE=T1. This is a narrow evidence/design audit
+(evidence-only; update only docs/evidence). Context: T5-A71 found the signaling-cutoff contract is
+blocked because Kamailio has no SIP routing path to any RuntimeNode (registration-only; 405 on INVITE;
+participants reach Asterisk via ARI originate; Asterisk exposes only ARI 8088; ADR-019 defers Asterisk
+signaling to T2/T3). Do NOT implement routing in this step and do NOT expand into media/rtpengine,
+external trunks, PSTN, SBC, or FreeSWITCH.
+
+Determine and document:
+1. Whether UTCP's roadmap intends Kamailio to route SIP application dialogs (INVITE) to Asterisk at all,
+   or whether conference media admission remains ARI-originate-only with SIP limited to registration.
+   Read the initial implementation plan (T2/T3/V0 scope), ADR-019, and the phase-status doc. This is the
+   pivotal question — the cutoff only exists if routed SIP-to-runtime is a real roadmap target.
+2. If routed SIP-to-runtime IS intended: define the smallest routing-authority design — dispatcher vs
+   generated route include vs runtime API; the canonical source record; writer/reconciler/idempotency/
+   projection-status/observed-confirmation; and how new-dialog route selection binds to the shared
+   RuntimeNode eligibility contract (desired∈{active,draining} + observed='ready' + capacity/capability,
+   reused from TelephonyDomainService, not re-encoded in Kamailio templates) so the cutoff is intrinsic.
+3. If routed SIP-to-runtime is NOT intended for the current roadmap: record that the T5 "Kamailio
+   signaling cutoff" item is a non-goal / satisfied-by-construction (Kamailio is registrar-only; runtime
+   admission is control-plane ARI, already governed by placement eligibility) and formally retire the
+   gap from the T5 remaining list with justification.
+
+End with a decision: (a) bounded Codex implementation of the routing path + intrinsic eligibility cutoff
+(only if step 1 confirms it's a real, in-scope target), (b) retire the item as a non-goal, or (c) a
+precise remaining blocker. Do not mutate cluster/DB/Kamailio. Commit docs(t5): define kamailio routing
+authority prerequisite. Do not push.
+```
+
+## Verification performed (T5-A71)
+Read-only: Kamailio route-authority trace (request_route = REGISTER/OPTIONS only, 405 otherwise;
+event_route xhttp websocket upgrade); registrar-vs-runtime-route separation (registrar = Kamailio+usrloc
+with C5 TelephonySession/credential eligibility; runtime routing = none, ARI originate instead);
+RuntimeNode state-to-signaling trace (no state affects signaling; no signaling-eligibility concept
+references RuntimeNode); static/fallback route inventory (none — no dispatcher module, no destination
+table, no generated route include); Asterisk direct-access inventory (Services expose only ARI 8088/TCP;
+no SIP listener; runtime-proof asserts no_asterisk_sip_scope=true); projection/reconciliation trace
+(observer is read-only usrloc→UTCP; no UTCP→Kamailio routing projection); existing-dialog behavior trace
+(N/A — no routed dialogs); automatic restoration trace (registration eligibility via C5, automatic;
+routing N/A); manual reload/reconciliation surface scan (none for signaling routing); feature-gate/
+allowlist scan (none); tenant-isolation trace (registration realm + auth-identity match; RuntimeNode
+routing N/A); phase-marker inspection (UTCP_PHASE=T1). NetworkPolicy confirms Kamailio ingress
+Traefik→8080, egress postgres+DNS only.
+make repository-hygiene / workflow-check / secret-scan: PASS. make *-config-check (4): PASS. make *-test
+(runtime-engine 21, telephony-domain 66, asterisk-ari 102, asterisk-conference 123,
+asterisk-conference-recovery 97): PASS. git diff --check / --cached: clean. No cluster/Kamailio/Asterisk/
+RuntimeNode/registration/Conference/PostgreSQL/Redis mutation.
