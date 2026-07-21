@@ -12428,3 +12428,253 @@ PASS. make *-test (runtime-engine 25, telephony-domain 66, asterisk-ari 102, ast
 asterisk-conference-recovery 97): PASS. git diff --check / --cached: clean. Direct inserts/deletes were
 confined to the noncanonical conference_recovery_metric_events table (fixture rows only, by ID); no other
 Kubernetes/runtime/Conference/RuntimeBinding/PostgreSQL/Redis/Asterisk/Kamailio mutation.
+
+---
+
+# T5-A76 — Contract: namespace Pod Security Admission reconciliation (evidence-only)
+
+Verdict: `T5_NAMESPACE_SECURITY_LABEL_RECONCILIATION_CONTRACT_DEFINED`. Narrow evidence-only audit; no
+production code changed. `UTCP_PHASE=T1`. Working tree clean.
+
+Starting-commit divergence: the task stated HEAD `b56de3c`, but the live branch HEAD had advanced to
+`fd36cd6` (docs(roadmap): fix table formatting in phase-status document) — a commit not authored by this
+audit. `git diff b56de3c fd36cd6` touches ONLY `docs/roadmap/phase-status.md` (table spacing); all
+`infrastructure/kubernetes` manifests are byte-identical, so the namespace analysis below is unaffected.
+See Divergences for the hygiene-check consequence.
+
+## Roadmap requirement
+The deferred T5 item "Namespace security-label reconciliation" means specifically **Kubernetes Pod
+Security Admission (PSA) namespace labels** (`pod-security.kubernetes.io/{enforce,audit,warn}` and their
+`-version` variants), not any other label authority. K3 (roadmap/phase-status.md, implementation-roadmap
+L148) already delivered `restricted` PSA pinned to `v1.35` on UTCP namespaces with default-deny
+NetworkPolicies; ADR-012 keeps `utcp-observability` under restricted PSA. The residual gap is that the
+T5-era `utcp-runtime` namespace (added for dynamic Asterisk instances after K3) is not consistently
+governed by the canonical version-pinned PSA authority. Intended completion phase: T5 hardening
+(non-phase-advancing; UTCP_PHASE stays T1).
+
+## Kubernetes and admission baseline
+Server `v1.35.3+k3s1`. PSA is enabled and enforcing: a server-side dry-run of a `privileged` Pod into
+`utcp-runtime` was rejected — `violates PodSecurity "restricted:latest": privileged … allowPrivilege
+Escalation != false … unrestricted capabilities … runAsNonRoot != true … seccompProfile …`. Note the
+error says `restricted:latest`, NOT `restricted:v1.35` — direct live proof that `utcp-runtime` is missing
+its version pin (falls back to `latest`). No cluster-wide PSA default is relied upon; each UTCP namespace
+carries explicit labels. k3s applies no exemptions to UTCP namespaces. Audit did not mutate any label or
+the API-server admission config.
+
+## Namespace ownership
+Live namespaces and ownership: `utcp-platform` (UTCP application-owned), `utcp-data` (UTCP data-owned),
+`utcp-observability` (UTCP observability-owned), `utcp-runtime` (UTCP runtime/telephony-execution-owned),
+`traefik-system` (UTCP edge-owned — UTCP manages its PSA labels); `default`/`kube-system`/`kube-public`/
+`kube-node-lease` (Kubernetes/k3d system-owned — NOT UTCP's responsibility, correctly unlabeled). The
+five UTCP-owned namespaces are exactly the five in `infrastructure/kubernetes/security/namespaces/
+pod-security-labels.yaml`.
+
+## Current namespace labels (live)
+| namespace | enforce | enforce-version | audit | warn | source |
+|---|---|---|---|---|---|
+| utcp-platform | restricted | v1.35 | restricted | restricted | pod-security-labels.yaml |
+| utcp-data | restricted | v1.35 | restricted | restricted | pod-security-labels.yaml |
+| utcp-observability | restricted | v1.35 | restricted | restricted | pod-security-labels.yaml |
+| traefik-system | restricted | v1.35 | restricted | restricted | pod-security-labels.yaml |
+| **utcp-runtime** | restricted | **&lt;none&gt;** | restricted | restricted | **base/runtime/namespace.yaml (unpinned)** |
+The four fully-pinned namespaces carry `app.kubernetes.io/part-of: utcp` (the pod-security-labels.yaml
+value). `utcp-runtime` live carries `app.kubernetes.io/part-of: unified-telephony-control-plane` +
+`app.kubernetes.io/name: utcp` and NO version labels — exactly `base/runtime/namespace.yaml`, proving the
+base/runtime definition is the live authority and has overridden the canonical pinned one.
+
+## Declarative namespace authority (the gap: duplicate authority for utcp-runtime)
+`utcp-runtime` has THREE competing Namespace definitions:
+1. `infrastructure/kubernetes/security/namespaces/pod-security-labels.yaml` — restricted + `v1.35` pins
+   (the canonical K3 authority; wired via `security/kustomization.yaml`, applied by `scripts/security/
+   apply` → `kube apply -k infrastructure/kubernetes/security`). Defines all 5 UTCP namespaces.
+2. `infrastructure/kubernetes/base/runtime/namespace.yaml` — restricted, **no version pins**, different
+   `part-of` value (wired via `base/runtime/kustomization.yaml` → `overlays/local/runtime`, applied by
+   the runtime overlay). **Currently winning live.**
+3. `infrastructure/kubernetes/overlays/local-two-asterisk/namespace.yaml` — **baseline**, no version pins
+   (a latent downgrade: if the two-asterisk overlay is applied after the security kustomization it would
+   drop utcp-runtime from restricted to baseline).
+The other four UTCP namespaces have exactly ONE definition (pod-security-labels.yaml), so they are fully
+pinned and drift-free. Only `utcp-runtime` suffers duplicate/conflicting authority.
+
+## Workload security inventory
+`utcp-runtime` workloads: Deployments `asterisk-ari` and `asterisk-ari-b` (single `asterisk` container
+each), both 1/1 Ready, image `utcp/asterisk-ari:0.1.0-k1-dev`. Live Pod security contexts:
+pod-level `runAsNonRoot=true`, `seccompProfile.type=RuntimeDefault`; container `asterisk`
+`allowPrivilegeEscalation=false`, `capabilities.drop=["ALL"]`, no `privileged`, no host namespaces, no
+hostPath/hostPort. The other UTCP namespaces (utcp-platform api/worker/scheduler/gateway/web/listeners/
+migration Job, utcp-data postgres/redis StatefulSets, utcp-observability, traefik-system) are ALL already
+running live under `enforce=restricted:v1.35` — so they are proven restricted-compatible by construction
+(they could not be admitted otherwise).
+
+## Baseline compatibility
+All UTCP-owned Pod templates are baseline-compatible (baseline is a strict subset of restricted; all are
+already admitted under restricted).
+
+## Restricted compatibility
+All UTCP-owned Pod templates are restricted-compatible and PROVEN so live: every namespace already
+enforces `restricted` and every workload is Ready. The `utcp-runtime` Asterisk pods satisfy the five
+restricted controls (runAsNonRoot, seccomp RuntimeDefault, allowPrivilegeEscalation=false, capabilities
+drop ALL, no privileged). No workload requires baseline; the `overlays/local-two-asterisk` baseline
+labels are an unjustified weakening, not a workload requirement.
+
+## Required privilege versus incomplete hardening
+No required privilege exists in any UTCP-owned workload — no hostNetwork/hostPID/hostIPC, no privileged,
+no added capabilities, no hostPath, no writable-root requirement blocking restricted. There is NO
+incomplete hardening to correct either (the live pods already carry the full restricted security context).
+The only defect is namespace-label authority (missing version pin + duplicate/baseline definitions),
+classified as "obsolete/duplicate manifest authority," not a workload privilege requirement.
+
+## Selected namespace policy matrix
+All five UTCP-owned namespaces: `enforce=restricted`, `enforce-version=v1.35`, `audit=restricted`,
+`audit-version=v1.35`, `warn=restricted`, `warn-version=v1.35` — matching the existing canonical
+`pod-security-labels.yaml`. No namespace needs baseline. Justification: every workload is already
+restricted-compatible and running under restricted enforcement. `utcp-runtime` simply must be brought
+under the same single pinned authority as the other four.
+
+## Policy-version contract
+Pin all three modes to `v1.35` (matches the live server minor v1.35.3). This is deliberate: an unpinned
+label uses `latest`, so a future cluster upgrade would silently change enforced admission semantics — the
+live `utcp-runtime` (`restricted:latest`) demonstrates exactly this hazard. On a cluster-version upgrade,
+the pin is bumped in the single `pod-security-labels.yaml` authority (a reviewed manifest change), making
+the change observable in git. No env-var override for policy versions; no hard-coded version unsupported
+by the cluster (v1.35 is the running minor).
+
+## Required workload corrections
+None. All UTCP-owned Pod templates already satisfy restricted (proven live). The slice is purely
+namespace-label authority consolidation + version pinning; no securityContext patch, image change, or
+entrypoint change is required.
+
+## Reconciliation and drift authority
+Consolidate `utcp-runtime` to the single canonical authority `security/namespaces/pod-security-labels.yaml`
+(already restricted+v1.35). Concretely: remove the PSA labels — and ideally the whole `Namespace` object —
+from `base/runtime/namespace.yaml` and `overlays/local-two-asterisk/namespace.yaml` so they no longer
+compete (keep any non-PSA identity labels only if a single owner is chosen; do not leave two Namespace
+objects setting PSA labels). Then normal `kube apply -k infrastructure/kubernetes/security` (via
+`scripts/security/apply`, already in `scripts/local/up`) restores the desired labels after drift — no new
+reconciliation service, no imperative `kubectl label`, no Artisan command, no env gate, no allowlist. If
+keeping a Namespace object in `base/runtime` is required for apply-ordering (so the namespace exists
+before its workloads), it must carry the identical restricted+v1.35 labels (single source of truth via a
+shared fragment) rather than a divergent set — but the simplest fix is to let `pod-security-labels.yaml`
+own utcp-runtime's labels and have base/runtime reference the namespace without re-declaring PSA labels.
+
+## Rollout order
+Workloads already comply, so no multi-stage audit-first migration is needed:
+1. Consolidate the utcp-runtime Namespace authority (remove duplicate/baseline PSA label definitions;
+   add v1.35 pins to the single authority — already present in pod-security-labels.yaml).
+2. Render + validate kustomize output (utcp-runtime emits restricted+v1.35, single Namespace object).
+3. `kube apply -k infrastructure/kubernetes/security` (canonical) — sets utcp-runtime enforce-version=v1.35.
+4. Confirm `kubectl get ns utcp-runtime` shows enforce-version=v1.35 and the asterisk pods stay 1/1.
+5. Prove admission: a compliant disposable Pod is admitted; a privileged one is rejected as
+   `restricted:v1.35` (not `latest`).
+No permanent audit-only period; immediate restricted enforcement is already live and safe.
+
+## Test contract
+- Every UTCP-owned namespace (5) has explicit enforce/audit/warn + all three -version labels = restricted/
+  v1.35 in the rendered `security` kustomization.
+- System/unrelated namespaces (default, kube-*) are not defined or labeled by any UTCP manifest.
+- Selected policy values are valid PSS levels; versions are `v1.35`.
+- Exactly ONE Namespace object defines each UTCP namespace's PSA labels (no duplicate authority) — assert
+  utcp-runtime is not also defined with PSA labels in base/runtime or overlays/local-two-asterisk.
+- audit/warn are not weaker than enforce.
+- No UTCP Pod template sets privileged/hostNetwork/hostPID/hostIPC/added-capabilities/hostPath; all set
+  runAsNonRoot + seccomp RuntimeDefault + allowPrivilegeEscalation=false + drop ALL (all containers and
+  init containers).
+- Migration Job (utcp-platform) renders restricted-compatible.
+- Namespace labels survive repeat `kube apply -k security` (idempotent).
+- No imperative namespace-label command, feature gate, or allowlist is introduced.
+- Existing NetworkPolicy manifests are unchanged.
+- Reuse/extend the existing `scripts/security/config-check` (which already validates PSA labels — it
+  references the six pod-security label keys) rather than adding a new policy engine.
+
+## Live acceptance contract (deferred — do not run now)
+1. Apply the consolidated manifests; asterisk-ari/asterisk-ari-b (and all other UTCP workloads) stay Ready.
+2. `kubectl get ns --show-labels` shows all 5 UTCP namespaces at restricted + v1.35 (incl. utcp-runtime
+   enforce-version=v1.35).
+3. A disposable compliant Pod is admitted into utcp-runtime; a disposable privileged/violating Pod is
+   rejected by enforce as `restricted:v1.35`.
+4. Migration/maintenance Jobs remain admissible.
+5. No unrelated namespace is modified; label drift (e.g. manual relabel) is restored by re-applying the
+   security kustomization.
+6. Final environment healthy, no disposable Pods left.
+
+## First implementation slice
+Consolidate utcp-runtime PSA-label authority into the single version-pinned `pod-security-labels.yaml`;
+remove the duplicate restricted-unpinned (base/runtime) and baseline (local-two-asterisk) PSA label
+definitions; keep all five UTCP namespaces at restricted+v1.35; add/extend a focused manifest check
+asserting single authority + pinned labels + no forbidden pod-security fields; update roadmap/evidence/
+runbook to mark the namespace PSA reconciliation gap closed. Defer: rtpengine privilege, production
+exemptions, system/third-party namespace policy, general admission frameworks, image signing, RBAC/secret
+redesign.
+
+## Implementation-readiness decision — bounded Codex implementation
+Exact UTCP-owned namespaces (5), current PSA behavior (restricted enforced; utcp-runtime unpinned),
+workload compatibility (all restricted-compatible, proven live; zero hardening required), selected policy
+(restricted+v1.35 all five), version semantics (pin v1.35; bump on cluster upgrade in the single
+authority), declarative authority (pod-security-labels.yaml via security kustomization; remove duplicate/
+baseline definitions), rollout order, tests, and live acceptance are all established. No blocker.
+
+## Ready-to-paste next prompt (Codex — bounded implementation)
+```
+T5-A77 — Consolidate utcp-runtime Pod Security Admission label authority
+
+Repo state: branch main, UTCP_PHASE=T1. Implement exactly the T5-A76 contract in
+docs/evidence/t2/multi-node-failover-readiness.md. Do not begin V0. Keep UTCP_PHASE=T1. No imperative
+kubectl label, no Artisan command, no env gate, no allowlist, no new reconciliation service. Do not push.
+Scope: ONLY the utcp-runtime namespace PSA-label authority; do not touch the other four namespaces
+(already restricted+v1.35 via pod-security-labels.yaml) and do not change any workload securityContext
+(all UTCP workloads are already restricted-compatible and running under restricted enforcement).
+
+1. Single authority: make infrastructure/kubernetes/security/namespaces/pod-security-labels.yaml the sole
+   definer of utcp-runtime's pod-security labels (it already declares utcp-runtime restricted + v1.35 on
+   all three modes). Remove the competing pod-security.kubernetes.io/* labels from
+   infrastructure/kubernetes/base/runtime/namespace.yaml and
+   infrastructure/kubernetes/overlays/local-two-asterisk/namespace.yaml. Prefer removing the entire
+   Namespace object from those two files if apply-ordering still creates utcp-runtime via the security
+   kustomization or an earlier step; if base/runtime must keep a Namespace object so its workloads have a
+   namespace at apply time, it must carry the identical restricted + v1.35 labels (no divergent/baseline
+   set) — but do not have two objects both set PSA labels. Ensure no baseline downgrade path remains.
+
+2. Render + validate: kubectl kustomize the security kustomization and the runtime overlay(s); confirm
+   utcp-runtime resolves to exactly one Namespace object with enforce/audit/warn=restricted and all three
+   -version=v1.35, and that no rendered path emits baseline or unpinned utcp-runtime PSA labels.
+
+3. Checks: extend scripts/security/config-check (or the manifest check it drives) to assert, for every
+   UTCP-owned namespace: enforce/audit/warn=restricted with -version=v1.35; exactly one Namespace object
+   sets PSA labels (fail on duplicate utcp-runtime PSA-label authority); audit/warn not weaker than
+   enforce; and no UTCP Pod template sets privileged/hostNetwork/hostPID/hostIPC/added-capabilities/
+   hostPath while all containers+initContainers set runAsNonRoot + seccomp RuntimeDefault +
+   allowPrivilegeEscalation=false + drop ALL. Reuse the existing PSA-label validation; do not add a new
+   policy engine.
+
+4. Docs: update docs/roadmap/phase-status.md / implementation-roadmap.md (and a short runbook note) to
+   record the namespace PSA reconciliation gap closed (utcp-runtime now restricted+v1.35 under a single
+   authority). NOTE: the phase-status T1 row must keep the literal string
+   '| T1 Kamailio SIP-over-WSS signaling | Complete |' intact so make repository-hygiene passes (a prior
+   table-reformat broke this — restore/keep the exact single-space pipe delimiters on that row).
+
+Verify: make repository-hygiene workflow-check secret-scan; make runtime-engine-config-check
+telephony-domain-config-check asterisk-ari-config-check asterisk-conference-config-check; make
+runtime-engine-test telephony-domain-test asterisk-ari-test asterisk-conference-test
+asterisk-conference-recovery-test; git diff --check. Commit
+feat(t5): consolidate utcp-runtime pod security admission labels. Do not push. Then hand to Claude Code
+for the T5-A78 controlled live PSA proof (enforce-version=v1.35 live; compliant Pod admitted; privileged
+Pod rejected as restricted:v1.35; drift restored by re-apply).
+```
+
+## Verification performed (T5-A76)
+Read-only: roadmap requirement trace (phase-status K3 restricted+v1.35; ADR-012; the T5 utcp-runtime gap);
+namespace ownership trace (5 UTCP-owned + 4 system); live PSA capability trace (server v1.35.3+k3s1;
+privileged dry-run Forbidden as restricted:latest); live namespace-label inventory (utcp-runtime missing
+enforce-version); rendered workload security-context inventory (asterisk-ari/-b restricted-compatible
+live; all other UTCP namespaces already enforcing restricted); baseline+restricted compatibility (all
+compatible, proven live); required-vs-accidental privilege classification (none required, none missing —
+pure label-authority defect); namespace-authority duplication scan (3 utcp-runtime definitions:
+pod-security-labels.yaml pinned, base/runtime unpinned, local-two-asterisk baseline); imperative
+label-command scan (none); feature-gate/allowlist scan (none); k8s-version/policy-version trace (v1.35
+pin correct); phase-marker inspection (UTCP_PHASE=T1). No Namespace/workload/admission/DB/runtime mutation.
+make workflow-check / secret-scan: PASS. make *-config-check (4): PASS. make *-test (runtime-engine 25,
+telephony-domain 66, asterisk-ari 102, asterisk-conference 123, asterisk-conference-recovery 97): PASS.
+git diff --check / --cached: clean. make repository-hygiene: FAIL — pre-existing, introduced by the
+intervening commit fd36cd6 (phase-status table reformat) which broke the check's literal grep for
+'| T1 Kamailio SIP-over-WSS signaling | Complete |'; hygiene PASSES at the task's stated start b56de3c;
+not caused by this audit (tree clean, evidence-only) and out of this audit's modification scope.
