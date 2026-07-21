@@ -76,7 +76,7 @@ Browser proof is not required for documentation-only changes. It is also not req
 
 ## UI-A — Application Shell, Routing, and Navigation
 
-Status: In Progress
+Status: Complete
 
 ### Objective
 
@@ -104,11 +104,11 @@ Replace the monolithic handmade application-routing structure with a maintainabl
 - A shared authenticated `AppShell` provides product identity, capability-aware navigation, tenant context, current user context, logout, route title context, and responsive navigation.
 - The dashboard uses existing canonical APIs for RuntimeNode, user, TelephonySession-summary, and membership orientation where server-returned capabilities permit them.
 - Frontend tests were strengthened from sixteen to twenty-one tests covering router guards, direct URLs, dashboard summaries, capability-filtered navigation, forbidden/not-found routes, and existing management regressions.
+- UI-A2 controlled natural browser proof (evidence: [`docs/evidence/ui/ui-a2-application-shell-dashboard-browser-proof.md`](../evidence/ui/ui-a2-application-shell-dashboard-browser-proof.md)) live-proved the deployed `90d02b4` frontend (web image digest `sha256:29abd658…`) through Playwright MCP: real-login with forced password change, dashboard as the authenticated landing page, dashboard summaries each backed by a canonical authenticated API, capability-aware navigation across no-tenant and tenant-selected states for a broad-capability user, a zero-capability limited user (dashboard usable, admin navigation absent, `/admin/users` guarded to `/forbidden`), a management route through the UI, direct URL and reload, browser back/forward, not-found handling, tenant switching with session and dashboard recalculation, transient secret handling, and logout with post-logout protection.
 
 ### Remaining Implementation
 
-- Complete controlled natural Playwright browser proof through the real login and tenant-selection flow.
-- Use the UI-A shell as the foundation for later UI-C and UI-D route expansion.
+- None for UI-A. Use the UI-A shell as the foundation for later UI-C and UI-D route expansion.
 - Continue preserving direct navigation, browser history, tenant switching, capability gates, login, change-password, session rejection, logout behavior, and write-only secret handling as additional routes are added.
 
 ### Test Contract
