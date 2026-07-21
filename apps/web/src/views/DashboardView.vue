@@ -12,25 +12,20 @@
           Current operator and tenant context from the authenticated session.
         </p>
       </div>
-      <button
+      <UiButton
         type="button"
         @click="loadDashboard"
       >
         Refresh
-      </button>
+      </UiButton>
     </div>
 
     <div class="dashboard-grid">
-      <section
-        class="dashboard-card"
-        aria-labelledby="identity-card-title"
+      <UiPanel
+        id="identity-card-title"
+        label="Identity"
+        :title="session?.user.display_name ?? 'Current user'"
       >
-        <p class="panel-label">
-          Identity
-        </p>
-        <h3 id="identity-card-title">
-          {{ session?.user.display_name }}
-        </h3>
         <dl class="definition-grid">
           <dt>Email</dt>
           <dd>{{ session?.user.email }}</dd>
@@ -43,7 +38,7 @@
           <dt>Session expires</dt>
           <dd>{{ session?.expires_at }}</dd>
         </dl>
-      </section>
+      </UiPanel>
 
       <DashboardSummaryCard
         v-if="can('runtime.nodes.view')"
@@ -66,24 +61,14 @@
         :state="membershipsCard"
       />
 
-      <section
-        class="dashboard-card"
-        aria-labelledby="attention-title"
+      <UiPanel
+        id="attention-title"
+        label="Needs attention"
+        title="Attention summary"
       >
-        <p class="panel-label">
-          Needs attention
-        </p>
-        <h3 id="attention-title">
-          Attention summary
-        </h3>
-        <p
+        <UiLoadingState
           v-if="attentionLoading"
-          class="meta"
-          role="status"
-          aria-live="polite"
-        >
-          Loading.
-        </p>
+        />
         <ul v-else-if="attentionItems.length > 0">
           <li
             v-for="item in attentionItems"
@@ -92,24 +77,18 @@
             {{ item }}
           </li>
         </ul>
-        <p
+        <UiEmptyState
           v-else
-          class="meta"
-        >
-          No degraded or unavailable state was returned by authorized summary requests.
-        </p>
-      </section>
+          title="No attention items"
+          message="No degraded or unavailable state was returned by authorized summary requests."
+        />
+      </UiPanel>
 
-      <section
-        class="dashboard-card"
-        aria-labelledby="quick-links-title"
+      <UiPanel
+        id="quick-links-title"
+        label="Quick navigation"
+        title="Available management"
       >
-        <p class="panel-label">
-          Quick navigation
-        </p>
-        <h3 id="quick-links-title">
-          Available management
-        </h3>
         <div class="quick-links">
           <RouterLink
             v-for="entry in navigation"
@@ -119,7 +98,7 @@
             {{ entry.label }}
           </RouterLink>
         </div>
-      </section>
+      </UiPanel>
     </div>
   </section>
 </template>
@@ -129,6 +108,10 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { identityApi, type AdminUser, type RuntimeNode } from '../api/platform'
 import DashboardSummaryCard, { type DashboardCardState } from '../components/dashboard/DashboardSummaryCard.vue'
+import UiButton from '../components/ui/UiButton.vue'
+import UiEmptyState from '../components/ui/UiEmptyState.vue'
+import UiLoadingState from '../components/ui/UiLoadingState.vue'
+import UiPanel from '../components/ui/UiPanel.vue'
 import {
   apiErrorMessage,
   can,

@@ -11,39 +11,69 @@
         </p>
       </div>
       <div class="topbar-actions">
-        <label v-if="activeMemberships.length > 0">
-          Active tenant
-          <select
-            :value="session?.active_tenant?.tenant_id ?? ''"
-            @change="selectTenant"
-          >
-            <option value="">
-              No tenant selected
-            </option>
-            <option
-              v-for="membership in activeMemberships"
-              :key="membership.tenant_id"
-              :value="membership.tenant_id"
+        <UiFormField
+          v-if="activeMemberships.length > 0"
+          id="active-tenant"
+          label="Active tenant"
+        >
+          <template #default="{ id }">
+            <UiSelect
+              :id="id"
+              :model-value="session?.active_tenant?.tenant_id ?? ''"
+              @update:model-value="selectTenant"
             >
-              {{ membership.display_name }}
-            </option>
-          </select>
-        </label>
-        <button
+              <option value="">
+                No tenant selected
+              </option>
+              <option
+                v-for="membership in activeMemberships"
+                :key="membership.tenant_id"
+                :value="membership.tenant_id"
+              >
+                {{ membership.display_name }}
+              </option>
+            </UiSelect>
+          </template>
+        </UiFormField>
+        <UiFormField
+          id="appearance"
+          label="Appearance"
+        >
+          <template #default="{ id }">
+            <UiSelect
+              :id="id"
+              :model-value="currentAppearancePreference"
+              aria-label="Appearance"
+              @update:model-value="updateAppearance"
+            >
+              <option value="system">
+                System
+              </option>
+              <option value="light">
+                Light
+              </option>
+              <option value="dark">
+                Dark
+              </option>
+            </UiSelect>
+          </template>
+        </UiFormField>
+        <UiButton
           class="compact-nav-toggle"
+          variant="secondary"
           type="button"
           aria-controls="primary-navigation"
           :aria-expanded="navigationOpen"
           @click="navigationOpen = !navigationOpen"
         >
           Menu
-        </button>
-        <button
+        </UiButton>
+        <UiButton
           type="button"
           @click="logout"
         >
           Log out
-        </button>
+        </UiButton>
       </div>
     </header>
 
@@ -107,6 +137,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import UiButton from '../components/ui/UiButton.vue'
+import UiFormField from '../components/ui/UiFormField.vue'
+import UiSelect from '../components/ui/UiSelect.vue'
 import {
   activeMemberships,
   clearOneTimeSignalingCredential,
@@ -117,6 +150,12 @@ import {
   session,
   switchTenant,
 } from '../state/appState'
+import {
+  currentAppearancePreference,
+  isAppearancePreference,
+  setAppearancePreference,
+  type AppearancePreference,
+} from '../state/theme'
 
 const route = useRoute()
 const router = useRouter()
@@ -134,9 +173,13 @@ async function logout(): Promise<void> {
   await router.push('/login')
 }
 
-async function selectTenant(event: Event): Promise<void> {
-  const tenantId = (event.target as HTMLSelectElement).value
-  await switchTenant(tenantId)
+function updateAppearance(preference: string | number): void {
+  const nextPreference: AppearancePreference = isAppearancePreference(preference) ? preference : 'system'
+  setAppearancePreference(nextPreference)
+}
+
+async function selectTenant(tenantId: string | number): Promise<void> {
+  await switchTenant(String(tenantId))
   if (route.name === 'admin-user-detail') {
     await router.push('/admin/users')
   }

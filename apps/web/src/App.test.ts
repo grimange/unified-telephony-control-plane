@@ -4,6 +4,7 @@ import { createMemoryHistory } from 'vue-router'
 import App from './App.vue'
 import { createUtcpRouter, router } from './router'
 import { resetAppStateForTests } from './state/appState'
+import { appearanceStorageKey, resetAppearanceForTests } from './state/theme'
 
 const session = {
   user: {
@@ -304,12 +305,16 @@ describe('C1 App shell', () => {
 
   beforeEach(() => {
     resetAppStateForTests()
+    resetAppearanceForTests()
+    window.localStorage.clear()
     window.history.replaceState({}, '', '/login')
   })
 
   afterEach(() => {
     for (const wrapper of mountedWrappers.splice(0)) wrapper.unmount()
     vi.restoreAllMocks()
+    resetAppearanceForTests()
+    window.localStorage.clear()
   })
 
   async function mountApp(path = '/login') {
@@ -431,6 +436,8 @@ describe('C1 App shell', () => {
     expect(wrapper.text()).toContain('Operator User')
     expect(wrapper.text()).toContain('TelephonySession: active')
     expect(wrapper.text()).toContain('Signaling: eligible / registered')
+    expect(wrapper.find('label[for="user-search"]').text()).toContain('Search')
+    expect(wrapper.find('.ui-status-badge--success').text()).toBe('active')
 
     await wrapper.findAll('a').find((link) => link.text() === 'Details')?.trigger('click')
     await flushPromises()
@@ -641,6 +648,33 @@ describe('C1 App shell', () => {
     expect(wrapper.text()).not.toContain('Tenants')
     expect(wrapper.text()).not.toContain('Runtime nodes')
     expect(calls.every((call) => !String(call.body ?? '').includes('role'))).toBe(true)
+  })
+
+  it('renders the local theme control for a limited user without API persistence', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString()
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(limitedSession))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/dashboard')
+    const callCountBeforeThemeChange = calls.length
+    const appearanceControl = wrapper.find('select[aria-label="Appearance"]')
+
+    expect(appearanceControl.exists()).toBe(true)
+    expect(appearanceControl.text()).toContain('System')
+    expect(appearanceControl.text()).toContain('Light')
+    expect(appearanceControl.text()).toContain('Dark')
+
+    await appearanceControl.setValue('dark')
+    await flushPromises()
+
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(window.localStorage.getItem(appearanceStorageKey)).toBe('dark')
+    expect(calls).toHaveLength(callCountBeforeThemeChange)
   })
 
   it('loads dashboard summaries from existing APIs and preserves partial failures', async () => {

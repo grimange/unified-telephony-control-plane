@@ -7,83 +7,133 @@
       <h2 id="users-title">
         Users
       </h2>
-      <button
+      <UiButton
         type="button"
+        variant="secondary"
         @click="load"
       >
         Refresh
-      </button>
+      </UiButton>
     </div>
-    <form
-      class="inline-form"
-      role="search"
-      @submit.prevent="run(applyUserFilters)"
+
+    <UiPanel
+      title="Filter users"
+      label="Search"
     >
-      <label>
-        Search
-        <input
-          v-model="userFilters.search"
-          placeholder="Name or email"
+      <form
+        class="inline-form"
+        role="search"
+        @submit.prevent="run(applyUserFilters)"
+      >
+        <UiFormField
+          id="user-search"
+          label="Search"
         >
-      </label>
-      <label>
-        Account status
-        <select v-model="userFilters.status">
-          <option value="">
-            Any status
-          </option>
-          <option value="active">
-            Active
-          </option>
-          <option value="suspended">
-            Suspended
-          </option>
-        </select>
-      </label>
-      <button type="submit">
-        Apply
-      </button>
-    </form>
-    <form
+          <template #default="{ id, describedBy, invalid }">
+            <UiTextInput
+              :id="id"
+              v-model="userFilters.search"
+              :aria-describedby="describedBy"
+              :invalid="invalid"
+              placeholder="Name or email"
+            />
+          </template>
+        </UiFormField>
+        <UiFormField
+          id="user-status-filter"
+          label="Account status"
+        >
+          <template #default="{ id, describedBy, invalid }">
+            <UiSelect
+              :id="id"
+              v-model="userFilters.status"
+              :aria-describedby="describedBy"
+              :invalid="invalid"
+            >
+              <option value="">
+                Any status
+              </option>
+              <option value="active">
+                Active
+              </option>
+              <option value="suspended">
+                Suspended
+              </option>
+            </UiSelect>
+          </template>
+        </UiFormField>
+        <UiButton type="submit">
+          Apply
+        </UiButton>
+      </form>
+    </UiPanel>
+
+    <UiPanel
       v-if="can('platform.users.manage')"
-      class="inline-form"
-      @submit.prevent="run(createUser)"
+      title="Create user"
+      label="Management"
     >
-      <input
-        v-model="userForm.email"
-        placeholder="user@example.test"
-        type="email"
-        required
+      <form
+        class="inline-form"
+        @submit.prevent="run(createUser)"
       >
-      <input
-        v-model="userForm.displayName"
-        placeholder="Display name"
-        required
-      >
-      <button type="submit">
-        Create user
-      </button>
-    </form>
+        <UiFormField
+          id="new-user-email"
+          label="Email"
+          required
+        >
+          <template #default="{ id, describedBy, invalid }">
+            <UiTextInput
+              :id="id"
+              v-model="userForm.email"
+              :aria-describedby="describedBy"
+              :invalid="invalid"
+              autocomplete="email"
+              placeholder="user@example.test"
+              type="email"
+              required
+            />
+          </template>
+        </UiFormField>
+        <UiFormField
+          id="new-user-display-name"
+          label="Display name"
+          required
+        >
+          <template #default="{ id, describedBy, invalid }">
+            <UiTextInput
+              :id="id"
+              v-model="userForm.displayName"
+              :aria-describedby="describedBy"
+              :invalid="invalid"
+              autocomplete="name"
+              placeholder="Display name"
+              required
+            />
+          </template>
+        </UiFormField>
+        <UiButton type="submit">
+          Create user
+        </UiButton>
+      </form>
+    </UiPanel>
+
     <p
       v-if="temporaryPassword"
       class="one-time-secret"
     >
       Temporary password: <code>{{ temporaryPassword }}</code>
     </p>
-    <p
+
+    <UiLoadingState
       v-if="loading"
-      class="meta"
-      role="status"
-      aria-live="polite"
-    >
-      Loading users.
-    </p>
-    <p
+      label="Loading users."
+    />
+    <UiEmptyState
       v-else-if="users.length === 0"
-      class="meta"
-    >
-      No users were returned.
-    </p>
+      title="No users"
+      message="No users were returned."
+    />
     <div
       v-else
       class="data-table"
@@ -95,21 +145,27 @@
       >
         <span>
           <strong>{{ user.display_name }}</strong>
-          <small>{{ user.email }} · {{ user.status }}{{ user.password_change_required ? ' · password change required' : '' }}</small>
+          <small>{{ user.email }} · {{ user.password_change_required ? 'password change required' : 'password current' }}</small>
+          <UiStatusBadge
+            :label="user.status"
+            :category="userStatusCategory(user.status)"
+          />
         </span>
         <span class="row-actions">
-          <button
+          <UiButton
             v-if="can('platform.users.manage')"
             type="button"
+            variant="secondary"
             @click="run(() => resetPassword(user.id))"
-          >Reset password</button>
-          <button
+          >Reset password</UiButton>
+          <UiButton
             v-if="can('platform.users.manage')"
             type="button"
+            :variant="user.status === 'active' ? 'danger' : 'secondary'"
             @click="run(() => setUserStatus(user.id, user.status === 'active' ? 'suspended' : 'active'))"
           >
             {{ user.status === 'active' ? 'Suspend' : 'Activate' }}
-          </button>
+          </UiButton>
           <RouterLink :to="`/admin/users/${user.id}`">
             Details
           </RouterLink>
@@ -134,23 +190,25 @@
       </div>
     </div>
     <div class="inline-form">
-      <button
+      <UiButton
         type="button"
+        variant="secondary"
         :disabled="userFilters.page <= 1"
         @click="run(() => goToUserPage(userFilters.page - 1))"
       >
         Previous
-      </button>
+      </UiButton>
       <p class="meta">
         Page {{ userPagination.page }} · {{ userPagination.total }} users
       </p>
-      <button
+      <UiButton
         type="button"
+        variant="secondary"
         :disabled="!userPagination.has_more"
         @click="run(() => goToUserPage(userFilters.page + 1))"
       >
         Next
-      </button>
+      </UiButton>
     </div>
   </section>
 </template>
@@ -158,6 +216,14 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
+import UiButton from '../components/ui/UiButton.vue'
+import UiEmptyState from '../components/ui/UiEmptyState.vue'
+import UiFormField from '../components/ui/UiFormField.vue'
+import UiLoadingState from '../components/ui/UiLoadingState.vue'
+import UiPanel from '../components/ui/UiPanel.vue'
+import UiSelect from '../components/ui/UiSelect.vue'
+import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
+import UiTextInput from '../components/ui/UiTextInput.vue'
 import {
   applyUserFilters,
   can,
@@ -178,6 +244,13 @@ import {
 } from '../state/appState'
 
 const loading = ref(false)
+
+function userStatusCategory(status: string): 'success' | 'warning' | 'neutral' {
+  if (status === 'active') return 'success'
+  if (status === 'suspended') return 'warning'
+
+  return 'neutral'
+}
 
 async function run(action: () => Promise<void>): Promise<void> {
   try {

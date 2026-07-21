@@ -159,17 +159,18 @@ Create a reusable frontend presentation foundation that keeps styling, layout pr
 
 ### Current Evidence
 
-- One global stylesheet exists.
-- Basic root variables exist.
-- Only one primary breakpoint exists.
-- No reusable component system or complete token scale exists.
+- UI-B1 repository implementation added `apps/web/src/styles/tokens.css` as the semantic token authority for color, focus, spacing, typography, radii, shadows, and layout values.
+- UI-B1 added deterministic system, light, and dark theme behavior using root `data-appearance` and `data-theme` attributes.
+- Appearance preference is stored only as local presentation state under `utcp.appearance`; no user, tenant, capability, credential, session, API, or telephony state is stored with it.
+- Core accessible primitives now exist for buttons, form fields, text inputs, selects, panels, status badges, alerts, loading states, and empty states.
+- `AppShell`, Dashboard, and `/admin/users` have adopted the token and component system.
+- Focused frontend tests now cover theme state, theme control behavior, core component contracts, AppShell regressions, Dashboard regressions, and representative management-view adoption.
 
 ### Remaining Implementation
 
-- Define a token scale for color, typography, spacing, radius, border, shadow, and state colors.
-- Add light and dark theme behavior.
-- Introduce reusable primitives and migrate existing screens without changing domain behavior.
+- Broaden component adoption across the remaining management views without changing domain behavior.
 - Standardize telephony and runtime status presentation.
+- Complete controlled natural browser proof of system, light, and dark behavior plus contrast, keyboard, responsive, and persistence acceptance.
 
 ### Test Contract
 

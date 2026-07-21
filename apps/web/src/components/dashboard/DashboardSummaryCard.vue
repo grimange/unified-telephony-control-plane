@@ -1,41 +1,32 @@
 <template>
-  <article class="dashboard-card">
-    <header class="section-heading">
-      <div>
-        <p class="panel-label">
-          {{ label }}
-        </p>
-        <h3>{{ title }}</h3>
-      </div>
+  <UiPanel
+    :title="title"
+    :label="label"
+  >
+    <template #actions>
       <strong v-if="state.status === 'success'">{{ state.countLabel }}</strong>
-    </header>
-    <p
+    </template>
+    <UiLoadingState
       v-if="state.status === 'loading'"
-      class="meta"
-      role="status"
-      aria-live="polite"
-    >
-      Loading.
-    </p>
-    <p
+    />
+    <UiEmptyState
       v-else-if="state.status === 'empty'"
-      class="meta"
-    >
-      {{ state.emptyText }}
-    </p>
-    <p
+      title="No data"
+      :message="state.emptyText"
+    />
+    <UiAlert
       v-else-if="state.status === 'unauthorized'"
-      class="meta"
+      title="Not available"
     >
       Not available for the current session.
-    </p>
-    <p
+    </UiAlert>
+    <UiAlert
       v-else-if="state.status === 'failure'"
-      class="form-error"
-      role="alert"
+      variant="error"
+      title="Summary unavailable"
     >
       {{ state.message }}
-    </p>
+    </UiAlert>
     <ul v-else-if="state.items.length > 0">
       <li
         v-for="item in state.items"
@@ -44,16 +35,20 @@
         {{ item }}
       </li>
     </ul>
-    <p
+    <UiEmptyState
       v-else
-      class="meta"
-    >
-      {{ state.emptyText }}
-    </p>
-  </article>
+      title="No data"
+      :message="state.emptyText"
+    />
+  </UiPanel>
 </template>
 
 <script setup lang="ts">
+import UiAlert from '../ui/UiAlert.vue'
+import UiEmptyState from '../ui/UiEmptyState.vue'
+import UiLoadingState from '../ui/UiLoadingState.vue'
+import UiPanel from '../ui/UiPanel.vue'
+
 export type DashboardCardState =
   | { status: 'loading' }
   | { status: 'empty'; emptyText: string }

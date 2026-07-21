@@ -5,6 +5,23 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>web</title>
+    <script>
+      (() => {
+        try {
+          const stored = window.localStorage.getItem('utcp.appearance')
+          const preference = ['system', 'light', 'dark'].includes(stored) ? stored : 'system'
+          const systemDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+          const theme = preference === 'system' ? (systemDark ? 'dark' : 'light') : preference
+          document.documentElement.dataset.appearance = preference
+          document.documentElement.dataset.theme = theme
+          document.documentElement.style.colorScheme = theme
+        } catch {
+          document.documentElement.dataset.appearance = 'system'
+          document.documentElement.dataset.theme = 'light'
+          document.documentElement.style.colorScheme = 'light'
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>
