@@ -7967,8 +7967,8 @@ participant, closed/observed-closed Conference, no active binding, and a retaine
 RuntimeNode. This is documented in HELP text as a database-derived upper bound because a metrics
 scrape must not call ARI or Asterisk to prove a live Local channel remains.
 
-`utcp_conference_runtime_reference_health_total` is a counter with bounded labels `resource_type`
-and `health`, sourced from `conference_recovery_metric_events`. Health values remain distinct:
+`utcp_conference_runtime_reference_health_10m` is a ten-minute rolling-window gauge with bounded
+labels `resource_type` and `health`, sourced from `conference_recovery_metric_events`. Health values remain distinct:
 `healthy_present`, `healthy_absent`, `degraded_unavailable`, and `transport_unavailable`.
 Unexpected historical values map to `other`. Recognized resource types are `conference` and
 `conference_participant`; unexpected values map to `other`.
@@ -9423,7 +9423,7 @@ each scrape by aggregating PostgreSQL tables (`runtime_operations`, `conference_
 `runtime_reconciliation_states`, `conferences`, `conference_participants`, `telephony_sessions`,
 event-source/lease tables). 39 metric families exist (simulator, telephony_sessions, conferences,
 `conference_operations_total`, `conference_participant_operations_total`,
-`utcp_conference_runtime_inspections_total`, `utcp_conference_runtime_inspection_failures_total`,
+`utcp_conference_runtime_inspections_10m`, `utcp_conference_runtime_inspection_failures_10m`,
 `utcp_conference_recovery_operations_total`, `utcp_conference_recovery_backlog`,
 `utcp_conference_recovery_lag_seconds`, asterisk_ari_*, kamailio_*). The canonical pattern
 (`conferenceOperationMetrics`): `SELECT operation_type, status AS result, coalesce(last_failure_class,
@@ -9453,7 +9453,7 @@ T5 resilience dashboard exists.
 ### Metric naming convention
 Two families: legacy unprefixed (`conference_operations_total`, `telephony_sessions_active`) and
 `utcp_`-prefixed for newer telephony/recovery/asterisk metrics
-(`utcp_conference_recovery_operations_total`, `utcp_conference_runtime_inspections_total`). New T5
+(`utcp_conference_recovery_operations_total`, `utcp_conference_runtime_inspections_10m`). New T5
 metrics MUST use the `utcp_` prefix, `_total` for counters, `_seconds` for time gauges, and bounded
 enum labels (`operation_type`, `result`, `failure_class`, `reason`, `resource_type`, `event_type`,
 `health`, `failover_state`).
@@ -9541,10 +9541,10 @@ failures surface as `result="terminal_failed"`.
 `recordInspectionMetric` writes `conference_recovery_metric_events(adapter_key, resource_type, result,
 failure_class, reason)` where `reason` = `runtime_reference_health` (`healthy_present`,
 `healthy_absent`, `degraded_unavailable`, `transport_unavailable`). The existing
-`utcp_conference_runtime_inspections_total` groups by `result`+`failure_class` only, so
+`utcp_conference_runtime_inspections_10m` groups by `result`+`failure_class` only, so
 `healthy_present` vs `healthy_absent` collapse to `result="observed"` (a gap); the failure metric
 already carries `reason` for the unavailable/failed cases. **Add**
-`utcp_conference_runtime_reference_health_total` (counter): labels `resource_type` ∈
+`utcp_conference_runtime_reference_health_10m` (current ten-minute gauge): labels `resource_type` ∈
 {conference, conference_participant}, `health` ∈ the 4 values above. Source:
 `conference_recovery_metric_events` grouped by `resource_type, reason`. This distinguishes routine
 `healthy_absent` (normal cleanup) from abnormal `degraded_unavailable` (false-404 degradation).
@@ -9622,7 +9622,7 @@ Extend `utcp-alerts.yaml` (PrometheusRule), following the existing
   event can hold this > 0 even after channels are gone; a bounded threshold/for window mitigates
   false alarms; this alert is a candidate to gate behind the follow-up event-resilience fix).
 - `UTCPAriReferenceDegraded`:
-  `sum(increase(utcp_conference_runtime_reference_health_total{health="degraded_unavailable"}[10m])) > 3`
+  `sum(utcp_conference_runtime_reference_health_10m{health="degraded_unavailable"}) > 3`
   for 10m, warning — sustained false-404-style ARI degradation.
 - `UTCPWorkerVersionSkew`: `count(count by (version) (utcp_build_info)) > 1` for 15m, warning —
   a rollout is stuck / version skew persists (directly addresses the T5-A56 visibility gap; 15m
@@ -9655,7 +9655,7 @@ gauge invariant, channel-reclaimed counter + orphan-candidate gauge, ARI health 
    `utcp_conference_failover_pending_oldest_seconds`, `utcp_runtime_resilience_operations_total`
    (verify/fence/restore), `utcp_conference_runtime_binding_retired_total`,
    `utcp_conference_stale_active_bindings`, `utcp_conference_participant_channel_reclaimed_total`,
-   `utcp_conference_orphan_participant_candidates`, `utcp_conference_runtime_reference_health_total`
+   `utcp_conference_orphan_participant_candidates`, `utcp_conference_runtime_reference_health_10m`
    — each following the existing `sample()`/GROUP BY pattern, plus `utcp_build_info{version,commit} 1`.
 2. `utcp-alerts.yaml`: add the 7 bounded alerts above.
 3. `MetricsEndpointTest` (+ a focused metrics unit test): the coverage matrix above.
@@ -9709,7 +9709,7 @@ namespace, Deployment, or raw error message labels.
   event_type conference_participant.channel_reclaimed
 - utcp_conference_orphan_participant_candidates (gauge) — removed participant + closed/observed-closed
   conference + retired binding + no active binding (same predicate as reclaimOrphanParticipantChannels)
-- utcp_conference_runtime_reference_health_total (counter) labels resource_type,health —
+- utcp_conference_runtime_reference_health_10m (current ten-minute gauge) labels resource_type,health —
   conference_recovery_metric_events group by resource_type, reason (health in healthy_present,
   healthy_absent, degraded_unavailable, transport_unavailable)
 - utcp_build_info (gauge, value 1) labels version,commit — from BuildInfo/config('utcp.build.*')
@@ -9724,8 +9724,8 @@ existing pattern). Guard every query with Schema::hasTable.
 - UTCPRuntimeRestoreTerminalFailure: same for operation_type="runtime.node.restore" 10m warning
 - UTCPStaleActiveBindings: sum(utcp_conference_stale_active_bindings) > 0 for 10m warning
 - UTCPOrphanParticipantCandidates: sum(utcp_conference_orphan_participant_candidates) > 0 for 15m warning
-- UTCPAriReferenceDegraded: sum(increase(utcp_conference_runtime_reference_health_total{health=
-  "degraded_unavailable"}[10m])) > 3 for 10m warning
+- UTCPAriReferenceDegraded: sum(utcp_conference_runtime_reference_health_10m{health=
+  "degraded_unavailable"}) > 3 for 10m warning
 - UTCPWorkerVersionSkew: count(count by (version)(utcp_build_info)) > 1 for 15m warning
 
 ## Invariants
@@ -9766,7 +9766,7 @@ Do not push. Keep UTCP_PHASE=T1.
 Verdict: `T5_RESILIENCE_OBSERVABILITY_LIVE_PROOF_INCOMPLETE`. The b78a0b5 deliverable
 (10 new metric families + 6 Prometheus alert rules) is deployed and substantially
 proven live and correct, but two verified divergences prevent an unqualified pass:
-(D1) `utcp_conference_runtime_reference_health_total` emits duplicate `health="other"`
+(D1) `utcp_conference_runtime_reference_health_10m` emits duplicate `health="other"`
 series so Prometheus under-reports the aggregated `other` bucket; (D2) `/api/metrics`
 is publicly reachable through the catch-all Traefik/Gateway route. Both are
 pre-existing (not b78a0b5 regressions); details below.
@@ -9893,7 +9893,7 @@ The `utcp-local` cluster was in a post-host-restart crash state (documented node
   | UTCPRuntimeRestoreTerminalFailure | 600s | sum(increase(...operation_type="runtime.node.restore"...[10m])) > 0 | inactive |
   | UTCPStaleActiveRuntimeBindings | 600s | sum(utcp_conference_stale_active_bindings) > 0 | inactive |
   | UTCPOrphanParticipantCandidates | 900s | sum(utcp_conference_orphan_participant_candidates) > 0 | pending (1 active) |
-  | UTCPAriReferenceFamilyDegraded | 600s | sum(increase(utcp_conference_runtime_reference_health_total{health="degraded_unavailable"}[10m])) > 3 | inactive |
+  | UTCPAriReferenceFamilyDegraded | 600s | sum(utcp_conference_runtime_reference_health_10m{health="degraded_unavailable"}) > 3 | inactive |
 
 ## Alert expression evaluation
 - Every expression executed without parse/evaluation error (lastError empty on all six).
@@ -10422,7 +10422,7 @@ gateway sha256:1591593a614cefe788d34415bb980c3f5eef028d0d661d5a986505c82415ad68.
 ## Stage 1 — API rollout (8080 path preserved), D1 + orphan metric
 Rolled out only `deployment/api` → pod api-57648d76c5-z57kg, rev 80, digest sha256:505239...
 Through the still-8080 scrape path: `/api/metrics` HTTP 200, no exceptions, new orphan metric present,
-and utcp_conference_runtime_reference_health_total emits exactly one series per resource_type×health
+and utcp_conference_runtime_reference_health_10m emits exactly one series per resource_type×health
 (no duplicate label sets). Prometheus ingested the corrected aggregation while still on 8080.
 
 ## D1 corrected aggregation (durable comparison)
@@ -10498,7 +10498,7 @@ present exactly once. All six T5 alerts loaded, health=ok, lastError="":
 | UTCPRuntimeRestoreTerminalFailure | 600s | inactive | sum(increase(...operation_type="runtime.node.restore"...[10m])) > 0 |
 | UTCPStaleActiveRuntimeBindings | 600s | inactive | sum(utcp_conference_stale_active_bindings) > 0 |
 | UTCPOrphanReclamationTerminalFailure | 600s | inactive | sum(increase(utcp_conference_orphan_reclamation_operations_total{result="terminal_failed",failure_class!="none"}[10m])) > 0 |
-| UTCPAriReferenceFamilyDegraded | 600s | inactive | sum(increase(utcp_conference_runtime_reference_health_total{health="degraded_unavailable"}[10m])) > 3 |
+| UTCPAriReferenceFamilyDegraded | 600s | inactive | sum(utcp_conference_runtime_reference_health_10m{health="degraded_unavailable"}) > 3 |
 New alert contract confirmed: references only utcp_conference_orphan_reclamation_operations_total; result
 filter terminal_failed; failure_class!="none"; lookback 10m; for 10m; severity warning; component
 telephony-domain; annotations summary+description with no artisan/manual/PBX/tenant wording. Direct
@@ -10507,7 +10507,7 @@ PromQL of the alert expr → 0 result series. False-positive elimination (D3 cor
 failure was manufactured. 40 rules loaded total, 0 with eval error.
 
 ## Cardinality and sensitive-data proof
-Live series for utcp_conference_runtime_reference_health_total, utcp_conference_orphan_reclamation_operations_total,
+Live series for utcp_conference_runtime_reference_health_10m, utcp_conference_orphan_reclamation_operations_total,
 utcp_conference_orphan_participant_candidates: metric-emitted labels are bounded enums only
 (failure_class, health, resource_type, result). Standard SD target metadata (instance/pod/container/job/
 endpoint/service/namespace) present as on every series (pod name, not UID). Scan for UUID / 7+ digit id /
@@ -11950,11 +11950,11 @@ idempotency check, admin API, or FK references the table (grep confirms only wri
 MetricsController). Answer to "Can deletion of a row change a future runtime decision?": **No.** Deletion
 affects only the value of three Prometheus metric families and (transitively) two 10-minute-window
 alerts. Consumers:
-- `conferenceRecoveryInspectionMetrics()` → `utcp_conference_runtime_inspections_total`
+- `conferenceRecoveryInspectionMetrics()` → `utcp_conference_runtime_inspections_10m`
   (COUNT(*) GROUP BY adapter_key,resource_type,result,failure_class — **whole-table cumulative**).
-- `conferenceRecoveryInspectionFailureMetrics()` → `utcp_conference_runtime_inspection_failures_total`
+- `conferenceRecoveryInspectionFailureMetrics()` → `utcp_conference_runtime_inspection_failures_10m`
   (COUNT(*) WHERE result IN (unavailable,failed) GROUP BY ... — **whole-table cumulative**).
-- `runtimeReferenceHealthMetrics()` → `utcp_conference_runtime_reference_health_total`
+- `runtimeReferenceHealthMetrics()` → `utcp_conference_runtime_reference_health_10m`
   (COUNT(*) GROUP BY resource_type,reason mapped to health — **whole-table cumulative**; this is the
   T5-A62 corrected aggregation).
 Alerts: `UTCPTelephonyConferenceRuntimeInspectionFailures` = `sum(increase(...inspection_failures_total
@@ -12029,23 +12029,13 @@ of those live in this table, and the age cutoff (>> 10m alert window) protects t
 `increase([10m])` alerts still read.
 
 ## Metric and alert preservation (the one design decision)
-Classification of the three metrics:
-- `utcp_conference_runtime_inspections_total` — declared a Prometheus **counter**, but implemented as a
-  whole-table cumulative COUNT. Pruning old rows would make it **decrease**, violating counter
-  monotonicity and corrupting any `rate()/increase()` over a window crossing a prune.
-- `utcp_conference_runtime_inspection_failures_total` — same (counter, whole-table cumulative).
-- `utcp_conference_runtime_reference_health_total` — same (counter, whole-table cumulative).
-The alerts only ever use `increase(...[10m])`, i.e. bounded-window deltas; they do NOT need unbounded
-history. Required correction in the SAME bounded implementation (do not retain unlimited raw history to
-preserve an accidentally unbounded counter): make each of the three queries **window-bounded** to a span
-that (a) safely exceeds the alert window and (b) is <= the retention cutoff, e.g.
-`WHERE created_at > now() - reference_window` with `reference_window` << `retention_days`. This turns the
-three families into honest bounded-window metrics whose value is stable across prunes (the pruner only
-removes rows already outside the reference window), so pruning never changes a metric's meaning and the
-`increase([10m])` alerts remain exactly correct. (Alternative accepted only if the reference window would
-be operationally awkward: keep them cumulative but document bounded-history semantics AND set retention
->> any dashboard rate window — the window-bounded correction is preferred and is what this contract
-selects.) No compact summary table is needed under the window-bounded correction.
+Classification of the three current recovery-event metrics:
+- `utcp_conference_runtime_inspections_10m` — a Prometheus **gauge** over rows created during the
+  preceding ten minutes.
+- `utcp_conference_runtime_inspection_failures_10m` — same bounded-window gauge semantics.
+- `utcp_conference_runtime_reference_health_10m` — same bounded-window gauge semantics.
+The alerts evaluate the current gauge value directly; they do not use `increase()` or another counter
+function. No compact summary table is needed under the window-bounded correction.
 
 ## Pruning observability
 Add bounded metrics from durable pruner state (all labels bounded enums, no IDs/tenant/table-from-input/
@@ -12195,3 +12185,126 @@ make repository-hygiene / workflow-check / secret-scan: PASS. make *-config-chec
 (runtime-engine 21, telephony-domain 66, asterisk-ari 102, asterisk-conference 123,
 asterisk-conference-recovery 97): PASS. git diff --check / --cached: clean. No cluster/DB/runtime/
 Conference/RuntimeBinding/PostgreSQL/Redis mutation.
+
+# T5-A74 conference-recovery metric-event retention implementation
+
+## Scope and authority boundary
+
+T5-A74 implements bounded automatic retention for exactly one diagnostic table:
+`conference_recovery_metric_events`.
+
+The table remains diagnostic metric evidence only. It is not authority for Conference lifecycle,
+RuntimeBindings, runtime operations, recovery decisions, reconciliation, idempotency, event receipts,
+event epochs, RuntimeNode state, or outbox delivery. The pruning service deletes from no adjacent
+canonical table and no runtime recovery path reads pruning results.
+
+## Retention configuration
+
+Application configuration now defines:
+
+- `runtime_engine.conference_recovery_metric_event_retention_days` = 7.
+- `runtime_engine.conference_recovery_metric_event_prune_batch_size` = 1000.
+- `runtime_engine.conference_recovery_metric_event_prune_max_batches_per_run` = 10.
+
+The runtime-engine config check validates these as positive integer application defaults. They are not
+environment-variable gates, tenant policy, runtime allowlists, or hidden opt-in switches. Seven days is
+safely greater than the ten-minute alert window.
+
+## Pruning behavior
+
+`ConferenceRecoveryMetricEventPruner` computes one cutoff snapshot per run:
+
+`created_at < now() - retention_days`
+
+It then deletes oldest eligible rows first in short transactional batches, ordered by `created_at, id`,
+with at most 1000 rows per batch and 10 batches per run. If the run cap is reached and eligible rows
+remain, the result is `backlog_remaining`; the next hourly run continues from the same age predicate.
+Rows exactly at the cutoff or newer are retained. Recently inserted diagnostic rows remain ineligible.
+
+Each batch is transactional. A failed batch rolls back that batch, earlier committed batches remain valid,
+the command exits nonzero, and the next scheduled run retries automatically. The service returns bounded
+structured fields: result, rows deleted, batches completed, remaining-backlog flag, and cutoff.
+
+## Command and schedule
+
+The thin command is:
+
+`runtime-engine:prune-conference-recovery-metric-events --once`
+
+It delegates to the pruner, logs bounded structured fields, prints a deterministic status, and exits
+nonzero on invalid configuration or pruning failure. It has no tenant, retention override, dry-run, or
+manual activation option.
+
+The scheduler runs it hourly with `withoutOverlapping()`. Normal retention pruning therefore requires no
+operator command, manual reconciliation, feature gate, Redis authority, or database lease.
+
+## Metric semantic correction
+
+The previous diagnostic-table metric families were whole-table counts declared as counters. That was
+invalid once old diagnostic rows became pruneable.
+
+T5-A74 removes those whole-history counter families from production code and replaces them with
+ten-minute rolling-window gauges:
+
+- `utcp_conference_runtime_inspections_10m`
+- `utcp_conference_runtime_inspection_failures_10m`
+- `utcp_conference_runtime_reference_health_10m`
+
+Each gauge counts matching `conference_recovery_metric_events` rows created during the preceding ten
+minutes. Values may naturally decrease as rows leave the window. No replacement metric has a `_total`
+suffix. Scrape queries perform only PostgreSQL reads and no PBX, Kubernetes, Redis, runtime, WebSocket,
+or ARI I/O.
+
+Label values are bounded before emission. Runtime reference health still maps resource type and health
+classification before aggregation, so raw ARI reasons do not become labels and duplicate final label sets
+are not emitted.
+
+## Alert correction
+
+The two recovery-event alerts now evaluate the current rolling-window gauges directly:
+
+- `UTCPTelephonyConferenceRuntimeInspectionFailures`: `sum(utcp_conference_runtime_inspection_failures_10m) > 3`
+- `UTCPAriReferenceFamilyDegraded`: `sum(utcp_conference_runtime_reference_health_10m{health="degraded_unavailable"}) > 3`
+
+They no longer use `increase()` against values derived from the pruneable diagnostic table. Pruning rows
+older than seven days cannot remove rows required by the ten-minute alert window.
+
+## Pruning observability
+
+MetricsController adds durable current-state gauges:
+
+- `utcp_conference_recovery_metric_event_prune_eligible_backlog`
+- `utcp_conference_recovery_metric_event_prune_oldest_age_seconds`
+
+Both are computed from the same age predicate as the pruner. They use no labels. Empty backlog reports
+zero age. No process-local cumulative pruning counters are exposed.
+
+The new alert is:
+
+`UTCPConferenceRecoveryMetricEventPruneBacklog`
+
+It fires when `utcp_conference_recovery_metric_event_prune_eligible_backlog > 10000` for 30 minutes with
+severity warning. Its annotation states that automatic retention pruning is falling behind and will retry
+on the next hourly schedule. It does not instruct an operator to run the pruning command manually.
+
+## Focused test coverage
+
+Focused tests cover:
+
+- Seven-day age eligibility, cutoff exclusivity, recent-row retention, and alternate retention cutoff.
+- Batch size and max-batch caps, remaining-backlog reporting, catch-up on later runs, idempotent repeats,
+  and oldest-first deletion.
+- Runtime authority preservation for adjacent operation and outbox tables.
+- Thin command execution, deterministic nonzero failure on invalid configuration, and hourly
+  `withoutOverlapping()` scheduler wiring.
+- Ten-minute rolling-window gauge semantics, absence of old `_total` diagnostic-table metric families,
+  bounded labels, pruning backlog gauges, and alert expressions that do not use `increase()` on gauges.
+
+Focused commands already observed passing during repository implementation:
+
+- `php artisan test --filter=ConferenceRecoveryMetricEventPrunerTest`
+- `php artisan test --filter=MetricsEndpointTest`
+
+Controlled live proof of scheduled aged-row pruning, recent-row preservation, metric correctness, and
+final cleanup remains pending. This repository update does not claim live scheduled pruning has already
+been observed.

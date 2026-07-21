@@ -246,8 +246,8 @@ Prometheus `ruleNamespaceSelector` (`utcp-observability`) and empty
 `ruleSelector`.
 
 Metrics proof: all seven recovery series
-(`utcp_conference_runtime_inspections_total`,
-`utcp_conference_runtime_inspection_failures_total`,
+(`utcp_conference_runtime_inspections_10m`,
+`utcp_conference_runtime_inspection_failures_10m`,
 `utcp_conference_recovery_operations_total`,
 `utcp_conference_recovery_operation_failures_total`,
 `utcp_conference_recovery_stale_events_rejected_total`,

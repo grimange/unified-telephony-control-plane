@@ -52,6 +52,9 @@ return [
     'lease_seconds' => env('UTCP_RUNTIME_ENGINE_LEASE_SECONDS', 60),
     'poll_seconds' => env('UTCP_RUNTIME_ENGINE_POLL_SECONDS', 3),
     'stale_observation_seconds' => env('UTCP_RUNTIME_ENGINE_STALE_OBSERVATION_SECONDS', 300),
+    'conference_recovery_metric_event_retention_days' => 7,
+    'conference_recovery_metric_event_prune_batch_size' => 1000,
+    'conference_recovery_metric_event_prune_max_batches_per_run' => 10,
     'kubernetes' => [
         'service_host' => env('KUBERNETES_SERVICE_HOST'),
         'service_port' => env('KUBERNETES_SERVICE_PORT_HTTPS', env('KUBERNETES_SERVICE_PORT', 443)),

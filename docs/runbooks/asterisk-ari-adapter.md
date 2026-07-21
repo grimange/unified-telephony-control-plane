@@ -47,8 +47,8 @@ T2 conference recovery remains adapter-neutral in the C3 and C5 layers. The gene
 
 The metrics endpoint exposes low-cardinality recovery telemetry:
 
-- `utcp_conference_runtime_inspections_total`: runtime inspections grouped by adapter, resource type, result, and failure class.
-- `utcp_conference_runtime_inspection_failures_total`: unavailable or failed inspections grouped by adapter, resource type, failure class, and reason.
+- `utcp_conference_runtime_inspections_10m`: runtime inspections grouped by adapter, resource type, result, and failure class.
+- `utcp_conference_runtime_inspection_failures_10m`: unavailable or failed inspections grouped by adapter, resource type, failure class, and reason.
 - `utcp_conference_recovery_operations_total`: conference recovery operations grouped by operation, result, and failure class.
 - `utcp_conference_recovery_operation_failures_total`: retrying or failed recovery operations grouped by operation, result, and failure class.
 - `utcp_conference_recovery_stale_events_rejected_total`: stale or superseded conference event receipts grouped by result and reason.

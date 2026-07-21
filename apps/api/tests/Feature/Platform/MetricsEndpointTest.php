@@ -241,10 +241,10 @@ final class MetricsEndpointTest extends TestCase
         $body = $response->getContent();
 
         $this->assertIsString($body);
-        $this->assertStringContainsString('# HELP utcp_conference_runtime_inspections_total', $body);
-        $this->assertStringContainsString('# TYPE utcp_conference_runtime_inspections_total counter', $body);
-        $this->assertStringContainsString('utcp_conference_runtime_inspections_total{adapter_key="asterisk-ari",resource_type="conference",result="observed",failure_class="none"} 1', $body);
-        $this->assertStringContainsString('utcp_conference_runtime_inspection_failures_total{adapter_key="asterisk-ari",resource_type="conference_participant",failure_class="runtime_unavailable",reason="runtime_unavailable"} 1', $body);
+        $this->assertStringContainsString('# HELP utcp_conference_runtime_inspections_10m', $body);
+        $this->assertStringContainsString('# TYPE utcp_conference_runtime_inspections_10m gauge', $body);
+        $this->assertStringContainsString('utcp_conference_runtime_inspections_10m{adapter_key="asterisk-ari",resource_type="conference",result="observed",failure_class="none"} 1', $body);
+        $this->assertStringContainsString('utcp_conference_runtime_inspection_failures_10m{adapter_key="asterisk-ari",resource_type="conference_participant",failure_class="runtime_unavailable",reason="runtime_unavailable"} 1', $body);
         $this->assertStringContainsString('utcp_conference_recovery_operations_total{operation="conference.close",result="retry_scheduled",failure_class="runtime_unavailable"} 1', $body);
         $this->assertStringContainsString('utcp_conference_recovery_operation_failures_total{operation="conference.participant.ensure",result="terminal_failed",failure_class="timeout"} 1', $body);
         $this->assertStringContainsString('utcp_conference_recovery_stale_events_rejected_total{result="conflict",reason="stale_epoch"} 1', $body);
@@ -390,11 +390,11 @@ final class MetricsEndpointTest extends TestCase
         $this->assertStringContainsString('utcp_conference_participant_channel_reclaimed_total{classification="other"} 1', $first);
         $this->assertStringContainsString('utcp_conference_orphan_participant_candidates{} 1', $first);
         $this->assertStringContainsString('utcp_conference_orphan_reclamation_operations_total{result="succeeded",failure_class="none"} 1', $first);
-        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference",health="healthy_present"} 1', $first);
-        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference",health="healthy_absent"} 1', $first);
-        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference_participant",health="degraded_unavailable"} 1', $first);
-        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference_participant",health="transport_unavailable"} 1', $first);
-        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference_participant",health="other"} 1', $first);
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_10m{resource_type="conference",health="healthy_present"} 1', $first);
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_10m{resource_type="conference",health="healthy_absent"} 1', $first);
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_10m{resource_type="conference_participant",health="degraded_unavailable"} 1', $first);
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_10m{resource_type="conference_participant",health="transport_unavailable"} 1', $first);
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_10m{resource_type="conference_participant",health="other"} 1', $first);
         $this->assertStringContainsString('utcp_build_info{version="5.8.0-t5",commit="5b219f1"} 1', $first);
         $this->assertStringNotContainsString('pod=', $first);
         $this->assertStringNotContainsString('digest=', $first);
@@ -430,6 +430,7 @@ final class MetricsEndpointTest extends TestCase
     public function test_runtime_reference_health_aggregates_after_bounded_label_mapping(): void
     {
         $now = Carbon::parse('2026-07-20 13:00:00');
+        $this->travelTo($now);
 
         foreach ([
             ['conference', 'ari_http_transport_failed'],
@@ -460,16 +461,16 @@ final class MetricsEndpointTest extends TestCase
         $second = (string) $this->get('/api/metrics')->assertOk()->getContent();
 
         $this->assertSame($first, $second);
-        $this->assertSame(1, $this->sampleLineCount($first, 'utcp_conference_runtime_reference_health_total{resource_type="conference",health="other"}'));
-        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference",health="other"} 4', $first);
-        $this->assertSame(1, $this->sampleLineCount($first, 'utcp_conference_runtime_reference_health_total{resource_type="conference_participant",health="other"}'));
-        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference_participant",health="other"} 2', $first);
-        $this->assertSame(1, $this->sampleLineCount($first, 'utcp_conference_runtime_reference_health_total{resource_type="other",health="other"}'));
-        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="other",health="other"} 1', $first);
-        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference",health="healthy_present"} 1', $first);
-        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference",health="healthy_absent"} 1', $first);
-        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference_participant",health="degraded_unavailable"} 1', $first);
-        $this->assertStringContainsString('utcp_conference_runtime_reference_health_total{resource_type="conference_participant",health="transport_unavailable"} 1', $first);
+        $this->assertSame(1, $this->sampleLineCount($first, 'utcp_conference_runtime_reference_health_10m{resource_type="conference",health="other"}'));
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_10m{resource_type="conference",health="other"} 4', $first);
+        $this->assertSame(1, $this->sampleLineCount($first, 'utcp_conference_runtime_reference_health_10m{resource_type="conference_participant",health="other"}'));
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_10m{resource_type="conference_participant",health="other"} 2', $first);
+        $this->assertSame(1, $this->sampleLineCount($first, 'utcp_conference_runtime_reference_health_10m{resource_type="other",health="other"}'));
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_10m{resource_type="other",health="other"} 1', $first);
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_10m{resource_type="conference",health="healthy_present"} 1', $first);
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_10m{resource_type="conference",health="healthy_absent"} 1', $first);
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_10m{resource_type="conference_participant",health="degraded_unavailable"} 1', $first);
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_10m{resource_type="conference_participant",health="transport_unavailable"} 1', $first);
 
         foreach (['ari_http_transport_failed', 'ari_http_unavailable', 'another unknown value'] as $rawReason) {
             $this->assertStringNotContainsString($rawReason, $first);
@@ -552,6 +553,62 @@ final class MetricsEndpointTest extends TestCase
         }
     }
 
+    public function test_conference_recovery_metric_event_gauges_use_ten_minute_window_and_prune_backlog_metrics(): void
+    {
+        $now = Carbon::parse('2026-07-21 12:00:00');
+        $this->travelTo($now);
+        Config::set('runtime_engine.conference_recovery_metric_event_retention_days', 7);
+
+        $recentObserved = EngineIds::new();
+        $recentFailed = EngineIds::new();
+        $outsideWindow = EngineIds::new();
+        $eligiblePrune = EngineIds::new();
+        $tenantLikeValue = IdentityIds::new();
+
+        foreach ([
+            [$recentObserved, 'observed', 'none', 'healthy_present', $now->copy()->subMinutes(5)],
+            [$recentFailed, 'failed', 'runtime_unavailable', 'runtime_unavailable', $now->copy()->subMinutes(4)],
+            [$outsideWindow, 'failed', 'timeout', 'timeout', $now->copy()->subMinutes(11)],
+            [$eligiblePrune, 'failed', 'unexpected_failure', $tenantLikeValue, $now->copy()->subDays(8)],
+        ] as [$id, $result, $failureClass, $reason, $createdAt]) {
+            DB::table('conference_recovery_metric_events')->insert([
+                'id' => $id,
+                'adapter_key' => 'asterisk-ari',
+                'resource_type' => 'conference',
+                'result' => $result,
+                'failure_class' => $failureClass,
+                'reason' => $reason,
+                'created_at' => $createdAt,
+                'updated_at' => $createdAt,
+            ]);
+        }
+
+        $body = (string) $this->get('/api/metrics')->assertOk()->getContent();
+
+        $this->assertStringContainsString('# TYPE utcp_conference_runtime_inspections_10m gauge', $body);
+        $this->assertStringContainsString('# TYPE utcp_conference_runtime_inspection_failures_10m gauge', $body);
+        $this->assertStringContainsString('# TYPE utcp_conference_runtime_reference_health_10m gauge', $body);
+        $this->assertStringContainsString('utcp_conference_runtime_inspections_10m{adapter_key="asterisk-ari",resource_type="conference",result="observed",failure_class="none"} 1', $body);
+        $this->assertStringContainsString('utcp_conference_runtime_inspections_10m{adapter_key="asterisk-ari",resource_type="conference",result="failed",failure_class="runtime_unavailable"} 1', $body);
+        $this->assertStringContainsString('utcp_conference_runtime_inspection_failures_10m{adapter_key="asterisk-ari",resource_type="conference",failure_class="runtime_unavailable",reason="runtime_unavailable"} 1', $body);
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_10m{resource_type="conference",health="healthy_present"} 1', $body);
+        $this->assertStringContainsString('utcp_conference_runtime_reference_health_10m{resource_type="conference",health="other"} 1', $body);
+        $this->assertStringContainsString('utcp_conference_recovery_metric_event_prune_eligible_backlog{} 1', $body);
+        $this->assertStringContainsString('utcp_conference_recovery_metric_event_prune_oldest_age_seconds{} 691200', $body);
+
+        foreach ([
+            'utcp_conference_runtime_inspections_total',
+            'utcp_conference_runtime_inspection_failures_total',
+            'utcp_conference_runtime_reference_health_total',
+            $outsideWindow,
+            $eligiblePrune,
+            $tenantLikeValue,
+            'unexpected_failure',
+        ] as $forbidden) {
+            $this->assertStringNotContainsString($forbidden, $body);
+        }
+    }
+
     public function test_asterisk_ari_events_degraded_node_metric_counts_current_degraded_nodes_without_identifiers(): void
     {
         $now = Carbon::parse('2026-07-21 10:00:00');
@@ -619,7 +676,8 @@ final class MetricsEndpointTest extends TestCase
             'UTCPRuntimeRestoreTerminalFailure' => 'operation_type="runtime.node.restore"',
             'UTCPStaleActiveRuntimeBindings' => 'for: 10m',
             'UTCPOrphanReclamationTerminalFailure' => 'utcp_conference_orphan_reclamation_operations_total{result="terminal_failed",failure_class!="none"}[10m]',
-            'UTCPAriReferenceFamilyDegraded' => 'health="degraded_unavailable"',
+            'UTCPAriReferenceFamilyDegraded' => 'sum(utcp_conference_runtime_reference_health_10m{health="degraded_unavailable"}) > 3',
+            'UTCPConferenceRecoveryMetricEventPruneBacklog' => 'utcp_conference_recovery_metric_event_prune_eligible_backlog > 10000',
             'UTCPAsteriskAriEventStreamDegraded' => 'sum(asterisk_ari_events_degraded_nodes) > 0',
         ] as $alert => $requiredText) {
             $this->assertSame(1, substr_count($yaml, 'alert: '.$alert), $alert.' must be declared exactly once.');
@@ -631,13 +689,20 @@ final class MetricsEndpointTest extends TestCase
             'utcp_runtime_resilience_operations_total',
             'utcp_conference_stale_active_bindings',
             'utcp_conference_orphan_reclamation_operations_total',
-            'utcp_conference_runtime_reference_health_total',
+            'utcp_conference_runtime_reference_health_10m',
+            'utcp_conference_runtime_inspection_failures_10m',
+            'utcp_conference_recovery_metric_event_prune_eligible_backlog',
             'asterisk_ari_events_degraded_nodes',
         ] as $metric) {
             $this->assertStringContainsString($metric, $yaml);
         }
 
         $this->assertMatchesRegularExpression('/alert: UTCPAsteriskAriEventStreamDegraded\s+expr: sum\(asterisk_ari_events_degraded_nodes\) > 0\s+for: 5m\s+labels:\s+severity: warning/s', $yaml);
+        $this->assertStringNotContainsString('increase(utcp_conference_runtime_inspection_failures_10m', $yaml);
+        $this->assertStringNotContainsString('increase(utcp_conference_runtime_reference_health_10m', $yaml);
+        $this->assertStringNotContainsString('utcp_conference_runtime_inspections_total', $yaml);
+        $this->assertStringNotContainsString('utcp_conference_runtime_inspection_failures_total', $yaml);
+        $this->assertStringNotContainsString('utcp_conference_runtime_reference_health_total', $yaml);
         $this->assertStringNotContainsString('UTCPOrphanParticipantCandidates', $yaml);
         $this->assertStringNotContainsString('utcp_conference_orphan_participant_candidates', $yaml);
         $this->assertStringContainsString('for: 10m', $yaml);

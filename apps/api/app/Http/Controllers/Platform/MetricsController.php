@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Platform;
 
 use App\ControlPlane\RuntimeOperations\FailureClass;
 use App\ControlPlane\RuntimeOperations\OperationStatus;
+use App\RuntimeEngine\ConferenceRecoveryMetricEventPruner;
 use App\RuntimeEngine\Sources\EventSourceRepository;
 use App\Support\Build\BuildInfo;
 use App\TelephonyDomain\Signaling\KamailioRegistrationObserver;
@@ -15,8 +16,11 @@ use Illuminate\Support\Facades\Schema;
 
 final class MetricsController
 {
+    private const CONFERENCE_RECOVERY_METRIC_WINDOW_MINUTES = 10;
+
     public function __construct(
         private readonly BuildInfo $build,
+        private readonly ConferenceRecoveryMetricEventPruner $conferenceRecoveryMetricEventPruner,
     ) {}
 
     public function __invoke(): Response
@@ -70,11 +74,11 @@ final class MetricsController
             '# HELP conference_participant_reconciliation_total Conference participant reconciliation states by result.',
             '# TYPE conference_participant_reconciliation_total counter',
             ...$this->telephonyReconciliationMetrics('conference_participant', 'conference_participant_reconciliation_total'),
-            '# HELP utcp_conference_runtime_inspections_total Conference runtime inspections by adapter, resource type, result, and failure class.',
-            '# TYPE utcp_conference_runtime_inspections_total counter',
+            '# HELP utcp_conference_runtime_inspections_10m Conference runtime inspections during the preceding ten minutes by adapter, resource type, result, and failure class.',
+            '# TYPE utcp_conference_runtime_inspections_10m gauge',
             ...$this->conferenceRecoveryInspectionMetrics(),
-            '# HELP utcp_conference_runtime_inspection_failures_total Conference runtime inspection failures by adapter, resource type, failure class, and reason.',
-            '# TYPE utcp_conference_runtime_inspection_failures_total counter',
+            '# HELP utcp_conference_runtime_inspection_failures_10m Conference runtime inspection failures during the preceding ten minutes by adapter, resource type, failure class, and reason.',
+            '# TYPE utcp_conference_runtime_inspection_failures_10m gauge',
             ...$this->conferenceRecoveryInspectionFailureMetrics(),
             '# HELP utcp_conference_recovery_operations_total Conference recovery runtime operations by operation, result, and failure class.',
             '# TYPE utcp_conference_recovery_operations_total counter',
@@ -118,9 +122,15 @@ final class MetricsController
             '# HELP utcp_conference_orphan_reclamation_operations_total Durable orphan participant-channel reclamation runtime operation objects by result and failure class. Attempts are not counted separately. Maximum series: 104.',
             '# TYPE utcp_conference_orphan_reclamation_operations_total counter',
             ...$this->orphanReclamationOperationMetrics(),
-            '# HELP utcp_conference_runtime_reference_health_total Conference runtime reference inspections by bounded resource type and ARI reference-health classification. Maximum series: 15.',
-            '# TYPE utcp_conference_runtime_reference_health_total counter',
+            '# HELP utcp_conference_runtime_reference_health_10m Conference runtime reference inspections during the preceding ten minutes by bounded resource type and ARI reference-health classification. Maximum series: 15.',
+            '# TYPE utcp_conference_runtime_reference_health_10m gauge',
             ...$this->runtimeReferenceHealthMetrics(),
+            '# HELP utcp_conference_recovery_metric_event_prune_eligible_backlog Current conference recovery diagnostic metric-event rows older than the configured retention cutoff.',
+            '# TYPE utcp_conference_recovery_metric_event_prune_eligible_backlog gauge',
+            ...$this->conferenceRecoveryMetricEventPruneBacklogMetrics(),
+            '# HELP utcp_conference_recovery_metric_event_prune_oldest_age_seconds Age in seconds of the oldest conference recovery diagnostic metric-event row eligible for pruning. Zero means no eligible backlog.',
+            '# TYPE utcp_conference_recovery_metric_event_prune_oldest_age_seconds gauge',
+            ...$this->conferenceRecoveryMetricEventPruneOldestAgeMetrics(),
             '# HELP utcp_build_info Build information for the application serving this metrics endpoint.',
             '# TYPE utcp_build_info gauge',
             ...$this->buildInfoMetrics(),
@@ -494,10 +504,12 @@ final class MetricsController
     private function conferenceRecoveryInspectionMetrics(): array
     {
         if (! Schema::hasTable('conference_recovery_metric_events')) {
-            return [$this->sample('utcp_conference_runtime_inspections_total', ['adapter_key' => 'none', 'resource_type' => 'none', 'result' => 'none', 'failure_class' => 'none'], 0)];
+            return [$this->sample('utcp_conference_runtime_inspections_10m', ['adapter_key' => 'none', 'resource_type' => 'none', 'result' => 'none', 'failure_class' => 'none'], 0)];
         }
 
+        $windowStart = $this->conferenceRecoveryMetricWindowStart();
         $rows = DB::table('conference_recovery_metric_events')
+            ->where('created_at', '>=', $windowStart)
             ->selectRaw('adapter_key, resource_type, result, failure_class, count(*) as count')
             ->groupBy('adapter_key', 'resource_type', 'result', 'failure_class')
             ->orderBy('adapter_key')
@@ -506,15 +518,34 @@ final class MetricsController
             ->get();
 
         if ($rows->isEmpty()) {
-            return [$this->sample('utcp_conference_runtime_inspections_total', ['adapter_key' => 'none', 'resource_type' => 'none', 'result' => 'none', 'failure_class' => 'none'], 0)];
+            return [$this->sample('utcp_conference_runtime_inspections_10m', ['adapter_key' => 'none', 'resource_type' => 'none', 'result' => 'none', 'failure_class' => 'none'], 0)];
         }
 
-        return $rows->map(fn (object $row): string => $this->sample('utcp_conference_runtime_inspections_total', [
-            'adapter_key' => (string) $row->adapter_key,
-            'resource_type' => (string) $row->resource_type,
-            'result' => (string) $row->result,
-            'failure_class' => (string) $row->failure_class,
-        ], (int) $row->count))->all();
+        $counts = [];
+        foreach ($rows as $row) {
+            $adapterKey = $this->boundedValue((string) $row->adapter_key, $this->conferenceRecoveryMetricAdapterKeys());
+            $resourceType = $this->boundedValue((string) $row->resource_type, $this->runtimeReferenceResourceTypes());
+            $result = $this->boundedValue((string) $row->result, $this->conferenceRecoveryMetricResults());
+            $failureClass = $this->boundedValue((string) $row->failure_class, $this->failureClassValuesWithNone());
+            $key = $adapterKey."\0".$resourceType."\0".$result."\0".$failureClass;
+            $counts[$key] = ($counts[$key] ?? 0) + (int) $row->count;
+        }
+
+        ksort($counts);
+
+        return collect($counts)
+            ->map(function (int $count, string $key): string {
+                [$adapterKey, $resourceType, $result, $failureClass] = explode("\0", $key, 4);
+
+                return $this->sample('utcp_conference_runtime_inspections_10m', [
+                    'adapter_key' => $adapterKey,
+                    'resource_type' => $resourceType,
+                    'result' => $result,
+                    'failure_class' => $failureClass,
+                ], $count);
+            })
+            ->values()
+            ->all();
     }
 
     /**
@@ -523,10 +554,12 @@ final class MetricsController
     private function conferenceRecoveryInspectionFailureMetrics(): array
     {
         if (! Schema::hasTable('conference_recovery_metric_events')) {
-            return [$this->sample('utcp_conference_runtime_inspection_failures_total', ['adapter_key' => 'none', 'resource_type' => 'none', 'failure_class' => 'none', 'reason' => 'none'], 0)];
+            return [$this->sample('utcp_conference_runtime_inspection_failures_10m', ['adapter_key' => 'none', 'resource_type' => 'none', 'failure_class' => 'none', 'reason' => 'none'], 0)];
         }
 
+        $windowStart = $this->conferenceRecoveryMetricWindowStart();
         $rows = DB::table('conference_recovery_metric_events')
+            ->where('created_at', '>=', $windowStart)
             ->whereIn('result', ['unavailable', 'failed'])
             ->selectRaw('adapter_key, resource_type, failure_class, reason, count(*) as count')
             ->groupBy('adapter_key', 'resource_type', 'failure_class', 'reason')
@@ -536,15 +569,34 @@ final class MetricsController
             ->get();
 
         if ($rows->isEmpty()) {
-            return [$this->sample('utcp_conference_runtime_inspection_failures_total', ['adapter_key' => 'none', 'resource_type' => 'none', 'failure_class' => 'none', 'reason' => 'none'], 0)];
+            return [$this->sample('utcp_conference_runtime_inspection_failures_10m', ['adapter_key' => 'none', 'resource_type' => 'none', 'failure_class' => 'none', 'reason' => 'none'], 0)];
         }
 
-        return $rows->map(fn (object $row): string => $this->sample('utcp_conference_runtime_inspection_failures_total', [
-            'adapter_key' => (string) $row->adapter_key,
-            'resource_type' => (string) $row->resource_type,
-            'failure_class' => (string) $row->failure_class,
-            'reason' => (string) $row->reason,
-        ], (int) $row->count))->all();
+        $counts = [];
+        foreach ($rows as $row) {
+            $adapterKey = $this->boundedValue((string) $row->adapter_key, $this->conferenceRecoveryMetricAdapterKeys());
+            $resourceType = $this->boundedValue((string) $row->resource_type, $this->runtimeReferenceResourceTypes());
+            $failureClass = $this->boundedValue((string) $row->failure_class, $this->failureClassValuesWithNone());
+            $reason = $this->boundedValue((string) $row->reason, $this->conferenceRecoveryMetricReasons());
+            $key = $adapterKey."\0".$resourceType."\0".$failureClass."\0".$reason;
+            $counts[$key] = ($counts[$key] ?? 0) + (int) $row->count;
+        }
+
+        ksort($counts);
+
+        return collect($counts)
+            ->map(function (int $count, string $key): string {
+                [$adapterKey, $resourceType, $failureClass, $reason] = explode("\0", $key, 4);
+
+                return $this->sample('utcp_conference_runtime_inspection_failures_10m', [
+                    'adapter_key' => $adapterKey,
+                    'resource_type' => $resourceType,
+                    'failure_class' => $failureClass,
+                    'reason' => $reason,
+                ], $count);
+            })
+            ->values()
+            ->all();
     }
 
     /**
@@ -865,7 +917,9 @@ final class MetricsController
         }
 
         $counts = [];
+        $windowStart = $this->conferenceRecoveryMetricWindowStart();
         $rows = DB::table('conference_recovery_metric_events')
+            ->where('created_at', '>=', $windowStart)
             ->selectRaw('resource_type, reason, count(*) as count')
             ->groupBy('resource_type', 'reason')
             ->orderBy('resource_type')
@@ -885,13 +939,47 @@ final class MetricsController
             ->map(function (int $count, string $key): string {
                 [$resourceType, $health] = explode("\0", $key, 2);
 
-                return $this->sample('utcp_conference_runtime_reference_health_total', [
+                return $this->sample('utcp_conference_runtime_reference_health_10m', [
                     'resource_type' => $resourceType,
                     'health' => $health,
                 ], $count);
             })
             ->values()
             ->all();
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conferenceRecoveryMetricEventPruneBacklogMetrics(): array
+    {
+        return [$this->sample(
+            'utcp_conference_recovery_metric_event_prune_eligible_backlog',
+            [],
+            $this->conferenceRecoveryMetricEventPruner->eligibleBacklogCount($this->conferenceRecoveryMetricEventRetentionDays()),
+        )];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conferenceRecoveryMetricEventPruneOldestAgeMetrics(): array
+    {
+        return [$this->sample(
+            'utcp_conference_recovery_metric_event_prune_oldest_age_seconds',
+            [],
+            $this->conferenceRecoveryMetricEventPruner->oldestEligibleAgeSeconds($this->conferenceRecoveryMetricEventRetentionDays()),
+        )];
+    }
+
+    private function conferenceRecoveryMetricWindowStart(): Carbon
+    {
+        return now()->subMinutes(self::CONFERENCE_RECOVERY_METRIC_WINDOW_MINUTES);
+    }
+
+    private function conferenceRecoveryMetricEventRetentionDays(): int
+    {
+        return max(1, (int) config('runtime_engine.conference_recovery_metric_event_retention_days', 7));
     }
 
     /**
@@ -1388,6 +1476,33 @@ final class MetricsController
     private function runtimeReferenceResourceTypes(): array
     {
         return ['conference', 'conference_participant'];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conferenceRecoveryMetricAdapterKeys(): array
+    {
+        return ['asterisk-ari'];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conferenceRecoveryMetricResults(): array
+    {
+        return ['observed', 'unavailable', 'unsupported', 'failed'];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function conferenceRecoveryMetricReasons(): array
+    {
+        return [
+            ...$this->runtimeReferenceHealthValues(),
+            ...$this->failureClassValuesWithNone(),
+        ];
     }
 
     /**

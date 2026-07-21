@@ -120,7 +120,7 @@ spec:
           annotations:
             summary: Conference recovery reconciliation backlog is older than the bounded recovery window.
         - alert: UTCPTelephonyConferenceRuntimeInspectionFailures
-          expr: sum(increase(utcp_conference_runtime_inspection_failures_total[10m])) > 3
+          expr: sum(utcp_conference_runtime_inspection_failures_10m) > 3
           for: 10m
           labels:
             severity: warning
@@ -175,7 +175,7 @@ spec:
             summary: Automatic orphan participant channel reclamation reached terminal failure during recent recovery.
             description: Automatic orphan participant-channel reclamation has reached a terminal failure according to the bounded orphan reclamation operation metric.
         - alert: UTCPAriReferenceFamilyDegraded
-          expr: sum(increase(utcp_conference_runtime_reference_health_total{health="degraded_unavailable"}[10m])) > 3
+          expr: sum(utcp_conference_runtime_reference_health_10m{health="degraded_unavailable"}) > 3
           for: 10m
           labels:
             severity: warning
@@ -183,6 +183,16 @@ spec:
             namespace: utcp-platform
           annotations:
             summary: ARI resource-family health is degrading authoritative runtime-reference inspection.
+        - alert: UTCPConferenceRecoveryMetricEventPruneBacklog
+          expr: utcp_conference_recovery_metric_event_prune_eligible_backlog > 10000
+          for: 30m
+          labels:
+            severity: warning
+            component: telephony-domain
+            namespace: utcp-platform
+          annotations:
+            summary: Conference recovery metric-event retention pruning is falling behind.
+            description: Automatic retention pruning for conference recovery diagnostic metric events is falling behind and will retry on the next hourly schedule.
         - alert: UTCPTelephonyExpiredActiveSessions
           expr: telephony_sessions_expired_active{status="active"} > 0
           for: 5m

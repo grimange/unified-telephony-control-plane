@@ -8,6 +8,7 @@ use App\Infrastructure\RuntimeFencing\InfrastructureConnectivityProbe;
 use App\RuntimeAdapters\Asterisk\AsteriskAriEventListener;
 use App\RuntimeAdapters\Asterisk\AsteriskCatalog;
 use App\RuntimeEngine\Commands\CommandWorker;
+use App\RuntimeEngine\ConferenceRecoveryMetricEventPruner;
 use App\RuntimeEngine\Events\EventNormalizerWorker;
 use App\RuntimeEngine\Outbox\OutboxDispatcher;
 use App\RuntimeEngine\Projection\ProjectionService;
@@ -433,6 +434,49 @@ Artisan::command('runtime-engine:derive-stale-observations', function (Projectio
 
     return 0;
 })->purpose('Derive stale runtime-node observations without manual state authority.');
+
+Artisan::command('runtime-engine:prune-conference-recovery-metric-events {--once : Run one bounded pruning pass and exit}', function (ConferenceRecoveryMetricEventPruner $pruner): int {
+    if (! $this->option('once')) {
+        $this->error('conference_recovery_metric_event_prune_status=failed');
+        $this->error('reason=once_required');
+
+        return 2;
+    }
+
+    try {
+        $result = $pruner->pruneExpired(
+            (int) config('runtime_engine.conference_recovery_metric_event_retention_days', 7),
+            (int) config('runtime_engine.conference_recovery_metric_event_prune_batch_size', 1000),
+            (int) config('runtime_engine.conference_recovery_metric_event_prune_max_batches_per_run', 10),
+        );
+    } catch (Throwable) {
+        Log::warning('conference recovery metric event pruning failed', [
+            'component' => 'conference-recovery-metric-event-pruner',
+            'result' => 'failed',
+            'rows_deleted' => 0,
+            'batches' => 0,
+            'remaining_backlog' => false,
+        ]);
+        $this->error('conference_recovery_metric_event_prune_status=failed');
+
+        return 1;
+    }
+
+    Log::info('conference recovery metric event pruning completed', [
+        'component' => 'conference-recovery-metric-event-pruner',
+        'result' => $result['result'],
+        'rows_deleted' => $result['rows_deleted'],
+        'batches' => $result['batches_completed'],
+        'remaining_backlog' => $result['eligible_backlog_remaining'],
+    ]);
+
+    $this->line('conference_recovery_metric_event_prune_status='.$result['result']);
+    $this->line('rows_deleted='.$result['rows_deleted']);
+    $this->line('batches_completed='.$result['batches_completed']);
+    $this->line('eligible_backlog_remaining='.($result['eligible_backlog_remaining'] ? '1' : '0'));
+
+    return in_array($result['result'], ['succeeded', 'noop', 'backlog_remaining'], true) ? 0 : 1;
+})->purpose('Prune expired conference recovery metric events with bounded retention.');
 
 Artisan::command('runtime-engine:status', function (): int {
     $tables = [
@@ -892,6 +936,7 @@ Schedule::command('runtime-engine:command-worker --once')->everyMinute()->withou
 Schedule::command('runtime-engine:event-normalizer --once')->everyMinute()->withoutOverlapping();
 Schedule::command('runtime-engine:reconciler --once')->everyMinute()->withoutOverlapping();
 Schedule::command('runtime-engine:derive-stale-observations')->everyFiveMinutes()->withoutOverlapping();
+Schedule::command('runtime-engine:prune-conference-recovery-metric-events --once')->hourly()->withoutOverlapping();
 Schedule::command('simulator:ensure-targets')->everyMinute()->withoutOverlapping();
 Schedule::command('simulator:event-source --once')->everyMinute()->withoutOverlapping();
 Schedule::command('asterisk-ari:ensure-targets')->everyMinute()->withoutOverlapping();
