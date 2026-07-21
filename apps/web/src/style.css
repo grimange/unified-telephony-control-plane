@@ -652,6 +652,11 @@ h3 {
     flex-direction: column;
   }
 
+  .data-row {
+    flex-wrap: nowrap;
+    height: auto;
+  }
+
   .app-shell {
     width: min(100% - var(--space-6), var(--layout-app));
     padding: var(--space-6) 0;

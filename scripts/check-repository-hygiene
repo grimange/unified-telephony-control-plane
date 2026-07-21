@@ -48,6 +48,31 @@ fi
 
 scripts/local/config-check
 
+python3 - <<'PY'
+from pathlib import Path
+import re
+import sys
+
+css = Path("apps/web/src/style.css").read_text(encoding="utf-8")
+if re.search(r"overflow-x\s*:\s*hidden", css):
+    sys.stderr.write("Users mobile overflow must not be masked with overflow-x:hidden\n")
+    sys.exit(1)
+
+match = re.search(r"@media \(max-width: 720px\) \{(?P<body>.*)\n\}", css, re.S)
+if not match:
+    sys.stderr.write("missing narrow responsive media block in apps/web/src/style.css\n")
+    sys.exit(1)
+
+body = match.group("body")
+if not re.search(r"\.data-row\s*\{[^}]*flex-wrap\s*:\s*nowrap[^}]*height\s*:\s*auto", body, re.S):
+    sys.stderr.write("narrow .data-row must set flex-wrap: nowrap and height: auto\n")
+    sys.exit(1)
+
+if not re.search(r"\.topbar,\s*\.data-row\s*\{[^}]*flex-direction\s*:\s*column", body, re.S):
+    sys.stderr.write("narrow .data-row must remain a vertical flex column\n")
+    sys.exit(1)
+PY
+
 while IFS= read -r path; do
   if [ "$path" = "versions.env" ]; then
     continue
