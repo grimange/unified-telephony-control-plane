@@ -1,6 +1,9 @@
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMemoryHistory } from 'vue-router'
 import App from './App.vue'
+import { createUtcpRouter, router } from './router'
+import { resetAppStateForTests } from './state/appState'
 
 const session = {
   user: {
@@ -38,6 +41,11 @@ const session = {
   ],
   catalog_version: 'c2.test',
   expires_at: '2026-07-14T10:00:00Z',
+}
+
+const limitedSession = {
+  ...session,
+  capabilities: [],
 }
 
 const adminUser = {
@@ -260,6 +268,7 @@ function mockUserAdminFetch(calls: Array<{ url: string; body?: unknown }>): void
     calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
     if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
     if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+    if (url.endsWith('/api/v1/auth/tenant-context')) return Promise.resolve(jsonResponse(session))
     if (url.includes('/api/v1/admin/users?')) {
       return Promise.resolve(jsonResponse({
         users: [adminUser],
@@ -291,19 +300,38 @@ function mockUserAdminFetch(calls: Array<{ url: string; body?: unknown }>): void
 }
 
 describe('C1 App shell', () => {
+  const mountedWrappers: VueWrapper[] = []
+
   beforeEach(() => {
+    resetAppStateForTests()
     window.history.replaceState({}, '', '/login')
   })
 
   afterEach(() => {
+    for (const wrapper of mountedWrappers.splice(0)) wrapper.unmount()
     vi.restoreAllMocks()
   })
+
+  async function mountApp(path = '/login') {
+    await router.push(path)
+    await router.isReady()
+    const wrapper = mount(App, {
+      global: {
+        plugins: [router],
+      },
+    })
+    mountedWrappers.push(wrapper)
+    await flushPromises()
+    await flushPromises()
+    await flushPromises()
+
+    return wrapper
+  }
 
   it('renders the natural login form without client-side tokens', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ message: 'Unauthenticated.' }, 401))
 
-    const wrapper = mount(App)
-    await flushPromises()
+    const wrapper = await mountApp('/login')
 
     expect(wrapper.text()).toContain('Sign in')
     expect(wrapper.find('input[type="email"]').exists()).toBe(true)
@@ -322,10 +350,7 @@ describe('C1 App shell', () => {
 
       return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
     })
-    window.history.replaceState({}, '', '/admin/tenants')
-
-    const wrapper = mount(App)
-    await flushPromises()
+    const wrapper = await mountApp('/admin/tenants')
 
     expect(wrapper.text()).toContain('Local Admin')
     expect(wrapper.text()).toContain('Tenants')
@@ -338,10 +363,7 @@ describe('C1 App shell', () => {
   it('renders runtime-node administration without exposing credential secrets', async () => {
     const calls: Array<{ url: string; body?: unknown }> = []
     mockRuntimeAdminFetch(calls)
-    window.history.replaceState({}, '', '/admin/runtime-nodes')
-
-    const wrapper = mount(App)
-    await flushPromises()
+    const wrapper = await mountApp('/admin/runtime-nodes')
 
     expect(wrapper.text()).toContain('Proof Runtime')
     expect(wrapper.text()).toContain('observed unobserved')
@@ -368,10 +390,7 @@ describe('C1 App shell', () => {
     const calls: Array<{ url: string; body?: unknown }> = []
     mockRuntimeAdminFetch(calls)
     vi.spyOn(window, 'confirm').mockReturnValue(true)
-    window.history.replaceState({}, '', '/admin/runtime-nodes')
-
-    const wrapper = mount(App)
-    await flushPromises()
+    const wrapper = await mountApp('/admin/runtime-nodes')
 
     await wrapper.find('form.inline-form input[type="checkbox"]').setValue(false)
     await wrapper.findAll('form.inline-form').find((form) => form.text().includes('Set capabilities'))?.trigger('submit.prevent')
@@ -398,28 +417,23 @@ describe('C1 App shell', () => {
 
   it('redirects a protected page to login when the session endpoint rejects it', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ message: 'Unauthenticated.' }, 401))
-    window.history.replaceState({}, '', '/admin/users')
+    const wrapper = await mountApp('/admin/users')
 
-    const wrapper = mount(App)
-    await flushPromises()
-
-    expect(window.location.pathname).toBe('/login')
+    expect(router.currentRoute.value.path).toBe('/login')
     expect(wrapper.text()).toContain('Sign in to continue.')
   })
 
   it('renders canonical user detail and keeps signaling secrets transient', async () => {
     const calls: Array<{ url: string; body?: unknown }> = []
     mockUserAdminFetch(calls)
-    window.history.replaceState({}, '', '/admin/users')
-
-    const wrapper = mount(App)
-    await flushPromises()
+    const wrapper = await mountApp('/admin/users')
 
     expect(wrapper.text()).toContain('Operator User')
     expect(wrapper.text()).toContain('TelephonySession: active')
     expect(wrapper.text()).toContain('Signaling: eligible / registered')
 
-    await wrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
+    await wrapper.findAll('a').find((link) => link.text() === 'Details')?.trigger('click')
+    await flushPromises()
     await flushPromises()
 
     expect(wrapper.text()).toContain('User detail')
@@ -495,10 +509,7 @@ describe('C1 App shell', () => {
 
       return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
     })
-    window.history.replaceState({}, '', '/admin/users')
-
-    const wrapper = mount(App)
-    await flushPromises()
+    const wrapper = await mountApp('/admin/users')
 
     expect(wrapper.text()).toContain('Operator User')
     expect(wrapper.text()).toContain('Page 1 · 21 users')
@@ -540,10 +551,7 @@ describe('C1 App shell', () => {
 
       return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
     })
-    window.history.replaceState({}, '', '/admin/users/user-2')
-
-    const wrapper = mount(App)
-    await flushPromises()
+    const wrapper = await mountApp('/admin/users/user-2')
 
     expect(wrapper.text()).toContain('Registration removed. Contact pending expiration. New registrations and refreshes are blocked.')
     expect(wrapper.findAll('button').find((button) => button.text() === 'End TelephonySession')).toBeUndefined()
@@ -569,12 +577,135 @@ describe('C1 App shell', () => {
 
       return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
     })
-    window.history.replaceState({}, '', '/admin/users/user-2')
-
-    const wrapper = mount(App)
-    await flushPromises()
+    const wrapper = await mountApp('/admin/users/user-2')
 
     expect(wrapper.text()).toContain('Registration removed. No active Contact. Reconciliation is converged when reported by the backend.')
     expect(wrapper.text()).not.toContain('No signaling credential has been issued.')
+  })
+
+  it('uses the dashboard as the authenticated root and login destination', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
+      const url = input.toString()
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.endsWith('/api/v1/admin/runtime-nodes')) return Promise.resolve(jsonResponse({ runtime_nodes: [] }))
+      if (url.includes('/api/v1/admin/users')) return Promise.resolve(jsonResponse({ users: [], pagination: { page: 1, per_page: 5, total: 0, has_more: false } }))
+      if (url.endsWith('/api/v1/admin/memberships')) return Promise.resolve(jsonResponse({ memberships: [] }))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const rootWrapper = await mountApp('/')
+    expect(router.currentRoute.value.path).toBe('/dashboard')
+    expect(rootWrapper.text()).toContain('Dashboard')
+
+    const loginWrapper = await mountApp('/login')
+    expect(router.currentRoute.value.path).toBe('/dashboard')
+    expect(loginWrapper.text()).toContain('Local Admin')
+  })
+
+  it('renders explicit forbidden and not-found routes through Vue Router', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
+      const url = input.toString()
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(limitedSession))
+      if (url.endsWith('/api/v1/admin/runtime-nodes')) return Promise.resolve(jsonResponse({ runtime_nodes: [] }))
+      if (url.includes('/api/v1/admin/users')) return Promise.resolve(jsonResponse({ users: [] }, 403))
+      if (url.endsWith('/api/v1/admin/memberships')) return Promise.resolve(jsonResponse({ memberships: [] }, 403))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const forbiddenWrapper = await mountApp('/admin/runtime-nodes')
+    expect(router.currentRoute.value.path).toBe('/forbidden')
+    expect(forbiddenWrapper.text()).toContain('Forbidden')
+    expect(forbiddenWrapper.text()).toContain('Back to dashboard')
+
+    const notFoundWrapper = await mountApp('/missing-route')
+    expect(router.currentRoute.value.name).toBe('not-found')
+    expect(notFoundWrapper.text()).toContain('Not found')
+  })
+
+  it('keeps capability navigation useful for a limited normal user without role-name authority', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString()
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(limitedSession))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/dashboard')
+
+    expect(wrapper.text()).toContain('Dashboard')
+    expect(wrapper.text()).toContain('Available management')
+    expect(wrapper.text()).not.toContain('Tenants')
+    expect(wrapper.text()).not.toContain('Runtime nodes')
+    expect(calls.every((call) => !String(call.body ?? '').includes('role'))).toBe(true)
+  })
+
+  it('loads dashboard summaries from existing APIs and preserves partial failures', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
+      const url = input.toString()
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.endsWith('/api/v1/admin/runtime-nodes')) return Promise.resolve(jsonResponse({ message: 'Runtime summary unavailable.' }, 500))
+      if (url.includes('/api/v1/admin/users')) {
+        return Promise.resolve(jsonResponse({
+          users: [adminUser],
+          pagination: { page: 1, per_page: 5, total: 1, has_more: false },
+        }))
+      }
+      if (url.endsWith('/api/v1/admin/memberships')) return Promise.resolve(jsonResponse({ memberships: [] }))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/dashboard')
+
+    expect(wrapper.text()).toContain('Runtime summary unavailable.')
+    expect(wrapper.text()).toContain('Users and TelephonySessions')
+    expect(wrapper.text()).toContain('Operator User')
+    expect(wrapper.text()).toContain('No memberships were returned.')
+    expect(wrapper.text()).not.toContain('Runtime nodes 0')
+
+    await wrapper.findAll('button').find((button) => button.text() === 'Refresh')?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Runtime summary unavailable.')
+  })
+
+  it('preserves router-level browser history across current direct URLs', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
+      const url = input.toString()
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.includes('/api/v1/admin/users')) {
+        return Promise.resolve(jsonResponse({
+          users: [adminUser],
+          pagination: { page: 1, per_page: 20, total: 1, has_more: false },
+        }))
+      }
+      if (url.endsWith('/api/v1/admin/runtime-nodes')) return Promise.resolve(jsonResponse({ runtime_nodes: [] }))
+      if (url.endsWith('/api/v1/admin/memberships')) return Promise.resolve(jsonResponse({ memberships: [] }))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/admin/users')
+    expect(router.currentRoute.value.path).toBe('/admin/users')
+    expect(wrapper.text()).toContain('Operator User')
+
+    const historyRouter = createUtcpRouter(createMemoryHistory())
+    await historyRouter.push('/admin/users')
+    await historyRouter.isReady()
+    expect(historyRouter.currentRoute.value.path).toBe('/admin/users')
+
+    await historyRouter.push('/dashboard')
+    await flushPromises()
+    expect(historyRouter.currentRoute.value.path).toBe('/dashboard')
+
+    historyRouter.back()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await flushPromises()
+    await flushPromises()
+    expect(historyRouter.currentRoute.value.path).toBe('/admin/users')
   })
 })

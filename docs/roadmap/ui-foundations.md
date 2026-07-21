@@ -97,19 +97,19 @@ Replace the monolithic handmade application-routing structure with a maintainabl
 
 ### Current Evidence
 
-- A homemade `pathname`, `pushState`, and `popstate` router exists.
-- Navigation and capability gating exist.
-- All current routes are concentrated in `App.vue`.
-- `App.vue` is approximately 1,572 lines.
-- Existing frontend tests cover current behavior.
+- UI-A1 repository implementation added official Vue Router as the frontend route authority for `/login`, `/change-password`, `/dashboard`, current admin routes, `/forbidden`, and not-found routes.
+- The former homemade `pathname`, `pushState`, and `popstate` router authority was removed from production frontend code.
+- `App.vue` is reduced to top-level router rendering.
+- Route-level views now own login, password change, dashboard, tenants, memberships, users, user detail, runtime nodes, forbidden, and not-found screens.
+- A shared authenticated `AppShell` provides product identity, capability-aware navigation, tenant context, current user context, logout, route title context, and responsive navigation.
+- The dashboard uses existing canonical APIs for RuntimeNode, user, TelephonySession-summary, and membership orientation where server-returned capabilities permit them.
+- Frontend tests were strengthened from sixteen to twenty-one tests covering router guards, direct URLs, dashboard summaries, capability-filtered navigation, forbidden/not-found routes, and existing management regressions.
 
 ### Remaining Implementation
 
-- Adopt Vue Router as the authoritative router.
-- Extract route-level views from `App.vue`.
-- Introduce a reusable authenticated shell and route context.
-- Add explicit not-found and unauthorized handling.
-- Preserve direct navigation, browser history, tenant switching, capability gates, login, change-password, session rejection, and logout behavior.
+- Complete controlled natural Playwright browser proof through the real login and tenant-selection flow.
+- Use the UI-A shell as the foundation for later UI-C and UI-D route expansion.
+- Continue preserving direct navigation, browser history, tenant switching, capability gates, login, change-password, session rejection, logout behavior, and write-only secret handling as additional routes are added.
 
 ### Test Contract
 
@@ -394,15 +394,18 @@ Run natural Playwright browser proof for material accessibility and responsivene
 
 ### UI-A1 — Adopt Vue Router and Decompose the Application Shell
 
-Scope:
+Implemented repository scope:
 
 - Add official Vue Router.
 - Replace handmade pathname routing.
 - Extract route-level views from `App.vue`.
 - Add a shared `AppShell`.
-- Preserve all current URLs, redirects, capability gates, tenant switching, login, logout, and secret handling.
-- Preserve or strengthen all sixteen tests.
-- Add focused router tests.
-- Require a later natural Playwright browser proof.
+- Add `/dashboard` as the default authenticated landing page.
+- Add capability-aware navigation and explicit forbidden/not-found views.
+- Preserve current URLs, redirects, capability gates, tenant switching, login, logout, and secret handling.
+- Preserve and strengthen the existing sixteen tests; twenty-one frontend tests now pass locally.
+- Add focused router, dashboard, AppShell, and capability-navigation tests.
 
-UI-A1 is not implemented by this documentation reconciliation. It is the next bounded implementation target.
+Remaining proof:
+
+- Complete a later natural Playwright browser proof through real login, tenant context, dashboard, capability-aware navigation, an existing management route, direct URL navigation, browser back/forward, and logout.

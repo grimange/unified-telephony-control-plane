@@ -84,6 +84,17 @@ button {
   cursor: pointer;
 }
 
+a {
+  color: #234d7d;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+a:hover,
+a:focus-visible {
+  text-decoration: underline;
+}
+
 button:disabled {
   cursor: wait;
   opacity: 0.65;
@@ -108,6 +119,10 @@ button:disabled {
 .topbar {
   padding-bottom: 20px;
   border-bottom: 1px solid #d7dce5;
+}
+
+.app-shell--wide {
+  width: min(1280px, calc(100% - 32px));
 }
 
 .topbar h1 {
@@ -136,6 +151,108 @@ button:disabled {
   border-color: #234d7d;
   background: #234d7d;
   color: #fff;
+}
+
+.app-topbar {
+  margin-bottom: 20px;
+}
+
+.compact-nav-toggle {
+  display: none;
+}
+
+.shell-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.24fr) minmax(0, 1fr);
+  gap: 20px;
+}
+
+.shell-sidebar {
+  align-self: start;
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid #d7dce5;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.side-nav {
+  display: grid;
+  gap: 8px;
+}
+
+.side-nav a,
+.quick-links a,
+.row-actions a {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #cbd3df;
+  border-radius: 6px;
+  background: #fff;
+  color: #1d2433;
+  padding: 8px 12px;
+}
+
+.side-nav a {
+  justify-content: flex-start;
+}
+
+.side-nav a.active {
+  border-color: #234d7d;
+  background: #e8eef7;
+  color: #17395f;
+  box-shadow: inset 4px 0 0 #234d7d;
+}
+
+.tenant-context {
+  display: grid;
+  gap: 4px;
+  padding-top: 14px;
+  border-top: 1px solid #e2e7ef;
+}
+
+.shell-content {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.dashboard-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 150px;
+  padding: 16px;
+  border: 1px solid #e2e7ef;
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.dashboard-card h3,
+.dashboard-card p,
+.dashboard-card ul {
+  margin: 0;
+}
+
+.dashboard-card ul {
+  display: grid;
+  gap: 6px;
+  padding-left: 18px;
+}
+
+.quick-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .workspace {
@@ -372,6 +489,30 @@ h1 {
   .data-row {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .app-shell {
+    width: min(100% - 24px, 1180px);
+    padding: 24px 0;
+  }
+
+  .shell-grid,
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .compact-nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .shell-sidebar {
+    display: none;
+  }
+
+  .shell-sidebar.open {
+    display: grid;
   }
 
   .topbar-actions,
