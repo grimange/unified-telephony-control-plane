@@ -4,13 +4,14 @@ This is the executable repository roadmap: actual phase ordering, phase objectiv
 
 ## Document Hierarchy
 
-Four documents share roadmap responsibility. Each has one job; none should duplicate another's.
+Five documents share roadmap responsibility. Each has one job; none should duplicate another's.
 
 | Document | Purpose | Authority |
 | --- | --- | --- |
 | [`docs/unified-telephony-control-plane-initial-implementation-plan.md`](../unified-telephony-control-plane-initial-implementation-plan.md) | Product scope, long-term authority boundaries, the complete end-to-end capability map (call lifecycle, call control, external trunks, routes, caller identity, conferences, signaling, media, runtime neutrality, Asterisk/FreeSWITCH parity). | Product boundary authority. Defines what UTCP must eventually be able to do. |
 | [`docs/unified-telephony-control-plane-application-implementation-plan.md`](../unified-telephony-control-plane-application-implementation-plan.md) | Application and runtime-integration sequencing; C-phase and T-phase implementation detail; the north-star V0 vertical slice; application-process responsibilities. | Sequencing authority for how the application layer is built, phase by phase. |
 | `docs/roadmap/implementation-roadmap.md` (this document) | The executable repository roadmap: actual phase ordering, objectives, boundaries, current completion state, next actionable phase, evidence/ADR links, future phases retained in full. | Executable roadmap authority. Reconciles the two plans above against what the repository has actually proven. |
+| [`docs/roadmap/ui-foundations.md`](ui-foundations.md) | UI-A through UI-E foundation scope, non-goals, dependencies, current evidence, remaining implementation, test contracts, browser-proof contracts, and completion criteria. | Authoritative UI Foundation roadmap. Defines reusable frontend foundations without replacing C/T/V domain phase authority. |
 | [`docs/roadmap/phase-status.md`](phase-status.md) | Concise factual current-state ledger: completed, active, blocked, deferred phases. No duplicate architecture specification. | Status-ledger authority. Always the shortest path to "what phase are we in." |
 
 `CLAUDE.md` (repository root) states the binding phase-dependency order for AI-coder task scoping and must not be treated as an independently competing roadmap; this document elaborates the same order with full objective/boundary/evidence detail and extends it, after the last phase named in `CLAUDE.md`'s current sequence, with the initial plan's full product scope (call lifecycle, external trunk, routing, caller-identity, and reference-application phases) so that scope is not lost. Extending the sequence here does not reorder any phase `CLAUDE.md` already orders (F0 through T5, V0, R0); it only adds phases that `CLAUDE.md`'s current text does not yet mention, pending a future ADR/CLAUDE.md update if and when work on them begins.
@@ -52,6 +53,35 @@ R0  Portfolio release
 ```
 
 F0 through T1 are complete exactly as `CLAUDE.md` orders them. T2 through T5/R0 are the same five phases `CLAUDE.md` already names, in the same order. C6, C7, T6, V1, and A0 are added between T5 and R0 to carry forward the initial plan's full product scope (see "Phase-Identifier Reconciliation" below for why they sit here and not earlier).
+
+## UI Foundation Track
+
+The horizontal UI Foundation track is defined in [`docs/roadmap/ui-foundations.md`](ui-foundations.md). It does not renumber, replace, or advance the F/K/C/T/V/R phase sequence, and it does not change `UTCP_PHASE`.
+
+```text
+UI-A  Application Shell, Routing, and Navigation
+  -> UI-B  Design System and Reusable Component Library
+      -> UI-C  Data Interaction and Management Workflows
+          -> UI-D  Real-Time Telephony Operational Experience
+
+UI-E  Accessibility, Testing, Responsiveness, and Portfolio Quality
+  -> continuous and cross-cutting
+```
+
+UI-A through UI-E own reusable frontend architecture and interaction foundations. C/T/V phases own domain behavior, lifecycle, APIs, authorization, and runtime execution. Completing a UI foundation does not complete a domain phase; completing one domain screen does not complete a UI foundation. Backend authorization remains authoritative, the frontend consumes server-provided capabilities and catalogs, and notifications are not canonical state.
+
+UI-A is the first bounded implementation: adopt Vue Router and decompose the monolithic `App.vue` application shell into route-level views behind a shared `AppShell`. Initial UI-B token work can begin alongside UI-A, but UI-A gates maintainable UI-C and UI-D expansion.
+
+The UI track interleaves with the existing roadmap as follows:
+
+- C1, C2, C5, and T1 already provide current login, tenant, capability, runtime-node, user, session, and signaling UI evidence that UI-A through UI-C must preserve.
+- T2 provides conference-execution domain behavior that later UI-D operational views may display, without making UI-D the domain authority.
+- T3 and V0 provide browser media and end-to-end admission behavior that domain-specific UI-D completion will depend on.
+- T4 must reuse normalized UI behavior rather than create a FreeSWITCH-specific frontend.
+- C6, C7, T6, and V1 call, trunk, route, and call-control screens should build on UI-A through UI-C, with real-time operational presentation flowing through UI-D where appropriate.
+- R0 portfolio release depends on UI-E quality progress, but runtime correctness work is not blocked by incomplete visual polish.
+
+Detailed UI Foundation criteria live only in `docs/roadmap/ui-foundations.md`.
 
 ## First User-Facing Vertical Slice
 
