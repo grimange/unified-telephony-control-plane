@@ -225,7 +225,9 @@ Provide reusable data-management patterns so UTCP operator workflows present can
 - `ApiRequestError` provides a typed API failure boundary.
 - Several management pages already operate.
 - UI-B2 migrated the existing Runtime Nodes adapter form to shared visual primitives while keeping one bounded view-local `asterisk-ari` rendering seam.
-- Shared table, form, validation, and notification systems do not yet exist.
+- UI-C1 repository implementation (evidence: [`docs/evidence/ui/ui-c1-async-state-notifications-runtime-node-loading.md`](../evidence/ui/ui-c1-async-state-notifications-runtime-node-loading.md)) added shared read-resource states (`idle`, `loading`, `success`, `empty`, `refreshing`, `error`, `forbidden`), shared mutation states (`idle`, `submitting`, `succeeded`, `failed`), one app-level notification authority, neutral informational handling for the pre-login session-probe `401`, on-demand RuntimeNode detail loading, node-scoped RuntimeNode field IDs, and representative action feedback for RuntimeNode, User, and Membership mutations.
+- Runtime Nodes initial load now remains bounded to the shared catalog/list requests and no longer fans out detail requests per listed node. Per-node adapter configuration, runtime evidence, and history are loaded only when the node detail/editor panel is opened, cached only in current memory, and invalidated on tenant/session changes or relevant node mutations.
+- Shared table, filter/sort/pagination, broader validation, and catalog-driven adapter-form systems do not yet exist.
 - One Asterisk-specific adapter-form branch remains in the Runtime Nodes view.
 
 ### Boundary
@@ -236,10 +238,11 @@ It must not introduce checked-in capability catalogs, runtime-management authori
 
 ### Remaining Implementation
 
-- Extract shared table, pagination, filter, sorting, form, validation, confirmation, and notification patterns.
-- Standardize API error and state presentation.
+- Extract shared table, URL-backed pagination, filter, sorting, form, validation, and confirmation patterns.
+- Broaden shared API error and state presentation adoption beyond the UI-C1 representative slice.
 - Replace the bounded Asterisk-specific adapter-form branch with server-catalog-driven adapter form rendering once the catalog contract supports it.
 - Preserve one-time and write-only secret handling.
+- Run controlled browser proof for UI-C1 request state, notifications, and on-demand RuntimeNode detail loading.
 
 ### Test Contract
 

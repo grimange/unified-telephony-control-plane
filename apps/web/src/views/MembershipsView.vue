@@ -23,7 +23,7 @@
     >
       <form
         class="inline-form"
-        @submit.prevent="run(createMembership)"
+        @submit.prevent="runMembership(createMembership, 'Membership added.')"
       >
         <UiFormField
           id="membership-user"
@@ -82,6 +82,8 @@
         <UiButton
           type="submit"
           :disabled="tenantRoleOptions.length === 0"
+          :loading="membershipAction.state.status === 'submitting'"
+          loading-label="Adding"
         >
           Add membership
         </UiButton>
@@ -120,18 +122,27 @@
             v-if="can('tenant.memberships.manage')"
             type="button"
             :variant="membership.status === 'active' ? 'danger' : 'secondary'"
-            @click="run(() => setMembershipStatus(membership.id, membership.status === 'active' ? 'suspended' : 'active'))"
+            :disabled="membershipAction.state.status === 'submitting'"
+            @click="runMembership(() => setMembershipStatus(membership.id, membership.status === 'active' ? 'suspended' : 'active'), `Membership ${membership.status === 'active' ? 'suspended' : 'activated'}.`)"
           >
             {{ membership.status === 'active' ? 'Suspend' : 'Activate' }}
           </UiButton>
         </div>
       </div>
     </UiPanel>
+    <UiAlert
+      v-if="membershipAction.state.status === 'failed'"
+      variant="error"
+      title="Membership action failed"
+    >
+      {{ membershipAction.state.error }}
+    </UiAlert>
   </section>
 </template>
 
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
+import UiAlert from '../components/ui/UiAlert.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiEmptyState from '../components/ui/UiEmptyState.vue'
 import UiFormField from '../components/ui/UiFormField.vue'
@@ -139,7 +150,10 @@ import UiLoadingState from '../components/ui/UiLoadingState.vue'
 import UiPanel from '../components/ui/UiPanel.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
 import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
+import { useAsyncAction } from '../composables/asyncState'
+import { notify } from '../state/notifications'
 import {
+  apiErrorMessage,
   can,
   createMembership,
   fail,
@@ -153,6 +167,9 @@ import {
 } from '../state/appState'
 
 const loading = ref(false)
+const membershipAction = useAsyncAction(async (action: () => Promise<void>) => action(), {
+  getErrorMessage: apiErrorMessage,
+})
 
 function membershipStatusCategory(status: string): 'success' | 'warning' | 'neutral' {
   if (status === 'active') return 'success'
@@ -166,6 +183,27 @@ async function run(action: () => Promise<void>): Promise<void> {
     await action()
   } catch (errorValue) {
     fail(errorValue)
+  }
+}
+
+async function runMembership(action: () => Promise<void>, successMessage: string): Promise<void> {
+  await membershipAction.run(action)
+  if (membershipAction.state.status === 'succeeded') {
+    notify({
+      variant: 'success',
+      title: 'Membership updated',
+      message: successMessage,
+    })
+
+    return
+  }
+
+  if (membershipAction.state.status === 'failed') {
+    notify({
+      variant: 'error',
+      title: 'Membership action failed',
+      message: membershipAction.state.error,
+    })
   }
 }
 

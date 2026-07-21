@@ -10,6 +10,8 @@
       <UiButton
         type="button"
         variant="secondary"
+        :loading="runtimeNodesResource.state.status === 'refreshing'"
+        loading-label="Refreshing"
         @click="load"
       >
         Refresh
@@ -23,7 +25,7 @@
     >
       <form
         class="inline-form"
-        @submit.prevent="run(createRuntimeNode)"
+        @submit.prevent="run(createRuntimeNode, 'RuntimeNode created.')"
       >
         <UiFormField
           id="runtime-name"
@@ -101,18 +103,47 @@
             </UiSelect>
           </template>
         </UiFormField>
-        <UiButton type="submit">
+        <UiButton
+          type="submit"
+          :loading="runtimeAction.state.status === 'submitting'"
+          loading-label="Creating"
+        >
           Create runtime node
         </UiButton>
       </form>
     </UiPanel>
 
+    <UiAlert
+      v-if="runtimeNodesResource.state.status === 'forbidden'"
+      variant="error"
+      title="Runtime nodes unavailable"
+    >
+      {{ runtimeNodesResource.state.error }}
+    </UiAlert>
+    <UiAlert
+      v-else-if="runtimeNodesResource.state.status === 'error'"
+      variant="error"
+      title="Runtime nodes unavailable"
+    >
+      {{ runtimeNodesResource.state.error }}
+    </UiAlert>
+    <UiAlert
+      v-if="runtimeAction.state.status === 'failed'"
+      variant="error"
+      title="RuntimeNode action failed"
+    >
+      {{ runtimeAction.state.error }}
+    </UiAlert>
     <UiLoadingState
-      v-if="loading"
+      v-if="runtimeNodesResource.state.status === 'loading' || runtimeNodesResource.state.status === 'idle'"
       label="Loading runtime nodes."
     />
+    <UiLoadingState
+      v-else-if="runtimeNodesResource.state.status === 'refreshing'"
+      label="Refreshing runtime nodes."
+    />
     <UiEmptyState
-      v-else-if="runtimeNodes.length === 0"
+      v-else-if="runtimeNodesResource.state.status === 'empty'"
       title="No RuntimeNodes"
       message="No RuntimeNodes were returned."
     />
@@ -143,10 +174,20 @@
           </span>
           <span class="row-actions">
             <UiButton
+              type="button"
+              variant="secondary"
+              :loading="nodeDetailStatus(node.id) === 'loading'"
+              loading-label="Loading details"
+              @click="toggleNodeDetails(node)"
+            >
+              {{ isNodeExpanded(node.id) ? 'Hide details' : 'Details' }}
+            </UiButton>
+            <UiButton
               v-if="can('runtime.nodes.manage')"
               type="button"
               variant="secondary"
-              @click="run(() => setRuntimeDesiredState(node.id, node.desired_state === 'active' ? 'draining' : 'active'))"
+              :disabled="runtimeAction.state.status === 'submitting'"
+              @click="run(() => setRuntimeDesiredState(node.id, node.desired_state === 'active' ? 'draining' : 'active'), 'RuntimeNode desired state updated.')"
             >
               {{ node.desired_state === 'active' ? 'Drain' : 'Activate' }}
             </UiButton>
@@ -154,19 +195,34 @@
               v-if="can('runtime.nodes.manage')"
               type="button"
               variant="danger"
-              @click="run(() => setRuntimeDesiredState(node.id, 'disabled'))"
+              :disabled="runtimeAction.state.status === 'submitting'"
+              @click="run(() => setRuntimeDesiredState(node.id, 'disabled'), 'RuntimeNode disabled.')"
             >
               Disable
             </UiButton>
           </span>
-          <div class="subgrid">
+          <div
+            v-if="isNodeExpanded(node.id)"
+            class="subgrid"
+          >
+            <UiLoadingState
+              v-if="nodeDetailStatus(node.id) === 'loading'"
+              label="Loading runtime node details."
+            />
+            <UiAlert
+              v-if="nodeDetailStatus(node.id) === 'error' || nodeDetailStatus(node.id) === 'forbidden'"
+              variant="error"
+              title="RuntimeNode details unavailable"
+            >
+              {{ runtimeNodeDetailStates[node.id]?.error }}
+            </UiAlert>
             <form
               v-if="can('runtime.nodes.manage')"
               class="inline-form"
-              @submit.prevent="run(() => addRuntimeEndpoint(node.id))"
+              @submit.prevent="run(() => addRuntimeEndpoint(node.id), 'RuntimeNode endpoint added.')"
             >
               <UiFormField
-                id="endpoint-purpose"
+                :id="runtimeFieldId(node.id, 'endpoint-purpose')"
                 label="Purpose"
               >
                 <template #default="{ id, describedBy, invalid }">
@@ -189,7 +245,7 @@
                 </template>
               </UiFormField>
               <UiFormField
-                id="endpoint-transport"
+                :id="runtimeFieldId(node.id, 'endpoint-transport')"
                 label="Transport"
               >
                 <template #default="{ id, describedBy, invalid }">
@@ -212,7 +268,7 @@
                 </template>
               </UiFormField>
               <UiFormField
-                id="endpoint-host"
+                :id="runtimeFieldId(node.id, 'endpoint-host')"
                 label="Host"
                 required
               >
@@ -229,7 +285,7 @@
                 </template>
               </UiFormField>
               <UiFormField
-                id="endpoint-port"
+                :id="runtimeFieldId(node.id, 'endpoint-port')"
                 label="Port"
                 required
               >
@@ -247,7 +303,7 @@
                 </template>
               </UiFormField>
               <UiFormField
-                id="endpoint-path"
+                :id="runtimeFieldId(node.id, 'endpoint-path')"
                 label="Path"
               >
                 <template #default="{ id, describedBy, invalid }">
@@ -277,7 +333,8 @@
                   v-if="can('runtime.nodes.manage')"
                   type="button"
                   variant="ghost"
-                  @click="run(() => removeRuntimeEndpoint(node.id, endpoint.id))"
+                  :disabled="runtimeAction.state.status === 'submitting'"
+                  @click="run(() => removeRuntimeEndpoint(node.id, endpoint.id), 'RuntimeNode endpoint removed.')"
                 >
                   Remove
                 </UiButton>
@@ -286,7 +343,7 @@
             <form
               v-if="can('runtime.nodes.manage')"
               class="inline-form"
-              @submit.prevent="run(() => setRuntimeCapabilities(node.id))"
+              @submit.prevent="run(() => setRuntimeCapabilities(node.id), 'RuntimeNode capabilities updated.')"
             >
               <label
                 v-for="capability in capabilityOptionsFor(node)"
@@ -313,10 +370,10 @@
             <form
               v-if="can('runtime.credentials.rotate')"
               class="inline-form"
-              @submit.prevent="run(() => createRuntimeCredential(node.id))"
+              @submit.prevent="run(() => createRuntimeCredential(node.id), 'RuntimeNode credential saved.')"
             >
               <UiFormField
-                id="credential-type"
+                :id="runtimeFieldId(node.id, 'credential-type')"
                 label="Credential type"
                 required
               >
@@ -333,7 +390,7 @@
                 </template>
               </UiFormField>
               <UiFormField
-                id="credential-identifier"
+                :id="runtimeFieldId(node.id, 'credential-identifier')"
                 label="Identifier"
               >
                 <template #default="{ id, describedBy, invalid }">
@@ -348,7 +405,7 @@
                 </template>
               </UiFormField>
               <UiFormField
-                id="credential-secret"
+                :id="runtimeFieldId(node.id, 'credential-secret')"
                 label="Write-only secret"
                 help="Secrets are submitted once and cannot be retrieved after submission."
                 required
@@ -382,7 +439,8 @@
                   v-if="can('runtime.credentials.rotate')"
                   type="button"
                   variant="ghost"
-                  @click="run(() => rotateRuntimeCredential(node.id, credential.id))"
+                  :disabled="runtimeAction.state.status === 'submitting'"
+                  @click="run(() => rotateRuntimeCredential(node.id, credential.id), 'RuntimeNode credential rotated.')"
                 >
                   Rotate
                 </UiButton>
@@ -390,7 +448,8 @@
                   v-if="can('runtime.credentials.rotate') && canRetireCredential(node, credential)"
                   type="button"
                   variant="danger"
-                  @click="run(() => retireRuntimeCredential(node.id, credential.id))"
+                  :disabled="runtimeAction.state.status === 'submitting'"
+                  @click="run(() => retireRuntimeCredential(node.id, credential.id), 'RuntimeNode credential retired.')"
                 >
                   Retire
                 </UiButton>
@@ -405,10 +464,10 @@
             <form
               v-if="can('runtime.nodes.manage') && adapterConfigurationSupported(node) && node.adapter_key === 'asterisk-ari'"
               class="inline-form"
-              @submit.prevent="run(() => saveAsteriskAdapterConfiguration(node.id))"
+              @submit.prevent="run(() => saveAsteriskAdapterConfiguration(node.id), 'RuntimeNode adapter configuration saved.')"
             >
               <UiFormField
-                id="asterisk-application-name"
+                :id="runtimeFieldId(node.id, 'asterisk-application-name')"
                 label="ARI application name"
                 required
               >
@@ -427,7 +486,7 @@
               </UiFormField>
               <UiFormField
                 v-for="field in asteriskNumberFields"
-                :id="`asterisk-${field.key}`"
+                :id="runtimeFieldId(node.id, `asterisk-${field.key}`)"
                 :key="field.key"
                 :label="field.label"
                 required
@@ -501,10 +560,14 @@ import UiPanel from '../components/ui/UiPanel.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
 import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
 import UiTextInput from '../components/ui/UiTextInput.vue'
+import { useAsyncAction, useAsyncResource } from '../composables/asyncState'
+import type { RuntimeNode } from '../api/platform'
+import { notify } from '../state/notifications'
 import {
   adapterConfigurationSupported,
   adapterOptionsFor,
   addRuntimeEndpoint,
+  apiErrorMessage,
   asteriskConfigurationForm,
   can,
   canRetireCredential,
@@ -515,7 +578,7 @@ import {
   credentialForm,
   displayValue,
   endpointForm,
-  fail,
+  loadRuntimeNodeDetails,
   refreshRuntimeNodes,
   removeRuntimeEndpoint,
   retireRuntimeCredential,
@@ -524,6 +587,7 @@ import {
   runtimeEvidence,
   runtimeFamilyOptions,
   runtimeHistory,
+  runtimeNodeDetailStates,
   runtimeNodeForm,
   runtimeNodes,
   saveAsteriskAdapterConfiguration,
@@ -532,7 +596,17 @@ import {
   tenantContextVersion,
 } from '../state/appState'
 
-const loading = ref(false)
+const expandedRuntimeNodeIds = ref<string[]>([])
+const runtimeNodesResource = useAsyncResource(refreshRuntimeNodes, {
+  isEmpty: () => runtimeNodes.value.length === 0,
+  getErrorMessage: apiErrorMessage,
+})
+const runtimeAction = useAsyncAction(async (action: () => Promise<void>) => action(), {
+  getErrorMessage: apiErrorMessage,
+})
+const detailAction = useAsyncAction(async (node: RuntimeNode) => loadRuntimeNodeDetails(node), {
+  getErrorMessage: apiErrorMessage,
+})
 
 const asteriskNumberFields = [
   { key: 'connect_timeout_ms', label: 'Connect timeout', min: 250 },
@@ -563,18 +637,63 @@ function runtimeStatusCategory(status: string): 'success' | 'warning' | 'danger'
   return 'neutral'
 }
 
-async function run(action: () => Promise<void>): Promise<void> {
-  try {
-    await action()
-  } catch (errorValue) {
-    fail(errorValue)
+function safeDomId(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]/g, '-')
+}
+
+function runtimeFieldId(runtimeNodeId: string, field: string): string {
+  return `${field}-${safeDomId(runtimeNodeId)}`
+}
+
+function isNodeExpanded(runtimeNodeId: string): boolean {
+  return expandedRuntimeNodeIds.value.includes(runtimeNodeId)
+}
+
+function nodeDetailStatus(runtimeNodeId: string): string {
+  return runtimeNodeDetailStates[runtimeNodeId]?.status ?? 'idle'
+}
+
+async function toggleNodeDetails(node: RuntimeNode): Promise<void> {
+  if (isNodeExpanded(node.id)) {
+    expandedRuntimeNodeIds.value = expandedRuntimeNodeIds.value.filter((runtimeNodeId) => runtimeNodeId !== node.id)
+
+    return
+  }
+
+  expandedRuntimeNodeIds.value = [...expandedRuntimeNodeIds.value, node.id]
+  await detailAction.run(node)
+  if (detailAction.state.status === 'failed') {
+    notify({
+      variant: 'error',
+      title: 'RuntimeNode details unavailable',
+      message: detailAction.state.error,
+    })
+  }
+}
+
+async function run(action: () => Promise<void>, successMessage: string): Promise<void> {
+  await runtimeAction.run(action)
+  if (runtimeAction.state.status === 'succeeded') {
+    notify({
+      variant: 'success',
+      title: 'RuntimeNode updated',
+      message: successMessage,
+    })
+
+    return
+  }
+
+  if (runtimeAction.state.status === 'failed') {
+    notify({
+      variant: 'error',
+      title: 'RuntimeNode action failed',
+      message: runtimeAction.state.error,
+    })
   }
 }
 
 async function load(): Promise<void> {
-  loading.value = true
-  await run(refreshRuntimeNodes)
-  loading.value = false
+  await runtimeNodesResource.load()
 }
 
 onMounted(load)

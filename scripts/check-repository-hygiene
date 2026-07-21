@@ -73,6 +73,42 @@ if not re.search(r"\.topbar,\s*\.data-row\s*\{[^}]*flex-direction\s*:\s*column",
     sys.exit(1)
 PY
 
+python3 - <<'PY'
+from pathlib import Path
+import re
+import sys
+
+runtime_view = Path("apps/web/src/views/RuntimeNodesView.vue").read_text(encoding="utf-8")
+app_state = Path("apps/web/src/state/appState.ts").read_text(encoding="utf-8")
+notifications = Path("apps/web/src/state/notifications.ts").read_text(encoding="utf-8")
+
+if 'id="credential-secret"' in runtime_view:
+    sys.stderr.write("RuntimeNode credential fields must use scoped deterministic IDs\n")
+    sys.exit(1)
+
+refresh_match = re.search(r"export async function refreshRuntimeNodes\(\): Promise<void> \{(?P<body>.*?)\n\}", app_state, re.S)
+if not refresh_match:
+    sys.stderr.write("missing refreshRuntimeNodes implementation\n")
+    sys.exit(1)
+
+if "loadRuntimeNodeDetails" in refresh_match.group("body"):
+    sys.stderr.write("refreshRuntimeNodes must not eagerly fetch every RuntimeNode detail\n")
+    sys.exit(1)
+
+restricted_storage_sources = runtime_view + "\n" + notifications
+if re.search(r"\b(localStorage|sessionStorage|indexedDB)\b", restricted_storage_sources):
+    sys.stderr.write("RuntimeNode detail and notification state must not use browser persistence\n")
+    sys.exit(1)
+
+if re.search(r"notify\([^)]*(credentialForm\.secret|temporaryPassword|oneTimeSignalingCredential|sip_secret|temporary_password)", app_state, re.S):
+    sys.stderr.write("notifications must not include one-time secret values\n")
+    sys.exit(1)
+
+if re.search(r"const\s+(roles|roleCatalog|adapterCatalog|capabilityCatalog)\s*=", runtime_view):
+    sys.stderr.write("frontend role, adapter, or capability catalogs must remain server-provided\n")
+    sys.exit(1)
+PY
+
 while IFS= read -r path; do
   if [ "$path" = "versions.env" ]; then
     continue

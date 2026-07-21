@@ -1,16 +1,23 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import UiAlert from './UiAlert.vue'
 import UiButton from './UiButton.vue'
 import UiEmptyState from './UiEmptyState.vue'
 import UiFormField from './UiFormField.vue'
 import UiLoadingState from './UiLoadingState.vue'
+import UiNotificationRegion from './UiNotificationRegion.vue'
 import UiPanel from './UiPanel.vue'
 import UiSelect from './UiSelect.vue'
 import UiStatusBadge from './UiStatusBadge.vue'
 import UiTextInput from './UiTextInput.vue'
+import { notify, resetNotificationsForTests } from '../../state/notifications'
 
 describe('core UI components', () => {
+  afterEach(() => {
+    resetNotificationsForTests()
+    vi.useRealTimers()
+  })
+
   it('keeps button variants, disabled, and loading states semantic', () => {
     const wrapper = mount(UiButton, {
       props: { variant: 'danger', loading: true, loadingLabel: 'Saving user' },
@@ -94,5 +101,39 @@ describe('core UI components', () => {
     expect(alert.attributes('role')).toBe('alert')
     expect(loading.attributes('role')).toBe('status')
     expect(empty.text()).toContain('No users were returned.')
+  })
+
+  it('renders one notification region with variants, unique IDs, dismissal, and secret redaction', async () => {
+    vi.useFakeTimers()
+    const successId = notify({ variant: 'success', title: 'Saved', message: 'RuntimeNode updated.', autoExpireMs: 1000 })
+    const infoId = notify({ variant: 'information', title: 'Information', message: 'Sign in to continue.', autoExpireMs: 0 })
+    const warningId = notify({ variant: 'warning', title: 'Warning', message: 'Catalog is stale.' })
+    const errorId = notify({
+      variant: 'error',
+      title: 'Credential failed',
+      message: 'Rejected super-secret-fixture.',
+      sensitiveValues: ['super-secret-fixture'],
+    })
+    const wrapper = mount(UiNotificationRegion)
+
+    expect(new Set([successId, infoId, warningId, errorId]).size).toBe(4)
+    expect(wrapper.findAll('.notification-region')).toHaveLength(1)
+    expect(wrapper.text()).toContain('Saved')
+    expect(wrapper.text()).toContain('Information')
+    expect(wrapper.text()).toContain('Warning')
+    expect(wrapper.text()).toContain('Credential failed')
+    expect(wrapper.text()).not.toContain('super-secret-fixture')
+    expect(wrapper.find(`#${errorId}`).attributes('role')).toBe('alert')
+    expect(wrapper.find(`#${infoId}`).attributes('role')).toBe('status')
+
+    vi.advanceTimersByTime(1000)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.text()).not.toContain('RuntimeNode updated.')
+    expect(wrapper.text()).toContain('Credential failed')
+
+    await wrapper.find(`button[aria-label="Dismiss Credential failed"]`).trigger('click')
+    expect(wrapper.text()).not.toContain('Credential failed')
+
+    wrapper.unmount()
   })
 })

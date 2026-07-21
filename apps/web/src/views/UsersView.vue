@@ -156,13 +156,15 @@
             v-if="can('platform.users.manage')"
             type="button"
             variant="secondary"
+            :disabled="userAction.state.status === 'submitting'"
             @click="run(() => resetPassword(user.id))"
           >Reset password</UiButton>
           <UiButton
             v-if="can('platform.users.manage')"
             type="button"
             :variant="user.status === 'active' ? 'danger' : 'secondary'"
-            @click="run(() => setUserStatus(user.id, user.status === 'active' ? 'suspended' : 'active'))"
+            :disabled="userAction.state.status === 'submitting'"
+            @click="runUserStatus(user.id, user.status === 'active' ? 'suspended' : 'active')"
           >
             {{ user.status === 'active' ? 'Suspend' : 'Activate' }}
           </UiButton>
@@ -189,6 +191,13 @@
         </div>
       </div>
     </div>
+    <UiAlert
+      v-if="userAction.state.status === 'failed'"
+      variant="error"
+      title="User action failed"
+    >
+      {{ userAction.state.error }}
+    </UiAlert>
     <div class="inline-form">
       <UiButton
         type="button"
@@ -216,6 +225,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
+import UiAlert from '../components/ui/UiAlert.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiEmptyState from '../components/ui/UiEmptyState.vue'
 import UiFormField from '../components/ui/UiFormField.vue'
@@ -224,8 +234,11 @@ import UiPanel from '../components/ui/UiPanel.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
 import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
 import UiTextInput from '../components/ui/UiTextInput.vue'
+import { useAsyncAction } from '../composables/asyncState'
+import { notify } from '../state/notifications'
 import {
   applyUserFilters,
+  apiErrorMessage,
   can,
   createUser,
   displayValue,
@@ -244,6 +257,9 @@ import {
 } from '../state/appState'
 
 const loading = ref(false)
+const userAction = useAsyncAction(async (action: () => Promise<void>) => action(), {
+  getErrorMessage: apiErrorMessage,
+})
 
 function userStatusCategory(status: string): 'success' | 'warning' | 'neutral' {
   if (status === 'active') return 'success'
@@ -257,6 +273,27 @@ async function run(action: () => Promise<void>): Promise<void> {
     await action()
   } catch (errorValue) {
     fail(errorValue)
+  }
+}
+
+async function runUserStatus(userId: string, status: string): Promise<void> {
+  await userAction.run(() => setUserStatus(userId, status))
+  if (userAction.state.status === 'succeeded') {
+    notify({
+      variant: 'success',
+      title: 'User updated',
+      message: `User ${status === 'active' ? 'activated' : 'suspended'}.`,
+    })
+
+    return
+  }
+
+  if (userAction.state.status === 'failed') {
+    notify({
+      variant: 'error',
+      title: 'User action failed',
+      message: userAction.state.error,
+    })
   }
 }
 

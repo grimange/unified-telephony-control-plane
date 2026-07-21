@@ -114,20 +114,6 @@
       </aside>
 
       <section class="shell-content">
-        <UiAlert
-          v-if="error"
-          variant="error"
-          title="Request failed"
-        >
-          {{ error }}
-        </UiAlert>
-        <UiAlert
-          v-if="message"
-          variant="success"
-          title="Request complete"
-        >
-          {{ message }}
-        </UiAlert>
         <RouterView />
       </section>
     </div>
@@ -137,7 +123,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import UiAlert from '../components/ui/UiAlert.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiFormField from '../components/ui/UiFormField.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
@@ -145,8 +130,6 @@ import {
   activeMemberships,
   clearOneTimeSignalingCredential,
   endSession,
-  error,
-  message,
   navigation,
   session,
   switchTenant,

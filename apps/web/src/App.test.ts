@@ -389,6 +389,13 @@ describe('C1 App shell', () => {
 
     expect(wrapper.text()).toContain('Proof Runtime')
     expect(wrapper.text()).toContain('observed unobserved')
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/adapter-configuration'))).toBe(false)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/runtime-evidence'))).toBe(false)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/history?limit=10'))).toBe(false)
+
+    await wrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
+    await flushPromises()
+
     expect(wrapper.text()).toContain('Secrets are write-only')
     expect(wrapper.text()).toContain('Simulator')
     expect(wrapper.text()).toContain('Asterisk ARI')
@@ -406,6 +413,20 @@ describe('C1 App shell', () => {
     expect(wrapper.text()).not.toContain('Retry')
     expect(wrapper.text()).not.toContain('Reconcile')
     expect(wrapper.text()).not.toContain('Mark Ready')
+
+    const detailCallCountAfterFirstOpen = calls.filter((call) =>
+      call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/adapter-configuration') ||
+      call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/runtime-evidence') ||
+      call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/history?limit=10'),
+    ).length
+    await wrapper.findAll('button').find((button) => button.text() === 'Hide details')?.trigger('click')
+    await wrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
+    await flushPromises()
+    expect(calls.filter((call) =>
+      call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/adapter-configuration') ||
+      call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/runtime-evidence') ||
+      call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/history?limit=10'),
+    )).toHaveLength(detailCallCountAfterFirstOpen)
   })
 
   it('preserves current capabilities and submits adapter configuration through canonical APIs', async () => {
@@ -413,6 +434,8 @@ describe('C1 App shell', () => {
     mockRuntimeAdminFetch(calls)
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = await mountApp('/admin/runtime-nodes')
+    await wrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
+    await flushPromises()
 
     await wrapper.find('form.inline-form input[type="checkbox"]').setValue(false)
     await wrapper.findAll('form.inline-form').find((form) => form.text().includes('Set capabilities'))?.trigger('submit.prevent')
@@ -435,6 +458,34 @@ describe('C1 App shell', () => {
     await flushPromises()
 
     expect(calls.some((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/credentials/credential-1/retire'))).toBe(true)
+  })
+
+  it('keeps repeated RuntimeNode credential field IDs unique and scoped to labels', async () => {
+    const secondRuntimeNode = { ...runtimeNode, id: 'runtime-2', name: 'Second Runtime', slug: 'second-runtime' }
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
+      const url = input.toString()
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.endsWith('/api/v1/admin/runtime-node-catalog')) return Promise.resolve(jsonResponse({ catalog: runtimeCatalog }))
+      if (url.endsWith('/api/v1/admin/runtime-nodes')) return Promise.resolve(jsonResponse({ runtime_nodes: [runtimeNode, secondRuntimeNode] }))
+      if (url.includes('/api/v1/admin/runtime-nodes/runtime-')) return Promise.resolve(jsonResponse({ message: 'Detail unavailable.' }, 500))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/admin/runtime-nodes')
+    for (const button of wrapper.findAll('button').filter((candidate) => candidate.text() === 'Details')) {
+      await button.trigger('click')
+    }
+    await flushPromises()
+
+    const credentialInputs = wrapper.findAll('input[type="password"][placeholder="Write-only secret"]')
+    const credentialIds = credentialInputs.map((input) => input.attributes('id'))
+    expect(credentialIds).toEqual(['credential-secret-runtime-1', 'credential-secret-runtime-2'])
+    expect(new Set(credentialIds).size).toBe(credentialIds.length)
+    for (const id of credentialIds) {
+      expect(wrapper.find(`label[for="${id}"]`).exists()).toBe(true)
+      expect(id).not.toContain('super-secret')
+    }
   })
 
   it('redirects a protected page to login when the session endpoint rejects it', async () => {
@@ -773,6 +824,10 @@ describe('C1 App shell', () => {
     })
 
     const wrapper = await mountApp('/login?redirect=/admin/users')
+    expect(wrapper.text()).toContain('Sign in to continue.')
+    expect(wrapper.text()).not.toContain('Authentication failed')
+    expect(wrapper.find('#login-password').attributes('aria-invalid')).toBeUndefined()
+
     await wrapper.find('#login-email').setValue('admin@utcp.local.test')
     await wrapper.find('#login-password').setValue('wrong-password')
     await wrapper.find('form').trigger('submit.prevent')

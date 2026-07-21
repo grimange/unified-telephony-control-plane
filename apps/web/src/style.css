@@ -178,6 +178,57 @@ button:disabled,
   color: var(--color-primary);
 }
 
+.notification-region {
+  position: fixed;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: 20;
+  display: grid;
+  width: min(420px, calc(100vw - var(--space-6)));
+  gap: var(--space-3);
+  pointer-events: none;
+}
+
+.ui-notification {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  box-shadow: var(--shadow-panel);
+  pointer-events: auto;
+}
+
+.ui-notification--success {
+  border-color: var(--color-success);
+}
+
+.ui-notification--information {
+  border-color: var(--color-info);
+}
+
+.ui-notification--warning {
+  border-color: var(--color-warning);
+}
+
+.ui-notification--error {
+  border-color: var(--color-danger);
+}
+
+.ui-notification__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ui-notification p {
+  margin-bottom: 0;
+  overflow-wrap: anywhere;
+}
+
 a {
   color: var(--color-primary);
   font-weight: var(--font-weight-semibold);

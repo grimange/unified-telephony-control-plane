@@ -46,6 +46,13 @@
           </template>
         </UiFormField>
         <UiAlert
+          v-if="loginNotice && !error"
+          variant="info"
+          title="Sign in to continue"
+        >
+          {{ loginNotice }}
+        </UiAlert>
+        <UiAlert
           v-if="error"
           variant="error"
           title="Authentication failed"
@@ -76,7 +83,7 @@ import UiFormField from '../components/ui/UiFormField.vue'
 import UiLoadingState from '../components/ui/UiLoadingState.vue'
 import UiPanel from '../components/ui/UiPanel.vue'
 import UiTextInput from '../components/ui/UiTextInput.vue'
-import { authenticate, busy, error, loginForm } from '../state/appState'
+import { authenticate, busy, error, loginForm, loginNotice } from '../state/appState'
 import { authorizedRedirectTarget } from '../router'
 
 const route = useRoute()

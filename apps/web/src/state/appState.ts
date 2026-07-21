@@ -15,7 +15,9 @@ import {
   type RoleCatalog,
   type SignalingMetadata,
 } from '../api/platform'
+import type { AsyncResourceStatus } from '../composables/asyncState'
 import { hasCapability, visibleNavigationEntries } from '../navigation'
+import { clearNotifications, notify } from './notifications'
 
 export const session = ref<IdentitySession | null>(null)
 export const sessionLoaded = ref(false)
@@ -35,8 +37,10 @@ export const adapterConfigurations = reactive<Record<string, RuntimeAdapterConfi
 export const adapterConfigurationForms = reactive<Record<string, RuntimeAdapterConfiguration>>({})
 export const runtimeEvidence = reactive<Record<string, RuntimeEvidence>>({})
 export const runtimeHistory = reactive<Record<string, RuntimeHistoryResponse>>({})
+export const runtimeNodeDetailStates = reactive<Record<string, { status: AsyncResourceStatus; error: string }>>({})
 export const error = ref('')
 export const message = ref('')
+export const loginNotice = ref('')
 export const busy = ref(false)
 export const temporaryPassword = ref('')
 export const tenantContextVersion = ref(0)
@@ -82,6 +86,7 @@ export function can(capability: string): boolean {
 export function clearStatus(): void {
   error.value = ''
   message.value = ''
+  loginNotice.value = ''
 }
 
 export function apiErrorMessage(errorValue: unknown): string {
@@ -98,16 +103,30 @@ export function apiErrorMessage(errorValue: unknown): string {
   return 'Request failed.'
 }
 
-export function fail(errorValue: unknown): void {
+export function fail(errorValue: unknown, options: { notify?: boolean; expectedUnauthenticated?: boolean } = {}): void {
   if (identityApi.isApiRequestError(errorValue) && errorValue.status === 401) {
     session.value = null
     sessionLoaded.value = true
-    error.value = 'Sign in to continue.'
+    if (options.expectedUnauthenticated) {
+      error.value = ''
+      loginNotice.value = 'Sign in to continue.'
+    } else {
+      error.value = apiErrorMessage(errorValue)
+      loginNotice.value = ''
+    }
 
     return
   }
 
   error.value = apiErrorMessage(errorValue)
+  loginNotice.value = ''
+  if (options.notify ?? true) {
+    notify({
+      variant: 'error',
+      title: 'Request failed',
+      message: error.value,
+    })
+  }
 }
 
 export async function ensureSession(force = false): Promise<IdentitySession | null> {
@@ -117,10 +136,17 @@ export async function ensureSession(force = false): Promise<IdentitySession | nu
     session.value = await identityApi.session()
     sessionLoaded.value = true
     error.value = ''
+    loginNotice.value = ''
 
     return session.value
   } catch (errorValue) {
-    fail(errorValue)
+    if (identityApi.isApiRequestError(errorValue) && errorValue.status === 401) {
+      fail(errorValue, { expectedUnauthenticated: true, notify: false })
+
+      return null
+    }
+
+    fail(errorValue, { notify: false })
 
     return null
   }
@@ -129,13 +155,14 @@ export async function ensureSession(force = false): Promise<IdentitySession | nu
 export async function authenticate(): Promise<IdentitySession | null> {
   busy.value = true
   error.value = ''
+  loginNotice.value = ''
   try {
     await identityApi.login(loginForm.email, loginForm.password)
     loginForm.password = ''
 
     return await ensureSession(true)
   } catch (errorValue) {
-    fail(errorValue)
+    fail(errorValue, { notify: false })
 
     return null
   } finally {
@@ -148,11 +175,14 @@ export async function endSession(): Promise<void> {
   session.value = null
   sessionLoaded.value = true
   clearOneTimeSignalingCredential()
+  clearRuntimeNodeDetails()
+  clearNotifications()
 }
 
 export async function savePasswordChange(): Promise<IdentitySession | null> {
   busy.value = true
   error.value = ''
+  loginNotice.value = ''
   try {
     if (passwordForm.next !== passwordForm.confirm) {
       error.value = 'New password and confirmation must match.'
@@ -166,7 +196,7 @@ export async function savePasswordChange(): Promise<IdentitySession | null> {
 
     return await ensureSession(true)
   } catch (errorValue) {
-    fail(errorValue)
+    fail(errorValue, { notify: false })
 
     return null
   } finally {
@@ -179,6 +209,7 @@ export async function switchTenant(tenantId: string): Promise<void> {
   session.value = await identityApi.selectTenant(tenantId)
   tenantContextVersion.value += 1
   clearOneTimeSignalingCredential()
+  clearRuntimeNodeDetails()
 }
 
 export function adapterOptionsFor(runtimeFamily: string): Array<{ key: string; label: string }> {
@@ -324,6 +355,11 @@ export async function createTenant(): Promise<void> {
   tenantForm.slug = ''
   tenantForm.displayName = ''
   message.value = 'Tenant created.'
+  notify({
+    variant: 'success',
+    title: 'Tenant created',
+    message: 'Tenant created.',
+  })
 }
 
 export async function setTenantStatus(tenantId: string, status: string): Promise<void> {
@@ -385,9 +421,15 @@ export async function setMembershipStatus(membershipId: string, status: string):
 export async function refreshRuntimeNodes(): Promise<void> {
   runtimeCatalog.value = (await identityApi.runtimeNodeCatalog()).catalog
   runtimeNodes.value = (await identityApi.runtimeNodes()).runtime_nodes
+  const activeNodeIds = new Set(runtimeNodes.value.map((node) => node.id))
   for (const node of runtimeNodes.value) {
     runtimeCapabilitySelections[node.id] = [...node.capabilities]
-    await loadRuntimeNodeDetails(node)
+  }
+  for (const runtimeNodeId of Object.keys(runtimeCapabilitySelections)) {
+    if (!activeNodeIds.has(runtimeNodeId)) delete runtimeCapabilitySelections[runtimeNodeId]
+  }
+  for (const runtimeNodeId of Object.keys(runtimeNodeDetailStates)) {
+    if (!activeNodeIds.has(runtimeNodeId)) clearRuntimeNodeDetails(runtimeNodeId)
   }
 }
 
@@ -406,6 +448,7 @@ export async function createRuntimeNode(): Promise<void> {
 
 export async function setRuntimeDesiredState(runtimeNodeId: string, desiredState: string): Promise<void> {
   await identityApi.updateRuntimeNodeDesiredState(runtimeNodeId, desiredState)
+  clearRuntimeNodeDetails(runtimeNodeId)
   await refreshRuntimeNodes()
 }
 
@@ -422,20 +465,51 @@ export async function addRuntimeEndpoint(runtimeNodeId: string): Promise<void> {
   })
   endpointForm.host = ''
   endpointForm.path = ''
+  clearRuntimeNodeDetails(runtimeNodeId)
   await refreshRuntimeNodes()
+  await reloadRuntimeNodeDetails(runtimeNodeId)
 }
 
 export async function removeRuntimeEndpoint(runtimeNodeId: string, endpointId: string): Promise<void> {
   await identityApi.removeRuntimeEndpoint(runtimeNodeId, endpointId)
+  clearRuntimeNodeDetails(runtimeNodeId)
   await refreshRuntimeNodes()
+  await reloadRuntimeNodeDetails(runtimeNodeId)
 }
 
 export async function setRuntimeCapabilities(runtimeNodeId: string): Promise<void> {
   await identityApi.setRuntimeCapabilities(runtimeNodeId, runtimeCapabilitySelections[runtimeNodeId] ?? [])
+  clearRuntimeNodeDetails(runtimeNodeId)
   await refreshRuntimeNodes()
+  await reloadRuntimeNodeDetails(runtimeNodeId)
 }
 
-export async function loadRuntimeNodeDetails(node: RuntimeNode): Promise<void> {
+export function clearRuntimeNodeDetails(runtimeNodeId?: string): void {
+  const runtimeNodeIds = runtimeNodeId ? [runtimeNodeId] : Object.keys(runtimeNodeDetailStates)
+  for (const nextRuntimeNodeId of runtimeNodeIds) {
+    delete adapterConfigurations[nextRuntimeNodeId]
+    delete adapterConfigurationForms[nextRuntimeNodeId]
+    delete runtimeEvidence[nextRuntimeNodeId]
+    delete runtimeHistory[nextRuntimeNodeId]
+    delete runtimeNodeDetailStates[nextRuntimeNodeId]
+  }
+}
+
+async function reloadRuntimeNodeDetails(runtimeNodeId: string): Promise<void> {
+  const node = runtimeNodes.value.find((candidate) => candidate.id === runtimeNodeId)
+  if (node) await loadRuntimeNodeDetails(node, true)
+}
+
+export async function loadRuntimeNodeDetails(node: RuntimeNode, force = false): Promise<void> {
+  const currentState = runtimeNodeDetailStates[node.id]
+  if (!force && currentState?.status === 'success') return
+
+  runtimeNodeDetailStates[node.id] = {
+    status: adapterConfigurations[node.id] || runtimeEvidence[node.id] || runtimeHistory[node.id] ? 'refreshing' : 'loading',
+    error: '',
+  }
+  let detailError: unknown = null
+
   if (adapterConfigurationSupported(node)) {
     try {
       const response = await identityApi.getRuntimeAdapterConfiguration(node.id)
@@ -444,28 +518,45 @@ export async function loadRuntimeNodeDetails(node: RuntimeNode): Promise<void> {
         ...asteriskConfigurationForm(node.id),
         ...response.adapter_configuration,
       }
-    } catch {
-      adapterConfigurations[node.id] = {}
+    } catch (errorValue) {
+      delete adapterConfigurations[node.id]
+      delete adapterConfigurationForms[node.id]
+      detailError ??= errorValue
     }
   }
 
   try {
     runtimeEvidence[node.id] = (await identityApi.runtimeEvidence(node.id)).runtime_evidence
-  } catch {
+  } catch (errorValue) {
     delete runtimeEvidence[node.id]
+    detailError ??= errorValue
   }
 
   try {
     runtimeHistory[node.id] = await identityApi.runtimeHistory(node.id)
-  } catch {
+  } catch (errorValue) {
     delete runtimeHistory[node.id]
+    detailError ??= errorValue
   }
+
+  if (detailError) {
+    runtimeNodeDetailStates[node.id] = {
+      status: identityApi.isApiRequestError(detailError) && detailError.status === 403 ? 'forbidden' : 'error',
+      error: apiErrorMessage(detailError),
+    }
+
+    return
+  }
+
+  runtimeNodeDetailStates[node.id] = { status: 'success', error: '' }
 }
 
 export async function saveAsteriskAdapterConfiguration(runtimeNodeId: string): Promise<void> {
   const form = asteriskConfigurationForm(runtimeNodeId)
   await identityApi.putRuntimeAdapterConfiguration(runtimeNodeId, form)
+  clearRuntimeNodeDetails(runtimeNodeId)
   await refreshRuntimeNodes()
+  await reloadRuntimeNodeDetails(runtimeNodeId)
 }
 
 export async function createRuntimeCredential(runtimeNodeId: string): Promise<void> {
@@ -476,7 +567,9 @@ export async function createRuntimeCredential(runtimeNodeId: string): Promise<vo
   })
   credentialForm.identifier = ''
   credentialForm.secret = ''
+  clearRuntimeNodeDetails(runtimeNodeId)
   await refreshRuntimeNodes()
+  await reloadRuntimeNodeDetails(runtimeNodeId)
 }
 
 export async function rotateRuntimeCredential(runtimeNodeId: string, credentialId: string): Promise<void> {
@@ -486,14 +579,18 @@ export async function rotateRuntimeCredential(runtimeNodeId: string, credentialI
   await identityApi.rotateRuntimeCredential(runtimeNodeId, credentialId, {
     ['sec' + 'ret']: nextSecret,
   })
+  clearRuntimeNodeDetails(runtimeNodeId)
   await refreshRuntimeNodes()
+  await reloadRuntimeNodeDetails(runtimeNodeId)
 }
 
 export async function retireRuntimeCredential(runtimeNodeId: string, credentialId: string): Promise<void> {
   if (!window.confirm('Retire this credential? Existing runtime connections using it may fail after retirement.')) return
 
   await identityApi.retireRuntimeCredential(runtimeNodeId, credentialId)
+  clearRuntimeNodeDetails(runtimeNodeId)
   await refreshRuntimeNodes()
+  await reloadRuntimeNodeDetails(runtimeNodeId)
 }
 
 export function resetAppStateForTests(): void {
@@ -508,6 +605,7 @@ export function resetAppStateForTests(): void {
   roleCatalog.value = null
   runtimeNodes.value = []
   runtimeCatalog.value = null
+  loginNotice.value = ''
   error.value = ''
   message.value = ''
   busy.value = false
@@ -548,4 +646,6 @@ export function resetAppStateForTests(): void {
   for (const key of Object.keys(adapterConfigurationForms)) delete adapterConfigurationForms[key]
   for (const key of Object.keys(runtimeEvidence)) delete runtimeEvidence[key]
   for (const key of Object.keys(runtimeHistory)) delete runtimeHistory[key]
+  for (const key of Object.keys(runtimeNodeDetailStates)) delete runtimeNodeDetailStates[key]
+  clearNotifications()
 }
