@@ -124,3 +124,75 @@ export function useAsyncAction<TArgs extends unknown[], TResult>(
     isSubmitting: computed(() => state.status === 'submitting'),
   }
 }
+
+export function useAsyncActionMap<TResult = unknown>(
+  options: {
+    getErrorMessage?: ErrorMessageResolver
+  } = {},
+) {
+  const states = reactive<Record<string, {
+    status: AsyncActionStatus
+    error: string
+    errorDetails: unknown
+    result: TResult | null
+  }>>({})
+
+  function stateFor(key: string) {
+    if (!states[key]) {
+      states[key] = {
+        status: 'idle',
+        error: '',
+        errorDetails: null,
+        result: null,
+      }
+    }
+
+    return states[key]
+  }
+
+  async function run(key: string, action: () => Promise<TResult>): Promise<TResult | null> {
+    const state = stateFor(key)
+    if (state.status === 'submitting') return null
+
+    state.status = 'submitting'
+    state.error = ''
+    state.errorDetails = null
+
+    try {
+      const result = await action()
+      state.result = result
+      state.status = 'succeeded'
+
+      return result
+    } catch (error) {
+      state.error = options.getErrorMessage?.(error) ?? defaultErrorMessage(error)
+      state.errorDetails = error
+      state.status = 'failed'
+
+      return null
+    }
+  }
+
+  function reset(key?: string): void {
+    if (key) {
+      delete states[key]
+      return
+    }
+
+    Object.keys(states).forEach((stateKey) => {
+      delete states[stateKey]
+    })
+  }
+
+  function isSubmitting(key: string): boolean {
+    return stateFor(key).status === 'submitting'
+  }
+
+  return {
+    states,
+    stateFor,
+    run,
+    reset,
+    isSubmitting,
+  }
+}

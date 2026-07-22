@@ -25,7 +25,7 @@
     >
       <form
         class="inline-form"
-        @submit.prevent="run(createTenant)"
+        @submit.prevent="runTenantAction(tenantCreateActionKey, createTenant, 'Tenant created.')"
       >
         <UiFormField
           id="tenant-slug"
@@ -61,11 +61,23 @@
             />
           </template>
         </UiFormField>
-        <UiButton type="submit">
+        <UiButton
+          type="submit"
+          :loading="tenantActionSubmitting(tenantCreateActionKey)"
+          loading-label="Creating tenant"
+        >
           Create tenant
         </UiButton>
       </form>
     </UiPanel>
+
+    <UiAlert
+      v-if="tenantActionError(tenantCreateActionKey)"
+      variant="error"
+      title="Tenant action failed"
+    >
+      {{ tenantActionError(tenantCreateActionKey) }}
+    </UiAlert>
 
     <UiDataList
       :status="tenantsResource.state.status"
@@ -104,7 +116,9 @@
             v-if="can('platform.tenants.manage')"
             type="button"
             :variant="tenant.status === 'active' ? 'danger' : 'secondary'"
-            @click="run(() => setTenantStatus(tenant.id, tenant.status === 'active' ? 'suspended' : 'active'))"
+            :disabled="tenantActionSubmitting(tenantStatusActionKey(tenant.id, tenant.status === 'active' ? 'suspended' : 'active'))"
+            :loading="tenantActionSubmitting(tenantStatusActionKey(tenant.id, tenant.status === 'active' ? 'suspended' : 'active'))"
+            @click="runTenantAction(tenantStatusActionKey(tenant.id, tenant.status === 'active' ? 'suspended' : 'active'), () => setTenantStatus(tenant.id, tenant.status === 'active' ? 'suspended' : 'active'), 'Tenant status updated.')"
           >
             {{ tenant.status === 'active' ? 'Suspend' : 'Activate' }}
           </UiButton>
@@ -117,22 +131,28 @@
 <script setup lang="ts">
 import { watch } from 'vue'
 import UiButton from '../components/ui/UiButton.vue'
+import UiAlert from '../components/ui/UiAlert.vue'
 import UiDataList from '../components/ui/UiDataList.vue'
 import UiFormField from '../components/ui/UiFormField.vue'
 import UiListSummary from '../components/ui/UiListSummary.vue'
 import UiPanel from '../components/ui/UiPanel.vue'
 import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
 import UiTextInput from '../components/ui/UiTextInput.vue'
-import { useAsyncResource } from '../composables/asyncState'
+import { useAsyncActionMap, useAsyncResource } from '../composables/asyncState'
 import { useListQueryState } from '../composables/listQueryState'
 import { router } from '../router'
-import { apiErrorMessage, can, createTenant, fail, refreshTenants, setTenantStatus, tenantContextVersion, tenantForm, tenants } from '../state/appState'
+import { apiErrorMessage, can, createTenant, refreshTenants, setTenantStatus, tenantContextVersion, tenantForm, tenants } from '../state/appState'
+import { notify } from '../state/notifications'
 
 useListQueryState(router, {})
 const tenantsResource = useAsyncResource(refreshTenants, {
   isEmpty: () => tenants.value.length === 0,
   getErrorMessage: apiErrorMessage,
 })
+const tenantActions = useAsyncActionMap<void>({
+  getErrorMessage: apiErrorMessage,
+})
+const tenantCreateActionKey = 'tenant:create'
 
 function tenantStatusCategory(status: string): 'success' | 'warning' | 'neutral' {
   if (status === 'active') return 'success'
@@ -141,11 +161,38 @@ function tenantStatusCategory(status: string): 'success' | 'warning' | 'neutral'
   return 'neutral'
 }
 
-async function run(action: () => Promise<void>): Promise<void> {
-  try {
-    await action()
-  } catch (errorValue) {
-    fail(errorValue)
+function tenantStatusActionKey(tenantId: string, status: string): string {
+  return `tenant:${tenantId}:status:${status}`
+}
+
+function tenantActionSubmitting(key: string): boolean {
+  return tenantActions.isSubmitting(key)
+}
+
+function tenantActionError(key: string): string {
+  const state = tenantActions.stateFor(key)
+
+  return state.status === 'failed' ? state.error : ''
+}
+
+async function runTenantAction(key: string, action: () => Promise<void>, successMessage: string): Promise<void> {
+  await tenantActions.run(key, action)
+  const state = tenantActions.stateFor(key)
+  if (state.status === 'succeeded') {
+    notify({
+      variant: 'success',
+      title: 'Tenant updated',
+      message: successMessage,
+    })
+    return
+  }
+
+  if (state.status === 'failed') {
+    notify({
+      variant: 'error',
+      title: 'Tenant action failed',
+      message: state.error,
+    })
   }
 }
 

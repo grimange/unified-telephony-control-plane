@@ -25,7 +25,7 @@
     >
       <form
         class="inline-form"
-        @submit.prevent="runMembership(createMembership, 'Membership added.')"
+        @submit.prevent="runMembership(membershipCreateActionKey, createMembership, 'Membership added.')"
       >
         <UiFormField
           id="membership-user"
@@ -84,7 +84,7 @@
         <UiButton
           type="submit"
           :disabled="tenantRoleOptions.length === 0"
-          :loading="membershipAction.state.status === 'submitting'"
+          :loading="membershipActionSubmitting(membershipCreateActionKey)"
           loading-label="Adding"
         >
           Add membership
@@ -129,8 +129,9 @@
             v-if="can('tenant.memberships.manage')"
             type="button"
             :variant="membership.status === 'active' ? 'danger' : 'secondary'"
-            :disabled="membershipAction.state.status === 'submitting'"
-            @click="runMembership(() => setMembershipStatus(membership.id, membership.status === 'active' ? 'suspended' : 'active'), `Membership ${membership.status === 'active' ? 'suspended' : 'activated'}.`)"
+            :disabled="membershipActionSubmitting(membershipStatusActionKey(membership.id, membership.status === 'active' ? 'suspended' : 'active'))"
+            :loading="membershipActionSubmitting(membershipStatusActionKey(membership.id, membership.status === 'active' ? 'suspended' : 'active'))"
+            @click="runMembership(membershipStatusActionKey(membership.id, membership.status === 'active' ? 'suspended' : 'active'), () => setMembershipStatus(membership.id, membership.status === 'active' ? 'suspended' : 'active'), `Membership ${membership.status === 'active' ? 'suspended' : 'activated'}.`)"
           >
             {{ membership.status === 'active' ? 'Suspend' : 'Activate' }}
           </UiButton>
@@ -138,11 +139,11 @@
       </div>
     </UiDataList>
     <UiAlert
-      v-if="membershipAction.state.status === 'failed'"
+      v-if="membershipActionError(membershipCreateActionKey)"
       variant="error"
       title="Membership action failed"
     >
-      {{ membershipAction.state.error }}
+      {{ membershipActionError(membershipCreateActionKey) }}
     </UiAlert>
   </section>
 </template>
@@ -157,7 +158,7 @@ import UiListSummary from '../components/ui/UiListSummary.vue'
 import UiPanel from '../components/ui/UiPanel.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
 import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
-import { useAsyncAction, useAsyncResource } from '../composables/asyncState'
+import { useAsyncActionMap, useAsyncResource } from '../composables/asyncState'
 import { useListQueryState } from '../composables/listQueryState'
 import { router } from '../router'
 import { notify } from '../state/notifications'
@@ -179,9 +180,10 @@ const membershipsResource = useAsyncResource(refreshMemberships, {
   isEmpty: () => memberships.value.length === 0,
   getErrorMessage: apiErrorMessage,
 })
-const membershipAction = useAsyncAction(async (action: () => Promise<void>) => action(), {
+const membershipActions = useAsyncActionMap<void>({
   getErrorMessage: apiErrorMessage,
 })
+const membershipCreateActionKey = 'membership:create'
 
 function membershipStatusCategory(status: string): 'success' | 'warning' | 'neutral' {
   if (status === 'active') return 'success'
@@ -190,9 +192,24 @@ function membershipStatusCategory(status: string): 'success' | 'warning' | 'neut
   return 'neutral'
 }
 
-async function runMembership(action: () => Promise<void>, successMessage: string): Promise<void> {
-  await membershipAction.run(action)
-  if (membershipAction.state.status === 'succeeded') {
+function membershipStatusActionKey(membershipId: string, status: string): string {
+  return `membership:${membershipId}:status:${status}`
+}
+
+function membershipActionSubmitting(key: string): boolean {
+  return membershipActions.isSubmitting(key)
+}
+
+function membershipActionError(key: string): string {
+  const state = membershipActions.stateFor(key)
+
+  return state.status === 'failed' ? state.error : ''
+}
+
+async function runMembership(key: string, action: () => Promise<void>, successMessage: string): Promise<void> {
+  await membershipActions.run(key, action)
+  const state = membershipActions.stateFor(key)
+  if (state.status === 'succeeded') {
     notify({
       variant: 'success',
       title: 'Membership updated',
@@ -202,11 +219,11 @@ async function runMembership(action: () => Promise<void>, successMessage: string
     return
   }
 
-  if (membershipAction.state.status === 'failed') {
+  if (state.status === 'failed') {
     notify({
       variant: 'error',
       title: 'Membership action failed',
-      message: membershipAction.state.error,
+      message: state.error,
     })
   }
 }

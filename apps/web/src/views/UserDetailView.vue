@@ -130,7 +130,9 @@
             v-if="can('telephony.sessions.manage') && selectedUserDetail.active_telephony_session.status === 'active'"
             type="button"
             variant="danger"
-            @click="run(endSelectedTelephonySession)"
+            :disabled="detailActionSubmitting(endTelephonySessionActionKey)"
+            :loading="detailActionSubmitting(endTelephonySessionActionKey)"
+            @click="runDetailAction(endTelephonySessionActionKey, endSelectedTelephonySession, 'TelephonySession ended.')"
           >
             End TelephonySession
           </UiButton>
@@ -187,7 +189,9 @@
               ref="issueCredentialButton"
               type="button"
               variant="secondary"
-              @click="run(issueSelectedSignalingCredential)"
+              :disabled="detailActionSubmitting(issueSignalingCredentialActionKey)"
+              :loading="detailActionSubmitting(issueSignalingCredentialActionKey)"
+              @click="runDetailAction(issueSignalingCredentialActionKey, issueSelectedSignalingCredential, 'Signaling credential issued.')"
             >
               {{ selectedUserDetail.signaling?.credential ? 'Reissue signaling credential' : 'Issue signaling credential' }}
             </UiButton>
@@ -254,13 +258,14 @@ import UiEmptyState from '../components/ui/UiEmptyState.vue'
 import UiLoadingState from '../components/ui/UiLoadingState.vue'
 import UiPanel from '../components/ui/UiPanel.vue'
 import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
+import { useAsyncActionMap } from '../composables/asyncState'
 import {
+  apiErrorMessage,
   can,
   closeOneTimeSignalingCredential,
   credentialState,
   displayValue,
   endSelectedTelephonySession,
-  fail,
   issueCredentialButton,
   issueSelectedSignalingCredential,
   oneTimeSecretPanel,
@@ -272,8 +277,14 @@ import {
   signalingSecretVisible,
   tenantContextVersion,
 } from '../state/appState'
+import { notify } from '../state/notifications'
 
 const route = useRoute()
+const detailActions = useAsyncActionMap<void>({
+  getErrorMessage: apiErrorMessage,
+})
+const endTelephonySessionActionKey = 'user-detail:telephony-session:end'
+const issueSignalingCredentialActionKey = 'user-detail:signaling-credential:issue'
 
 function accountStatusCategory(status: string): 'success' | 'warning' | 'neutral' {
   if (status === 'active') return 'success'
@@ -295,18 +306,35 @@ watchEffect(() => {
   void oneTimeSecretPanel.value
 })
 
-async function run(action: () => Promise<void>): Promise<void> {
-  try {
-    await action()
-  } catch (errorValue) {
-    fail(errorValue)
+function detailActionSubmitting(key: string): boolean {
+  return detailActions.isSubmitting(key)
+}
+
+async function runDetailAction(key: string, action: () => Promise<void>, successMessage: string): Promise<void> {
+  await detailActions.run(key, action)
+  const state = detailActions.stateFor(key)
+  if (state.status === 'succeeded') {
+    notify({
+      variant: 'success',
+      title: 'User detail updated',
+      message: successMessage,
+    })
+    return
+  }
+
+  if (state.status === 'failed') {
+    notify({
+      variant: 'error',
+      title: 'User detail action failed',
+      message: state.error,
+    })
   }
 }
 
 async function load(): Promise<void> {
   const userId = String(route.params.id ?? '')
   if (userId === '') return
-  await run(() => refreshSelectedUser(userId))
+  await refreshSelectedUser(userId)
 }
 
 onMounted(load)

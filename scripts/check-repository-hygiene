@@ -107,6 +107,42 @@ if re.search(r"notify\([^)]*(credentialForm\.secret|temporaryPassword|oneTimeSig
 if re.search(r"const\s+(roles|roleCatalog|adapterCatalog|capabilityCatalog)\s*=", runtime_view):
     sys.stderr.write("frontend role, adapter, or capability catalogs must remain server-provided\n")
     sys.exit(1)
+
+runtime_field_renderer = Path("apps/web/src/components/runtime/RuntimeNodeCatalogField.vue").read_text(encoding="utf-8")
+adapter_authority_sources = runtime_view + "\n" + app_state
+
+for forbidden in [
+    "adapter_key === 'asterisk-ari'",
+    'adapter_key === "asterisk-ari"',
+    "saveAsteriskAdapterConfiguration",
+    "asteriskConfigurationForm",
+    "asteriskNumberFields",
+]:
+    if forbidden in adapter_authority_sources:
+        sys.stderr.write(f"RuntimeNode forms must not retain frontend Asterisk-specific form authority: {forbidden}\n")
+        sys.exit(1)
+
+if "RuntimeNodeCatalogField" not in runtime_view:
+    sys.stderr.write("RuntimeNodesView must consume the shared catalog field renderer\n")
+    sys.exit(1)
+
+if not all(token in runtime_field_renderer for token in ["field.input_type === 'text'", "field.input_type === 'integer'", "field.input_type === 'json'"]):
+    sys.stderr.write("RuntimeNode catalog field renderer must cover the supported server descriptor types\n")
+    sys.exit(1)
+
+if re.search(r"fields\s*:\s*\[[^\]]*(application_name|connect_timeout_ms|scenario_key|parameters)", adapter_authority_sources, re.S):
+    sys.stderr.write("frontend production code must not define checked-in adapter field catalogs\n")
+    sys.exit(1)
+
+if re.search(r"if\s*\([^)]*(asterisk-ari|simulator-deterministic)", adapter_authority_sources):
+    sys.stderr.write("frontend RuntimeNode configuration payload/rendering must not branch by adapter key\n")
+    sys.exit(1)
+
+for view_name in ["TenantsView.vue", "MembershipsView.vue", "UsersView.vue", "UserDetailView.vue", "RuntimeNodesView.vue"]:
+    view_source = Path("apps/web/src/views") / view_name
+    if "useAsyncActionMap" not in view_source.read_text(encoding="utf-8"):
+        sys.stderr.write(f"{view_name} management mutations must use shared keyed action state\n")
+        sys.exit(1)
 PY
 
 python3 - <<'PY'

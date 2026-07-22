@@ -171,6 +171,11 @@ textarea:disabled,
   cursor: not-allowed;
 }
 
+.runtime-catalog-field__textarea {
+  min-height: 128px;
+  resize: vertical;
+}
+
 button,
 .ui-button {
   min-height: 40px;

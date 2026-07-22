@@ -8,6 +8,7 @@ import {
   type IdentitySession,
   type OneTimeSignalingCredential,
   type RuntimeAdapterConfiguration,
+  type RuntimeAdapterConfigurationFieldDescriptor,
   type RuntimeEvidence,
   type RuntimeHistoryResponse,
   type RuntimeManagementCatalog,
@@ -35,6 +36,7 @@ export const runtimeCatalog = ref<RuntimeManagementCatalog | null>(null)
 export const runtimeCapabilitySelections = reactive<Record<string, string[]>>({})
 export const adapterConfigurations = reactive<Record<string, RuntimeAdapterConfiguration>>({})
 export const adapterConfigurationForms = reactive<Record<string, RuntimeAdapterConfiguration>>({})
+export const adapterConfigurationFieldErrors = reactive<Record<string, Record<string, string>>>({})
 export const runtimeEvidence = reactive<Record<string, RuntimeEvidence>>({})
 export const runtimeHistory = reactive<Record<string, RuntimeHistoryResponse>>({})
 export const runtimeNodeDetailStates = reactive<Record<string, { status: AsyncResourceStatus; error: string }>>({})
@@ -283,20 +285,176 @@ export async function closeOneTimeSignalingCredential(): Promise<void> {
   issueCredentialButton.value?.focus()
 }
 
-export function asteriskConfigurationForm(runtimeNodeId: string): RuntimeAdapterConfiguration {
-  if (!adapterConfigurationForms[runtimeNodeId]) {
-    adapterConfigurationForms[runtimeNodeId] = {
-      application_name: 'utcp',
-      connect_timeout_ms: 1000,
-      request_timeout_ms: 7000,
-      websocket_handshake_timeout_ms: 8000,
-      heartbeat_interval_ms: 15000,
-      reconnect_min_delay_ms: 500,
-      reconnect_max_delay_ms: 10000,
-    }
-  }
+export function adapterConfigurationDescriptorsFor(node: RuntimeNode): RuntimeAdapterConfigurationFieldDescriptor[] {
+  return [...(runtimeCatalog.value?.adapter_keys[node.adapter_key]?.adapter_configuration?.fields ?? [])]
+    .sort((left, right) => left.order - right.order || left.key.localeCompare(right.key))
+}
+
+export function adapterConfigurationForm(runtimeNodeId: string): RuntimeAdapterConfiguration {
+  if (!adapterConfigurationForms[runtimeNodeId]) adapterConfigurationForms[runtimeNodeId] = {}
 
   return adapterConfigurationForms[runtimeNodeId]
+}
+
+export function adapterConfigurationFieldError(runtimeNodeId: string, fieldKey: string): string {
+  return adapterConfigurationFieldErrors[runtimeNodeId]?.[fieldKey] ?? ''
+}
+
+export function setAdapterConfigurationFormValue(runtimeNodeId: string, fieldKey: string, value: unknown): void {
+  adapterConfigurationForm(runtimeNodeId)[fieldKey] = value
+  if (adapterConfigurationFieldErrors[runtimeNodeId]) delete adapterConfigurationFieldErrors[runtimeNodeId][fieldKey]
+}
+
+export function unsupportedAdapterConfigurationFields(node: RuntimeNode): RuntimeAdapterConfigurationFieldDescriptor[] {
+  return adapterConfigurationDescriptorsFor(node).filter((field) =>
+    !['text', 'integer', 'json'].includes(field.input_type as string),
+  )
+}
+
+export function adapterConfigurationSubmissionBlocked(node: RuntimeNode): boolean {
+  return unsupportedAdapterConfigurationFields(node).some((field) => field.required)
+}
+
+function currentAdapterConfigurationValues(runtimeNodeId: string): Record<string, unknown> {
+  const configuration = adapterConfigurations[runtimeNodeId]
+  if (!configuration || typeof configuration !== 'object' || Array.isArray(configuration)) return {}
+
+  const profile = configuration.profile
+  if (profile && typeof profile === 'object' && !Array.isArray(profile)) return profile as Record<string, unknown>
+
+  return configuration
+}
+
+function formatJsonInput(value: unknown): string {
+  if (value === null || value === undefined) return ''
+
+  return JSON.stringify(value, null, 2)
+}
+
+function initialAdapterConfigurationValue(
+  runtimeNodeId: string,
+  field: RuntimeAdapterConfigurationFieldDescriptor,
+): unknown {
+  if (field.write_only) return ''
+
+  const currentValues = currentAdapterConfigurationValues(runtimeNodeId)
+  if (Object.prototype.hasOwnProperty.call(currentValues, field.key)) {
+    const currentValue = currentValues[field.key]
+    return field.input_type === 'json' ? formatJsonInput(currentValue) : currentValue
+  }
+
+  if (field.default !== null && field.default !== undefined) {
+    return field.input_type === 'json' ? formatJsonInput(field.default) : field.default
+  }
+
+  return ''
+}
+
+function initializeAdapterConfigurationForm(node: RuntimeNode): void {
+  adapterConfigurationForms[node.id] = Object.fromEntries(
+    adapterConfigurationDescriptorsFor(node).map((field) => [
+      field.key,
+      initialAdapterConfigurationValue(node.id, field),
+    ]),
+  )
+  adapterConfigurationFieldErrors[node.id] = {}
+}
+
+function setAdapterConfigurationFieldErrors(runtimeNodeId: string, errors: Record<string, string>): void {
+  adapterConfigurationFieldErrors[runtimeNodeId] = errors
+}
+
+function extractApiFieldErrors(errorValue: unknown, node: RuntimeNode): Record<string, string> {
+  if (!identityApi.isApiRequestError(errorValue)) return {}
+  const details = errorValue.details
+  if (!details || typeof details !== 'object' || !('errors' in details)) return {}
+
+  const apiErrors = (details as { errors?: unknown }).errors
+  if (!apiErrors || typeof apiErrors !== 'object' || Array.isArray(apiErrors)) return {}
+
+  const descriptorKeys = new Set(adapterConfigurationDescriptorsFor(node).map((field) => field.key))
+  const errors: Record<string, string> = {}
+  Object.entries(apiErrors as Record<string, unknown>).forEach(([key, messages]) => {
+    if (!descriptorKeys.has(key)) return
+
+    if (Array.isArray(messages)) {
+      const [messageValue] = messages
+      errors[key] = String(messageValue ?? 'Invalid value.')
+      return
+    }
+
+    errors[key] = String(messages)
+  })
+
+  return errors
+}
+
+function buildRuntimeAdapterConfigurationPayload(node: RuntimeNode): RuntimeAdapterConfiguration | null {
+  const errors: Record<string, string> = {}
+  const payload: RuntimeAdapterConfiguration = {}
+  const form = adapterConfigurationForm(node.id)
+
+  for (const field of adapterConfigurationDescriptorsFor(node)) {
+    const inputType = field.input_type as string
+    if (!['text', 'integer', 'json'].includes(inputType)) {
+      if (field.required) {
+        errors[field.key] = `Required field ${field.key} uses unsupported type ${inputType}.`
+      }
+      continue
+    }
+
+    if (field.read_only) continue
+
+    const rawValue = form[field.key]
+    const blank = rawValue === '' || rawValue === null || rawValue === undefined
+    if (field.write_only && blank) continue
+
+    if (inputType === 'integer') {
+      if (blank) {
+        if (field.required) errors[field.key] = `${field.label} is required.`
+        continue
+      }
+
+      const numericValue = typeof rawValue === 'number' ? rawValue : Number(rawValue)
+      if (!Number.isInteger(numericValue)) {
+        errors[field.key] = `${field.label} must be an integer.`
+        continue
+      }
+
+      payload[field.key] = numericValue
+      continue
+    }
+
+    if (inputType === 'json') {
+      if (blank) {
+        if (field.required) errors[field.key] = `${field.label} is required.`
+        continue
+      }
+
+      if (typeof rawValue === 'string') {
+        try {
+          payload[field.key] = JSON.parse(rawValue)
+        } catch {
+          errors[field.key] = `${field.label} must contain valid JSON.`
+        }
+        continue
+      }
+
+      payload[field.key] = rawValue
+      continue
+    }
+
+    if (blank) {
+      if (field.required) errors[field.key] = `${field.label} is required.`
+      continue
+    }
+
+    payload[field.key] = String(rawValue)
+  }
+
+  setAdapterConfigurationFieldErrors(node.id, errors)
+
+  return Object.keys(errors).length > 0 ? null : payload
 }
 
 export function canRetireCredential(node: RuntimeNode, credential: RuntimeNode['credentials'][number]): boolean {
@@ -400,16 +558,10 @@ export async function refreshMemberships(): Promise<void> {
 }
 
 export async function createTenant(): Promise<void> {
-  const response = await identityApi.createTenant(tenantForm.slug, tenantForm.displayName)
-  tenants.value.push(response.tenant)
+  await identityApi.createTenant(tenantForm.slug, tenantForm.displayName)
   tenantForm.slug = ''
   tenantForm.displayName = ''
-  message.value = 'Tenant created.'
-  notify({
-    variant: 'success',
-    title: 'Tenant created',
-    message: 'Tenant created.',
-  })
+  await refreshTenants()
 }
 
 export async function setTenantStatus(tenantId: string, status: string): Promise<void> {
@@ -536,6 +688,7 @@ export function clearRuntimeNodeDetails(runtimeNodeId?: string): void {
   for (const nextRuntimeNodeId of runtimeNodeIds) {
     delete adapterConfigurations[nextRuntimeNodeId]
     delete adapterConfigurationForms[nextRuntimeNodeId]
+    delete adapterConfigurationFieldErrors[nextRuntimeNodeId]
     delete runtimeEvidence[nextRuntimeNodeId]
     delete runtimeHistory[nextRuntimeNodeId]
     delete runtimeNodeDetailStates[nextRuntimeNodeId]
@@ -561,13 +714,11 @@ export async function loadRuntimeNodeDetails(node: RuntimeNode, force = false): 
     try {
       const response = await identityApi.getRuntimeAdapterConfiguration(node.id)
       adapterConfigurations[node.id] = response.adapter_configuration
-      adapterConfigurationForms[node.id] = {
-        ...asteriskConfigurationForm(node.id),
-        ...response.adapter_configuration,
-      }
+      initializeAdapterConfigurationForm(node)
     } catch (errorValue) {
       delete adapterConfigurations[node.id]
       delete adapterConfigurationForms[node.id]
+      delete adapterConfigurationFieldErrors[node.id]
       detailError ??= errorValue
     }
   }
@@ -598,12 +749,25 @@ export async function loadRuntimeNodeDetails(node: RuntimeNode, force = false): 
   runtimeNodeDetailStates[node.id] = { status: 'success', error: '' }
 }
 
-export async function saveAsteriskAdapterConfiguration(runtimeNodeId: string): Promise<void> {
-  const form = asteriskConfigurationForm(runtimeNodeId)
-  await identityApi.putRuntimeAdapterConfiguration(runtimeNodeId, form)
-  clearRuntimeNodeDetails(runtimeNodeId)
+export async function saveRuntimeAdapterConfiguration(node: RuntimeNode): Promise<void> {
+  const payload = buildRuntimeAdapterConfigurationPayload(node)
+  if (!payload) throw new Error('Correct the adapter configuration fields before saving.')
+
+  try {
+    await identityApi.putRuntimeAdapterConfiguration(node.id, payload)
+  } catch (errorValue) {
+    const fieldErrors = extractApiFieldErrors(errorValue, node)
+    if (Object.keys(fieldErrors).length > 0) setAdapterConfigurationFieldErrors(node.id, fieldErrors)
+    throw errorValue
+  }
+
+  Object.entries(adapterConfigurationForm(node.id)).forEach(([key]) => {
+    const descriptor = adapterConfigurationDescriptorsFor(node).find((field) => field.key === key)
+    if (descriptor?.write_only) adapterConfigurationForm(node.id)[key] = ''
+  })
+  clearRuntimeNodeDetails(node.id)
   await refreshRuntimeNodes()
-  await reloadRuntimeNodeDetails(runtimeNodeId)
+  await reloadRuntimeNodeDetails(node.id)
 }
 
 export async function createRuntimeCredential(runtimeNodeId: string): Promise<void> {
@@ -686,6 +850,7 @@ export function resetAppStateForTests(): void {
   for (const key of Object.keys(runtimeCapabilitySelections)) delete runtimeCapabilitySelections[key]
   for (const key of Object.keys(adapterConfigurations)) delete adapterConfigurations[key]
   for (const key of Object.keys(adapterConfigurationForms)) delete adapterConfigurationForms[key]
+  for (const key of Object.keys(adapterConfigurationFieldErrors)) delete adapterConfigurationFieldErrors[key]
   for (const key of Object.keys(runtimeEvidence)) delete runtimeEvidence[key]
   for (const key of Object.keys(runtimeHistory)) delete runtimeHistory[key]
   for (const key of Object.keys(runtimeNodeDetailStates)) delete runtimeNodeDetailStates[key]

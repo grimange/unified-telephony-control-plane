@@ -73,7 +73,7 @@
     >
       <form
         class="inline-form"
-        @submit.prevent="run(createUserAndRefresh)"
+        @submit.prevent="runUserAction(userCreateActionKey, createUserAndRefresh, 'User created.')"
       >
         <UiFormField
           id="new-user-email"
@@ -110,7 +110,11 @@
             />
           </template>
         </UiFormField>
-        <UiButton type="submit">
+        <UiButton
+          type="submit"
+          :loading="userActionSubmitting(userCreateActionKey)"
+          loading-label="Creating user"
+        >
           Create user
         </UiButton>
       </form>
@@ -163,14 +167,16 @@
               v-if="can('platform.users.manage')"
               type="button"
               variant="secondary"
-              :disabled="userAction.state.status === 'submitting'"
-              @click="run(() => resetPasswordAndRefresh(user.id))"
+              :disabled="userActionSubmitting(userResetPasswordActionKey(user.id))"
+              :loading="userActionSubmitting(userResetPasswordActionKey(user.id))"
+              @click="runUserAction(userResetPasswordActionKey(user.id), () => resetPasswordAndRefresh(user.id), 'Password reset completed.')"
             >Reset password</UiButton>
             <UiButton
               v-if="can('platform.users.manage')"
               type="button"
               :variant="user.status === 'active' ? 'danger' : 'secondary'"
-              :disabled="userAction.state.status === 'submitting'"
+              :disabled="userActionSubmitting(userStatusActionKey(user.id, user.status === 'active' ? 'suspended' : 'active'))"
+              :loading="userActionSubmitting(userStatusActionKey(user.id, user.status === 'active' ? 'suspended' : 'active'))"
               @click="runUserStatus(user.id, user.status === 'active' ? 'suspended' : 'active')"
             >
               {{ user.status === 'active' ? 'Suspend' : 'Activate' }}
@@ -200,11 +206,11 @@
       </div>
     </UiDataList>
     <UiAlert
-      v-if="userAction.state.status === 'failed'"
+      v-if="userActionError(userCreateActionKey)"
       variant="error"
       title="User action failed"
     >
-      {{ userAction.state.error }}
+      {{ userActionError(userCreateActionKey) }}
     </UiAlert>
     <UiPagination
       v-if="usersResource.state.status === 'success' || usersResource.state.status === 'refreshing'"
@@ -234,7 +240,7 @@ import UiPanel from '../components/ui/UiPanel.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
 import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
 import UiTextInput from '../components/ui/UiTextInput.vue'
-import { useAsyncAction, useAsyncResource } from '../composables/asyncState'
+import { useAsyncActionMap, useAsyncResource } from '../composables/asyncState'
 import { useListQueryState } from '../composables/listQueryState'
 import { router } from '../router'
 import { notify } from '../state/notifications'
@@ -245,7 +251,6 @@ import {
   createUser,
   displayValue,
   emptyUsersListResult,
-  fail,
   refreshUsers,
   registrationSummary,
   resetPassword,
@@ -284,9 +289,10 @@ const currentEmptyResult = computed(() => emptyUsersListResult({
 const renderedResult = computed(() => usersResource.state.data ?? currentEmptyResult.value)
 const renderedUsers = computed(() => renderedResult.value.users)
 const renderedPagination = computed(() => renderedResult.value.pagination)
-const userAction = useAsyncAction(async (action: () => Promise<void>) => action(), {
+const userActions = useAsyncActionMap<void>({
   getErrorMessage: apiErrorMessage,
 })
+const userCreateActionKey = 'user:create'
 
 function userStatusCategory(status: string): 'success' | 'warning' | 'neutral' {
   if (status === 'active') return 'success'
@@ -295,11 +301,42 @@ function userStatusCategory(status: string): 'success' | 'warning' | 'neutral' {
   return 'neutral'
 }
 
-async function run(action: () => Promise<void>): Promise<void> {
-  try {
-    await action()
-  } catch (errorValue) {
-    fail(errorValue)
+function userResetPasswordActionKey(userId: string): string {
+  return `user:${userId}:password-reset`
+}
+
+function userStatusActionKey(userId: string, status: string): string {
+  return `user:${userId}:status:${status}`
+}
+
+function userActionSubmitting(key: string): boolean {
+  return userActions.isSubmitting(key)
+}
+
+function userActionError(key: string): string {
+  const state = userActions.stateFor(key)
+
+  return state.status === 'failed' ? state.error : ''
+}
+
+async function runUserAction(key: string, action: () => Promise<void>, successMessage: string): Promise<void> {
+  await userActions.run(key, action)
+  const state = userActions.stateFor(key)
+  if (state.status === 'succeeded') {
+    notify({
+      variant: 'success',
+      title: 'User updated',
+      message: successMessage,
+    })
+    return
+  }
+
+  if (state.status === 'failed') {
+    notify({
+      variant: 'error',
+      title: 'User action failed',
+      message: state.error,
+    })
   }
 }
 
@@ -338,8 +375,10 @@ async function resetPasswordAndRefresh(userId: string): Promise<void> {
 }
 
 async function runUserStatus(userId: string, status: string): Promise<void> {
-  await userAction.run(() => setUserStatus(userId, status))
-  if (userAction.state.status === 'succeeded') {
+  const key = userStatusActionKey(userId, status)
+  await userActions.run(key, () => setUserStatus(userId, status))
+  const state = userActions.stateFor(key)
+  if (state.status === 'succeeded') {
     await load()
     notify({
       variant: 'success',
@@ -350,11 +389,11 @@ async function runUserStatus(userId: string, status: string): Promise<void> {
     return
   }
 
-  if (userAction.state.status === 'failed') {
+  if (state.status === 'failed') {
     notify({
       variant: 'error',
       title: 'User action failed',
-      message: userAction.state.error,
+      message: state.error,
     })
   }
 }

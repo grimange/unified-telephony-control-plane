@@ -9,6 +9,7 @@ import { appearanceStorageKey, resetAppearanceForTests } from './state/theme'
 import changePasswordViewSource from './views/ChangePasswordView.vue?raw'
 import loginViewSource from './views/LoginView.vue?raw'
 import membershipsViewSource from './views/MembershipsView.vue?raw'
+import appStateSource from './state/appState.ts?raw'
 import runtimeNodesViewSource from './views/RuntimeNodesView.vue?raw'
 import tenantsViewSource from './views/TenantsView.vue?raw'
 import userDetailViewSource from './views/UserDetailView.vue?raw'
@@ -551,7 +552,28 @@ describe('C1 App shell', () => {
     expect(wrapper.text()).toContain('Event stream')
     expect(wrapper.text()).toContain('Runtime observation')
     expect(wrapper.text()).not.toContain('Conference execution')
-    expect(wrapper.find('input[placeholder="ARI application name"]').exists()).toBe(true)
+    const adapterFieldLabels = wrapper.findAll('label')
+      .map((label) => label.text().replace(/\s*required\s*/g, '').trim())
+      .filter((label) => [
+        'ARI application name',
+        'Connect timeout',
+        'Request timeout',
+        'WebSocket handshake timeout',
+        'Heartbeat interval',
+        'Minimum reconnect delay',
+        'Maximum reconnect delay',
+      ].includes(label))
+    expect(adapterFieldLabels).toEqual([
+      'ARI application name',
+      'Connect timeout',
+      'Request timeout',
+      'WebSocket handshake timeout',
+      'Heartbeat interval',
+      'Minimum reconnect delay',
+      'Maximum reconnect delay',
+    ])
+    expect(wrapper.find('#runtime-node-runtime-1-adapter-field-application_name').exists()).toBe(true)
+    expect(wrapper.find('#runtime-node-runtime-1-adapter-field-connect_timeout_ms').attributes('type')).toBe('number')
     expect(wrapper.text()).toContain('Desired state: draft')
     expect(wrapper.text()).toContain('Observed state: unobserved')
     expect(wrapper.text()).toContain('runtime_node.created')
@@ -598,15 +620,267 @@ describe('C1 App shell', () => {
     await wrapper.findAll('form.inline-form').find((form) => form.text().includes('Save adapter configuration'))?.trigger('submit.prevent')
     await flushPromises()
 
-    expect(calls.some((call) =>
+    const configurationSave = calls.find((call) =>
       call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/adapter-configuration') &&
-      (call.body as { application_name?: string })?.application_name === 'utcp',
-    )).toBe(true)
+      (call.body as { application_name?: string })?.application_name === 'utcp')
+    expect(configurationSave?.body).toEqual({
+      application_name: 'utcp',
+      connect_timeout_ms: 1000,
+      request_timeout_ms: 7000,
+      websocket_handshake_timeout_ms: 8000,
+      heartbeat_interval_ms: 15000,
+      reconnect_min_delay_ms: 500,
+      reconnect_max_delay_ms: 10000,
+    })
 
     await wrapper.findAll('button').find((button) => button.text() === 'Retire')?.trigger('click')
     await flushPromises()
 
     expect(calls.some((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/credentials/credential-1/retire'))).toBe(true)
+  })
+
+  it('renders simulator JSON configuration from catalog descriptors and blocks invalid JSON', async () => {
+    const simulatorNode = {
+      ...runtimeNode,
+      id: 'runtime-sim',
+      name: 'Simulator Runtime',
+      slug: 'simulator-runtime',
+      runtime_family: 'simulator',
+      adapter_key: 'simulator-deterministic',
+      credentials: [],
+      capabilities: ['event.stream', 'runtime.observation', 'runtime.configuration'],
+    }
+    const calls: Array<{ url: string; body?: unknown }> = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString()
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+      if (url.endsWith('/api/v1/admin/runtime-node-catalog')) return Promise.resolve(jsonResponse({ catalog: runtimeCatalog }))
+      if (url.endsWith('/api/v1/admin/runtime-nodes')) return Promise.resolve(jsonResponse({ runtime_nodes: [runtimeNode, simulatorNode] }))
+      if (url.endsWith('/api/v1/admin/runtime-nodes/runtime-sim/adapter-configuration')) {
+        if (init?.method === 'PUT') {
+          return Promise.resolve(jsonResponse({ adapter_configuration: { configured: true, profile: JSON.parse(String(init.body)) } }))
+        }
+
+        return Promise.resolve(jsonResponse({
+          adapter_configuration: {
+            configured: true,
+            profile: {
+              scenario_key: 'happy_path',
+              scenario_version: 1,
+              seed: 'fixture',
+              parameters: { calls: 2, enabled: true },
+            },
+          },
+        }))
+      }
+      if (url.endsWith('/api/v1/admin/runtime-nodes/runtime-sim/runtime-evidence')) {
+        return Promise.resolve(jsonResponse({ runtime_evidence: { desired_state: 'draft', observed_state: 'unobserved', observed_at: null, desired_configuration_generation: 1, observed_configuration_generation: null, listener: { status: null, lease_freshness: null, last_claimed_at: null, last_renewed_at: null }, connection: { state: 'closed', latest_epoch_opened_at: null, latest_epoch_closed_at: null, latest_event_at: null, latest_disconnect_class: null }, reconciliation: { state: 'blocked', last_evaluated_at: null, next_retry_at: null, sanitized_failure_class: null, sanitized_failure_code: null, sanitized_message: null }, inspection: { last_success_at: null, last_failure_at: null, failure_class: null } } }))
+      }
+      if (url.endsWith('/api/v1/admin/runtime-nodes/runtime-sim/history?limit=10')) return Promise.resolve(jsonResponse({ history: [], pagination: { limit: 10, has_more: false, next_before: null } }))
+      if (url.includes('/api/v1/admin/runtime-nodes/runtime-1/')) return Promise.resolve(jsonResponse({ message: 'not opened' }, 500))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/admin/runtime-nodes')
+    await wrapper.findAll('button').filter((button) => button.text() === 'Details')[1]?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Scenario key')
+    expect(wrapper.text()).toContain('Parameters')
+    const jsonField = wrapper.find('#runtime-node-runtime-sim-adapter-field-parameters')
+    expect(jsonField.element.tagName).toBe('TEXTAREA')
+    expect((jsonField.element as HTMLTextAreaElement).value).toContain('"calls": 2')
+
+    await jsonField.setValue('{bad json')
+    await wrapper.findAll('form.inline-form').find((form) => form.text().includes('Save adapter configuration'))?.trigger('submit.prevent')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Parameters must contain valid JSON.')
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-sim/adapter-configuration') && call.body !== undefined)).toBe(false)
+
+    await jsonField.setValue('{"calls":0,"enabled":false,"tags":["a"],"nothing":null}')
+    await wrapper.findAll('form.inline-form').find((form) => form.text().includes('Save adapter configuration'))?.trigger('submit.prevent')
+    await flushPromises()
+
+    const saveCall = calls.find((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-sim/adapter-configuration') && call.body !== undefined)
+    expect(saveCall?.body).toMatchObject({
+      scenario_key: 'happy_path',
+      scenario_version: 1,
+      seed: 'fixture',
+      parameters: { calls: 0, enabled: false, tags: ['a'], nothing: null },
+    })
+  })
+
+  it('omits read-only and blank write-only descriptor values while preserving entered replacements', async () => {
+    const writeOnlyCatalog = structuredClone(runtimeCatalog) as RuntimeManagementCatalog
+    writeOnlyCatalog.adapter_keys['asterisk-ari'].adapter_configuration = {
+      fields: [
+        {
+          key: 'application_name',
+          label: 'ARI application name',
+          help: 'Synthetic writable text fixture.',
+          input_type: 'text',
+          required: true,
+          read_only: false,
+          write_only: false,
+          default: 'catalog-default',
+          order: 10,
+        },
+        {
+          key: 'connect_timeout_ms',
+          label: 'Connect timeout',
+          help: 'Synthetic writable integer fixture.',
+          input_type: 'integer',
+          required: true,
+          read_only: false,
+          write_only: false,
+          default: 0,
+          order: 20,
+        },
+        {
+          key: 'read_only_note',
+          label: 'Read-only note',
+          help: 'Synthetic read-only fixture.',
+          input_type: 'text',
+          required: false,
+          read_only: true,
+          write_only: false,
+          default: null,
+          order: 30,
+        },
+        {
+          key: 'replacement_secret',
+          label: 'Replacement secret',
+          help: 'Synthetic write-only fixture.',
+          input_type: 'text',
+          required: false,
+          read_only: false,
+          write_only: true,
+          default: null,
+          order: 40,
+        },
+      ],
+    }
+    const calls: Array<{ url: string; body?: unknown }> = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString()
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+      if (url.endsWith('/api/v1/admin/runtime-node-catalog')) return Promise.resolve(jsonResponse({ catalog: writeOnlyCatalog }))
+      if (url.endsWith('/api/v1/admin/runtime-nodes')) return Promise.resolve(jsonResponse({ runtime_nodes: [runtimeNode] }))
+      if (url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/adapter-configuration')) {
+        if (init?.method === 'PUT') return Promise.resolve(jsonResponse({ adapter_configuration: { configured: true, profile: JSON.parse(String(init.body)) } }))
+
+        return Promise.resolve(jsonResponse({
+          adapter_configuration: {
+            configured: true,
+            profile: {
+              application_name: 'utcp',
+              connect_timeout_ms: 0,
+              read_only_note: 'server-owned',
+              replacement_secret: 'synthetic-readback-secret',
+            },
+          },
+        }))
+      }
+      if (url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/runtime-evidence')) {
+        return Promise.resolve(jsonResponse({ runtime_evidence: { desired_state: 'draft', observed_state: 'unobserved', observed_at: null, desired_configuration_generation: 1, observed_configuration_generation: null, listener: { status: null, lease_freshness: null, last_claimed_at: null, last_renewed_at: null }, connection: { state: 'closed', latest_epoch_opened_at: null, latest_epoch_closed_at: null, latest_event_at: null, latest_disconnect_class: null }, reconciliation: { state: 'blocked', last_evaluated_at: null, next_retry_at: null, sanitized_failure_class: null, sanitized_failure_code: null, sanitized_message: null }, inspection: { last_success_at: null, last_failure_at: null, failure_class: null } } }))
+      }
+      if (url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/history?limit=10')) return Promise.resolve(jsonResponse({ history: [], pagination: { limit: 10, has_more: false, next_before: null } }))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/admin/runtime-nodes')
+    await wrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
+    await flushPromises()
+
+    const writeOnlyInput = wrapper.find('#runtime-node-runtime-1-adapter-field-replacement_secret')
+    expect(writeOnlyInput.attributes('type')).toBe('password')
+    expect((writeOnlyInput.element as HTMLInputElement).value).toBe('')
+    expect(wrapper.text()).not.toContain('synthetic-readback-secret')
+
+    await wrapper.findAll('form.inline-form').find((form) => form.text().includes('Save adapter configuration'))?.trigger('submit.prevent')
+    await flushPromises()
+
+    const firstSave = calls.find((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/adapter-configuration') && call.body !== undefined)
+    expect(firstSave?.body).toEqual({
+      application_name: 'utcp',
+      connect_timeout_ms: 0,
+    })
+
+    await wrapper.find('#runtime-node-runtime-1-adapter-field-replacement_secret').setValue('synthetic-replacement')
+    await wrapper.findAll('form.inline-form').find((form) => form.text().includes('Save adapter configuration'))?.trigger('submit.prevent')
+    await flushPromises()
+
+    const saveBodies = calls
+      .filter((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/adapter-configuration') && call.body !== undefined)
+      .map((call) => call.body)
+    expect(saveBodies[1]).toEqual({
+      application_name: 'utcp',
+      connect_timeout_ms: 0,
+      replacement_secret: 'synthetic-replacement',
+    })
+    expect((wrapper.find('#runtime-node-runtime-1-adapter-field-replacement_secret').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.text()).not.toContain('synthetic-replacement')
+    expect(wrapper.text()).not.toContain('synthetic-readback-secret')
+  })
+
+  it('blocks required unsupported RuntimeNode descriptors without affecting the list', async () => {
+    const unsupportedCatalog = structuredClone(runtimeCatalog) as RuntimeManagementCatalog
+    unsupportedCatalog.adapter_keys['asterisk-ari'].adapter_configuration = {
+      fields: [
+        {
+          key: 'application_name',
+          label: 'ARI application name',
+          help: 'Unsupported fixture.',
+          input_type: 'unsupported' as 'text',
+          required: true,
+          read_only: false,
+          write_only: false,
+          default: null,
+          order: 10,
+        },
+      ],
+    }
+    const calls: Array<{ url: string; body?: unknown }> = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString()
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+      if (url.endsWith('/api/v1/admin/runtime-node-catalog')) return Promise.resolve(jsonResponse({ catalog: unsupportedCatalog }))
+      if (url.endsWith('/api/v1/admin/runtime-nodes')) return Promise.resolve(jsonResponse({ runtime_nodes: [runtimeNode] }))
+      if (url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/adapter-configuration')) {
+        if (init?.method === 'PUT') return Promise.resolve(jsonResponse({ message: 'should not save' }, 500))
+
+        return Promise.resolve(jsonResponse({ adapter_configuration: { configured: true, profile: { application_name: 'utcp' } } }))
+      }
+      if (url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/runtime-evidence')) {
+        return Promise.resolve(jsonResponse({ runtime_evidence: { desired_state: 'draft', observed_state: 'unobserved', observed_at: null, desired_configuration_generation: 1, observed_configuration_generation: null, listener: { status: null, lease_freshness: null, last_claimed_at: null, last_renewed_at: null }, connection: { state: 'closed', latest_epoch_opened_at: null, latest_epoch_closed_at: null, latest_event_at: null, latest_disconnect_class: null }, reconciliation: { state: 'blocked', last_evaluated_at: null, next_retry_at: null, sanitized_failure_class: null, sanitized_failure_code: null, sanitized_message: null }, inspection: { last_success_at: null, last_failure_at: null, failure_class: null } } }))
+      }
+      if (url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/history?limit=10')) return Promise.resolve(jsonResponse({ history: [], pagination: { limit: 10, has_more: false, next_before: null } }))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/admin/runtime-nodes')
+    await wrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Proof Runtime')
+    expect(wrapper.text()).toContain('Required field application_name uses unsupported type unsupported.')
+    expect(wrapper.find('#runtime-node-runtime-1-adapter-field-application_name').exists()).toBe(false)
+    const saveButton = wrapper.findAll('button').find((button) => button.text() === 'Save adapter configuration')
+    expect(saveButton?.attributes('disabled')).toBeDefined()
+    await wrapper.findAll('form.inline-form').find((form) => form.text().includes('Save adapter configuration'))?.trigger('submit.prevent')
+    await flushPromises()
+
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/adapter-configuration') && call.body !== undefined)).toBe(false)
   })
 
   it('keeps repeated RuntimeNode credential field IDs unique and scoped to labels', async () => {
@@ -1338,7 +1612,13 @@ describe('C1 App shell', () => {
     expect(membershipSource).toContain('tenantRoleOptions')
 
     const runtimeSource = viewSources['RuntimeNodesView.vue']
-    expect(runtimeSource.match(/adapter_key === 'asterisk-ari'/g)).toHaveLength(1)
+    expect(runtimeSource).not.toContain("adapter_key === 'asterisk-ari'")
+    expect(runtimeSource).not.toContain('saveAsteriskAdapterConfiguration')
+    expect(runtimeSource).not.toContain('asteriskConfigurationForm')
+    expect(appStateSource).not.toContain('saveAsteriskAdapterConfiguration')
+    expect(appStateSource).not.toContain('asteriskConfigurationForm')
+    expect(appStateSource).toContain('saveRuntimeAdapterConfiguration')
+    expect(runtimeSource).toContain('RuntimeNodeCatalogField')
     expect(runtimeSource).not.toContain('feature gate')
 
     expect(usersViewSource).toContain('class="subgrid"')
@@ -1346,7 +1626,7 @@ describe('C1 App shell', () => {
     expect(usersViewSource).toContain('TelephonySession:')
   })
 
-  it('accepts runtime adapter configuration descriptors in the catalog contract without cutting over rendering', () => {
+  it('accepts runtime adapter configuration descriptors in the catalog contract and cuts over rendering authority', () => {
     const asteriskFields = runtimeCatalog.adapter_keys['asterisk-ari'].adapter_configuration?.fields ?? []
     expect(asteriskFields.map((field) => field.key)).toEqual([
       'application_name',
@@ -1377,6 +1657,10 @@ describe('C1 App shell', () => {
     expect(serializedCatalog).not.toContain('credential-secret')
     expect(serializedCatalog).not.toContain('encrypted_secret')
     expect(serializedCatalog).not.toContain('fencing_token')
-    expect(runtimeNodesViewSource.match(/adapter_key === 'asterisk-ari'/g)).toHaveLength(1)
+    expect(runtimeNodesViewSource).not.toContain("adapter_key === 'asterisk-ari'")
+    expect(runtimeNodesViewSource).not.toContain('saveAsteriskAdapterConfiguration')
+    expect(runtimeNodesViewSource).not.toContain('asteriskNumberFields')
+    expect(appStateSource).not.toContain('saveAsteriskAdapterConfiguration')
+    expect(appStateSource).not.toContain('asteriskConfigurationForm')
   })
 })
