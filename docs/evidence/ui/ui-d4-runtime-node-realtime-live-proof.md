@@ -346,3 +346,17 @@ remaining behavioural proof:
 2. Redis ingress policy omits the `reverb` role — breaks the scaling pub/sub path (must be fixed together).
 
 UI-D remains **In Progress**; UI-D1 is **not** proven.
+
+---
+
+## 15. Follow-up (superseded)
+
+Both defects recorded here were corrected in `ff3444f`
+([`ui-d5-reverb-origin-redis-policy-fix.md`](ui-d5-reverb-origin-redis-policy-fix.md)) and the proof was
+resumed in [`ui-d6-runtime-node-realtime-live-proof.md`](ui-d6-runtime-node-realtime-live-proof.md), which
+**confirms both fixes live** — the browser's exact `Origin` now completes a full Pusher handshake instead of
+being rejected with `4009`, and Reverb reaches Redis with pods at 0 restarts. UI-D6 halted on a third,
+frontend defect: the Echo client is constructed but pusher-js never opens a socket. Note one correction to
+this document — the single WebSocket attempt recorded in §7 was **this proof's own isolation probe**, not
+the application; the application has never opened a socket, a fact that was masked here by the `4009`
+rejection.
