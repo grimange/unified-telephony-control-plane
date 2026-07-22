@@ -106,6 +106,7 @@ final class ReverbRealtimeInfrastructureTest extends TestCase
         $this->assertStringContainsString('utcp.io/network-role: worker', $reverbPolicy);
         $this->assertSame(2, substr_count($reverbPolicy, 'port: 8080'));
         $this->assertStringContainsString('utcp.io/network-role: redis', $reverbPolicy);
+        $this->assertStringContainsString('port: 6379', $reverbPolicy);
         $this->assertStringNotContainsString('podSelector: {}', $reverbPolicy);
         $this->assertStringNotContainsString('0.0.0.0/0', $reverbPolicy);
 
@@ -113,6 +114,114 @@ final class ReverbRealtimeInfrastructureTest extends TestCase
             $this->assertStringContainsString('utcp.io/network-role: reverb', $publisherPolicy);
             $this->assertStringContainsString('port: 8080', $publisherPolicy);
         }
+    }
+
+    public function test_local_reverb_allowed_origin_is_host_only_gateway_hostname(): void
+    {
+        $objects = $this->kustomizeObjects('infrastructure/kubernetes/overlays/local/platform');
+        $config = $objects['ConfigMap/utcp-platform/utcp-application-config']['data'];
+
+        $this->assertSame('app.utcp.local.test', $config['REVERB_ALLOWED_ORIGIN']);
+        $this->assertReverbAllowedOriginIsHostOnly($config['REVERB_ALLOWED_ORIGIN']);
+
+        $assignments = [
+            'apps/api/.env.example' => $this->extractEnvAssignment(
+                $this->repoFile('apps/api/.env.example'),
+                'REVERB_ALLOWED_ORIGIN'
+            ),
+            'infrastructure/kubernetes/overlays/local/application-config.properties' => $this->extractEnvAssignment(
+                $this->repoFile('infrastructure/kubernetes/overlays/local/application-config.properties'),
+                'REVERB_ALLOWED_ORIGIN'
+            ),
+            'infrastructure/kubernetes/overlays/local/platform/application-config.properties' => $this->extractEnvAssignment(
+                $this->repoFile('infrastructure/kubernetes/overlays/local/platform/application-config.properties'),
+                'REVERB_ALLOWED_ORIGIN'
+            ),
+            'infrastructure/compose/env.example' => $this->extractEnvAssignment(
+                $this->repoFile('infrastructure/compose/env.example'),
+                'UTCP_REVERB_ALLOWED_ORIGIN'
+            ),
+            'infrastructure/compose/compose.yaml' => $this->extractComposeDefault(
+                $this->repoFile('infrastructure/compose/compose.yaml'),
+                'REVERB_ALLOWED_ORIGIN',
+                'UTCP_REVERB_ALLOWED_ORIGIN'
+            ),
+        ];
+
+        foreach ($assignments as $path => $allowedOrigin) {
+            $this->assertSame('app.utcp.local.test', $allowedOrigin, $path);
+            $this->assertReverbAllowedOriginIsHostOnly($allowedOrigin, $path);
+        }
+    }
+
+    public function test_reverb_allowed_origin_fallback_derives_hostname_from_app_url(): void
+    {
+        $config = $this->reverbConfigWithEnvironment([
+            'APP_URL' => 'https://app.utcp.local.test',
+            'REVERB_ALLOWED_ORIGIN' => null,
+        ]);
+
+        $this->assertSame(
+            ['app.utcp.local.test'],
+            $config['apps']['apps'][0]['allowed_origins']
+        );
+
+        $config = $this->reverbConfigWithEnvironment([
+            'APP_URL' => 'https://app.utcp.local.test',
+            'REVERB_ALLOWED_ORIGIN' => 'runtime.example.test',
+        ]);
+
+        $this->assertSame(
+            ['runtime.example.test'],
+            $config['apps']['apps'][0]['allowed_origins']
+        );
+
+        $config = $this->reverbConfigWithEnvironment([
+            'APP_URL' => 'not a valid url',
+            'REVERB_ALLOWED_ORIGIN' => null,
+        ]);
+
+        $this->assertSame(
+            ['localhost'],
+            $config['apps']['apps'][0]['allowed_origins']
+        );
+    }
+
+    public function test_redis_network_policy_allows_reverb_only_on_redis_port(): void
+    {
+        $objects = $this->kustomizeObjects('infrastructure/kubernetes/security');
+        $policy = $objects['NetworkPolicy/utcp-data/allow-redis-from-backend-roles'];
+        $spec = $policy['spec'];
+
+        $this->assertSame(['utcp.io/network-role' => 'redis'], $spec['podSelector']['matchLabels']);
+        $this->assertSame(['Ingress', 'Egress'], $spec['policyTypes']);
+        $this->assertSame([], $spec['egress']);
+        $this->assertCount(1, $spec['ingress']);
+        $this->assertCount(1, $spec['ingress'][0]['ports']);
+        $this->assertSame('TCP', $spec['ingress'][0]['ports'][0]['protocol']);
+        $this->assertSame(6379, $spec['ingress'][0]['ports'][0]['port']);
+
+        $roles = [];
+        foreach ($spec['ingress'][0]['from'] as $source) {
+            $this->assertSame(
+                ['kubernetes.io/metadata.name' => 'utcp-platform'],
+                $source['namespaceSelector']['matchLabels'] ?? []
+            );
+            $this->assertArrayHasKey('matchLabels', $source['podSelector'] ?? []);
+            $this->assertNotSame([], $source['podSelector']);
+            $roles[] = $source['podSelector']['matchLabels']['utcp.io/network-role'] ?? null;
+        }
+
+        sort($roles);
+        $this->assertSame([
+            'api',
+            'asterisk-ari-events',
+            'migration',
+            'reverb',
+            'scheduler',
+            'simulator-event-source',
+            'worker',
+        ], $roles);
     }
 
     public function test_broadcasting_auth_uses_session_middleware_path(): void
@@ -227,6 +336,93 @@ final class ReverbRealtimeInfrastructureTest extends TestCase
     private function repoFile(string $relativePath): string
     {
         return (string) file_get_contents(dirname(base_path(), 2).'/'.$relativePath);
+    }
+
+    private function assertReverbAllowedOriginIsHostOnly(string $allowedOrigin, string $message = ''): void
+    {
+        $this->assertStringNotContainsString('://', $allowedOrigin, $message);
+        $this->assertStringNotContainsString('/', $allowedOrigin, $message);
+        $this->assertStringNotContainsString(':443', $allowedOrigin, $message);
+    }
+
+    private function extractEnvAssignment(string $content, string $key): string
+    {
+        $this->assertMatchesRegularExpression(
+            '/^'.preg_quote($key, '/').'=(?<value>[^\r\n]+)$/m',
+            $content
+        );
+        preg_match('/^'.preg_quote($key, '/').'=(?<value>[^\r\n]+)$/m', $content, $matches);
+
+        return $matches['value'];
+    }
+
+    private function extractComposeDefault(string $content, string $key, string $environmentKey): string
+    {
+        $this->assertMatchesRegularExpression(
+            '/^\s+'.preg_quote($key, '/').':\s+\$\{'.preg_quote($environmentKey, '/').':-(?<value>[^}]+)\}$/m',
+            $content
+        );
+        preg_match(
+            '/^\s+'.preg_quote($key, '/').':\s+\$\{'.preg_quote($environmentKey, '/').':-(?<value>[^}]+)\}$/m',
+            $content,
+            $matches
+        );
+
+        return $matches['value'];
+    }
+
+    /**
+     * @param  array<string, string|null>  $environment
+     * @return array<string, mixed>
+     */
+    private function reverbConfigWithEnvironment(array $environment): array
+    {
+        $keys = array_unique(array_merge(['APP_URL', 'REVERB_ALLOWED_ORIGIN'], array_keys($environment)));
+        $previous = [];
+
+        foreach ($keys as $key) {
+            $previous[$key] = [
+                'getenv' => getenv($key),
+                'env' => $_ENV[$key] ?? null,
+                'server' => $_SERVER[$key] ?? null,
+            ];
+            putenv($key);
+            unset($_ENV[$key], $_SERVER[$key]);
+        }
+
+        foreach ($environment as $key => $value) {
+            if ($value === null) {
+                continue;
+            }
+
+            putenv($key.'='.$value);
+            $_ENV[$key] = $value;
+            $_SERVER[$key] = $value;
+        }
+
+        try {
+            return require dirname(base_path(), 2).'/apps/api/config/reverb.php';
+        } finally {
+            foreach ($previous as $key => $values) {
+                if ($values['getenv'] === false) {
+                    putenv($key);
+                } else {
+                    putenv($key.'='.$values['getenv']);
+                }
+
+                if ($values['env'] === null) {
+                    unset($_ENV[$key]);
+                } else {
+                    $_ENV[$key] = $values['env'];
+                }
+
+                if ($values['server'] === null) {
+                    unset($_SERVER[$key]);
+                } else {
+                    $_SERVER[$key] = $values['server'];
+                }
+            }
+        }
     }
 
     /**

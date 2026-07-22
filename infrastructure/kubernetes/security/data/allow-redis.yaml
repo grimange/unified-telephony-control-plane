@@ -44,6 +44,12 @@ spec:
               kubernetes.io/metadata.name: utcp-platform
           podSelector:
             matchLabels:
+              utcp.io/network-role: reverb
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
               utcp.io/network-role: scheduler
         - namespaceSelector:
             matchLabels:

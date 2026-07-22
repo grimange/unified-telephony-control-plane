@@ -11,13 +11,15 @@ check_k1_tag
 
 tmp="$(mktemp)"
 migration_tmp="$(mktemp)"
-trap 'rm -f "$tmp" "$migration_tmp"' EXIT
+platform_tmp="$(mktemp)"
+trap 'rm -f "$tmp" "$migration_tmp" "$platform_tmp"' EXIT
 render_overlay > "$tmp"
 kubectl kustomize "$K8S_MIGRATION_OVERLAY" > "$migration_tmp"
+kubectl kustomize "$K8S_PLATFORM_OVERLAY" > "$platform_tmp"
 
 kube apply --dry-run=server -f "$tmp" >/dev/null
 "$SCRIPT_DIR/static-check" "$tmp"
-python3 - "$migration_tmp" <<'PY'
+python3 - "$migration_tmp" "$tmp" "$platform_tmp" <<'PY'
 from __future__ import annotations
 
 import sys
@@ -42,6 +44,32 @@ objects = {
     for doc in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
     if isinstance(doc, dict)
 }
+local_objects = {
+    object_key(doc): doc
+    for doc in yaml.safe_load_all(Path(sys.argv[2]).read_text(encoding="utf-8"))
+    if isinstance(doc, dict)
+}
+platform_objects = {
+    object_key(doc): doc
+    for doc in yaml.safe_load_all(Path(sys.argv[3]).read_text(encoding="utf-8"))
+    if isinstance(doc, dict)
+}
+
+
+def validate_reverb_allowed_origin(label: str, rendered_objects: dict[str, Any]) -> None:
+    config = rendered_objects.get("ConfigMap/utcp-platform/utcp-application-config")
+    if not config:
+        fail(f"{label} overlay must render the platform application ConfigMap")
+
+    origin = (config.get("data") or {}).get("REVERB_ALLOWED_ORIGIN")
+    if origin != "app.utcp.local.test":
+        fail(f"{label} REVERB_ALLOWED_ORIGIN must be app.utcp.local.test")
+    if "://" in origin or "/" in origin or ":443" in origin:
+        fail(f"{label} REVERB_ALLOWED_ORIGIN must be a host-only Reverb origin pattern")
+
+
+validate_reverb_allowed_origin("local", local_objects)
+validate_reverb_allowed_origin("platform", platform_objects)
 
 job = objects.get("Job/utcp-platform/utcp-migrate")
 config = objects.get("ConfigMap/utcp-platform/utcp-application-config")

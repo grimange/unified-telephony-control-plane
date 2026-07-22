@@ -79,6 +79,11 @@ def labels(doc: dict[str, Any]) -> dict[str, Any]:
     return doc.get("metadata", {}).get("labels") or {}
 
 
+def object_key(doc: dict[str, Any]) -> str:
+    metadata = doc.get("metadata", {})
+    return f"{doc.get('kind')}/{metadata.get('namespace')}/{metadata.get('name')}"
+
+
 def has_psa_labels(doc: dict[str, Any]) -> bool:
     doc_labels = labels(doc)
     return any(key in doc_labels for key in psa_expected)
@@ -148,6 +153,7 @@ def validate_pod_security(identifier: str, pod_spec: dict[str, Any]) -> None:
 
 
 security_docs = load_yaml_documents(security_render.read_text(encoding="utf-8"))
+security_objects = {object_key(doc): doc for doc in security_docs}
 security_namespaces = namespace_documents(security_docs)
 if {doc.get("metadata", {}).get("name") for doc in security_namespaces} != expected_namespaces:
     fail("security render must define exactly the five UTCP-owned namespaces")
@@ -192,6 +198,48 @@ first_security = yaml.safe_dump_all(security_namespaces, sort_keys=True)
 second_security = yaml.safe_dump_all(namespace_documents(render("infrastructure/kubernetes/security")), sort_keys=True)
 if first_security != second_security:
     fail("repeated security rendering changed namespace labels")
+
+redis_policy = security_objects.get("NetworkPolicy/utcp-data/allow-redis-from-backend-roles")
+if not redis_policy:
+    fail("security render must include Redis ingress policy")
+
+redis_spec = redis_policy.get("spec") or {}
+if (redis_spec.get("podSelector") or {}).get("matchLabels") != {"utcp.io/network-role": "redis"}:
+    fail("Redis policy must target only Redis pods")
+
+redis_ingress = redis_spec.get("ingress") or []
+if len(redis_ingress) != 1:
+    fail("Redis policy must define one bounded ingress rule")
+
+redis_ports = redis_ingress[0].get("ports") or []
+if redis_ports != [{"protocol": "TCP", "port": 6379}]:
+    fail("Redis policy must allow only TCP port 6379")
+
+redis_sources = redis_ingress[0].get("from") or []
+redis_roles = []
+for source in redis_sources:
+    namespace_selector = (source.get("namespaceSelector") or {}).get("matchLabels") or {}
+    pod_selector = source.get("podSelector") or {}
+    match_labels = pod_selector.get("matchLabels") or {}
+    if namespace_selector != {"kubernetes.io/metadata.name": "utcp-platform"}:
+        fail("Redis ingress source must be bounded to the platform namespace")
+    if not match_labels:
+        fail("Redis ingress source must not permit all Pods")
+    role = match_labels.get("utcp.io/network-role")
+    if not role:
+        fail("Redis ingress source must select an explicit network role")
+    redis_roles.append(role)
+
+if sorted(redis_roles) != [
+    "api",
+    "asterisk-ari-events",
+    "migration",
+    "reverb",
+    "scheduler",
+    "simulator-event-source",
+    "worker",
+]:
+    fail("Redis ingress roles must preserve approved clients and include reverb")
 
 for label, path in workload_renders.items():
     for doc in render(path):

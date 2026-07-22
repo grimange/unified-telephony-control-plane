@@ -1,5 +1,13 @@
 <?php
 
+$defaultAllowedOrigin = static function (): string {
+    $host = parse_url((string) env('APP_URL', 'http://localhost'), PHP_URL_HOST);
+
+    return is_string($host) && $host !== '' ? $host : 'localhost';
+};
+
+$allowedOrigin = env('REVERB_ALLOWED_ORIGIN') ?: $defaultAllowedOrigin();
+
 return [
 
     'default' => env('REVERB_SERVER', 'reverb'),
@@ -45,7 +53,7 @@ return [
                     'scheme' => env('REVERB_SCHEME', 'https'),
                     'useTLS' => env('REVERB_SCHEME', 'https') === 'https',
                 ],
-                'allowed_origins' => [env('REVERB_ALLOWED_ORIGIN', env('APP_URL', 'http://localhost'))],
+                'allowed_origins' => [$allowedOrigin],
                 'ping_interval' => env('REVERB_APP_PING_INTERVAL', 60),
                 'activity_timeout' => env('REVERB_APP_ACTIVITY_TIMEOUT', 30),
                 'max_connections' => env('REVERB_APP_MAX_CONNECTIONS'),
