@@ -7,11 +7,21 @@ use App\ControlPlane\Messaging\EventEnvelope;
 use App\ControlPlane\Messaging\OutboxRepository;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\StableJson;
+use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationDescriptorCollection;
+use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationFieldDescriptor;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 final class SimulatorProfileService
 {
+    public const SCENARIO_KEY_MIN_LENGTH = 1;
+
+    public const SCENARIO_VERSION = 1;
+
+    public const SEED_MIN_LENGTH = 1;
+
+    public const SEED_MAX_LENGTH = 120;
+
     public function __construct(
         private readonly SimulatorCatalog $catalog,
         private readonly AuditRepository $audit,
@@ -53,15 +63,97 @@ final class SimulatorProfileService
      * @param  array<string, mixed>  $input
      * @return array<string, mixed>
      */
-    public function put(ExecutionContext $context, string $tenantId, string $runtimeNodeId, array $input): array
+    public function validate(array $input): array
     {
-        $scenario = (string) $input['scenario_key'];
-        $version = (int) ($input['scenario_version'] ?? 1);
+        $scenario = (string) ($input['scenario_key'] ?? '');
+        $version = (int) ($input['scenario_version'] ?? self::SCENARIO_VERSION);
         $seed = (string) ($input['seed'] ?? 'local');
-        if (! preg_match('/^[A-Za-z0-9._:-]{1,120}$/', $seed)) {
+        if (
+            strlen($seed) < self::SEED_MIN_LENGTH
+            || strlen($seed) > self::SEED_MAX_LENGTH
+            || ! preg_match('/^[A-Za-z0-9._:-]+$/', $seed)
+        ) {
             throw new InvalidArgumentException('Invalid simulator seed.');
         }
-        $parameters = $this->catalog->validateParameters($input['parameters'] ?? []);
+
+        $parameters = is_array($input['parameters'] ?? null) ? $input['parameters'] : [];
+
+        return [
+            'scenario_key' => $scenario,
+            'scenario_version' => $version,
+            'seed' => $seed,
+            'parameters' => $this->catalog->validateParameters($parameters),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function defaults(): array
+    {
+        return [
+            'scenario_key' => null,
+            'scenario_version' => self::SCENARIO_VERSION,
+            'seed' => 'local',
+            'parameters' => [],
+        ];
+    }
+
+    public function descriptors(): AdapterConfigurationDescriptorCollection
+    {
+        $defaults = $this->defaults();
+        $scenarioMaxLength = max(array_map('strlen', $this->catalog->scenarios()) ?: [self::SCENARIO_KEY_MIN_LENGTH]);
+
+        return new AdapterConfigurationDescriptorCollection([
+            AdapterConfigurationFieldDescriptor::text(
+                'scenario_key',
+                'Scenario key',
+                'Deterministic simulator scenario key from the server simulator catalog.',
+                true,
+                $defaults['scenario_key'],
+                10,
+                ['min_length' => self::SCENARIO_KEY_MIN_LENGTH, 'max_length' => $scenarioMaxLength],
+            ),
+            AdapterConfigurationFieldDescriptor::integer(
+                'scenario_version',
+                'Scenario version',
+                'Deterministic simulator scenario contract version.',
+                true,
+                $defaults['scenario_version'],
+                20,
+                ['min' => self::SCENARIO_VERSION, 'max' => self::SCENARIO_VERSION, 'step' => 1],
+            ),
+            AdapterConfigurationFieldDescriptor::text(
+                'seed',
+                'Seed',
+                'Stable deterministic seed used by the simulator profile.',
+                true,
+                $defaults['seed'],
+                30,
+                ['min_length' => self::SEED_MIN_LENGTH, 'max_length' => self::SEED_MAX_LENGTH],
+            ),
+            AdapterConfigurationFieldDescriptor::json(
+                'parameters',
+                'Parameters',
+                'Optional scalar simulator parameters keyed by the selected scenario.',
+                true,
+                $defaults['parameters'],
+                40,
+            ),
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $input
+     * @return array<string, mixed>
+     */
+    public function put(ExecutionContext $context, string $tenantId, string $runtimeNodeId, array $input): array
+    {
+        $validated = $this->validate($input);
+        $scenario = $validated['scenario_key'];
+        $version = $validated['scenario_version'];
+        $seed = $validated['seed'];
+        $parameters = $validated['parameters'];
         $this->catalog->assertScenario($scenario, $version);
 
         DB::transaction(function () use ($context, $tenantId, $runtimeNodeId, $scenario, $version, $seed, $parameters): void {

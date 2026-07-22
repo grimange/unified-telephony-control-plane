@@ -2,6 +2,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory } from 'vue-router'
 import App from './App.vue'
+import type { RuntimeManagementCatalog } from './api/platform'
 import { createUtcpRouter, router } from './router'
 import { resetAppStateForTests } from './state/appState'
 import { appearanceStorageKey, resetAppearanceForTests } from './state/theme'
@@ -165,6 +166,94 @@ const runtimeCatalog = {
       endpoint_requirements: [],
       credentials_required: true,
       adapter_configuration_available: true,
+      adapter_configuration: {
+        fields: [
+          {
+            key: 'application_name',
+            label: 'ARI application name',
+            help: 'Stasis application name subscribed by the Asterisk ARI listener.',
+            input_type: 'text',
+            required: true,
+            read_only: false,
+            write_only: false,
+            default: 'utcp-t0-observation',
+            order: 10,
+            validation: { min_length: 3, max_length: 80 },
+          },
+          {
+            key: 'connect_timeout_ms',
+            label: 'Connect timeout',
+            help: 'HTTP connection timeout for Asterisk ARI requests, in milliseconds.',
+            input_type: 'integer',
+            required: true,
+            read_only: false,
+            write_only: false,
+            default: 2000,
+            order: 20,
+            validation: { min: 250, max: 30000, step: 1 },
+          },
+          {
+            key: 'request_timeout_ms',
+            label: 'Request timeout',
+            help: 'Total timeout for Asterisk ARI HTTP requests, in milliseconds.',
+            input_type: 'integer',
+            required: true,
+            read_only: false,
+            write_only: false,
+            default: 4000,
+            order: 30,
+            validation: { min: 250, max: 60000, step: 1 },
+          },
+          {
+            key: 'websocket_handshake_timeout_ms',
+            label: 'WebSocket handshake timeout',
+            help: 'Timeout for establishing the Asterisk ARI event WebSocket, in milliseconds.',
+            input_type: 'integer',
+            required: true,
+            read_only: false,
+            write_only: false,
+            default: 4000,
+            order: 40,
+            validation: { min: 250, max: 60000, step: 1 },
+          },
+          {
+            key: 'heartbeat_interval_ms',
+            label: 'Heartbeat interval',
+            help: 'Interval for ARI event connection heartbeat checks, in milliseconds.',
+            input_type: 'integer',
+            required: true,
+            read_only: false,
+            write_only: false,
+            default: 15000,
+            order: 50,
+            validation: { min: 1000, max: 120000, step: 1 },
+          },
+          {
+            key: 'reconnect_min_delay_ms',
+            label: 'Minimum reconnect delay',
+            help: 'Minimum backoff delay before reconnecting the ARI event stream, in milliseconds.',
+            input_type: 'integer',
+            required: true,
+            read_only: false,
+            write_only: false,
+            default: 1000,
+            order: 60,
+            validation: { min: 100, max: 120000, step: 1 },
+          },
+          {
+            key: 'reconnect_max_delay_ms',
+            label: 'Maximum reconnect delay',
+            help: 'Maximum backoff delay before reconnecting the ARI event stream, in milliseconds.',
+            input_type: 'integer',
+            required: true,
+            read_only: false,
+            write_only: false,
+            default: 30000,
+            order: 70,
+            validation: { min: 100, max: 300000, step: 1 },
+          },
+        ],
+      },
     },
     'freeswitch-esl': {
       runtime_family: 'freeswitch',
@@ -185,6 +274,57 @@ const runtimeCatalog = {
       endpoint_requirements: [],
       credentials_required: false,
       adapter_configuration_available: true,
+      adapter_configuration: {
+        fields: [
+          {
+            key: 'scenario_key',
+            label: 'Scenario key',
+            help: 'Deterministic simulator scenario key from the server simulator catalog.',
+            input_type: 'text',
+            required: true,
+            read_only: false,
+            write_only: false,
+            default: null,
+            order: 10,
+            validation: { min_length: 1, max_length: 32 },
+          },
+          {
+            key: 'scenario_version',
+            label: 'Scenario version',
+            help: 'Deterministic simulator scenario contract version.',
+            input_type: 'integer',
+            required: true,
+            read_only: false,
+            write_only: false,
+            default: 1,
+            order: 20,
+            validation: { min: 1, max: 1, step: 1 },
+          },
+          {
+            key: 'seed',
+            label: 'Seed',
+            help: 'Stable deterministic seed used by the simulator profile.',
+            input_type: 'text',
+            required: true,
+            read_only: false,
+            write_only: false,
+            default: 'local',
+            order: 30,
+            validation: { min_length: 1, max_length: 120 },
+          },
+          {
+            key: 'parameters',
+            label: 'Parameters',
+            help: 'Optional scalar simulator parameters keyed by the selected scenario.',
+            input_type: 'json',
+            required: true,
+            read_only: false,
+            write_only: false,
+            default: [],
+            order: 40,
+          },
+        ],
+      },
     },
   },
   runtime_capabilities: {
@@ -197,7 +337,7 @@ const runtimeCatalog = {
   endpoint_purposes: {},
   endpoint_transports: {},
   endpoint_tls_modes: {},
-}
+} satisfies RuntimeManagementCatalog
 
 const roleCatalog = {
   catalog_version: 'roles.v1',
@@ -1204,5 +1344,39 @@ describe('C1 App shell', () => {
     expect(usersViewSource).toContain('class="subgrid"')
     expect(usersViewSource).toContain('Memberships:')
     expect(usersViewSource).toContain('TelephonySession:')
+  })
+
+  it('accepts runtime adapter configuration descriptors in the catalog contract without cutting over rendering', () => {
+    const asteriskFields = runtimeCatalog.adapter_keys['asterisk-ari'].adapter_configuration?.fields ?? []
+    expect(asteriskFields.map((field) => field.key)).toEqual([
+      'application_name',
+      'connect_timeout_ms',
+      'request_timeout_ms',
+      'websocket_handshake_timeout_ms',
+      'heartbeat_interval_ms',
+      'reconnect_min_delay_ms',
+      'reconnect_max_delay_ms',
+    ])
+    expect(asteriskFields.map((field) => field.order)).toEqual([10, 20, 30, 40, 50, 60, 70])
+    expect(asteriskFields.map((field) => field.input_type)).toEqual([
+      'text',
+      'integer',
+      'integer',
+      'integer',
+      'integer',
+      'integer',
+      'integer',
+    ])
+
+    const simulatorFields = runtimeCatalog.adapter_keys['simulator-deterministic'].adapter_configuration?.fields ?? []
+    expect(simulatorFields.map((field) => field.key)).toEqual(['scenario_key', 'scenario_version', 'seed', 'parameters'])
+    expect(simulatorFields.map((field) => field.input_type)).toEqual(['text', 'integer', 'text', 'json'])
+    expect('adapter_configuration' in runtimeCatalog.adapter_keys['freeswitch-esl']).toBe(false)
+
+    const serializedCatalog = JSON.stringify(runtimeCatalog)
+    expect(serializedCatalog).not.toContain('credential-secret')
+    expect(serializedCatalog).not.toContain('encrypted_secret')
+    expect(serializedCatalog).not.toContain('fencing_token')
+    expect(runtimeNodesViewSource.match(/adapter_key === 'asterisk-ari'/g)).toHaveLength(1)
   })
 })

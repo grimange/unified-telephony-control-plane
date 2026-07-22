@@ -7,12 +7,17 @@ use App\ControlPlane\Shared\ExecutionContext;
 use App\Identity\IdentityIds;
 use App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentityResolver;
 use App\Models\User;
+use App\RuntimeAdapters\Asterisk\AsteriskAriProfileService;
 use App\RuntimeEngine\EngineIds;
 use App\RuntimeEngine\Sources\EventSourceRepository;
+use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationDescriptorCollection;
+use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationFieldDescriptor;
+use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationRegistry;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use InvalidArgumentException;
 use Tests\TestCase;
 
 final class RuntimeRegistryTest extends TestCase
@@ -543,6 +548,135 @@ final class RuntimeRegistryTest extends TestCase
         $this->assertArrayNotHasKey('implementation_class', $catalog['adapter_keys']['asterisk-ari']);
     }
 
+    public function test_runtime_management_catalog_publishes_adapter_configuration_descriptors(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin('descriptor-admin@utcp.local.test', 'descriptor');
+
+        $catalog = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->getJson('/api/v1/admin/runtime-node-catalog')
+            ->assertOk()
+            ->assertJsonPath('catalog.adapter_keys.asterisk-ari.adapter_configuration_available', true)
+            ->assertJsonPath('catalog.adapter_keys.freeswitch-esl.adapter_configuration_available', false)
+            ->assertJsonPath('catalog.adapter_keys.simulator-deterministic.adapter_configuration_available', true)
+            ->json('catalog');
+
+        $asteriskFields = $catalog['adapter_keys']['asterisk-ari']['adapter_configuration']['fields'];
+        $this->assertSame([
+            'application_name',
+            'connect_timeout_ms',
+            'request_timeout_ms',
+            'websocket_handshake_timeout_ms',
+            'heartbeat_interval_ms',
+            'reconnect_min_delay_ms',
+            'reconnect_max_delay_ms',
+        ], array_column($asteriskFields, 'key'));
+        $this->assertSame([10, 20, 30, 40, 50, 60, 70], array_column($asteriskFields, 'order'));
+
+        $defaults = app(AsteriskAriProfileService::class)->defaults();
+        $asteriskByKey = collect($asteriskFields)->keyBy('key');
+        $this->assertSame('text', $asteriskByKey['application_name']['input_type']);
+        $this->assertSame($defaults['application_name'], $asteriskByKey['application_name']['default']);
+        $this->assertSame([
+            'min_length' => AsteriskAriProfileService::APPLICATION_NAME_MIN_LENGTH,
+            'max_length' => AsteriskAriProfileService::APPLICATION_NAME_MAX_LENGTH,
+        ], $asteriskByKey['application_name']['validation']);
+
+        foreach ([
+            'connect_timeout_ms' => [AsteriskAriProfileService::CONNECT_TIMEOUT_MIN_MS, AsteriskAriProfileService::CONNECT_TIMEOUT_MAX_MS],
+            'request_timeout_ms' => [AsteriskAriProfileService::REQUEST_TIMEOUT_MIN_MS, AsteriskAriProfileService::REQUEST_TIMEOUT_MAX_MS],
+            'websocket_handshake_timeout_ms' => [AsteriskAriProfileService::WEBSOCKET_HANDSHAKE_TIMEOUT_MIN_MS, AsteriskAriProfileService::WEBSOCKET_HANDSHAKE_TIMEOUT_MAX_MS],
+            'heartbeat_interval_ms' => [AsteriskAriProfileService::HEARTBEAT_INTERVAL_MIN_MS, AsteriskAriProfileService::HEARTBEAT_INTERVAL_MAX_MS],
+            'reconnect_min_delay_ms' => [AsteriskAriProfileService::RECONNECT_MIN_DELAY_MIN_MS, AsteriskAriProfileService::RECONNECT_MIN_DELAY_MAX_MS],
+            'reconnect_max_delay_ms' => [AsteriskAriProfileService::RECONNECT_MAX_DELAY_MIN_MS, AsteriskAriProfileService::RECONNECT_MAX_DELAY_MAX_MS],
+        ] as $key => [$min, $max]) {
+            $this->assertSame('integer', $asteriskByKey[$key]['input_type']);
+            $this->assertTrue($asteriskByKey[$key]['required']);
+            $this->assertFalse($asteriskByKey[$key]['read_only']);
+            $this->assertFalse($asteriskByKey[$key]['write_only']);
+            $this->assertSame($defaults[$key], $asteriskByKey[$key]['default']);
+            $this->assertSame(['min' => $min, 'max' => $max, 'step' => 1], $asteriskByKey[$key]['validation']);
+            $this->assertNotSame('', trim($asteriskByKey[$key]['label']));
+            $this->assertNotSame('', trim($asteriskByKey[$key]['help']));
+        }
+
+        $simulatorFields = $catalog['adapter_keys']['simulator-deterministic']['adapter_configuration']['fields'];
+        $this->assertSame(['scenario_key', 'scenario_version', 'seed', 'parameters'], array_column($simulatorFields, 'key'));
+        $this->assertSame(['text', 'integer', 'text', 'json'], array_column($simulatorFields, 'input_type'));
+        $this->assertArrayNotHasKey('adapter_configuration', $catalog['adapter_keys']['freeswitch-esl']);
+
+        $catalogJson = json_encode($catalog, JSON_THROW_ON_ERROR);
+        $this->assertStringNotContainsString('encrypted_secret', $catalogJson);
+        $this->assertStringNotContainsString('fencing_token', $catalogJson);
+    }
+
+    public function test_adapter_configuration_availability_requires_descriptor_providers(): void
+    {
+        $registry = app(AdapterConfigurationRegistry::class);
+
+        foreach (config('runtime_registry.adapter_keys', []) as $adapterKey => $adapter) {
+            $configurationAvailable = (bool) ($adapter['adapter_configuration_available'] ?? false);
+            if (! $configurationAvailable) {
+                $this->assertFalse($registry->hasAdapter($adapterKey));
+
+                continue;
+            }
+
+            $this->assertTrue($registry->hasAdapter($adapterKey));
+            $descriptors = $registry->descriptorsForAdapter($adapterKey);
+            $this->assertFalse($descriptors->isEmpty());
+            $fields = $descriptors->fields();
+            $this->assertSameSize($fields, array_unique(array_map(fn (AdapterConfigurationFieldDescriptor $field): string => $field->key, $fields)));
+            $this->assertSameSize($fields, array_unique(array_map(fn (AdapterConfigurationFieldDescriptor $field): int => $field->order, $fields)));
+        }
+    }
+
+    public function test_adapter_configuration_descriptors_reject_malformed_metadata(): void
+    {
+        $this->assertDescriptorFailure(fn () => AdapterConfigurationFieldDescriptor::text('', 'Label', 'Help', true, null, 10));
+        $this->assertDescriptorFailure(fn () => AdapterConfigurationFieldDescriptor::text('field', '', 'Help', true, null, 10));
+        $this->assertDescriptorFailure(fn () => new AdapterConfigurationFieldDescriptor('field', 'Label', 'Help', 'unsupported', true, false, false, null, 10));
+        $this->assertDescriptorFailure(fn () => AdapterConfigurationFieldDescriptor::integer('field', 'Label', 'Help', true, 5, 10, ['min' => 10, 'max' => 5]));
+        $this->assertDescriptorFailure(fn () => AdapterConfigurationFieldDescriptor::integer('field', 'Label', 'Help', true, 5, 10, ['step' => 0]));
+        $this->assertDescriptorFailure(fn () => AdapterConfigurationFieldDescriptor::text('field', 'Label', 'Help', true, 'value', 10, ['min' => 1]));
+        $this->assertDescriptorFailure(fn () => AdapterConfigurationFieldDescriptor::text('field', 'Label', 'Help', true, 'value', 10, ['min_length' => 10, 'max_length' => 1]));
+        $this->assertDescriptorFailure(fn () => AdapterConfigurationFieldDescriptor::text('field', 'Label', 'Help', true, 'value', 0));
+        $this->assertDescriptorFailure(fn () => AdapterConfigurationFieldDescriptor::text('field', 'Label', 'Help', true, 'published-secret', 10, [], writeOnly: true));
+        $this->assertDescriptorFailure(fn () => AdapterConfigurationFieldDescriptor::text('field', 'Label', 'Help', true, null, 10, [], readOnly: true, writeOnly: true));
+        $this->assertDescriptorFailure(fn () => new AdapterConfigurationDescriptorCollection([
+            AdapterConfigurationFieldDescriptor::text('field', 'Label', 'Help', true, null, 10),
+            AdapterConfigurationFieldDescriptor::text('field', 'Other label', 'Help', true, null, 20),
+        ]));
+        $this->assertDescriptorFailure(fn () => new AdapterConfigurationDescriptorCollection([
+            AdapterConfigurationFieldDescriptor::text('field_one', 'Label', 'Help', true, null, 10),
+            AdapterConfigurationFieldDescriptor::text('field_two', 'Other label', 'Help', true, null, 10),
+        ]));
+    }
+
+    public function test_asterisk_adapter_descriptors_match_backend_validation_contract(): void
+    {
+        $profiles = app(AsteriskAriProfileService::class);
+        $fields = collect($profiles->descriptors()->fields())->keyBy('key');
+        $defaults = $profiles->defaults();
+
+        $this->assertSame(array_keys($defaults), $fields->keys()->all());
+        $this->assertSame($defaults, $profiles->validate($defaults));
+
+        foreach ($fields as $key => $field) {
+            $this->assertArrayHasKey($key, $defaults);
+            if ($field->inputType !== AdapterConfigurationFieldDescriptor::INPUT_INTEGER) {
+                continue;
+            }
+
+            $below = $defaults;
+            $below[$key] = $field->validation['min'] - 1;
+            $this->assertDescriptorValidationFailure(fn () => $profiles->validate($below));
+
+            $above = $defaults;
+            $above[$key] = $field->validation['max'] + 1;
+            $this->assertDescriptorValidationFailure(fn () => $profiles->validate($above));
+        }
+    }
+
     public function test_asterisk_capabilities_reject_unsupported_values_and_preserve_unchanged_actual_values(): void
     {
         [$admin, $tenantId] = $this->createTenantAdmin();
@@ -779,6 +913,29 @@ final class RuntimeRegistryTest extends TestCase
         $this->actingAs($otherAdmin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $otherTenantId])
             ->getJson("/api/v1/admin/runtime-nodes/{$node['id']}/history")
             ->assertNotFound();
+    }
+
+    /**
+     * @return array{0: User, 1: string}
+     */
+    private function assertDescriptorFailure(callable $factory): void
+    {
+        try {
+            $factory();
+            $this->fail('Malformed adapter configuration descriptor was accepted.');
+        } catch (InvalidArgumentException $exception) {
+            $this->assertNotSame('', $exception->getMessage());
+        }
+    }
+
+    private function assertDescriptorValidationFailure(callable $factory): void
+    {
+        try {
+            $factory();
+            $this->fail('Descriptor validation hint exceeded backend validation.');
+        } catch (InvalidArgumentException $exception) {
+            $this->assertNotSame('', $exception->getMessage());
+        }
     }
 
     /**

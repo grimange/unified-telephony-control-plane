@@ -8,11 +8,41 @@ use App\ControlPlane\Messaging\OutboxRepository;
 use App\ControlPlane\RuntimeOperations\FailureClass;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\RuntimeEngine\Sources\EventSourceRepository;
+use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationDescriptorCollection;
+use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationFieldDescriptor;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 final class AsteriskAriProfileService
 {
+    public const APPLICATION_NAME_MIN_LENGTH = 3;
+
+    public const APPLICATION_NAME_MAX_LENGTH = 80;
+
+    public const CONNECT_TIMEOUT_MIN_MS = 250;
+
+    public const CONNECT_TIMEOUT_MAX_MS = 30000;
+
+    public const REQUEST_TIMEOUT_MIN_MS = 250;
+
+    public const REQUEST_TIMEOUT_MAX_MS = 60000;
+
+    public const WEBSOCKET_HANDSHAKE_TIMEOUT_MIN_MS = 250;
+
+    public const WEBSOCKET_HANDSHAKE_TIMEOUT_MAX_MS = 60000;
+
+    public const HEARTBEAT_INTERVAL_MIN_MS = 1000;
+
+    public const HEARTBEAT_INTERVAL_MAX_MS = 120000;
+
+    public const RECONNECT_MIN_DELAY_MIN_MS = 100;
+
+    public const RECONNECT_MIN_DELAY_MAX_MS = 120000;
+
+    public const RECONNECT_MAX_DELAY_MIN_MS = 100;
+
+    public const RECONNECT_MAX_DELAY_MAX_MS = 300000;
+
     public function __construct(
         private readonly AsteriskCatalog $catalog,
         private readonly AuditRepository $audit,
@@ -104,16 +134,20 @@ final class AsteriskAriProfileService
     public function validate(array $input): array
     {
         $application = (string) ($input['application_name'] ?? '');
-        if (! preg_match('/^[A-Za-z0-9_.-]{3,80}$/', $application)) {
+        if (
+            strlen($application) < self::APPLICATION_NAME_MIN_LENGTH
+            || strlen($application) > self::APPLICATION_NAME_MAX_LENGTH
+            || ! preg_match('/^[A-Za-z0-9_.-]+$/', $application)
+        ) {
             throw new InvalidArgumentException('Invalid Asterisk ARI application name.');
         }
 
-        $connect = $this->boundedInt($input['connect_timeout_ms'] ?? null, 250, 30000, 'Invalid connect timeout.');
-        $request = $this->boundedInt($input['request_timeout_ms'] ?? null, 250, 60000, 'Invalid request timeout.');
-        $handshake = $this->boundedInt($input['websocket_handshake_timeout_ms'] ?? null, 250, 60000, 'Invalid WebSocket handshake timeout.');
-        $heartbeat = $this->boundedInt($input['heartbeat_interval_ms'] ?? null, 1000, 120000, 'Invalid heartbeat interval.');
-        $minReconnect = $this->boundedInt($input['reconnect_min_delay_ms'] ?? null, 100, 120000, 'Invalid minimum reconnect delay.');
-        $maxReconnect = $this->boundedInt($input['reconnect_max_delay_ms'] ?? null, 100, 300000, 'Invalid maximum reconnect delay.');
+        $connect = $this->boundedInt($input['connect_timeout_ms'] ?? null, self::CONNECT_TIMEOUT_MIN_MS, self::CONNECT_TIMEOUT_MAX_MS, 'Invalid connect timeout.');
+        $request = $this->boundedInt($input['request_timeout_ms'] ?? null, self::REQUEST_TIMEOUT_MIN_MS, self::REQUEST_TIMEOUT_MAX_MS, 'Invalid request timeout.');
+        $handshake = $this->boundedInt($input['websocket_handshake_timeout_ms'] ?? null, self::WEBSOCKET_HANDSHAKE_TIMEOUT_MIN_MS, self::WEBSOCKET_HANDSHAKE_TIMEOUT_MAX_MS, 'Invalid WebSocket handshake timeout.');
+        $heartbeat = $this->boundedInt($input['heartbeat_interval_ms'] ?? null, self::HEARTBEAT_INTERVAL_MIN_MS, self::HEARTBEAT_INTERVAL_MAX_MS, 'Invalid heartbeat interval.');
+        $minReconnect = $this->boundedInt($input['reconnect_min_delay_ms'] ?? null, self::RECONNECT_MIN_DELAY_MIN_MS, self::RECONNECT_MIN_DELAY_MAX_MS, 'Invalid minimum reconnect delay.');
+        $maxReconnect = $this->boundedInt($input['reconnect_max_delay_ms'] ?? null, self::RECONNECT_MAX_DELAY_MIN_MS, self::RECONNECT_MAX_DELAY_MAX_MS, 'Invalid maximum reconnect delay.');
         if ($minReconnect > $maxReconnect) {
             throw new InvalidArgumentException('Minimum reconnect delay must not exceed maximum reconnect delay.');
         }
@@ -132,7 +166,81 @@ final class AsteriskAriProfileService
     /**
      * @return array<string, mixed>
      */
-    private function defaults(): array
+    public function descriptors(): AdapterConfigurationDescriptorCollection
+    {
+        $defaults = $this->defaults();
+
+        return new AdapterConfigurationDescriptorCollection([
+            AdapterConfigurationFieldDescriptor::text(
+                'application_name',
+                'ARI application name',
+                'Stasis application name subscribed by the Asterisk ARI listener.',
+                true,
+                $defaults['application_name'],
+                10,
+                ['min_length' => self::APPLICATION_NAME_MIN_LENGTH, 'max_length' => self::APPLICATION_NAME_MAX_LENGTH],
+            ),
+            AdapterConfigurationFieldDescriptor::integer(
+                'connect_timeout_ms',
+                'Connect timeout',
+                'HTTP connection timeout for Asterisk ARI requests, in milliseconds.',
+                true,
+                $defaults['connect_timeout_ms'],
+                20,
+                ['min' => self::CONNECT_TIMEOUT_MIN_MS, 'max' => self::CONNECT_TIMEOUT_MAX_MS, 'step' => 1],
+            ),
+            AdapterConfigurationFieldDescriptor::integer(
+                'request_timeout_ms',
+                'Request timeout',
+                'Total timeout for Asterisk ARI HTTP requests, in milliseconds.',
+                true,
+                $defaults['request_timeout_ms'],
+                30,
+                ['min' => self::REQUEST_TIMEOUT_MIN_MS, 'max' => self::REQUEST_TIMEOUT_MAX_MS, 'step' => 1],
+            ),
+            AdapterConfigurationFieldDescriptor::integer(
+                'websocket_handshake_timeout_ms',
+                'WebSocket handshake timeout',
+                'Timeout for establishing the Asterisk ARI event WebSocket, in milliseconds.',
+                true,
+                $defaults['websocket_handshake_timeout_ms'],
+                40,
+                ['min' => self::WEBSOCKET_HANDSHAKE_TIMEOUT_MIN_MS, 'max' => self::WEBSOCKET_HANDSHAKE_TIMEOUT_MAX_MS, 'step' => 1],
+            ),
+            AdapterConfigurationFieldDescriptor::integer(
+                'heartbeat_interval_ms',
+                'Heartbeat interval',
+                'Interval for ARI event connection heartbeat checks, in milliseconds.',
+                true,
+                $defaults['heartbeat_interval_ms'],
+                50,
+                ['min' => self::HEARTBEAT_INTERVAL_MIN_MS, 'max' => self::HEARTBEAT_INTERVAL_MAX_MS, 'step' => 1],
+            ),
+            AdapterConfigurationFieldDescriptor::integer(
+                'reconnect_min_delay_ms',
+                'Minimum reconnect delay',
+                'Minimum backoff delay before reconnecting the ARI event stream, in milliseconds.',
+                true,
+                $defaults['reconnect_min_delay_ms'],
+                60,
+                ['min' => self::RECONNECT_MIN_DELAY_MIN_MS, 'max' => self::RECONNECT_MIN_DELAY_MAX_MS, 'step' => 1],
+            ),
+            AdapterConfigurationFieldDescriptor::integer(
+                'reconnect_max_delay_ms',
+                'Maximum reconnect delay',
+                'Maximum backoff delay before reconnecting the ARI event stream, in milliseconds.',
+                true,
+                $defaults['reconnect_max_delay_ms'],
+                70,
+                ['min' => self::RECONNECT_MAX_DELAY_MIN_MS, 'max' => self::RECONNECT_MAX_DELAY_MAX_MS, 'step' => 1],
+            ),
+        ]);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function defaults(): array
     {
         return $this->validate([
             'application_name' => config('asterisk_ari.defaults.application_name', 'utcp-t0-observation'),

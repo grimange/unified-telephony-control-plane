@@ -214,12 +214,40 @@ export type RuntimeManagementCatalog = {
     endpoint_requirements: Array<{ purpose: string; transports: string[]; required: boolean }>
     credentials_required: boolean
     adapter_configuration_available: boolean
+    adapter_configuration?: RuntimeAdapterConfigurationDescriptorCollection
   }>
   runtime_capabilities: Record<string, { display_name: string; description: string | null }>
   desired_states: Record<string, { display_name: string; description: string | null }>
   endpoint_purposes: Record<string, { display_name: string; description: string | null }>
   endpoint_transports: Record<string, { display_name: string; description: string | null }>
   endpoint_tls_modes: Record<string, { display_name: string; description: string | null }>
+}
+
+export type RuntimeAdapterConfigurationInputType = 'text' | 'integer' | 'json'
+
+export type RuntimeAdapterConfigurationValidation = {
+  min?: number
+  max?: number
+  step?: number
+  min_length?: number
+  max_length?: number
+}
+
+export type RuntimeAdapterConfigurationFieldDescriptor = {
+  key: string
+  label: string
+  help: string
+  input_type: RuntimeAdapterConfigurationInputType
+  required: boolean
+  read_only: boolean
+  write_only: boolean
+  default: unknown
+  order: number
+  validation?: RuntimeAdapterConfigurationValidation
+}
+
+export type RuntimeAdapterConfigurationDescriptorCollection = {
+  fields: RuntimeAdapterConfigurationFieldDescriptor[]
 }
 
 export type RuntimeAdapterConfiguration = Record<string, unknown>

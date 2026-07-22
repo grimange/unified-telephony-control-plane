@@ -3,6 +3,7 @@
 namespace App\RuntimeAdapters\Asterisk;
 
 use App\ControlPlane\Shared\ExecutionContext;
+use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationDescriptorCollection;
 use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationHandler;
 
 final class AsteriskAdapterConfigurationHandler implements AdapterConfigurationHandler
@@ -20,6 +21,11 @@ final class AsteriskAdapterConfigurationHandler implements AdapterConfigurationH
     public function supports(object $runtimeNode): bool
     {
         return $runtimeNode->adapter_key === $this->adapterKey();
+    }
+
+    public function configurationDescriptors(): AdapterConfigurationDescriptorCollection
+    {
+        return $this->profiles->descriptors();
     }
 
     public function read(object $runtimeNode, ExecutionContext $context): array

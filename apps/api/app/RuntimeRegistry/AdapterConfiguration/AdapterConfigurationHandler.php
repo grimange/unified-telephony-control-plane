@@ -10,6 +10,8 @@ interface AdapterConfigurationHandler
 
     public function supports(object $runtimeNode): bool;
 
+    public function configurationDescriptors(): AdapterConfigurationDescriptorCollection;
+
     /**
      * @return array<string, mixed>
      */

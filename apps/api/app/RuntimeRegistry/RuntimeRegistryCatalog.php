@@ -2,10 +2,13 @@
 
 namespace App\RuntimeRegistry;
 
+use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationRegistry;
 use InvalidArgumentException;
 
 final class RuntimeRegistryCatalog
 {
+    public function __construct(private readonly AdapterConfigurationRegistry $adapterConfigurations) {}
+
     /**
      * @return array<string, mixed>
      */
@@ -40,7 +43,8 @@ final class RuntimeRegistryCatalog
             if (! is_array($adapter)) {
                 continue;
             }
-            $adapters[$key] = [
+            $configurationAvailable = (bool) ($adapter['adapter_configuration_available'] ?? false);
+            $serialized = [
                 'key' => $key,
                 'runtime_family' => (string) ($adapter['runtime_family'] ?? ''),
                 'display_name' => (string) ($adapter['display_name'] ?? $key),
@@ -49,8 +53,18 @@ final class RuntimeRegistryCatalog
                 'required_capabilities' => $this->stringList($adapter['required_capabilities'] ?? []),
                 'endpoint_requirements' => array_values(array_filter($adapter['endpoint_requirements'] ?? [], 'is_array')),
                 'credentials_required' => (bool) ($adapter['credentials_required'] ?? false),
-                'adapter_configuration_available' => (bool) ($adapter['adapter_configuration_available'] ?? false),
+                'adapter_configuration_available' => $configurationAvailable,
             ];
+
+            if ($configurationAvailable) {
+                $descriptors = $this->adapterConfigurations->descriptorsForAdapter($key);
+                if ($descriptors->isEmpty()) {
+                    throw new InvalidArgumentException("Configurable runtime adapter {$key} must publish adapter configuration descriptors.");
+                }
+                $serialized['adapter_configuration'] = $descriptors->toArray();
+            }
+
+            $adapters[$key] = $serialized;
         }
 
         return [
