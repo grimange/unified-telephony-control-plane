@@ -10,6 +10,8 @@
       <UiButton
         type="button"
         variant="secondary"
+        :loading="membershipsResource.state.status === 'refreshing'"
+        loading-label="Refreshing"
         @click="load"
       >
         Refresh
@@ -90,20 +92,25 @@
       </form>
     </UiPanel>
 
-    <UiLoadingState
-      v-if="loading"
-      label="Loading memberships."
-    />
-    <UiEmptyState
-      v-else-if="memberships.length === 0"
-      title="No memberships"
-      message="No memberships were returned."
-    />
-    <UiPanel
-      v-else
+    <UiDataList
+      :status="membershipsResource.state.status"
+      :error="membershipsResource.state.error"
+      :has-data="memberships.length > 0"
       title="Membership list"
       label="Tenant access"
+      loading-label="Loading memberships."
+      refreshing-label="Refreshing memberships."
+      empty-title="No memberships"
+      empty-message="No memberships were returned."
+      error-title="Memberships unavailable"
+      forbidden-title="Memberships forbidden"
     >
+      <template #actions>
+        <UiListSummary
+          :count="memberships.length"
+          item-label="memberships"
+        />
+      </template>
       <div class="data-table">
         <div
           v-for="membership in memberships"
@@ -129,7 +136,7 @@
           </UiButton>
         </div>
       </div>
-    </UiPanel>
+    </UiDataList>
     <UiAlert
       v-if="membershipAction.state.status === 'failed'"
       variant="error"
@@ -141,22 +148,23 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { watch } from 'vue'
 import UiAlert from '../components/ui/UiAlert.vue'
 import UiButton from '../components/ui/UiButton.vue'
-import UiEmptyState from '../components/ui/UiEmptyState.vue'
+import UiDataList from '../components/ui/UiDataList.vue'
 import UiFormField from '../components/ui/UiFormField.vue'
-import UiLoadingState from '../components/ui/UiLoadingState.vue'
+import UiListSummary from '../components/ui/UiListSummary.vue'
 import UiPanel from '../components/ui/UiPanel.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
 import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
-import { useAsyncAction } from '../composables/asyncState'
+import { useAsyncAction, useAsyncResource } from '../composables/asyncState'
+import { useListQueryState } from '../composables/listQueryState'
+import { router } from '../router'
 import { notify } from '../state/notifications'
 import {
   apiErrorMessage,
   can,
   createMembership,
-  fail,
   membershipForm,
   memberships,
   refreshMemberships,
@@ -166,7 +174,11 @@ import {
   users,
 } from '../state/appState'
 
-const loading = ref(false)
+useListQueryState(router, {})
+const membershipsResource = useAsyncResource(refreshMemberships, {
+  isEmpty: () => memberships.value.length === 0,
+  getErrorMessage: apiErrorMessage,
+})
 const membershipAction = useAsyncAction(async (action: () => Promise<void>) => action(), {
   getErrorMessage: apiErrorMessage,
 })
@@ -176,14 +188,6 @@ function membershipStatusCategory(status: string): 'success' | 'warning' | 'neut
   if (status === 'suspended') return 'warning'
 
   return 'neutral'
-}
-
-async function run(action: () => Promise<void>): Promise<void> {
-  try {
-    await action()
-  } catch (errorValue) {
-    fail(errorValue)
-  }
 }
 
 async function runMembership(action: () => Promise<void>, successMessage: string): Promise<void> {
@@ -208,11 +212,8 @@ async function runMembership(action: () => Promise<void>, successMessage: string
 }
 
 async function load(): Promise<void> {
-  loading.value = true
-  await run(refreshMemberships)
-  loading.value = false
+  await membershipsResource.load()
 }
 
-onMounted(load)
-watch(tenantContextVersion, load)
+watch(tenantContextVersion, load, { immediate: true })
 </script>

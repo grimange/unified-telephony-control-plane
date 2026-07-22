@@ -10,6 +10,8 @@
       <UiButton
         type="button"
         variant="secondary"
+        :loading="tenantsResource.state.status === 'refreshing'"
+        loading-label="Refreshing"
         @click="load"
       >
         Refresh
@@ -65,20 +67,25 @@
       </form>
     </UiPanel>
 
-    <UiLoadingState
-      v-if="loading"
-      label="Loading tenants."
-    />
-    <UiEmptyState
-      v-else-if="tenants.length === 0"
-      title="No tenants"
-      message="No tenants were returned."
-    />
-    <UiPanel
-      v-else
+    <UiDataList
+      :status="tenantsResource.state.status"
+      :error="tenantsResource.state.error"
+      :has-data="tenants.length > 0"
       title="Tenant list"
       label="Directory"
+      loading-label="Loading tenants."
+      refreshing-label="Refreshing tenants."
+      empty-title="No tenants"
+      empty-message="No tenants were returned."
+      error-title="Tenants unavailable"
+      forbidden-title="Tenants forbidden"
     >
+      <template #actions>
+        <UiListSummary
+          :count="tenants.length"
+          item-label="tenants"
+        />
+      </template>
       <div class="data-table">
         <div
           v-for="tenant in tenants"
@@ -103,22 +110,29 @@
           </UiButton>
         </div>
       </div>
-    </UiPanel>
+    </UiDataList>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { watch } from 'vue'
 import UiButton from '../components/ui/UiButton.vue'
-import UiEmptyState from '../components/ui/UiEmptyState.vue'
+import UiDataList from '../components/ui/UiDataList.vue'
 import UiFormField from '../components/ui/UiFormField.vue'
-import UiLoadingState from '../components/ui/UiLoadingState.vue'
+import UiListSummary from '../components/ui/UiListSummary.vue'
 import UiPanel from '../components/ui/UiPanel.vue'
 import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
 import UiTextInput from '../components/ui/UiTextInput.vue'
-import { can, createTenant, fail, refreshTenants, setTenantStatus, tenantContextVersion, tenantForm, tenants } from '../state/appState'
+import { useAsyncResource } from '../composables/asyncState'
+import { useListQueryState } from '../composables/listQueryState'
+import { router } from '../router'
+import { apiErrorMessage, can, createTenant, fail, refreshTenants, setTenantStatus, tenantContextVersion, tenantForm, tenants } from '../state/appState'
 
-const loading = ref(false)
+useListQueryState(router, {})
+const tenantsResource = useAsyncResource(refreshTenants, {
+  isEmpty: () => tenants.value.length === 0,
+  getErrorMessage: apiErrorMessage,
+})
 
 function tenantStatusCategory(status: string): 'success' | 'warning' | 'neutral' {
   if (status === 'active') return 'success'
@@ -136,11 +150,8 @@ async function run(action: () => Promise<void>): Promise<void> {
 }
 
 async function load(): Promise<void> {
-  loading.value = true
-  await run(refreshTenants)
-  loading.value = false
+  await tenantsResource.load()
 }
 
-onMounted(load)
-watch(tenantContextVersion, load)
+watch(tenantContextVersion, load, { immediate: true })
 </script>

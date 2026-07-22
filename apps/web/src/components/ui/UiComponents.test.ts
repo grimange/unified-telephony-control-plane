@@ -2,10 +2,14 @@ import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import UiAlert from './UiAlert.vue'
 import UiButton from './UiButton.vue'
+import UiDataList from './UiDataList.vue'
 import UiEmptyState from './UiEmptyState.vue'
+import UiFilterBar from './UiFilterBar.vue'
 import UiFormField from './UiFormField.vue'
+import UiListSummary from './UiListSummary.vue'
 import UiLoadingState from './UiLoadingState.vue'
 import UiNotificationRegion from './UiNotificationRegion.vue'
+import UiPagination from './UiPagination.vue'
 import UiPanel from './UiPanel.vue'
 import UiSelect from './UiSelect.vue'
 import UiStatusBadge from './UiStatusBadge.vue'
@@ -101,6 +105,106 @@ describe('core UI components', () => {
     expect(alert.attributes('role')).toBe('alert')
     expect(loading.attributes('role')).toBe('status')
     expect(empty.text()).toContain('No users were returned.')
+  })
+
+  it('keeps filter bars keyboard-submittable and clearable without domain filter knowledge', async () => {
+    const wrapper = mount(UiFilterBar, {
+      slots: {
+        default: '<label>Search <input name="search" value="alice"></label>',
+      },
+    })
+
+    await wrapper.find('form').trigger('submit.prevent')
+    await wrapper.find('form').trigger('reset.prevent')
+
+    expect(wrapper.emitted('apply')).toHaveLength(1)
+    expect(wrapper.emitted('clear')).toHaveLength(1)
+    expect(wrapper.text()).toContain('Apply')
+    expect(wrapper.text()).toContain('Clear')
+  })
+
+  it('renders accessible pagination controls without inferring missing totals', async () => {
+    const wrapper = mount(UiPagination, {
+      props: { page: 2, perPage: 20, total: 45, hasMore: true, pageSizeOptions: [10, 20, 50] },
+    })
+
+    expect(wrapper.find('nav').attributes('aria-label')).toBe('Pagination')
+    expect(wrapper.text()).toContain('Page 2 of 3')
+    expect(wrapper.find('button[aria-label="Go to previous page"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('button[aria-label="Go to next page"]').attributes('disabled')).toBeUndefined()
+
+    await wrapper.find('button[aria-label="Go to previous page"]').trigger('click')
+    await wrapper.find('select').setValue('50')
+
+    expect(wrapper.emitted('previous')).toHaveLength(1)
+    expect(wrapper.emitted('update:perPage')?.[0]).toEqual([50])
+
+    const bounded = mount(UiPagination, {
+      props: { page: 1, perPage: 20, hasMore: false },
+    })
+    expect(bounded.text()).toContain('Page 1')
+    expect(bounded.text()).not.toContain('of')
+    expect(bounded.find('button[aria-label="Go to previous page"]').attributes('disabled')).toBeDefined()
+    expect(bounded.find('button[aria-label="Go to next page"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('renders list summaries and data-list states from supplied metadata only', () => {
+    const summary = mount(UiListSummary, {
+      props: { page: 2, total: 45, count: 20, itemLabel: 'users' },
+    })
+    const countOnly = mount(UiListSummary, {
+      props: { count: 3, itemLabel: 'tenants' },
+    })
+    const refreshing = mount(UiDataList, {
+      props: {
+        status: 'refreshing',
+        hasData: true,
+        title: 'User list',
+        label: 'Directory',
+        loadingLabel: 'Loading users.',
+        refreshingLabel: 'Refreshing users.',
+        emptyTitle: 'No users',
+        emptyMessage: 'No users were returned.',
+        errorTitle: 'Users unavailable',
+        forbiddenTitle: 'Users forbidden',
+      },
+      slots: { default: 'Existing user rows' },
+    })
+    const empty = mount(UiDataList, {
+      props: {
+        status: 'empty',
+        title: 'User list',
+        loadingLabel: 'Loading users.',
+        refreshingLabel: 'Refreshing users.',
+        emptyTitle: 'No users',
+        emptyMessage: 'No users were returned.',
+        errorTitle: 'Users unavailable',
+        forbiddenTitle: 'Users forbidden',
+      },
+    })
+    const failedWithData = mount(UiDataList, {
+      props: {
+        status: 'error',
+        error: 'Refresh failed.',
+        hasData: true,
+        title: 'User list',
+        loadingLabel: 'Loading users.',
+        refreshingLabel: 'Refreshing users.',
+        emptyTitle: 'No users',
+        emptyMessage: 'No users were returned.',
+        errorTitle: 'Users unavailable',
+        forbiddenTitle: 'Users forbidden',
+      },
+      slots: { default: 'Existing user rows' },
+    })
+
+    expect(summary.text()).toBe('Page 2 · 45 users')
+    expect(countOnly.text()).toBe('3 tenants')
+    expect(refreshing.text()).toContain('Refreshing users.')
+    expect(refreshing.text()).toContain('Existing user rows')
+    expect(empty.text()).toContain('No users were returned.')
+    expect(failedWithData.text()).toContain('Refresh failed.')
+    expect(failedWithData.text()).toContain('Existing user rows')
   })
 
   it('renders one notification region with variants, unique IDs, dismissal, and secret redaction', async () => {

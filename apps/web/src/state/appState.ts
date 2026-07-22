@@ -309,7 +309,15 @@ export async function refreshTenants(): Promise<void> {
   tenants.value = (await identityApi.tenants()).tenants
 }
 
-export async function refreshUsers(): Promise<void> {
+export type UserListQuery = { search?: string; status?: string; page?: number; perPage?: number }
+
+export async function refreshUsers(query: UserListQuery = {}): Promise<void> {
+  Object.assign(userFilters, {
+    search: query.search ?? userFilters.search,
+    status: query.status ?? userFilters.status,
+    page: query.page ?? userFilters.page,
+    perPage: query.perPage ?? userFilters.perPage,
+  })
   const response = await identityApi.users({
     search: userFilters.search,
     status: userFilters.status,

@@ -109,6 +109,46 @@ if re.search(r"const\s+(roles|roleCatalog|adapterCatalog|capabilityCatalog)\s*="
     sys.exit(1)
 PY
 
+python3 - <<'PY'
+from pathlib import Path
+import re
+import sys
+
+frontend_sources = "\n".join(
+    path.read_text(encoding="utf-8")
+    for path in [
+        Path("apps/web/src/composables/listQueryState.ts"),
+        Path("apps/web/src/views/UsersView.vue"),
+        Path("apps/web/src/views/MembershipsView.vue"),
+        Path("apps/web/src/views/TenantsView.vue"),
+        Path("apps/web/src/views/RuntimeNodesView.vue"),
+    ]
+)
+
+if re.search(r"\b(pushState|replaceState)\s*\(", frontend_sources):
+    sys.stderr.write("list query state must use Vue Router, not manual history APIs\n")
+    sys.exit(1)
+
+if re.search(r"\b(localStorage|sessionStorage|indexedDB)\b", frontend_sources):
+    sys.stderr.write("list query state must not persist protected list data in browser storage\n")
+    sys.exit(1)
+
+if re.search(r"\b(users|memberships|tenants|runtimeNodes)\.value\.sort\s*\(", frontend_sources):
+    sys.stderr.write("frontend must not fake global sorting over one server-paginated page\n")
+    sys.exit(1)
+
+for view_name in ["UsersView.vue", "MembershipsView.vue", "TenantsView.vue", "RuntimeNodesView.vue"]:
+    source = Path("apps/web/src/views") / view_name
+    if "useListQueryState" not in source.read_text(encoding="utf-8"):
+        sys.stderr.write(f"{view_name} must use the shared list query state contract\n")
+        sys.exit(1)
+
+users_source = Path("apps/web/src/views/UsersView.vue").read_text(encoding="utf-8")
+if "pagination: true" not in users_source or "allowedPerPage: [10, 20, 50]" not in users_source:
+    sys.stderr.write("UsersView must preserve URL-backed canonical pagination state\n")
+    sys.exit(1)
+PY
+
 while IFS= read -r path; do
   if [ "$path" = "versions.env" ]; then
     continue

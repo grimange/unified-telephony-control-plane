@@ -10,6 +10,8 @@
       <UiButton
         type="button"
         variant="secondary"
+        :loading="usersResource.state.status === 'refreshing'"
+        loading-label="Refreshing"
         @click="load"
       >
         Refresh
@@ -20,10 +22,9 @@
       title="Filter users"
       label="Search"
     >
-      <form
-        class="inline-form"
-        role="search"
-        @submit.prevent="run(applyUserFilters)"
+      <UiFilterBar
+        @apply="applyFilters"
+        @clear="clearFilters"
       >
         <UiFormField
           id="user-search"
@@ -32,7 +33,7 @@
           <template #default="{ id, describedBy, invalid }">
             <UiTextInput
               :id="id"
-              v-model="userFilters.search"
+              v-model="filterDraft.search"
               :aria-describedby="describedBy"
               :invalid="invalid"
               placeholder="Name or email"
@@ -46,7 +47,7 @@
           <template #default="{ id, describedBy, invalid }">
             <UiSelect
               :id="id"
-              v-model="userFilters.status"
+              v-model="filterDraft.status"
               :aria-describedby="describedBy"
               :invalid="invalid"
             >
@@ -62,10 +63,7 @@
             </UiSelect>
           </template>
         </UiFormField>
-        <UiButton type="submit">
-          Apply
-        </UiButton>
-      </form>
+      </UiFilterBar>
     </UiPanel>
 
     <UiPanel
@@ -125,72 +123,82 @@
       Temporary password: <code>{{ temporaryPassword }}</code>
     </p>
 
-    <UiLoadingState
-      v-if="loading"
-      label="Loading users."
-    />
-    <UiEmptyState
-      v-else-if="users.length === 0"
-      title="No users"
-      message="No users were returned."
-    />
-    <div
-      v-else
-      class="data-table"
+    <UiDataList
+      :status="usersResource.state.status"
+      :error="usersResource.state.error"
+      :has-data="users.length > 0"
+      title="User list"
+      label="Directory"
+      loading-label="Loading users."
+      refreshing-label="Refreshing users."
+      empty-title="No users"
+      empty-message="No users were returned."
+      error-title="Users unavailable"
+      forbidden-title="Users forbidden"
     >
-      <div
-        v-for="user in users"
-        :key="user.id"
-        class="data-row"
-      >
-        <span>
-          <strong>{{ user.display_name }}</strong>
-          <small>{{ user.email }} · {{ user.password_change_required ? 'password change required' : 'password current' }}</small>
-          <UiStatusBadge
-            :label="user.status"
-            :category="userStatusCategory(user.status)"
-          />
-        </span>
-        <span class="row-actions">
-          <UiButton
-            v-if="can('platform.users.manage')"
-            type="button"
-            variant="secondary"
-            :disabled="userAction.state.status === 'submitting'"
-            @click="run(() => resetPassword(user.id))"
-          >Reset password</UiButton>
-          <UiButton
-            v-if="can('platform.users.manage')"
-            type="button"
-            :variant="user.status === 'active' ? 'danger' : 'secondary'"
-            :disabled="userAction.state.status === 'submitting'"
-            @click="runUserStatus(user.id, user.status === 'active' ? 'suspended' : 'active')"
-          >
-            {{ user.status === 'active' ? 'Suspend' : 'Activate' }}
-          </UiButton>
-          <RouterLink :to="`/admin/users/${user.id}`">
-            Details
-          </RouterLink>
-        </span>
-        <div class="subgrid">
-          <p class="meta">
-            Memberships: {{ user.membership_summary?.active ?? 0 }} active / {{ user.membership_summary?.total ?? 0 }} total
-          </p>
-          <p class="meta">
-            Roles: {{ [...(user.role_summary?.platform ?? []), ...(user.role_summary?.tenant ?? [])].join(', ') || 'None' }}
-          </p>
-          <p class="meta">
-            TelephonySession: {{ user.active_telephony_session ? user.active_telephony_session.status : 'none' }}
-          </p>
-          <p class="meta">
-            Signaling: {{ registrationSummary(user) }}
-          </p>
-          <p class="meta">
-            Updated: {{ displayValue(user.updated_at) }}
-          </p>
+      <template #actions>
+        <UiListSummary
+          :page="userPagination.page"
+          :total="userPagination.total"
+          :count="users.length"
+          item-label="users"
+        />
+      </template>
+      <div class="data-table">
+        <div
+          v-for="user in users"
+          :key="user.id"
+          class="data-row"
+        >
+          <span>
+            <strong>{{ user.display_name }}</strong>
+            <small>{{ user.email }} · {{ user.password_change_required ? 'password change required' : 'password current' }}</small>
+            <UiStatusBadge
+              :label="user.status"
+              :category="userStatusCategory(user.status)"
+            />
+          </span>
+          <span class="row-actions">
+            <UiButton
+              v-if="can('platform.users.manage')"
+              type="button"
+              variant="secondary"
+              :disabled="userAction.state.status === 'submitting'"
+              @click="run(() => resetPassword(user.id))"
+            >Reset password</UiButton>
+            <UiButton
+              v-if="can('platform.users.manage')"
+              type="button"
+              :variant="user.status === 'active' ? 'danger' : 'secondary'"
+              :disabled="userAction.state.status === 'submitting'"
+              @click="runUserStatus(user.id, user.status === 'active' ? 'suspended' : 'active')"
+            >
+              {{ user.status === 'active' ? 'Suspend' : 'Activate' }}
+            </UiButton>
+            <RouterLink :to="`/admin/users/${user.id}`">
+              Details
+            </RouterLink>
+          </span>
+          <div class="subgrid">
+            <p class="meta">
+              Memberships: {{ user.membership_summary?.active ?? 0 }} active / {{ user.membership_summary?.total ?? 0 }} total
+            </p>
+            <p class="meta">
+              Roles: {{ [...(user.role_summary?.platform ?? []), ...(user.role_summary?.tenant ?? [])].join(', ') || 'None' }}
+            </p>
+            <p class="meta">
+              TelephonySession: {{ user.active_telephony_session ? user.active_telephony_session.status : 'none' }}
+            </p>
+            <p class="meta">
+              Signaling: {{ registrationSummary(user) }}
+            </p>
+            <p class="meta">
+              Updated: {{ displayValue(user.updated_at) }}
+            </p>
+          </div>
         </div>
       </div>
-    </div>
+    </UiDataList>
     <UiAlert
       v-if="userAction.state.status === 'failed'"
       variant="error"
@@ -198,65 +206,77 @@
     >
       {{ userAction.state.error }}
     </UiAlert>
-    <div class="inline-form">
-      <UiButton
-        type="button"
-        variant="secondary"
-        :disabled="userFilters.page <= 1"
-        @click="run(() => goToUserPage(userFilters.page - 1))"
-      >
-        Previous
-      </UiButton>
-      <p class="meta">
-        Page {{ userPagination.page }} · {{ userPagination.total }} users
-      </p>
-      <UiButton
-        type="button"
-        variant="secondary"
-        :disabled="!userPagination.has_more"
-        @click="run(() => goToUserPage(userFilters.page + 1))"
-      >
-        Next
-      </UiButton>
-    </div>
+    <UiPagination
+      v-if="usersResource.state.status === 'success' || usersResource.state.status === 'refreshing'"
+      :page="userPagination.page"
+      :per-page="userPagination.per_page"
+      :total="userPagination.total"
+      :has-more="userPagination.has_more"
+      :page-size-options="[10, 20, 50]"
+      @previous="setPage(userPagination.page - 1)"
+      @next="setPage(userPagination.page + 1)"
+      @update:per-page="setPerPage"
+    />
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { reactive, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import UiAlert from '../components/ui/UiAlert.vue'
 import UiButton from '../components/ui/UiButton.vue'
-import UiEmptyState from '../components/ui/UiEmptyState.vue'
+import UiDataList from '../components/ui/UiDataList.vue'
+import UiFilterBar from '../components/ui/UiFilterBar.vue'
 import UiFormField from '../components/ui/UiFormField.vue'
-import UiLoadingState from '../components/ui/UiLoadingState.vue'
+import UiListSummary from '../components/ui/UiListSummary.vue'
+import UiPagination from '../components/ui/UiPagination.vue'
 import UiPanel from '../components/ui/UiPanel.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
 import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
 import UiTextInput from '../components/ui/UiTextInput.vue'
-import { useAsyncAction } from '../composables/asyncState'
+import { useAsyncAction, useAsyncResource } from '../composables/asyncState'
+import { useListQueryState } from '../composables/listQueryState'
+import { router } from '../router'
 import { notify } from '../state/notifications'
 import {
-  applyUserFilters,
   apiErrorMessage,
   can,
   createUser,
   displayValue,
   fail,
-  goToUserPage,
   refreshUsers,
   registrationSummary,
   resetPassword,
   setUserStatus,
   temporaryPassword,
   tenantContextVersion,
-  userFilters,
   userForm,
   userPagination,
   users,
 } from '../state/appState'
 
-const loading = ref(false)
+const filterDraft = reactive({ search: '', status: '' })
+const userListQuery = useListQueryState<{ status: string }>(router, {
+  search: true,
+  pagination: true,
+  filters: {
+    status: { query: 'status', allowedValues: ['active', 'suspended'] },
+  },
+  defaultPerPage: 20,
+  allowedPerPage: [10, 20, 50],
+})
+const usersResource = useAsyncResource(
+  () => refreshUsers({
+    search: userListQuery.state.search,
+    status: userListQuery.state.filters.status,
+    page: userListQuery.state.page,
+    perPage: userListQuery.state.perPage,
+  }),
+  {
+    isEmpty: () => users.value.length === 0,
+    getErrorMessage: apiErrorMessage,
+  },
+)
 const userAction = useAsyncAction(async (action: () => Promise<void>) => action(), {
   getErrorMessage: apiErrorMessage,
 })
@@ -274,6 +294,29 @@ async function run(action: () => Promise<void>): Promise<void> {
   } catch (errorValue) {
     fail(errorValue)
   }
+}
+
+async function load(): Promise<void> {
+  await usersResource.load()
+}
+
+async function applyFilters(): Promise<void> {
+  await userListQuery.applyFilters({
+    search: filterDraft.search,
+    filters: { status: filterDraft.status },
+  })
+}
+
+async function clearFilters(): Promise<void> {
+  await userListQuery.clear()
+}
+
+async function setPage(page: number): Promise<void> {
+  await userListQuery.setPage(page)
+}
+
+async function setPerPage(perPage: number): Promise<void> {
+  await userListQuery.setPerPage(perPage)
 }
 
 async function runUserStatus(userId: string, status: string): Promise<void> {
@@ -297,12 +340,28 @@ async function runUserStatus(userId: string, status: string): Promise<void> {
   }
 }
 
-async function load(): Promise<void> {
-  loading.value = true
-  await run(refreshUsers)
-  loading.value = false
-}
-
-onMounted(load)
-watch(tenantContextVersion, load)
+watch(
+  () => [userListQuery.state.search, userListQuery.state.filters.status],
+  () => {
+    filterDraft.search = userListQuery.state.search
+    filterDraft.status = userListQuery.state.filters.status
+  },
+  { immediate: true },
+)
+watch(
+  () => [
+    userListQuery.state.search,
+    userListQuery.state.filters.status,
+    userListQuery.state.page,
+    userListQuery.state.perPage,
+  ],
+  () => {
+    void load()
+  },
+  { immediate: true },
+)
+watch(tenantContextVersion, async () => {
+  const changed = await userListQuery.apply({ page: 1 }, 'replace')
+  if (!changed) await load()
+})
 </script>

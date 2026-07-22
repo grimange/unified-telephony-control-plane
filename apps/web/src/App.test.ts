@@ -595,6 +595,7 @@ describe('C1 App shell', () => {
     await nextButton?.trigger('click')
     await flushPromises()
 
+    expect(router.currentRoute.value.query).toEqual({ page: '2' })
     expect(calls.some((call) => call.url.includes('/api/v1/admin/users?') && new URL(call.url, 'http://localhost').searchParams.get('page') === '2')).toBe(true)
     expect(wrapper.text()).toContain('Second Page User')
     expect(wrapper.text()).toContain('Page 2 · 21 users')
@@ -603,8 +604,63 @@ describe('C1 App shell', () => {
     await wrapper.findAll('button').find((button) => button.text() === 'Previous')?.trigger('click')
     await flushPromises()
 
+    expect(router.currentRoute.value.query).toEqual({})
     expect(wrapper.text()).toContain('Operator User')
     expect(wrapper.text()).toContain('Page 1 · 21 users')
+  })
+
+  it('restores Users search, status, page, and page size from the URL-backed query state', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString()
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+      if (url.includes('/api/v1/admin/users')) {
+        const params = new URL(url, 'http://localhost').searchParams
+        const email = params.get('search') === 'bob' ? 'bob@utcp.local.test' : 'alice@utcp.local.test'
+
+        return Promise.resolve(jsonResponse({
+          users: [{ ...adminUser, email, display_name: params.get('search') === 'bob' ? 'Bob User' : 'Alice User', status: params.get('status') ?? 'active' }],
+          pagination: {
+            page: Number(params.get('page') ?? '1'),
+            per_page: Number(params.get('per_page') ?? '20'),
+            total: 37,
+            has_more: true,
+          },
+        }))
+      }
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/admin/users?page=2&per_page=10&search=alice&status=active')
+    const initialUserCall = calls.find((call) => call.url.includes('/api/v1/admin/users'))
+    const initialParams = new URL(initialUserCall?.url ?? '', 'http://localhost').searchParams
+
+    expect(initialParams.get('search')).toBe('alice')
+    expect(initialParams.get('status')).toBe('active')
+    expect(initialParams.get('page')).toBe('2')
+    expect(initialParams.get('per_page')).toBe('10')
+    expect((wrapper.find('#user-search').element as HTMLInputElement).value).toBe('alice')
+    expect((wrapper.find('#user-status-filter').element as HTMLSelectElement).value).toBe('active')
+    expect(wrapper.text()).toContain('Alice User')
+
+    const callCountBeforeUnchangedApply = calls.length
+    await wrapper.find('form[role="search"]').trigger('submit')
+    await flushPromises()
+    expect(calls).toHaveLength(callCountBeforeUnchangedApply)
+
+    await wrapper.find('#user-search').setValue('bob')
+    await wrapper.find('form[role="search"]').trigger('submit')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ search: 'bob', status: 'active', per_page: '10' })
+    const latestUserCall = [...calls].reverse().find((call) => call.url.includes('/api/v1/admin/users'))
+    const latestParams = new URL(latestUserCall?.url ?? '', 'http://localhost').searchParams
+    expect(latestParams.get('search')).toBe('bob')
+    expect(latestParams.get('page')).toBe('1')
+    expect(wrapper.text()).toContain('Bob User')
   })
 
   it('shows pending-removal wording for an ended session and hides mutation actions', async () => {

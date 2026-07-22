@@ -114,44 +114,31 @@
     </UiPanel>
 
     <UiAlert
-      v-if="runtimeNodesResource.state.status === 'forbidden'"
-      variant="error"
-      title="Runtime nodes unavailable"
-    >
-      {{ runtimeNodesResource.state.error }}
-    </UiAlert>
-    <UiAlert
-      v-else-if="runtimeNodesResource.state.status === 'error'"
-      variant="error"
-      title="Runtime nodes unavailable"
-    >
-      {{ runtimeNodesResource.state.error }}
-    </UiAlert>
-    <UiAlert
       v-if="runtimeAction.state.status === 'failed'"
       variant="error"
       title="RuntimeNode action failed"
     >
       {{ runtimeAction.state.error }}
     </UiAlert>
-    <UiLoadingState
-      v-if="runtimeNodesResource.state.status === 'loading' || runtimeNodesResource.state.status === 'idle'"
-      label="Loading runtime nodes."
-    />
-    <UiLoadingState
-      v-else-if="runtimeNodesResource.state.status === 'refreshing'"
-      label="Refreshing runtime nodes."
-    />
-    <UiEmptyState
-      v-else-if="runtimeNodesResource.state.status === 'empty'"
-      title="No RuntimeNodes"
-      message="No RuntimeNodes were returned."
-    />
-    <UiPanel
-      v-else
+    <UiDataList
+      :status="runtimeNodesResource.state.status"
+      :error="runtimeNodesResource.state.error"
+      :has-data="runtimeNodes.length > 0"
       title="RuntimeNode list"
       label="Runtime registry"
+      loading-label="Loading runtime nodes."
+      refreshing-label="Refreshing runtime nodes."
+      empty-title="No RuntimeNodes"
+      empty-message="No RuntimeNodes were returned."
+      error-title="Runtime nodes unavailable"
+      forbidden-title="Runtime nodes forbidden"
     >
+      <template #actions>
+        <UiListSummary
+          :count="runtimeNodes.length"
+          item-label="RuntimeNodes"
+        />
+      </template>
       <div class="data-table">
         <div
           v-for="node in runtimeNodes"
@@ -545,23 +532,26 @@
           </div>
         </div>
       </div>
-    </UiPanel>
+    </UiDataList>
   </section>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import UiAlert from '../components/ui/UiAlert.vue'
 import UiButton from '../components/ui/UiButton.vue'
-import UiEmptyState from '../components/ui/UiEmptyState.vue'
+import UiDataList from '../components/ui/UiDataList.vue'
 import UiFormField from '../components/ui/UiFormField.vue'
+import UiListSummary from '../components/ui/UiListSummary.vue'
 import UiLoadingState from '../components/ui/UiLoadingState.vue'
 import UiPanel from '../components/ui/UiPanel.vue'
 import UiSelect from '../components/ui/UiSelect.vue'
 import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
 import UiTextInput from '../components/ui/UiTextInput.vue'
 import { useAsyncAction, useAsyncResource } from '../composables/asyncState'
+import { useListQueryState } from '../composables/listQueryState'
 import type { RuntimeNode } from '../api/platform'
+import { router } from '../router'
 import { notify } from '../state/notifications'
 import {
   adapterConfigurationSupported,
@@ -597,6 +587,7 @@ import {
 } from '../state/appState'
 
 const expandedRuntimeNodeIds = ref<string[]>([])
+useListQueryState(router, {})
 const runtimeNodesResource = useAsyncResource(refreshRuntimeNodes, {
   isEmpty: () => runtimeNodes.value.length === 0,
   getErrorMessage: apiErrorMessage,
@@ -696,6 +687,12 @@ async function load(): Promise<void> {
   await runtimeNodesResource.load()
 }
 
-onMounted(load)
-watch(tenantContextVersion, load)
+watch(
+  tenantContextVersion,
+  () => {
+    expandedRuntimeNodeIds.value = []
+    void load()
+  },
+  { immediate: true },
+)
 </script>
