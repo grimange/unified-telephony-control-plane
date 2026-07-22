@@ -10,10 +10,62 @@ ensure_kubeconfig
 check_k1_tag
 
 tmp="$(mktemp)"
-trap 'rm -f "$tmp"' EXIT
+migration_tmp="$(mktemp)"
+trap 'rm -f "$tmp" "$migration_tmp"' EXIT
 render_overlay > "$tmp"
+kubectl kustomize "$K8S_MIGRATION_OVERLAY" > "$migration_tmp"
 
 kube apply --dry-run=server -f "$tmp" >/dev/null
 "$SCRIPT_DIR/static-check" "$tmp"
+python3 - "$migration_tmp" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+def fail(message: str) -> None:
+    print(f"Kubernetes config check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def object_key(doc: dict[str, Any]) -> str:
+    metadata = doc.get("metadata", {})
+    return f"{doc.get('kind')}/{metadata.get('namespace')}/{metadata.get('name')}"
+
+
+objects = {
+    object_key(doc): doc
+    for doc in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(doc, dict)
+}
+
+job = objects.get("Job/utcp-platform/utcp-migrate")
+config = objects.get("ConfigMap/utcp-platform/utcp-application-config")
+if not job or not config:
+    fail("migration overlay must render the utcp-migrate Job and application ConfigMap")
+
+data = config.get("data") or {}
+if data.get("BROADCAST_CONNECTION") != "log":
+    fail("migration workload must use BROADCAST_CONNECTION=log")
+
+container = ((job.get("spec") or {}).get("template") or {}).get("spec", {}).get("containers", [{}])[0]
+env_from = container.get("envFrom") or []
+secret_names = [
+    entry.get("secretRef", {}).get("name")
+    for entry in env_from
+    if "secretRef" in entry
+]
+if "utcp-local-reverb-credentials" in secret_names:
+    fail("migration workload must not reference Reverb credentials")
+
+rendered = yaml.safe_dump(job, sort_keys=True) + yaml.safe_dump(config, sort_keys=True)
+for key in ("REVERB_APP_ID", "REVERB_APP_KEY", "REVERB_APP_SECRET"):
+    if key in data or key in rendered:
+        fail(f"migration workload must not receive {key}")
+PY
 
 printf 'K1 Kubernetes config check passed\n'

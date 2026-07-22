@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Platform;
 
+use Illuminate\Broadcasting\BroadcastManager;
+use Symfony\Component\Process\Process;
 use Tests\TestCase;
 
 final class ReverbRealtimeInfrastructureTest extends TestCase
@@ -127,8 +129,161 @@ final class ReverbRealtimeInfrastructureTest extends TestCase
         $this->assertStringContainsString("request()->session()->get('active_tenant_id')", $channels);
     }
 
+    public function test_migration_job_uses_log_broadcaster_without_reverb_credentials(): void
+    {
+        $objects = $this->kustomizeObjects('infrastructure/kubernetes/overlays/local/migration');
+        $job = $objects['Job/utcp-platform/utcp-migrate'];
+        $config = $objects['ConfigMap/utcp-platform/utcp-application-config'];
+        $container = $job['spec']['template']['spec']['containers'][0];
+        $envFrom = $this->envFromNames($container);
+        $configData = $config['data'];
+
+        $this->assertSame(['migrate'], $container['args']);
+        $this->assertSame('log', $configData['BROADCAST_CONNECTION']);
+        $this->assertSame(['utcp-application-config'], $envFrom['configMaps']);
+        $this->assertSame([
+            'utcp-local-data-credentials',
+            'utcp-local-kamailio-db-credentials',
+        ], $envFrom['secrets']);
+        $this->assertSame('pgsql', $configData['DB_CONNECTION']);
+        $this->assertSame('postgres.utcp-data.svc.cluster.local', $configData['DB_HOST']);
+        $this->assertSame('redis', $configData['QUEUE_CONNECTION']);
+
+        $renderedJob = json_encode($job, JSON_THROW_ON_ERROR);
+        $renderedConfig = json_encode($configData, JSON_THROW_ON_ERROR);
+
+        $this->assertStringNotContainsString('utcp-local-reverb-credentials', $renderedJob);
+        foreach ([
+            'REVERB_APP_ID',
+            'REVERB_APP_KEY',
+            'REVERB_APP_SECRET',
+            'REVERB_HOST',
+            'REVERB_PORT',
+            'REVERB_SCHEME',
+        ] as $reverbKey) {
+            $this->assertArrayNotHasKey($reverbKey, $configData);
+            $this->assertStringNotContainsString($reverbKey, $renderedConfig);
+        }
+    }
+
+    public function test_platform_publishers_keep_reverb_broadcaster_and_credentials(): void
+    {
+        $objects = $this->kustomizeObjects('infrastructure/kubernetes/overlays/local/platform');
+        $config = $objects['ConfigMap/utcp-platform/utcp-application-config']['data'];
+
+        $this->assertSame('reverb', $config['BROADCAST_CONNECTION']);
+        $this->assertSame('reverb.utcp-platform.svc.cluster.local', $config['REVERB_HOST']);
+        $this->assertSame('8080', $config['REVERB_PORT']);
+        $this->assertArrayHasKey('Secret/utcp-platform/utcp-local-reverb-credentials', $objects);
+
+        foreach ([
+            'Deployment/utcp-platform/api' => 'api',
+            'Deployment/utcp-platform/worker' => 'worker',
+            'Deployment/utcp-platform/control-plane-outbox-dispatcher' => 'outbox-dispatcher',
+        ] as $key => $containerName) {
+            $deployment = $objects[$key];
+            $this->assertSame($containerName, $deployment['spec']['template']['spec']['containers'][0]['name']);
+            $this->assertContains('utcp-local-reverb-credentials', $this->envFromNames($deployment['spec']['template']['spec']['containers'][0])['secrets']);
+        }
+    }
+
+    public function test_reverb_workload_keeps_credentials_and_private_clusterip_service(): void
+    {
+        $objects = $this->kustomizeObjects('infrastructure/kubernetes/overlays/local/platform');
+        $deployment = $objects['Deployment/utcp-platform/reverb'];
+        $service = $objects['Service/utcp-platform/reverb'];
+        $container = $deployment['spec']['template']['spec']['containers'][0];
+
+        $this->assertSame('reverb', $container['name']);
+        $this->assertSame(['reverb'], $container['args']);
+        $this->assertContains('utcp-local-reverb-credentials', $this->envFromNames($container)['secrets']);
+        $this->assertSame(8080, $container['ports'][0]['containerPort']);
+
+        $this->assertSame('ClusterIP', $service['spec']['type']);
+        $this->assertSame(8080, $service['spec']['ports'][0]['port']);
+        $this->assertSame('ws', $service['spec']['ports'][0]['targetPort']);
+        $this->assertArrayNotHasKey('nodePort', $service['spec']['ports'][0]);
+    }
+
+    public function test_reverb_broadcaster_requires_a_real_application_key(): void
+    {
+        config([
+            'broadcasting.default' => 'reverb',
+            'broadcasting.connections.reverb.key' => null,
+            'broadcasting.connections.reverb.secret' => 'test-secret',
+            'broadcasting.connections.reverb.app_id' => 'test-app',
+            'broadcasting.connections.reverb.options.host' => 'reverb.utcp-platform.svc.cluster.local',
+            'broadcasting.connections.reverb.options.port' => 8080,
+            'broadcasting.connections.reverb.options.scheme' => 'http',
+            'broadcasting.connections.reverb.options.useTLS' => false,
+        ]);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessageMatches('/Failed to create broadcaster for connection "reverb".*\$auth_key\) must be of type string, null given/s');
+
+        $this->app->make(BroadcastManager::class)->connection('reverb');
+    }
+
     private function repoFile(string $relativePath): string
     {
         return (string) file_get_contents(dirname(base_path(), 2).'/'.$relativePath);
+    }
+
+    /**
+     * @return array<string, array<string, mixed>>
+     */
+    private function kustomizeObjects(string $path): array
+    {
+        $root = dirname(base_path(), 2);
+        $render = new Process(['kubectl', 'kustomize', $path], $root);
+        $render->run();
+        $this->assertSame(0, $render->getExitCode(), $render->getErrorOutput());
+
+        $parse = new Process(['python3', '-c', <<<'PY'
+import json
+import sys
+import yaml
+
+items = {}
+for doc in yaml.safe_load_all(sys.stdin.read()):
+    if not doc:
+        continue
+    metadata = doc.get("metadata", {})
+    key = f"{doc.get('kind')}/{metadata.get('namespace')}/{metadata.get('name')}"
+    items[key] = doc
+print(json.dumps({key: items[key] for key in sorted(items)}))
+PY], $root);
+        $parse->setInput($render->getOutput());
+        $parse->run();
+        $this->assertSame(0, $parse->getExitCode(), $parse->getErrorOutput());
+
+        $objects = json_decode($parse->getOutput(), true, flags: JSON_THROW_ON_ERROR);
+        $this->assertIsArray($objects);
+
+        return $objects;
+    }
+
+    /**
+     * @param  array<string, mixed>  $container
+     * @return array{configMaps: list<string>, secrets: list<string>}
+     */
+    private function envFromNames(array $container): array
+    {
+        $configMaps = [];
+        $secrets = [];
+
+        foreach ($container['envFrom'] ?? [] as $entry) {
+            if (isset($entry['configMapRef']['name'])) {
+                $configMaps[] = $entry['configMapRef']['name'];
+            }
+            if (isset($entry['secretRef']['name'])) {
+                $secrets[] = $entry['secretRef']['name'];
+            }
+        }
+
+        return [
+            'configMaps' => $configMaps,
+            'secrets' => $secrets,
+        ];
     }
 }
