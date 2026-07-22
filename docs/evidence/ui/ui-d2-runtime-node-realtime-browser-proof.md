@@ -305,3 +305,17 @@ entire live proof.
 
 Required next step: bounded infrastructure correction (recommended option A in §2), then re-run this live
 proof unchanged. UI-D remains **In Progress**; UI-D1 is **not** proven.
+
+---
+
+## 8. Follow-up (superseded)
+
+The recommended option A correction was implemented in `18ef90a`
+([`ui-d3-migration-broadcast-driver-fix.md`](ui-d3-migration-broadcast-driver-fix.md)) and the blocked run
+was resumed in [`ui-d4-runtime-node-realtime-live-proof.md`](ui-d4-runtime-node-realtime-live-proof.md),
+which **confirms the migration blocker recorded here is resolved** — `make k8s-apply` now succeeds and
+`utcp-migrate` completes with `BROADCAST_CONNECTION=log` and no Reverb credentials. UI-D4 additionally
+proved the full public WSS corridor (`101 Switching Protocols` from Laravel Reverb through Traefik 443),
+then halted on two different bounded configuration defects (`REVERB_ALLOWED_ORIGIN` scheme mismatch and a
+missing `reverb` role in the Redis ingress policy). This document remains the historical record of the
+migration blocker only.
