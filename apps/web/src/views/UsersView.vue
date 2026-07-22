@@ -73,7 +73,7 @@
     >
       <form
         class="inline-form"
-        @submit.prevent="run(createUser)"
+        @submit.prevent="run(createUserAndRefresh)"
       >
         <UiFormField
           id="new-user-email"
@@ -126,7 +126,7 @@
     <UiDataList
       :status="usersResource.state.status"
       :error="usersResource.state.error"
-      :has-data="users.length > 0"
+      :has-data="renderedUsers.length > 0"
       title="User list"
       label="Directory"
       loading-label="Loading users."
@@ -138,15 +138,15 @@
     >
       <template #actions>
         <UiListSummary
-          :page="userPagination.page"
-          :total="userPagination.total"
-          :count="users.length"
+          :page="renderedPagination.page"
+          :total="renderedPagination.total"
+          :count="renderedUsers.length"
           item-label="users"
         />
       </template>
       <div class="data-table">
         <div
-          v-for="user in users"
+          v-for="user in renderedUsers"
           :key="user.id"
           class="data-row"
         >
@@ -164,7 +164,7 @@
               type="button"
               variant="secondary"
               :disabled="userAction.state.status === 'submitting'"
-              @click="run(() => resetPassword(user.id))"
+              @click="run(() => resetPasswordAndRefresh(user.id))"
             >Reset password</UiButton>
             <UiButton
               v-if="can('platform.users.manage')"
@@ -208,20 +208,20 @@
     </UiAlert>
     <UiPagination
       v-if="usersResource.state.status === 'success' || usersResource.state.status === 'refreshing'"
-      :page="userPagination.page"
-      :per-page="userPagination.per_page"
-      :total="userPagination.total"
-      :has-more="userPagination.has_more"
+      :page="renderedPagination.page"
+      :per-page="renderedPagination.per_page"
+      :total="renderedPagination.total"
+      :has-more="renderedPagination.has_more"
       :page-size-options="[10, 20, 50]"
-      @previous="setPage(userPagination.page - 1)"
-      @next="setPage(userPagination.page + 1)"
+      @previous="setPage(renderedPagination.page - 1)"
+      @next="setPage(renderedPagination.page + 1)"
       @update:per-page="setPerPage"
     />
   </section>
 </template>
 
 <script setup lang="ts">
-import { reactive, watch } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import UiAlert from '../components/ui/UiAlert.vue'
 import UiButton from '../components/ui/UiButton.vue'
@@ -240,9 +240,11 @@ import { router } from '../router'
 import { notify } from '../state/notifications'
 import {
   apiErrorMessage,
+  applyUsersListResult,
   can,
   createUser,
   displayValue,
+  emptyUsersListResult,
   fail,
   refreshUsers,
   registrationSummary,
@@ -251,8 +253,6 @@ import {
   temporaryPassword,
   tenantContextVersion,
   userForm,
-  userPagination,
-  users,
 } from '../state/appState'
 
 const filterDraft = reactive({ search: '', status: '' })
@@ -273,10 +273,17 @@ const usersResource = useAsyncResource(
     perPage: userListQuery.state.perPage,
   }),
   {
-    isEmpty: () => users.value.length === 0,
+    isEmpty: (result) => result.users.length === 0,
     getErrorMessage: apiErrorMessage,
   },
 )
+const currentEmptyResult = computed(() => emptyUsersListResult({
+  page: userListQuery.state.page,
+  perPage: userListQuery.state.perPage,
+}))
+const renderedResult = computed(() => usersResource.state.data ?? currentEmptyResult.value)
+const renderedUsers = computed(() => renderedResult.value.users)
+const renderedPagination = computed(() => renderedResult.value.pagination)
 const userAction = useAsyncAction(async (action: () => Promise<void>) => action(), {
   getErrorMessage: apiErrorMessage,
 })
@@ -297,7 +304,8 @@ async function run(action: () => Promise<void>): Promise<void> {
 }
 
 async function load(): Promise<void> {
-  await usersResource.load()
+  const result = await usersResource.load()
+  if (result) applyUsersListResult(result)
 }
 
 async function applyFilters(): Promise<void> {
@@ -319,9 +327,20 @@ async function setPerPage(perPage: number): Promise<void> {
   await userListQuery.setPerPage(perPage)
 }
 
+async function createUserAndRefresh(): Promise<void> {
+  await createUser()
+  await load()
+}
+
+async function resetPasswordAndRefresh(userId: string): Promise<void> {
+  await resetPassword(userId)
+  await load()
+}
+
 async function runUserStatus(userId: string, status: string): Promise<void> {
   await userAction.run(() => setUserStatus(userId, status))
   if (userAction.state.status === 'succeeded') {
+    await load()
     notify({
       variant: 'success',
       title: 'User updated',
@@ -361,6 +380,7 @@ watch(
   { immediate: true },
 )
 watch(tenantContextVersion, async () => {
+  usersResource.reset()
   const changed = await userListQuery.apply({ page: 1 }, 'replace')
   if (!changed) await load()
 })

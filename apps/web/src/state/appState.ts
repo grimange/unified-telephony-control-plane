@@ -310,8 +310,10 @@ export async function refreshTenants(): Promise<void> {
 }
 
 export type UserListQuery = { search?: string; status?: string; page?: number; perPage?: number }
+export type UserListPagination = { page: number; per_page: number; total: number; has_more: boolean }
+export type UsersListResult = { users: AdminUser[]; pagination: UserListPagination }
 
-export async function refreshUsers(query: UserListQuery = {}): Promise<void> {
+export async function refreshUsers(query: UserListQuery = {}): Promise<UsersListResult> {
   Object.assign(userFilters, {
     search: query.search ?? userFilters.search,
     status: query.status ?? userFilters.status,
@@ -324,23 +326,63 @@ export async function refreshUsers(query: UserListQuery = {}): Promise<void> {
     page: userFilters.page,
     per_page: userFilters.perPage,
   })
-  users.value = response.users
-  Object.assign(userPagination, response.pagination ?? {
-    page: userFilters.page,
-    per_page: userFilters.perPage,
-    total: response.users.length,
-    has_more: false,
-  })
+
+  return {
+    users: response.users,
+    pagination: response.pagination ?? {
+      page: userFilters.page,
+      per_page: userFilters.perPage,
+      total: response.users.length,
+      has_more: false,
+    },
+  }
+}
+
+export function applyUsersListResult(result: UsersListResult): void {
+  users.value = result.users
+  Object.assign(userPagination, result.pagination)
+}
+
+export function emptyUsersListResult(query: UserListQuery = {}): UsersListResult {
+  return {
+    users: [],
+    pagination: {
+      page: query.page ?? userFilters.page,
+      per_page: query.perPage ?? userFilters.perPage,
+      total: 0,
+      has_more: false,
+    },
+  }
+}
+
+async function refreshUsersIntoModuleState(query: UserListQuery = {}): Promise<void> {
+  applyUsersListResult(await refreshUsers(query))
 }
 
 export async function goToUserPage(page: number): Promise<void> {
-  userFilters.page = Math.max(1, page)
-  await refreshUsers()
+  await refreshUsersIntoModuleState({
+    page: Math.max(1, page),
+  })
 }
 
 export async function applyUserFilters(): Promise<void> {
+  await refreshUsersIntoModuleState({
+    page: 1,
+  })
+}
+
+export function resetUsersListState(): void {
+  users.value = []
+  userFilters.search = ''
+  userFilters.status = ''
   userFilters.page = 1
-  await refreshUsers()
+  userFilters.perPage = 20
+  Object.assign(userPagination, {
+    page: userFilters.page,
+    per_page: userFilters.perPage,
+    total: 0,
+    has_more: false,
+  })
 }
 
 export async function refreshSelectedUser(userId: string): Promise<void> {
@@ -354,7 +396,7 @@ export async function refreshMemberships(): Promise<void> {
     membershipForm.roleKey = tenantRoleOptions.value[0].key
   }
   memberships.value = (await identityApi.memberships()).memberships
-  if (users.value.length === 0 && canViewUsers.value) await refreshUsers()
+  if (users.value.length === 0 && canViewUsers.value) await refreshUsersIntoModuleState()
 }
 
 export async function createTenant(): Promise<void> {
@@ -380,18 +422,15 @@ export async function createUser(): Promise<void> {
   temporaryPassword.value = response.temporary_password
   userForm.email = ''
   userForm.displayName = ''
-  await refreshUsers()
 }
 
 export async function setUserStatus(userId: string, status: string): Promise<void> {
   await identityApi.setUserStatus(userId, status)
-  await refreshUsers()
 }
 
 export async function resetPassword(userId: string): Promise<void> {
   const response = await identityApi.resetPassword(userId)
   temporaryPassword.value = response.temporary_password_displayed === false ? 'Password reset. Temporary password was delivered out of band.' : ''
-  await refreshUsers()
 }
 
 export async function endSelectedTelephonySession(): Promise<void> {
@@ -605,7 +644,7 @@ export function resetAppStateForTests(): void {
   session.value = null
   sessionLoaded.value = false
   tenants.value = []
-  users.value = []
+  resetUsersListState()
   selectedUserDetail.value = null
   oneTimeSignalingCredential.value = null
   signalingSecretVisible.value = false
@@ -628,11 +667,6 @@ export function resetAppStateForTests(): void {
   tenantForm.displayName = ''
   userForm.email = ''
   userForm.displayName = ''
-  userFilters.search = ''
-  userFilters.status = ''
-  userFilters.page = 1
-  userFilters.perPage = 20
-  Object.assign(userPagination, { page: 1, per_page: 20, total: 0, has_more: false })
   membershipForm.userId = ''
   membershipForm.roleKey = ''
   runtimeNodeForm.name = ''

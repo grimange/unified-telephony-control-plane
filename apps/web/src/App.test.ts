@@ -139,6 +139,15 @@ function jsonResponse(body: unknown, status = 200): Response {
   })
 }
 
+function deferredResponse(): { promise: Promise<Response>; resolve: (response: Response) => void } {
+  let resolve!: (response: Response) => void
+  const promise = new Promise<Response>((next) => {
+    resolve = next
+  })
+
+  return { promise, resolve }
+}
+
 const runtimeCatalog = {
   catalog_version: 'runtime-management.v1',
   runtime_families: {
@@ -661,6 +670,142 @@ describe('C1 App shell', () => {
     expect(latestParams.get('search')).toBe('bob')
     expect(latestParams.get('page')).toBe('1')
     expect(wrapper.text()).toContain('Bob User')
+  })
+
+  it('keeps rendered Users rows and pagination bound to the newer query when an older response resolves last', async () => {
+    const activeUser = { ...adminUser, id: 'active-user', email: 'active@utcp.local.test', display_name: 'Active Query User', status: 'active' }
+    const suspendedUser = { ...adminUser, id: 'suspended-user', email: 'suspended@utcp.local.test', display_name: 'Suspended Query User', status: 'suspended' }
+    const activeRequest = deferredResponse()
+    const suspendedRequest = deferredResponse()
+    const calls: string[] = []
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
+      const url = input.toString()
+      calls.push(url)
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+      if (url.includes('/api/v1/admin/users')) {
+        const params = new URL(url, 'http://localhost').searchParams
+        if (params.get('status') === 'active') return activeRequest.promise
+        if (params.get('status') === 'suspended') return suspendedRequest.promise
+      }
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/admin/users?status=active')
+
+    expect(calls.some((url) => url.includes('/api/v1/admin/users') && url.includes('status=active'))).toBe(true)
+
+    await wrapper.find('#user-status-filter').setValue('suspended')
+    await wrapper.find('form[role="search"]').trigger('submit')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ status: 'suspended' })
+    expect(calls.some((url) => url.includes('/api/v1/admin/users') && url.includes('status=suspended'))).toBe(true)
+
+    suspendedRequest.resolve(jsonResponse({
+      users: [suspendedUser],
+      pagination: { page: 1, per_page: 20, total: 1, has_more: false },
+    }))
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Suspended Query User')
+    expect(wrapper.text()).toContain('Page 1 · 1 users')
+    expect(wrapper.text()).not.toContain('Active Query User')
+    expect(wrapper.findAll('button').find((button) => button.text() === 'Next')?.attributes('disabled')).toBeDefined()
+
+    activeRequest.resolve(jsonResponse({
+      users: [activeUser],
+      pagination: { page: 1, per_page: 20, total: 206, has_more: true },
+    }))
+    await flushPromises()
+    await flushPromises()
+
+    expect(router.currentRoute.value.query).toEqual({ status: 'suspended' })
+    expect(wrapper.text()).toContain('Suspended Query User')
+    expect(wrapper.text()).toContain('Page 1 · 1 users')
+    expect(wrapper.text()).not.toContain('Active Query User')
+    expect(wrapper.text()).not.toContain('Page 1 · 206 users')
+    expect(wrapper.findAll('button').find((button) => button.text() === 'Next')?.attributes('disabled')).toBeDefined()
+  })
+
+  it('keeps rendered Users rows tenant-scoped when a prior-tenant response resolves after tenant switch', async () => {
+    const tenantAUser = { ...adminUser, id: 'tenant-a-user', email: 'tenant-a@utcp.local.test', display_name: 'Tenant A User' }
+    const tenantBUser = { ...adminUser, id: 'tenant-b-user', email: 'tenant-b@utcp.local.test', display_name: 'Tenant B User' }
+    const twoTenantSession = {
+      ...session,
+      active_tenant: { tenant_id: 'tenant-a', slug: 'tenant-a', display_name: 'Tenant A' },
+      memberships: [
+        {
+          membership_id: 'membership-a',
+          tenant_id: 'tenant-a',
+          slug: 'tenant-a',
+          display_name: 'Tenant A',
+          status: 'active',
+          membership_status: 'active',
+        },
+        {
+          membership_id: 'membership-b',
+          tenant_id: 'tenant-b',
+          slug: 'tenant-b',
+          display_name: 'Tenant B',
+          status: 'active',
+          membership_status: 'active',
+        },
+      ],
+    }
+    const tenantBSession = {
+      ...twoTenantSession,
+      active_tenant: { tenant_id: 'tenant-b', slug: 'tenant-b', display_name: 'Tenant B' },
+    }
+    const tenantARequest = deferredResponse()
+    const tenantBRequest = deferredResponse()
+    let currentTenant = 'tenant-a'
+
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString()
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(twoTenantSession))
+      if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+      if (url.endsWith('/api/v1/auth/tenant-context')) {
+        currentTenant = String(JSON.parse(String(init?.body)).tenant_id)
+
+        return Promise.resolve(jsonResponse(tenantBSession))
+      }
+      if (url.includes('/api/v1/admin/users')) {
+        return currentTenant === 'tenant-a' ? tenantARequest.promise : tenantBRequest.promise
+      }
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/admin/users')
+    await wrapper.find('#active-tenant').setValue('tenant-b')
+    await flushPromises()
+
+    tenantBRequest.resolve(jsonResponse({
+      users: [tenantBUser],
+      pagination: { page: 1, per_page: 20, total: 1, has_more: false },
+    }))
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Tenant B User')
+    expect(wrapper.text()).toContain('Page 1 · 1 users')
+    expect(wrapper.text()).not.toContain('Tenant A User')
+
+    tenantARequest.resolve(jsonResponse({
+      users: [tenantAUser],
+      pagination: { page: 1, per_page: 20, total: 44, has_more: true },
+    }))
+    await flushPromises()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Tenant B User')
+    expect(wrapper.text()).toContain('Page 1 · 1 users')
+    expect(wrapper.text()).not.toContain('Tenant A User')
+    expect(wrapper.text()).not.toContain('Page 1 · 44 users')
   })
 
   it('shows pending-removal wording for an ended session and hides mutation actions', async () => {
