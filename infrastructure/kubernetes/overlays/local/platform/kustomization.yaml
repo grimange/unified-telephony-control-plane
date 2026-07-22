@@ -16,6 +16,10 @@ secretGenerator:
     namespace: utcp-platform
     envs:
       - local-kamailio-db-credentials.properties
+  - name: utcp-local-reverb-credentials
+    namespace: utcp-platform
+    envs:
+      - local-reverb-credentials.properties
 resources:
   - ../../../base/platform
 images:

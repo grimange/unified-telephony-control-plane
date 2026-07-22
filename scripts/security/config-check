@@ -256,6 +256,7 @@ for required in \
   allow-web-from-gateway \
   allow-api-required-traffic \
   allow-worker-required-egress \
+  allow-reverb-required-traffic \
   allow-asterisk-ari-events-required-egress \
   allow-command-worker-to-asterisk-ari \
   allow-kamailio-signaling-required-traffic \

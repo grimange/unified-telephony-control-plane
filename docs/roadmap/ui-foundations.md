@@ -303,6 +303,7 @@ Provide real-time operational visibility for telephony state while preserving ba
 - No Conference operational view exists.
 - No runtime-operation or audit view exists.
 - UI-D0 contract audit (evidence: [`docs/evidence/ui/ui-d0-realtime-operational-contract-audit.md`](../evidence/ui/ui-d0-realtime-operational-contract-audit.md)) established the current real-time contracts and selected the first slice. Findings: the frontend has zero real-time client (only clean `switchTenant`/`endSession` teardown hooks in `apps/web/src/state/appState.ts`); the backend has no Laravel broadcasting (`BROADCAST_CONNECTION=log`, no `laravel/reverb`, no `config/broadcasting.php`, no `routes/channels.php`, no `ShouldBroadcast`) but a mature transactional-outbox domain-event substrate and session-authenticated snapshot APIs; no Reverb/WSS transport is deployed (a Redis-backed `queue:work` worker is deployed and would carry a queued broadcast). RuntimeNode is the only entity with a live domain-event source plus a mature list/detail/`runtime-evidence` snapshot and an existing browser-proven operational view. **Selected first slice: UI-D1 — real-time broadcast + Reverb/WSS transport foundation delivering notification-only RuntimeNode operational-state events on a tenant-scoped private channel authorized via `AuthorizationService::requireTenant(..., 'runtime.nodes.view')`, consumed by the existing Runtime Nodes view which rereads canonical snapshots on notification.** Delivery is best-effort/at-most-once with no client-facing sequence; the browser event stream is never canonical (event → reread; gap/reconnect → full reread; broadcast down → disconnected/stale state). Next coder: Codex (bounded implementation).
+- UI-D1 repository implementation (evidence: [`docs/evidence/ui/ui-d1-runtime-node-realtime-implementation.md`](../evidence/ui/ui-d1-runtime-node-realtime-implementation.md)) installs Laravel Reverb and frontend Echo/Pusher dependencies, adds one notification-only `RuntimeNodeOperationalStateChanged` broadcast, bridges canonical `runtime_node.*` outbox messages after commit, authorizes `tenant.{tenantId}.runtime-nodes` through `/api/broadcasting/auth` with the existing session and `runtime.nodes.view`, deploys a dedicated Reverb workload/Service/NetworkPolicy with generated local credentials, proxies `/app/` WSS through `app.utcp.local.test`, and wires one frontend realtime lifecycle authority into Runtime Nodes. RuntimeNode notifications and reconnects reread canonical snapshots, disconnection preserves prior canonical data with stale presentation, tenant switch/logout/session rejection tear down subscriptions, and the UI-C RuntimeNode request budget remains preserved. UI-D remains In Progress because the natural WSS/browser proof is intentionally deferred.
 
 ### Authority Boundary
 
@@ -316,8 +317,7 @@ Some domain-specific UI-D completion depends on T2, T3, V0, and later call-contr
 
 ### Remaining Implementation
 
-- Add notification plumbing and reconnect/degraded presentation.
-- Re-read canonical backend APIs on notifications.
+- Complete the focused natural Playwright MCP proof for the UI-D1 Reverb/WSS RuntimeNode corridor.
 - Add operational views for sessions, conferences, participants, runtime operations, audits, and runtime health as domain APIs permit.
 - Prove that notifications never become canonical lifecycle authority.
 

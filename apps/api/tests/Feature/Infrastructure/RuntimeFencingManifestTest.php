@@ -59,7 +59,7 @@ final class RuntimeFencingManifestTest extends TestCase
 
         $ports = $this->networkPolicyPorts($workerPolicies['NetworkPolicy/utcp-platform/allow-worker-required-egress']);
         sort($ports);
-        $this->assertSame(['TCP:53', 'TCP:5432', 'TCP:6379', 'UDP:53'], $ports);
+        $this->assertSame(['TCP:53', 'TCP:5432', 'TCP:6379', 'TCP:8080', 'UDP:53'], $ports);
     }
 
     public function test_fencer_api_policy_is_endpoint_only_and_fencer_selected(): void

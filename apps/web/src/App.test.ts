@@ -1,8 +1,17 @@
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { createMemoryHistory } from 'vue-router'
 import App from './App.vue'
 import type { RuntimeManagementCatalog } from './api/platform'
+import {
+  disconnectRuntimeNodeRealtime,
+  resetRuntimeNodeRealtimeClientFactory,
+  setRuntimeNodeRealtimeClientFactory,
+  type EchoChannel,
+  type EchoClient,
+  type RuntimeNodeRealtimeConfig,
+} from './realtime/runtimeNodeRealtime'
 import { createUtcpRouter, router } from './router'
 import { resetAppStateForTests } from './state/appState'
 import { appearanceStorageKey, resetAppearanceForTests } from './state/theme'
@@ -467,6 +476,77 @@ function mockUserAdminFetch(calls: Array<{ url: string; body?: unknown }>): void
   })
 }
 
+function createMockRealtimeEcho() {
+  const connectionCallbacks: Record<string, Array<(payload?: unknown) => void>> = {}
+  const channelErrorCallbacks: Array<(error: unknown) => void> = []
+  const privateChannels: string[] = []
+  const leftChannels: string[] = []
+  const createdConfigs: RuntimeNodeRealtimeConfig[] = []
+  let disconnected = false
+
+  const channel: EchoChannel = {
+    listen() {
+      return channel
+    },
+    stopListening() {
+      return channel
+    },
+    error(callback) {
+      channelErrorCallbacks.push(callback)
+
+      return channel
+    },
+    bind(event, callback) {
+      if (event === 'pusher:subscription_error') channelErrorCallbacks.push(callback)
+
+      return channel
+    },
+  }
+  const client: EchoClient = {
+    private(channelName) {
+      privateChannels.push(channelName)
+
+      return channel
+    },
+    leave(channelName) {
+      leftChannels.push(channelName)
+    },
+    disconnect() {
+      disconnected = true
+    },
+    connector: {
+      pusher: {
+        connection: {
+          bind(event, callback) {
+            connectionCallbacks[event] = [...(connectionCallbacks[event] ?? []), callback]
+          },
+        },
+      },
+    },
+  }
+
+  setRuntimeNodeRealtimeClientFactory((config) => {
+    createdConfigs.push(config)
+
+    return client
+  })
+
+  return {
+    createdConfigs,
+    privateChannels,
+    leftChannels,
+    get disconnected() {
+      return disconnected
+    },
+    emitConnection(event: string, payload?: unknown) {
+      for (const callback of connectionCallbacks[event] ?? []) callback(payload)
+    },
+    emitAuthError(error: unknown) {
+      for (const callback of channelErrorCallbacks) callback(error)
+    },
+  }
+}
+
 describe('C1 App shell', () => {
   const mountedWrappers: VueWrapper[] = []
 
@@ -480,7 +560,10 @@ describe('C1 App shell', () => {
   afterEach(() => {
     for (const wrapper of mountedWrappers.splice(0)) wrapper.unmount()
     vi.restoreAllMocks()
+    disconnectRuntimeNodeRealtime()
+    resetRuntimeNodeRealtimeClientFactory()
     resetAppearanceForTests()
+    vi.unstubAllEnvs()
     window.localStorage.clear()
   })
 
@@ -535,13 +618,48 @@ describe('C1 App shell', () => {
   it('renders runtime-node administration without exposing credential secrets', async () => {
     const calls: Array<{ url: string; body?: unknown }> = []
     mockRuntimeAdminFetch(calls)
+    vi.stubEnv('VITE_UTCP_REVERB_APP_KEY', 'public-reverb-key')
+    vi.stubEnv('VITE_UTCP_WS_HOST', 'app.utcp.local.test')
+    vi.stubEnv('VITE_UTCP_WS_PORT', '443')
+    vi.stubEnv('VITE_UTCP_WS_SCHEME', 'wss')
+    vi.stubEnv('VITE_UTCP_WS_PATH', '/app')
+    const realtime = createMockRealtimeEcho()
     const wrapper = await mountApp('/admin/runtime-nodes')
 
     expect(wrapper.text()).toContain('Proof Runtime')
     expect(wrapper.text()).toContain('observed unobserved')
+    expect(wrapper.text()).toContain('Live updates connecting')
+    expect(realtime.createdConfigs).toEqual([{
+      appKey: 'public-reverb-key',
+      wsHost: 'app.utcp.local.test',
+      wsPort: 443,
+      wsScheme: 'wss',
+      wsPath: '/app',
+      authEndpoint: '/api/broadcasting/auth',
+    }])
+    expect(realtime.privateChannels).toEqual(['tenant.tenant-1.runtime-nodes'])
+    expect(calls.filter((call) => call.url.endsWith('/api/v1/admin/runtime-node-catalog'))).toHaveLength(1)
+    expect(calls.filter((call) => call.url.endsWith('/api/v1/admin/runtime-nodes'))).toHaveLength(1)
     expect(calls.some((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/adapter-configuration'))).toBe(false)
     expect(calls.some((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/runtime-evidence'))).toBe(false)
     expect(calls.some((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/history?limit=10'))).toBe(false)
+
+    realtime.emitConnection('state_change', { current: 'connected' })
+    await nextTick()
+    expect(wrapper.text()).toContain('Live updates connected')
+
+    realtime.emitConnection('state_change', { current: 'disconnected' })
+    await nextTick()
+    expect(wrapper.text()).toContain('Live updates reconnecting')
+
+    realtime.emitConnection('unavailable')
+    await nextTick()
+    expect(wrapper.text()).toContain('Live updates disconnected — displayed data may be stale')
+    expect(wrapper.text()).toContain('Details')
+
+    realtime.emitAuthError({ status: 403 })
+    await nextTick()
+    expect(wrapper.text()).toContain('Live updates unavailable for this session')
 
     await wrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
     await flushPromises()

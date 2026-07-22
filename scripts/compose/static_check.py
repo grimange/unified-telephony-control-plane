@@ -16,6 +16,7 @@ expected_services = {
     "worker",
     "scheduler",
     "control-plane-outbox-dispatcher",
+    "reverb",
     "telephony-command-worker",
     "telephony-event-normalizer",
     "telephony-reconciler",
@@ -57,6 +58,7 @@ expected_networks = {
     "worker": {"data"},
     "scheduler": {"data"},
     "control-plane-outbox-dispatcher": {"data"},
+    "reverb": {"platform", "data"},
     "telephony-command-worker": {"data"},
     "telephony-event-normalizer": {"data"},
     "telephony-reconciler": {"data"},
@@ -73,7 +75,7 @@ for service, expected in expected_networks.items():
     if actual != expected:
         fail(f"{service} networks mismatch: expected {sorted(expected)}, got {sorted(actual)}")
 
-for service in ("postgres", "redis", "api", "web", "gateway"):
+for service in ("postgres", "redis", "api", "reverb", "web", "gateway"):
     if "healthcheck" not in services[service]:
         fail(f"{service} is missing a healthcheck")
 
@@ -82,6 +84,9 @@ if services["postgres"].get("ports"):
 
 if services["redis"].get("ports"):
     fail("redis must not publish host ports")
+
+if services["reverb"].get("ports"):
+    fail("reverb must not publish host ports")
 
 if services["kamailio"].get("ports"):
     fail("kamailio must not publish host ports")
@@ -109,6 +114,7 @@ for service in (
     "worker",
     "scheduler",
     "control-plane-outbox-dispatcher",
+    "reverb",
     "telephony-command-worker",
     "telephony-event-normalizer",
     "telephony-reconciler",
@@ -123,6 +129,7 @@ expected_commands = {
     "worker": ["worker"],
     "scheduler": ["scheduler"],
     "control-plane-outbox-dispatcher": ["control-plane-outbox-dispatcher"],
+    "reverb": ["reverb"],
     "telephony-command-worker": ["telephony-command-worker"],
     "telephony-event-normalizer": ["telephony-event-normalizer"],
     "telephony-reconciler": ["telephony-reconciler"],
@@ -162,6 +169,24 @@ for service in ("api", "worker", "scheduler"):
         fail(f"{service} queue connection must use redis")
     if environment.get("CACHE_STORE") != "redis":
         fail(f"{service} cache store must use redis")
+
+for service in (
+    "api",
+    "worker",
+    "control-plane-outbox-dispatcher",
+    "telephony-command-worker",
+    "telephony-event-normalizer",
+    "telephony-reconciler",
+    "reverb",
+):
+    environment = services[service].get("environment", {})
+    if environment.get("BROADCAST_CONNECTION") != "reverb":
+        fail(f"{service} broadcast connection must use reverb")
+
+reverb_environment = services["reverb"].get("environment", {})
+for key in ("REVERB_APP_ID", "REVERB_APP_KEY", "REVERB_APP_SECRET"):
+    if not reverb_environment.get(key):
+        fail(f"reverb is missing {key}")
 
 for service_name, service in services.items():
     if service.get("network_mode") == "host":

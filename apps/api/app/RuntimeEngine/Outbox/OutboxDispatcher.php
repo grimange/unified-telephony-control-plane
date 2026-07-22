@@ -12,6 +12,7 @@ final class OutboxDispatcher
     public function __construct(
         private readonly OutboxRepository $outbox,
         private readonly InboxRepository $inbox,
+        private readonly RuntimeNodeBroadcastBridge $runtimeNodeBroadcasts = new RuntimeNodeBroadcastBridge,
     ) {}
 
     public function dispatchOnce(string $workerId, int $batchSize = 10, int $leaseSeconds = 60): int
@@ -67,6 +68,7 @@ final class OutboxDispatcher
         );
 
         if ($status === 'accepted' || $status === 'duplicate_pending') {
+            $this->runtimeNodeBroadcasts->dispatchForOutboxRow($row);
             $this->inbox->markProcessed('control-plane-generic-consumer', $claim->id);
         }
     }

@@ -27,6 +27,7 @@ K8S_RUNTIME_OVERLAY="$K8S_OVERLAY/runtime"
 K8S_ASTERISK_CREDENTIALS_FILE="$K8S_RUNTIME_OVERLAY/local-asterisk-ari-credentials.properties"
 K8S_KAMAILIO_PLATFORM_CREDENTIALS_FILE="$K8S_PLATFORM_OVERLAY/local-kamailio-db-credentials.properties"
 K8S_KAMAILIO_MIGRATION_CREDENTIALS_FILE="$K8S_MIGRATION_OVERLAY/local-kamailio-db-credentials.properties"
+K8S_REVERB_CREDENTIALS_FILE="$K8S_PLATFORM_OVERLAY/local-reverb-credentials.properties"
 K8S_PLATFORM_NAMESPACE="utcp-platform"
 K8S_DATA_NAMESPACE="utcp-data"
 K8S_RUNTIME_NAMESPACE="utcp-runtime"
@@ -96,6 +97,7 @@ check_k1_tag() {
 render_overlay() {
   ensure_local_asterisk_credentials
   ensure_local_kamailio_credentials
+  ensure_local_reverb_credentials
   kubectl kustomize "$K8S_OVERLAY"
 }
 
@@ -142,6 +144,24 @@ ensure_local_kamailio_credentials() {
   rm -f "$tmp_file"
 }
 
+ensure_local_reverb_credentials() {
+  if [ -s "$K8S_REVERB_CREDENTIALS_FILE" ]; then
+    return
+  fi
+
+  mkdir -p "$(dirname "$K8S_REVERB_CREDENTIALS_FILE")"
+  umask 077
+  {
+    printf 'REVERB_APP_ID=utcp-local\n'
+    printf 'REVERB_APP_KEY='
+    od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
+    printf '\n'
+    printf 'REVERB_APP_SECRET='
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+    printf '\n'
+  } >"$K8S_REVERB_CREDENTIALS_FILE"
+}
+
 wait_data() {
   kube -n "$K8S_DATA_NAMESPACE" rollout status statefulset/postgres --timeout=240s
   kube -n "$K8S_DATA_NAMESPACE" rollout status statefulset/redis --timeout=180s
@@ -162,7 +182,7 @@ wait_migration() {
 }
 
 wait_platform() {
-  for deployment in api worker scheduler web gateway telephony-command-worker telephony-event-normalizer telephony-reconciler simulator-event-source asterisk-ari-events kamailio; do
+  for deployment in api worker scheduler reverb web gateway telephony-command-worker telephony-event-normalizer telephony-reconciler simulator-event-source asterisk-ari-events kamailio; do
     kube -n "$K8S_PLATFORM_NAMESPACE" rollout status "deployment/$deployment" --timeout=240s
   done
 }

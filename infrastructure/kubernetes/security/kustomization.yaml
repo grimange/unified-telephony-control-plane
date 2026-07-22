@@ -6,6 +6,7 @@ resources:
   - platform/allow-gateway.yaml
   - platform/allow-web.yaml
   - platform/allow-api.yaml
+  - platform/allow-reverb.yaml
   - platform/allow-worker.yaml
   - platform/allow-simulator-event-source.yaml
   - platform/allow-asterisk-ari-events.yaml

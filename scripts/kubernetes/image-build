@@ -7,6 +7,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 required_tools
 check_k1_tag
+ensure_local_reverb_credentials
+
+# shellcheck disable=SC1090
+. "$K8S_REVERB_CREDENTIALS_FILE"
 
 docker build \
   --file "$ROOT/infrastructure/docker/api/Dockerfile" \
@@ -26,6 +30,11 @@ docker build \
   --build-arg "BUILD_COMMIT=unknown" \
   --build-arg "BUILD_CREATED=unknown" \
   --build-arg "IMAGE_SOURCE=local" \
+  --build-arg "VITE_UTCP_REVERB_APP_KEY=$REVERB_APP_KEY" \
+  --build-arg "VITE_UTCP_WS_HOST=app.utcp.local.test" \
+  --build-arg "VITE_UTCP_WS_PORT=443" \
+  --build-arg "VITE_UTCP_WS_SCHEME=wss" \
+  --build-arg "VITE_UTCP_WS_PATH=/app" \
   "$ROOT"
 
 docker build \

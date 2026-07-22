@@ -54,6 +54,13 @@ spec:
     - to:
         - podSelector:
             matchLabels:
+              utcp.io/network-role: reverb
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - podSelector:
+            matchLabels:
               utcp.io/network-role: kamailio-signaling
       ports:
         - protocol: TCP

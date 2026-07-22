@@ -17,6 +17,7 @@ node_modules/
 /infrastructure/kubernetes/overlays/local/runtime/local-asterisk-ari-credentials.properties
 /infrastructure/kubernetes/overlays/local/local-asterisk-ari-credentials.properties
 /infrastructure/kubernetes/overlays/local/platform/local-kamailio-db-credentials.properties
+/infrastructure/kubernetes/overlays/local/platform/local-reverb-credentials.properties
 /infrastructure/kubernetes/overlays/local/migration/local-kamailio-db-credentials.properties
 /public/build/
 /dist/

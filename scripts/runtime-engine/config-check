@@ -429,8 +429,8 @@ worker_ports = sorted(
     for rule in worker_policy.get('spec', {}).get('egress') or []
     for port in rule.get('ports') or []
 )
-if worker_ports != [('TCP', 53), ('TCP', 5432), ('TCP', 6379), ('UDP', 53)]:
-    fail(f'common worker egress policy changed away from DNS/PostgreSQL/Redis only: {worker_ports}')
+if worker_ports != [('TCP', 53), ('TCP', 5432), ('TCP', 6379), ('TCP', 8080), ('UDP', 53)]:
+    fail(f'common worker egress policy changed away from DNS/PostgreSQL/Redis/Reverb only: {worker_ports}')
 
 with open('infrastructure/kubernetes/security/kubernetes-api/allow-runtime-fencer-kubernetes-api.template.yaml', 'r', encoding='utf-8') as handle:
     fencer_policy = yaml.safe_load(handle)

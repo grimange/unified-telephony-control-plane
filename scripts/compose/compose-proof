@@ -418,7 +418,7 @@ run_worker_once() {
 "${compose[@]}" config --format json | scripts/compose/static_check.py
 "${compose[@]}" up -d --build --wait --wait-timeout 360
 
-expected_services=(postgres redis migrate api worker scheduler web gateway control-plane-outbox-dispatcher telephony-command-worker telephony-event-normalizer telephony-reconciler kamailio kamailio-registration-observer sip-gateway)
+expected_services=(postgres redis migrate api worker scheduler web gateway control-plane-outbox-dispatcher reverb telephony-command-worker telephony-event-normalizer telephony-reconciler kamailio kamailio-registration-observer sip-gateway)
 
 service_container() {
   "${compose[@]}" ps --all -q "$1"
@@ -445,7 +445,7 @@ for service in "${expected_services[@]}"; do
   require_container "$service" >/dev/null
 done
 
-for service in postgres redis api web gateway sip-gateway kamailio kamailio-registration-observer; do
+for service in postgres redis api reverb web gateway sip-gateway kamailio kamailio-registration-observer; do
   require_health "$service"
 done
 
@@ -453,12 +453,12 @@ migrate_container="$(require_container migrate)"
 migrate_state="$(docker inspect --format '{{.State.Status}} {{.State.ExitCode}}' "$migrate_container")"
 [ "$migrate_state" = "exited 0" ] || { printf 'migration job did not complete successfully: %s\n' "$migrate_state" >&2; exit 1; }
 
-for service in worker scheduler control-plane-outbox-dispatcher telephony-command-worker telephony-event-normalizer telephony-reconciler kamailio-registration-observer kamailio sip-gateway; do
+for service in worker scheduler control-plane-outbox-dispatcher reverb telephony-command-worker telephony-event-normalizer telephony-reconciler kamailio-registration-observer kamailio sip-gateway; do
   state="$(docker inspect --format '{{.State.Status}}' "$(require_container "$service")")"
   [ "$state" = "running" ] || { printf '%s is not running: %s\n' "$service" "$state" >&2; exit 1; }
 done
 
-for service in postgres redis kamailio kamailio-registration-observer; do
+for service in postgres redis reverb kamailio kamailio-registration-observer; do
   ports="$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$(require_container "$service")")"
   if [ "$ports" != "null" ] && [ "$ports" != "{}" ]; then
     printf '%s unexpectedly publishes ports: %s\n' "$service" "$ports" >&2

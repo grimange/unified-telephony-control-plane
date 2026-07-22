@@ -18,6 +18,7 @@ import {
 } from '../api/platform'
 import type { AsyncResourceStatus } from '../composables/asyncState'
 import { hasCapability, visibleNavigationEntries } from '../navigation'
+import { disconnectRuntimeNodeRealtime, leaveRuntimeNodeRealtimeTenant } from '../realtime/runtimeNodeRealtime'
 import { clearNotifications, notify } from './notifications'
 
 export const session = ref<IdentitySession | null>(null)
@@ -107,6 +108,7 @@ export function apiErrorMessage(errorValue: unknown): string {
 
 export function fail(errorValue: unknown, options: { notify?: boolean; expectedUnauthenticated?: boolean } = {}): void {
   if (identityApi.isApiRequestError(errorValue) && errorValue.status === 401) {
+    disconnectRuntimeNodeRealtime()
     session.value = null
     sessionLoaded.value = true
     if (options.expectedUnauthenticated) {
@@ -173,6 +175,7 @@ export async function authenticate(): Promise<IdentitySession | null> {
 }
 
 export async function endSession(): Promise<void> {
+  disconnectRuntimeNodeRealtime()
   await identityApi.logout()
   session.value = null
   sessionLoaded.value = true
@@ -208,6 +211,7 @@ export async function savePasswordChange(): Promise<IdentitySession | null> {
 
 export async function switchTenant(tenantId: string): Promise<void> {
   clearStatus()
+  leaveRuntimeNodeRealtimeTenant()
   session.value = await identityApi.selectTenant(tenantId)
   tenantContextVersion.value += 1
   clearOneTimeSignalingCredential()

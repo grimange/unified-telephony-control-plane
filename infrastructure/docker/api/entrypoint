@@ -61,6 +61,10 @@ case "$role" in
     shift || true
     exec php artisan schedule:work "$@"
     ;;
+  reverb)
+    shift || true
+    exec php artisan reverb:start --host=0.0.0.0 --port=8080 "$@"
+    ;;
   control-plane-outbox-dispatcher)
     shift || true
     exec php artisan runtime-engine:outbox-dispatcher "$@"
@@ -106,7 +110,7 @@ case "$role" in
     ;;
   *)
     printf 'Unknown UTCP API process role: %s\n' "$role" >&2
-    printf 'Expected one of: api, worker, scheduler, migrate, control-plane-outbox-dispatcher, telephony-command-worker, telephony-infrastructure-worker, telephony-event-normalizer, telephony-reconciler, simulator-event-source, asterisk-ari-events, kamailio-registration-observer, or an explicit diagnostic command.\n' >&2
+    printf 'Expected one of: api, worker, scheduler, reverb, migrate, control-plane-outbox-dispatcher, telephony-command-worker, telephony-infrastructure-worker, telephony-event-normalizer, telephony-reconciler, simulator-event-source, asterisk-ari-events, kamailio-registration-observer, or an explicit diagnostic command.\n' >&2
     exit 64
     ;;
 esac

@@ -4,6 +4,8 @@ resources:
   - service-account.yaml
   - api-deployment.yaml
   - api-service.yaml
+  - reverb-deployment.yaml
+  - reverb-service.yaml
   - worker-deployment.yaml
   - scheduler-deployment.yaml
   - outbox-dispatcher-deployment.yaml

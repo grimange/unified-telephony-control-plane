@@ -1,23 +1,23 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: api
+  name: reverb
   namespace: utcp-platform
   labels:
     app.kubernetes.io/part-of: utcp
-    app.kubernetes.io/component: api
+    app.kubernetes.io/component: reverb
 spec:
   replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/part-of: utcp
-      app.kubernetes.io/component: api
+      app.kubernetes.io/component: reverb
   template:
     metadata:
       labels:
         app.kubernetes.io/part-of: utcp
-        app.kubernetes.io/component: api
-        utcp.io/network-role: api
+        app.kubernetes.io/component: reverb
+        utcp.io/network-role: reverb
     spec:
       serviceAccountName: utcp-platform-app
       automountServiceAccountToken: false
@@ -28,14 +28,14 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: api
+        - name: reverb
           image: utcp-api
           imagePullPolicy: Always
           args:
-            - api
+            - reverb
           ports:
-            - name: php-fpm
-              containerPort: 9000
+            - name: ws
+              containerPort: 8080
           envFrom:
             - configMapRef:
                 name: utcp-application-config
@@ -45,26 +45,26 @@ spec:
                 name: utcp-local-reverb-credentials
           startupProbe:
             tcpSocket:
-              port: php-fpm
+              port: ws
             failureThreshold: 30
             periodSeconds: 2
           readinessProbe:
             tcpSocket:
-              port: php-fpm
+              port: ws
             periodSeconds: 5
             timeoutSeconds: 2
           livenessProbe:
             tcpSocket:
-              port: php-fpm
+              port: ws
             periodSeconds: 15
             timeoutSeconds: 2
           resources:
             requests:
-              cpu: 100m
+              cpu: 50m
               memory: 128Mi
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: 250m
+              memory: 384Mi
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

@@ -7,6 +7,11 @@
       <h2 id="runtime-nodes-title">
         Runtime nodes
       </h2>
+      <UiStatusBadge
+        class="live-updates-badge"
+        :label="runtimeNodeRealtimeStatusText()"
+        :category="runtimeNodeRealtimeStatusCategory"
+      />
       <UiButton
         type="button"
         variant="secondary"
@@ -559,7 +564,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import RuntimeNodeCatalogField from '../components/runtime/RuntimeNodeCatalogField.vue'
 import UiAlert from '../components/ui/UiAlert.vue'
 import UiButton from '../components/ui/UiButton.vue'
@@ -575,6 +580,13 @@ import { useAsyncAction, useAsyncActionMap, useAsyncResource } from '../composab
 import { useListQueryState } from '../composables/listQueryState'
 import type { RuntimeNode } from '../api/platform'
 import { router } from '../router'
+import {
+  disconnectRuntimeNodeRealtime,
+  resynchronizeRuntimeNodeRealtime,
+  runtimeNodeRealtimeConnectionState,
+  runtimeNodeRealtimeStatusText,
+  subscribeRuntimeNodeRealtime,
+} from '../realtime/runtimeNodeRealtime'
 import { notify } from '../state/notifications'
 import {
   adapterConfigurationSupported,
@@ -607,6 +619,7 @@ import {
   runtimeNodeForm,
   runtimeNodes,
   saveRuntimeAdapterConfiguration,
+  session,
   setRuntimeCapabilities,
   setAdapterConfigurationFormValue,
   setRuntimeDesiredState,
@@ -627,6 +640,17 @@ const runtimeActions = useAsyncActionMap<void>({
   getErrorMessage: apiErrorMessage,
 })
 const runtimeCreateActionKey = 'runtime-node:create'
+let backgroundedAt = 0
+
+const runtimeNodeRealtimeStatusCategory = computed((): 'success' | 'warning' | 'danger' | 'neutral' | 'information' => {
+  if (runtimeNodeRealtimeConnectionState.value === 'connected') return 'success'
+  if (runtimeNodeRealtimeConnectionState.value === 'connecting') return 'information'
+  if (runtimeNodeRealtimeConnectionState.value === 'reconnecting') return 'warning'
+  if (runtimeNodeRealtimeConnectionState.value === 'unauthorized') return 'warning'
+  if (runtimeNodeRealtimeConnectionState.value === 'disconnected') return 'danger'
+
+  return 'neutral'
+})
 
 function runtimeStatusCategory(status: string): 'success' | 'warning' | 'danger' | 'neutral' | 'information' {
   if (['active', 'ready', 'healthy', 'observed'].includes(status)) return 'success'
@@ -741,6 +765,45 @@ async function runRuntimeAction(key: string, action: () => Promise<void>, succes
 
 async function load(): Promise<void> {
   await runtimeNodesResource.load()
+  subscribeAfterCanonicalSnapshot()
+}
+
+function subscribeAfterCanonicalSnapshot(): void {
+  const activeTenantId = session.value?.active_tenant?.tenant_id ?? ''
+  if (!session.value || activeTenantId === '' || !['success', 'empty'].includes(runtimeNodesResource.state.status)) {
+    disconnectRuntimeNodeRealtime()
+
+    return
+  }
+
+  subscribeRuntimeNodeRealtime({
+    tenantId: activeTenantId,
+    refreshList: async () => {
+      await runtimeNodesResource.load()
+    },
+    refreshNodeDetails: async (runtimeNodeId: string) => {
+      const node = runtimeNodes.value.find((candidate) => candidate.id === runtimeNodeId)
+      if (node) await loadRuntimeNodeDetails(node, true)
+    },
+    openRuntimeNodeIds: () => [...expandedRuntimeNodeIds.value],
+    sessionActive: () => session.value?.active_tenant?.tenant_id === activeTenantId,
+  })
+}
+
+function handleVisibilityChange(): void {
+  const browserDocument = globalThis.document
+  if (!browserDocument) return
+
+  if (browserDocument.visibilityState === 'hidden') {
+    backgroundedAt = Date.now()
+
+    return
+  }
+
+  if (backgroundedAt > 0 && Date.now() - backgroundedAt >= 5_000) {
+    void resynchronizeRuntimeNodeRealtime()
+  }
+  backgroundedAt = 0
 }
 
 watch(
@@ -751,4 +814,13 @@ watch(
   },
   { immediate: true },
 )
+
+onMounted(() => {
+  globalThis.document?.addEventListener('visibilitychange', handleVisibilityChange)
+})
+
+onBeforeUnmount(() => {
+  globalThis.document?.removeEventListener('visibilitychange', handleVisibilityChange)
+  disconnectRuntimeNodeRealtime()
+})
 </script>

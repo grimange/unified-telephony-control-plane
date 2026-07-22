@@ -9,7 +9,7 @@ required_tools
 ensure_kubeconfig
 wait_platform
 
-for deployment in api worker scheduler web gateway; do
+for deployment in api worker scheduler reverb web gateway; do
   pod="$(kube -n "$K8S_PLATFORM_NAMESPACE" get pod -l "app.kubernetes.io/component=$deployment" -o jsonpath='{.items[0].metadata.name}')"
   printf 'restarting=%s pod=%s\n' "$deployment" "$pod"
   kube -n "$K8S_PLATFORM_NAMESPACE" delete pod "$pod" >/dev/null

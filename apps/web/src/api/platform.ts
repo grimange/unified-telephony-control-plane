@@ -1,3 +1,5 @@
+import { disconnectRuntimeNodeRealtime } from '../realtime/runtimeNodeRealtime'
+
 export type LivenessResponse = {
   status: 'ok'
   service: string
@@ -330,6 +332,7 @@ async function fetchJson<T>(
   })
 
   if (!allowStatuses.includes(response.status)) {
+    if (response.status === 401) disconnectRuntimeNodeRealtime()
     let details: unknown = null
     try {
       details = await response.json()
