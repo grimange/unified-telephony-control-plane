@@ -68,8 +68,20 @@ if not re.search(r"\.data-row\s*\{[^}]*flex-wrap\s*:\s*nowrap[^}]*height\s*:\s*a
     sys.stderr.write("narrow .data-row must set flex-wrap: nowrap and height: auto\n")
     sys.exit(1)
 
-if not re.search(r"\.topbar,\s*\.data-row\s*\{[^}]*flex-direction\s*:\s*column", body, re.S):
+if not re.search(r"\.topbar,\s*\.section-heading,\s*\.data-row\s*\{[^}]*flex-direction\s*:\s*column", body, re.S):
     sys.stderr.write("narrow .data-row must remain a vertical flex column\n")
+    sys.exit(1)
+
+if not re.search(r"\.section-heading\s*\{[^}]*min-width\s*:\s*0[^}]*flex-wrap\s*:\s*wrap", css, re.S):
+    sys.stderr.write("RuntimeNodes heading must permit narrow wrapping with min-width:0\n")
+    sys.exit(1)
+
+if not re.search(r"\.live-updates-badge\s*\{[^}]*max-width\s*:\s*100%[^}]*white-space\s*:\s*normal[^}]*overflow-wrap\s*:\s*anywhere", css, re.S):
+    sys.stderr.write("RuntimeNodes live-update badge must remain readable in narrow layouts\n")
+    sys.exit(1)
+
+if not re.search(r"\.topbar,\s*\.section-heading,\s*\.data-row\s*\{[^}]*align-items\s*:\s*stretch[^}]*flex-direction\s*:\s*column", body, re.S):
+    sys.stderr.write("narrow RuntimeNodes heading must stack without page-level overflow\n")
     sys.exit(1)
 PY
 

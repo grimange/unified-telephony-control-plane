@@ -60,6 +60,23 @@ export type RuntimeNodeRealtimeConfig = {
   authEndpoint: string
 }
 
+export type RuntimeNodeEchoOptions = {
+  broadcaster: 'reverb'
+  key: string
+  wsHost: string
+  wsPort: number
+  wssPort: number
+  forceTLS: boolean
+  enabledTransports: Array<'ws' | 'wss'>
+  authEndpoint: string
+  auth: {
+    headers: {
+      'X-Requested-With': 'XMLHttpRequest'
+    }
+  }
+  Pusher: typeof Pusher
+}
+
 const eventName = '.runtime-node.operational-state.changed'
 const publicRuntimeNodeIdPattern = /^[A-Za-z0-9._:-]{1,128}$/
 
@@ -152,16 +169,15 @@ export async function resynchronizeRuntimeNodeRealtime(): Promise<boolean> {
   return resynchronizeCanonicalSnapshots()
 }
 
-function createEchoClient(config: RuntimeNodeRealtimeConfig): EchoClient {
-  return new Echo({
+export function buildRuntimeNodeEchoOptions(config: RuntimeNodeRealtimeConfig): RuntimeNodeEchoOptions {
+  return {
     broadcaster: 'reverb',
     key: config.appKey,
     wsHost: config.wsHost,
     wsPort: config.wsPort,
     wssPort: config.wsPort,
-    wsPath: config.wsPath,
     forceTLS: config.wsScheme === 'wss',
-    enabledTransports: [config.wsScheme],
+    enabledTransports: ['ws', 'wss'],
     authEndpoint: config.authEndpoint,
     auth: {
       headers: {
@@ -169,7 +185,11 @@ function createEchoClient(config: RuntimeNodeRealtimeConfig): EchoClient {
       },
     },
     Pusher,
-  }) as EchoClient
+  }
+}
+
+function createEchoClient(config: RuntimeNodeRealtimeConfig): EchoClient {
+  return new Echo(buildRuntimeNodeEchoOptions(config)) as EchoClient
 }
 
 function readRuntimeNodeRealtimeConfig(): RuntimeNodeRealtimeConfig | null {

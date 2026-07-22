@@ -321,6 +321,22 @@ h3 {
   justify-content: space-between;
 }
 
+.section-heading {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.section-heading > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.live-updates-badge {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .topbar {
   padding-bottom: var(--space-5);
   border-bottom: 1px solid var(--color-border);
@@ -739,6 +755,7 @@ h3 {
   }
 
   .topbar,
+  .section-heading,
   .data-row {
     align-items: stretch;
     flex-direction: column;

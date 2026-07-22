@@ -5,6 +5,7 @@ import { createMemoryHistory } from 'vue-router'
 import App from './App.vue'
 import type { RuntimeManagementCatalog } from './api/platform'
 import {
+  buildRuntimeNodeEchoOptions,
   disconnectRuntimeNodeRealtime,
   resetRuntimeNodeRealtimeClientFactory,
   setRuntimeNodeRealtimeClientFactory,
@@ -615,6 +616,58 @@ describe('C1 App shell', () => {
     expect(wrapper.text()).toContain('Local Tenant')
   })
 
+  it('builds production RuntimeNode Reverb options for the canonical WSS route', () => {
+    const appKey = 'test-public-key'
+    const options = buildRuntimeNodeEchoOptions({
+      appKey,
+      wsHost: 'app.utcp.local.test',
+      wsPort: 443,
+      wsScheme: 'wss',
+      wsPath: '/app',
+      authEndpoint: '/api/broadcasting/auth',
+    })
+
+    expect(options.broadcaster).toBe('reverb')
+    expect(options.key).toBe(appKey)
+    expect(options.wsHost).toBe('app.utcp.local.test')
+    expect(options.wsPort).toBe(443)
+    expect(options.wssPort).toBe(443)
+    expect(options.forceTLS).toBe(true)
+    expect(options.enabledTransports).toEqual(['ws', 'wss'])
+    const enabledTransports = options.enabledTransports.map(String)
+    expect(enabledTransports).not.toContain('xhr_polling')
+    expect(enabledTransports).not.toContain('xhr_streaming')
+    expect(options.authEndpoint).toBe('/api/broadcasting/auth')
+    expect(options.auth.headers['X-Requested-With']).toBe('XMLHttpRequest')
+    expect(options).not.toHaveProperty('wsPath')
+    expect(Object.keys(options)).not.toContain('secret')
+    expect(Object.values(options)).not.toContain(6001)
+
+    const pusherRouteTemplate = `${String((options as { wsPath?: string }).wsPath ?? '')}/app/{key}`
+    expect(pusherRouteTemplate).toBe('/app/{key}')
+    expect(pusherRouteTemplate.match(/\/app\//g)).toHaveLength(1)
+  })
+
+  it('keeps RuntimeNode realtime disconnected when required browser transport coordinates are missing', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockRuntimeAdminFetch(calls)
+    vi.stubEnv('VITE_UTCP_REVERB_APP_KEY', 'test-public-key')
+    vi.stubEnv('VITE_UTCP_WS_HOST', '')
+    vi.stubEnv('VITE_UTCP_WS_PORT', '443')
+    vi.stubEnv('VITE_UTCP_WS_SCHEME', 'wss')
+    vi.stubEnv('VITE_UTCP_WS_PATH', '/app')
+    const realtime = createMockRealtimeEcho()
+    const wrapper = await mountApp('/admin/runtime-nodes')
+
+    expect(wrapper.text()).toContain('Proof Runtime')
+    expect(wrapper.text()).toContain('Live updates disconnected — displayed data may be stale')
+    expect(realtime.createdConfigs).toEqual([])
+    expect(realtime.privateChannels).toEqual([])
+    expect(calls.filter((call) => call.url.endsWith('/api/v1/admin/runtime-node-catalog'))).toHaveLength(1)
+    expect(calls.filter((call) => call.url.endsWith('/api/v1/admin/runtime-nodes'))).toHaveLength(1)
+    expect(calls.some((call) => call.url.includes('/api/broadcasting/auth'))).toBe(false)
+  })
+
   it('renders runtime-node administration without exposing credential secrets', async () => {
     const calls: Array<{ url: string; body?: unknown }> = []
     mockRuntimeAdminFetch(calls)
@@ -629,6 +682,10 @@ describe('C1 App shell', () => {
     expect(wrapper.text()).toContain('Proof Runtime')
     expect(wrapper.text()).toContain('observed unobserved')
     expect(wrapper.text()).toContain('Live updates connecting')
+    const runtimeHeading = wrapper.find('.section-heading')
+    expect(runtimeHeading.exists()).toBe(true)
+    expect(runtimeHeading.find('.live-updates-badge').text()).toContain('Live updates connecting')
+    expect(runtimeHeading.findAll('button').some((button) => button.text() === 'Refresh')).toBe(true)
     expect(realtime.createdConfigs).toEqual([{
       appKey: 'public-reverb-key',
       wsHost: 'app.utcp.local.test',
