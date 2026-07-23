@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   disconnectRuntimeNodeRealtime,
+  isPermittedPusherTransportCache,
+  leaveRuntimeNodeRealtimeTenant,
   resetRuntimeNodeRealtimeClientFactory,
   runtimeNodeRealtimeConnectionState,
   runtimeNodeRealtimeMayBeStale,
   runtimeNodeRealtimeStatusText,
   setRuntimeNodeRealtimeClientFactory,
+  subscribeConferenceRealtime,
   subscribeRuntimeNodeRealtime,
+  type ConferenceRealtimeSubscription,
   type EchoChannel,
   type EchoClient,
   type RuntimeNodeRealtimeConfig,
@@ -21,41 +25,54 @@ function flushAsync(): Promise<void> {
 
 function createMockEcho() {
   const connectionCallbacks: Record<string, ConnectionCallback[]> = {}
-  const notificationCallbacks: Record<string, (payload: unknown) => void> = {}
-  const channelErrorCallbacks: Array<(error: unknown) => void> = []
-  const channelBindCallbacks: Record<string, ConnectionCallback[]> = {}
+  const channels: Record<string, {
+    notificationCallbacks: Record<string, (payload: unknown) => void>
+    errorCallbacks: Array<(error: unknown) => void>
+    bindCallbacks: Record<string, ConnectionCallback[]>
+  }> = {}
   const privateChannels: string[] = []
   const leftChannels: string[] = []
   let disconnected = false
 
-  const channel: EchoChannel = {
-    listen(event, callback) {
-      notificationCallbacks[event] = callback
+  function ensureChannel(channelName: string): EchoChannel {
+    channels[channelName] ??= {
+      notificationCallbacks: {},
+      errorCallbacks: [],
+      bindCallbacks: {},
+    }
+    const state = channels[channelName]
 
-      return channel
-    },
-    stopListening(event) {
-      delete notificationCallbacks[event]
+    const channel: EchoChannel = {
+      listen(event, callback) {
+        state.notificationCallbacks[event] = callback
 
-      return channel
-    },
-    error(callback) {
-      channelErrorCallbacks.push(callback)
+        return channel
+      },
+      stopListening(event) {
+        delete state.notificationCallbacks[event]
 
-      return channel
-    },
-    bind(event, callback) {
-      channelBindCallbacks[event] = [...(channelBindCallbacks[event] ?? []), callback]
+        return channel
+      },
+      error(callback) {
+        state.errorCallbacks.push(callback)
 
-      return channel
-    },
+        return channel
+      },
+      bind(event, callback) {
+        state.bindCallbacks[event] = [...(state.bindCallbacks[event] ?? []), callback]
+
+        return channel
+      },
+    }
+
+    return channel
   }
 
   const client: EchoClient = {
     private(channelName) {
       privateChannels.push(channelName)
 
-      return channel
+      return ensureChannel(channelName)
     },
     leave(channelName) {
       leftChannels.push(channelName)
@@ -84,12 +101,18 @@ function createMockEcho() {
     emitConnection(event: string, payload?: unknown) {
       for (const callback of connectionCallbacks[event] ?? []) callback(payload)
     },
-    emitNotification(payload: unknown) {
-      notificationCallbacks['.runtime-node.operational-state.changed']?.(payload)
+    emitRuntimeNodeNotification(channelName: string, payload: unknown) {
+      channels[channelName]?.notificationCallbacks['.runtime-node.operational-state.changed']?.(payload)
     },
-    emitChannelError(error: unknown) {
-      for (const callback of channelErrorCallbacks) callback(error)
-      for (const callback of channelBindCallbacks['pusher:subscription_error'] ?? []) callback(error)
+    emitConferenceNotification(channelName: string, payload: unknown) {
+      channels[channelName]?.notificationCallbacks['.conference.operational-state.changed']?.(payload)
+    },
+    emitSubscriptionSucceeded(channelName: string) {
+      for (const callback of channels[channelName]?.bindCallbacks['pusher:subscription_succeeded'] ?? []) callback({})
+    },
+    emitChannelError(channelName: string, error: unknown) {
+      for (const callback of channels[channelName]?.errorCallbacks ?? []) callback(error)
+      for (const callback of channels[channelName]?.bindCallbacks['pusher:subscription_error'] ?? []) callback(error)
     },
   }
 }
@@ -117,6 +140,31 @@ function subscription(overrides: Partial<RuntimeNodeRealtimeSubscription> = {}) 
     sessionActive: vi.fn(() => true),
     ...overrides,
   } satisfies RuntimeNodeRealtimeSubscription
+}
+
+function conferenceNotification(overrides: Record<string, unknown> = {}) {
+  return {
+    event_type: 'conference_participant.admitted',
+    aggregate_type: 'conference_participant',
+    aggregate_id: 'participant-1',
+    conference_id: 'conference-1',
+    tenant_id: 'tenant-1',
+    occurred_at: '2026-07-23T01:02:03.000000Z',
+    observed_state: 'joined',
+    secret: 'must-not-be-used',
+    ...overrides,
+  }
+}
+
+function conferenceSubscription(overrides: Partial<ConferenceRealtimeSubscription> = {}) {
+  return {
+    tenantId: 'tenant-1',
+    refreshList: vi.fn().mockResolvedValue({ conferences: [{ id: 'conference-1', observed_state: 'canonical-open' }] }),
+    refreshSelectedConference: vi.fn().mockResolvedValue({ conference: { id: 'conference-1', observed_state: 'canonical-open' } }),
+    selectedConferenceId: vi.fn(() => 'conference-1'),
+    sessionActive: vi.fn(() => true),
+    ...overrides,
+  } satisfies ConferenceRealtimeSubscription
 }
 
 describe('runtimeNodeRealtime', () => {
@@ -179,7 +227,7 @@ describe('runtimeNodeRealtime', () => {
     })
 
     subscribeRuntimeNodeRealtime(activeSubscription)
-    echo.emitNotification(notification())
+    echo.emitRuntimeNodeNotification('tenant.tenant-1.runtime-nodes', notification())
     await flushAsync()
 
     expect(activeSubscription.refreshList).toHaveBeenCalledTimes(1)
@@ -188,21 +236,21 @@ describe('runtimeNodeRealtime', () => {
     expect(JSON.stringify(window.localStorage)).not.toContain('disabled')
     expect(JSON.stringify(window.sessionStorage)).not.toContain('must-not-be-used')
 
-    echo.emitNotification(notification({ runtime_node_id: 'runtime-2' }))
+    echo.emitRuntimeNodeNotification('tenant.tenant-1.runtime-nodes', notification({ runtime_node_id: 'runtime-2' }))
     await flushAsync()
 
     expect(activeSubscription.refreshList).toHaveBeenCalledTimes(2)
     expect(activeSubscription.refreshNodeDetails).toHaveBeenCalledTimes(1)
 
-    echo.emitNotification(notification({ tenant_id: 'tenant-2' }))
-    echo.emitNotification(notification({ aggregate_type: 'conference' }))
-    echo.emitNotification(notification({ runtime_node_id: '../runtime-1' }))
+    echo.emitRuntimeNodeNotification('tenant.tenant-1.runtime-nodes', notification({ tenant_id: 'tenant-2' }))
+    echo.emitRuntimeNodeNotification('tenant.tenant-1.runtime-nodes', notification({ aggregate_type: 'conference' }))
+    echo.emitRuntimeNodeNotification('tenant.tenant-1.runtime-nodes', notification({ runtime_node_id: '../runtime-1' }))
     await flushAsync()
 
     expect(activeSubscription.refreshList).toHaveBeenCalledTimes(2)
 
-    echo.emitNotification(notification({ occurred_at: '2026-07-23T01:02:02.000000Z' }))
-    echo.emitNotification(notification({ occurred_at: '2026-07-23T01:02:01.000000Z' }))
+    echo.emitRuntimeNodeNotification('tenant.tenant-1.runtime-nodes', notification({ occurred_at: '2026-07-23T01:02:02.000000Z' }))
+    echo.emitRuntimeNodeNotification('tenant.tenant-1.runtime-nodes', notification({ occurred_at: '2026-07-23T01:02:01.000000Z' }))
     await flushAsync()
 
     expect(activeSubscription.refreshList).toHaveBeenCalledTimes(4)
@@ -218,6 +266,7 @@ describe('runtimeNodeRealtime', () => {
 
     subscribeRuntimeNodeRealtime(activeSubscription)
     echo.emitConnection('state_change', { current: 'connected' })
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-nodes')
     await flushAsync()
 
     expect(runtimeNodeRealtimeConnectionState.value).toBe('connected')
@@ -229,6 +278,7 @@ describe('runtimeNodeRealtime', () => {
     expect(runtimeNodeRealtimeMayBeStale.value).toBe(true)
 
     echo.emitConnection('state_change', { current: 'connected' })
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-nodes')
     await flushAsync()
 
     expect(activeSubscription.refreshList).toHaveBeenCalledTimes(1)
@@ -239,6 +289,7 @@ describe('runtimeNodeRealtime', () => {
     vi.mocked(activeSubscription.refreshList).mockRejectedValueOnce(new Error('snapshot unavailable'))
     echo.emitConnection('state_change', { current: 'disconnected' })
     echo.emitConnection('state_change', { current: 'connected' })
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-nodes')
     await flushAsync()
 
     expect(runtimeNodeRealtimeConnectionState.value).toBe('disconnected')
@@ -268,7 +319,7 @@ describe('runtimeNodeRealtime', () => {
     setRuntimeNodeRealtimeClientFactory(() => echo.client)
 
     subscribeRuntimeNodeRealtime(subscription())
-    echo.emitChannelError({ status: 403 })
+    echo.emitChannelError('tenant.tenant-1.runtime-nodes', { status: 403 })
 
     expect(runtimeNodeRealtimeConnectionState.value).toBe('unauthorized')
     expect(runtimeNodeRealtimeMayBeStale.value).toBe(true)
@@ -280,5 +331,104 @@ describe('runtimeNodeRealtime', () => {
 
     expect(runtimeNodeRealtimeConnectionState.value).toBe('unauthorized')
     expect(echo.privateChannels).toEqual(['tenant.tenant-1.runtime-nodes'])
+  })
+
+  it('uses one Echo client for RuntimeNode and Conference subscriptions with scoped conference rereads', async () => {
+    const echo = createMockEcho()
+    const factory = vi.fn(() => echo.client)
+    setRuntimeNodeRealtimeClientFactory(factory)
+    const runtimeSubscription = subscription()
+    const activeConferenceSubscription = conferenceSubscription()
+
+    subscribeRuntimeNodeRealtime(runtimeSubscription)
+    subscribeConferenceRealtime(activeConferenceSubscription)
+
+    expect(factory).toHaveBeenCalledTimes(1)
+    expect(echo.privateChannels).toEqual(['tenant.tenant-1.runtime-nodes', 'tenant.tenant-1.conferences'])
+
+    echo.emitConnection('state_change', { current: 'connected' })
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-nodes')
+    await flushAsync()
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connecting')
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.conferences')
+    await flushAsync()
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connected')
+
+    echo.emitConferenceNotification('tenant.tenant-1.conferences', conferenceNotification())
+    await flushAsync()
+
+    expect(activeConferenceSubscription.refreshList).toHaveBeenCalledTimes(1)
+    expect(activeConferenceSubscription.refreshSelectedConference).toHaveBeenCalledTimes(1)
+    expect(activeConferenceSubscription.refreshSelectedConference).toHaveBeenCalledWith('conference-1')
+    expect(JSON.stringify(window.localStorage)).not.toContain('must-not-be-used')
+
+    echo.emitConferenceNotification('tenant.tenant-1.conferences', conferenceNotification({ conference_id: 'conference-2' }))
+    echo.emitConferenceNotification('tenant.tenant-1.conferences', conferenceNotification({ occurred_at: '2026-07-23T01:00:00.000000Z' }))
+    echo.emitConferenceNotification('tenant.tenant-1.conferences', conferenceNotification({ tenant_id: 'tenant-2' }))
+    echo.emitConferenceNotification('tenant.tenant-1.conferences', conferenceNotification({ conference_id: '../conference-1' }))
+    await flushAsync()
+
+    expect(activeConferenceSubscription.refreshList).toHaveBeenCalledTimes(3)
+    expect(activeConferenceSubscription.refreshSelectedConference).toHaveBeenCalledTimes(2)
+  })
+
+  it('clears tenant-switch stale state after snapshot and private-channel resubscription without another socket connection', async () => {
+    const echo = createMockEcho()
+    setRuntimeNodeRealtimeClientFactory(() => echo.client)
+    const tenantA = subscription({ tenantId: 'tenant-a' })
+    const tenantB = subscription({ tenantId: 'tenant-b' })
+
+    subscribeRuntimeNodeRealtime(tenantA)
+    echo.emitConnection('state_change', { current: 'connected' })
+    echo.emitSubscriptionSucceeded('tenant.tenant-a.runtime-nodes')
+    await flushAsync()
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connected')
+
+    leaveRuntimeNodeRealtimeTenant()
+    subscribeRuntimeNodeRealtime(tenantB)
+
+    expect(echo.leftChannels).toContain('tenant.tenant-a.runtime-nodes')
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connecting')
+
+    echo.emitSubscriptionSucceeded('tenant.tenant-b.runtime-nodes')
+    await flushAsync()
+
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connected')
+    expect(runtimeNodeRealtimeMayBeStale.value).toBe(false)
+    expect(tenantB.refreshList).not.toHaveBeenCalled()
+  })
+
+  it('keeps tenant-switch state stale when the new private subscription fails or logout interrupts the switch', async () => {
+    const echo = createMockEcho()
+    setRuntimeNodeRealtimeClientFactory(() => echo.client)
+    const tenantA = subscription({ tenantId: 'tenant-a' })
+    const tenantB = subscription({ tenantId: 'tenant-b' })
+
+    subscribeRuntimeNodeRealtime(tenantA)
+    echo.emitConnection('state_change', { current: 'connected' })
+    echo.emitSubscriptionSucceeded('tenant.tenant-a.runtime-nodes')
+    await flushAsync()
+
+    leaveRuntimeNodeRealtimeTenant()
+    subscribeRuntimeNodeRealtime(tenantB)
+    echo.emitChannelError('tenant.tenant-b.runtime-nodes', { status: 403 })
+
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('unauthorized')
+    expect(runtimeNodeRealtimeMayBeStale.value).toBe(true)
+
+    disconnectRuntimeNodeRealtime()
+    echo.emitSubscriptionSucceeded('tenant.tenant-b.runtime-nodes')
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('idle')
+  })
+
+  it('treats pusherTransportTLS as bounded vendor transport cache only', () => {
+    expect(isPermittedPusherTransportCache(null)).toBe(true)
+    expect(isPermittedPusherTransportCache(JSON.stringify({ timestamp: Date.now(), transport: 'wss' }))).toBe(true)
+    expect(isPermittedPusherTransportCache(JSON.stringify({ timestamp: '2026-07-23T01:02:03Z', transport: 'ws' }))).toBe(true)
+    expect(isPermittedPusherTransportCache(JSON.stringify({ timestamp: Date.now(), transport: 'xhr_streaming' }))).toBe(false)
+    expect(isPermittedPusherTransportCache(JSON.stringify({ timestamp: Date.now(), transport: 'wss', tenant_id: 'tenant-1' }))).toBe(false)
+    expect(isPermittedPusherTransportCache(JSON.stringify({ timestamp: Date.now(), transport: 'wss', channel: 'private-tenant.tenant-1.runtime-nodes' }))).toBe(false)
+    expect(isPermittedPusherTransportCache(JSON.stringify({ timestamp: Date.now(), transport: 'wss', auth: 'signature' }))).toBe(false)
+    expect(isPermittedPusherTransportCache('{not json')).toBe(false)
   })
 })

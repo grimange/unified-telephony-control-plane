@@ -303,6 +303,51 @@ export type RuntimeHistoryResponse = {
   }
 }
 
+export type Conference = {
+  id: string
+  tenant_id: string
+  slug: string
+  display_name: string
+  runtime_node_id: string | null
+  active_runtime_binding_id?: string | null
+  active_binding_runtime_node_id?: string | null
+  runtime_binding_lifecycle_status?: string | null
+  last_runtime_binding_retirement_reason?: string | null
+  last_runtime_binding_retired_at?: string | null
+  desired_state: string
+  observed_state: string
+  failover_state?: string | null
+  failover_binding_id?: string | null
+  failover_generation?: number | null
+  failover_started_at?: string | null
+  configuration_generation: number
+  observed_generation: number | null
+  observed_at: string | null
+  opened_at: string | null
+  draining_at: string | null
+  closed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type ConferenceParticipant = {
+  id: string
+  tenant_id: string
+  conference_id: string
+  telephony_session_id: string
+  user_id?: string | null
+  desired_state: string
+  observed_state: string
+  role: string
+  admission_reason?: string | null
+  joined_at: string | null
+  left_at: string | null
+  failure_class: string | null
+  failure_code: string | null
+  created_at: string
+  updated_at: string
+}
+
 class ApiRequestError extends Error {
   status: number
   details: unknown
@@ -523,5 +568,9 @@ export const identityApi = {
     fetchJson<{ runtime_evidence: RuntimeEvidence }>(`/api/v1/admin/runtime-nodes/${runtimeNodeId}/runtime-evidence`),
   runtimeHistory: (runtimeNodeId: string) =>
     fetchJson<RuntimeHistoryResponse>(`/api/v1/admin/runtime-nodes/${runtimeNodeId}/history?limit=10`),
+  conferences: () => fetchJson<{ conferences: Conference[] }>('/api/v1/admin/conferences'),
+  conference: (conferenceId: string) => fetchJson<{ conference: Conference }>(`/api/v1/admin/conferences/${conferenceId}`),
+  conferenceParticipants: (conferenceId: string) =>
+    fetchJson<{ participants: ConferenceParticipant[] }>(`/api/v1/admin/conferences/${conferenceId}/participants`),
   isApiRequestError: (error: unknown): error is ApiRequestError => error instanceof ApiRequestError,
 }

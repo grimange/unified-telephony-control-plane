@@ -83,6 +83,18 @@ if not re.search(r"\.live-updates-badge\s*\{[^}]*max-width\s*:\s*100%[^}]*white-
 if not re.search(r"\.topbar,\s*\.section-heading,\s*\.data-row\s*\{[^}]*align-items\s*:\s*stretch[^}]*flex-direction\s*:\s*column", body, re.S):
     sys.stderr.write("narrow RuntimeNodes heading must stack without page-level overflow\n")
     sys.exit(1)
+
+if not re.search(r"\.conference-detail-grid\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,\s*0\.9fr\)\s*minmax\(0,\s*1\.1fr\)", css, re.S):
+    sys.stderr.write("Conference detail and participant layout must bound grid tracks with minmax(0,...)\n")
+    sys.exit(1)
+
+if not re.search(r"\.conference-row,\s*\.participant-row\s*\{[^}]*max-width\s*:\s*100%", css, re.S):
+    sys.stderr.write("Conference rows must remain bounded in narrow layouts\n")
+    sys.exit(1)
+
+if not re.search(r"\.conference-detail-grid,\s*\.definition-grid\s*\{[^}]*grid-template-columns\s*:\s*1fr", body, re.S):
+    sys.stderr.write("Conference detail grid must collapse to one column in narrow layouts\n")
+    sys.exit(1)
 PY
 
 python3 - <<'PY'
@@ -170,6 +182,7 @@ frontend_sources = "\n".join(
         Path("apps/web/src/views/MembershipsView.vue"),
         Path("apps/web/src/views/TenantsView.vue"),
         Path("apps/web/src/views/RuntimeNodesView.vue"),
+        Path("apps/web/src/views/ConferenceOperationsView.vue"),
     ]
 )
 

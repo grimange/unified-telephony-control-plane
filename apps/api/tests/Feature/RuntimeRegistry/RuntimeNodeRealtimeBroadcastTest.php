@@ -110,7 +110,7 @@ final class RuntimeNodeRealtimeBroadcastTest extends TestCase
 
         $createdId = $this->appendOutboxEvent($tenantId, $runtimeNodeId, 'runtime_node.created', 'runtime_node');
         $observedId = $this->appendOutboxEvent($tenantId, $runtimeNodeId, 'runtime_node.event_listener_degraded', 'runtime_node');
-        $otherId = $this->appendOutboxEvent($tenantId, 'conference-1', 'conference.created', 'conference');
+        $otherId = $this->appendOutboxEvent($tenantId, 'tenant-1', 'tenant.updated', 'tenant');
 
         $dispatcher = new OutboxDispatcher(new OutboxRepository, new InboxRepository);
         $this->assertSame(3, $dispatcher->dispatchOnce('realtime-test-worker', 10));

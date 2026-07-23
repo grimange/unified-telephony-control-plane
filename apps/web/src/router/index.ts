@@ -8,6 +8,7 @@ import {
 } from 'vue-router'
 import AppShell from '../layouts/AppShell.vue'
 import ChangePasswordView from '../views/ChangePasswordView.vue'
+import ConferenceOperationsView from '../views/ConferenceOperationsView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import ForbiddenView from '../views/ForbiddenView.vue'
 import LoginView from '../views/LoginView.vue'
@@ -44,6 +45,7 @@ export const routes = [
       { path: 'admin/users', name: 'admin-users', component: UsersView, meta: { requiresAuth: true, title: 'Users', capabilityAny: ['platform.users.view', 'tenant.memberships.view'] } },
       { path: 'admin/users/:id', name: 'admin-user-detail', component: UserDetailView, meta: { requiresAuth: true, title: 'User detail', capabilityAny: ['platform.users.view', 'tenant.memberships.view'] } },
       { path: 'admin/runtime-nodes', name: 'admin-runtime-nodes', component: RuntimeNodesView, meta: { requiresAuth: true, title: 'Runtime nodes', capability: 'runtime.nodes.view' } },
+      { path: 'operations/conferences', name: 'operations-conferences', component: ConferenceOperationsView, meta: { requiresAuth: true, title: 'Conferences', capability: 'telephony.conferences.view' } },
       { path: 'forbidden', name: 'forbidden', component: ForbiddenView, meta: { requiresAuth: true, title: 'Forbidden' } },
       { path: ':pathMatch(.*)*', name: 'not-found', component: NotFoundView, meta: { requiresAuth: true, title: 'Not found' } },
     ],

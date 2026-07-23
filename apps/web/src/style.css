@@ -506,6 +506,15 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+.conference-detail-grid {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+}
+
+.conference-row,
+.participant-row {
+  max-width: 100%;
+}
+
 .badge-row,
 .inline-record {
   display: flex;
@@ -793,6 +802,7 @@ h3 {
   .inline-form,
   .ui-filter-bar__controls,
   .subgrid,
+  .conference-detail-grid,
   .definition-grid {
     grid-template-columns: 1fr;
   }

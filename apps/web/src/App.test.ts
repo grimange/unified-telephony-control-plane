@@ -7,6 +7,7 @@ import type { RuntimeManagementCatalog } from './api/platform'
 import {
   buildRuntimeNodeEchoOptions,
   disconnectRuntimeNodeRealtime,
+  isPermittedPusherTransportCache,
   resetRuntimeNodeRealtimeClientFactory,
   setRuntimeNodeRealtimeClientFactory,
   type EchoChannel,
@@ -17,6 +18,7 @@ import { createUtcpRouter, router } from './router'
 import { resetAppStateForTests } from './state/appState'
 import { appearanceStorageKey, resetAppearanceForTests } from './state/theme'
 import changePasswordViewSource from './views/ChangePasswordView.vue?raw'
+import conferenceOperationsViewSource from './views/ConferenceOperationsView.vue?raw'
 import loginViewSource from './views/LoginView.vue?raw'
 import membershipsViewSource from './views/MembershipsView.vue?raw'
 import appStateSource from './state/appState.ts?raw'
@@ -58,6 +60,8 @@ const session = {
     'runtime.nodes.view',
     'runtime.nodes.manage',
     'runtime.credentials.rotate',
+    'telephony.conferences.view',
+    'telephony.conferences.participants.manage',
   ],
   catalog_version: 'c2.test',
   expires_at: '2026-07-14T10:00:00Z',
@@ -379,6 +383,59 @@ const runtimeNode = {
   capabilities: ['event.stream', 'runtime.observation'],
 }
 
+const conference = {
+  id: 'conference-1',
+  tenant_id: 'tenant-1',
+  slug: 'daily-ops',
+  display_name: 'Daily Ops',
+  runtime_node_id: 'runtime-1',
+  active_runtime_binding_id: 'binding-1',
+  active_binding_runtime_node_id: 'runtime-1',
+  runtime_binding_lifecycle_status: 'active',
+  last_runtime_binding_retirement_reason: null,
+  last_runtime_binding_retired_at: null,
+  desired_state: 'open',
+  observed_state: 'active',
+  failover_state: null,
+  failover_binding_id: null,
+  failover_generation: null,
+  failover_started_at: null,
+  configuration_generation: 2,
+  observed_generation: 2,
+  observed_at: '2026-07-22T10:00:00Z',
+  opened_at: '2026-07-22T09:55:00Z',
+  draining_at: null,
+  closed_at: null,
+  created_at: '2026-07-22T09:50:00Z',
+  updated_at: '2026-07-22T10:00:00Z',
+}
+
+const secondConference = {
+  ...conference,
+  id: 'conference-2',
+  slug: 'support-room',
+  display_name: 'Support Room',
+  observed_state: 'ready',
+}
+
+const conferenceParticipant = {
+  id: 'participant-1',
+  tenant_id: 'tenant-1',
+  conference_id: 'conference-1',
+  telephony_session_id: '11111111-2222-3333-4444-555555555555',
+  user_id: 'user-1',
+  desired_state: 'admitted',
+  observed_state: 'joined',
+  role: 'host',
+  admission_reason: 'operator',
+  joined_at: '2026-07-22T10:01:00Z',
+  left_at: null,
+  failure_class: null,
+  failure_code: null,
+  created_at: '2026-07-22T10:00:30Z',
+  updated_at: '2026-07-22T10:01:00Z',
+}
+
 function mockRuntimeAdminFetch(calls: Array<{ url: string; body?: unknown }>): void {
   vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString()
@@ -440,6 +497,21 @@ function mockRuntimeAdminFetch(calls: Array<{ url: string; body?: unknown }>): v
   })
 }
 
+function mockConferenceAdminFetch(calls: Array<{ url: string; body?: unknown }>): void {
+  vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString()
+    calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+    if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+    if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+    if (url.endsWith('/api/v1/admin/conferences')) return Promise.resolve(jsonResponse({ conferences: [conference, secondConference] }))
+    if (url.endsWith('/api/v1/admin/conferences/conference-1')) return Promise.resolve(jsonResponse({ conference }))
+    if (url.endsWith('/api/v1/admin/conferences/conference-1/participants')) return Promise.resolve(jsonResponse({ participants: [conferenceParticipant] }))
+    if (url.includes('/api/v1/admin/conferences/conference-2/')) return Promise.resolve(jsonResponse({ message: 'Unselected Conference detail was requested.' }, 500))
+
+    return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+  })
+}
+
 function mockUserAdminFetch(calls: Array<{ url: string; body?: unknown }>): void {
   vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString()
@@ -479,35 +551,47 @@ function mockUserAdminFetch(calls: Array<{ url: string; body?: unknown }>): void
 
 function createMockRealtimeEcho() {
   const connectionCallbacks: Record<string, Array<(payload?: unknown) => void>> = {}
-  const channelErrorCallbacks: Array<(error: unknown) => void> = []
+  const channelErrorCallbacks: Record<string, Array<(error: unknown) => void>> = {}
+  const channelBindCallbacks: Record<string, Record<string, Array<(payload?: unknown) => void>>> = {}
   const privateChannels: string[] = []
   const leftChannels: string[] = []
   const createdConfigs: RuntimeNodeRealtimeConfig[] = []
   let disconnected = false
 
-  const channel: EchoChannel = {
-    listen() {
-      return channel
-    },
-    stopListening() {
-      return channel
-    },
-    error(callback) {
-      channelErrorCallbacks.push(callback)
+  function createChannel(channelName: string): EchoChannel {
+    const channel: EchoChannel = {
+      listen() {
+        return channel
+      },
+      stopListening() {
+        return channel
+      },
+      error(callback) {
+        channelErrorCallbacks[channelName] = [...(channelErrorCallbacks[channelName] ?? []), callback]
 
-      return channel
-    },
-    bind(event, callback) {
-      if (event === 'pusher:subscription_error') channelErrorCallbacks.push(callback)
+        return channel
+      },
+      bind(event, callback) {
+        channelBindCallbacks[channelName] = {
+          ...(channelBindCallbacks[channelName] ?? {}),
+          [event]: [...(channelBindCallbacks[channelName]?.[event] ?? []), callback],
+        }
+        if (event === 'pusher:subscription_error') {
+          channelErrorCallbacks[channelName] = [...(channelErrorCallbacks[channelName] ?? []), callback]
+        }
 
-      return channel
-    },
+        return channel
+      },
+    }
+
+    return channel
   }
+
   const client: EchoClient = {
     private(channelName) {
       privateChannels.push(channelName)
 
-      return channel
+      return createChannel(channelName)
     },
     leave(channelName) {
       leftChannels.push(channelName)
@@ -542,8 +626,11 @@ function createMockRealtimeEcho() {
     emitConnection(event: string, payload?: unknown) {
       for (const callback of connectionCallbacks[event] ?? []) callback(payload)
     },
-    emitAuthError(error: unknown) {
-      for (const callback of channelErrorCallbacks) callback(error)
+    emitAuthError(error: unknown, channelName = privateChannels.at(-1) ?? '') {
+      for (const callback of channelErrorCallbacks[channelName] ?? []) callback(error)
+    },
+    emitSubscriptionSucceeded(channelName = privateChannels.at(-1) ?? '') {
+      for (const callback of channelBindCallbacks[channelName]?.['pusher:subscription_succeeded'] ?? []) callback({})
     },
   }
 }
@@ -668,6 +755,44 @@ describe('C1 App shell', () => {
     expect(calls.some((call) => call.url.includes('/api/broadcasting/auth'))).toBe(false)
   })
 
+  it('keeps in-app RuntimeNode navigation to one catalog and one list request', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString()
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+      if (url.endsWith('/api/v1/admin/tenants')) return Promise.resolve(jsonResponse({ tenants: [{ id: 'tenant-1', slug: 'local', display_name: 'Local Tenant', status: 'active' }] }))
+      if (url.endsWith('/api/v1/admin/runtime-node-catalog')) return Promise.resolve(jsonResponse({ catalog: runtimeCatalog }))
+      if (url.endsWith('/api/v1/admin/runtime-nodes')) return Promise.resolve(jsonResponse({ runtime_nodes: [runtimeNode] }))
+      if (url.includes('/api/v1/admin/runtime-nodes/runtime-1/')) return Promise.resolve(jsonResponse({ message: 'Initial detail fan-out was requested.' }, 500))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+    vi.stubEnv('VITE_UTCP_REVERB_APP_KEY', 'public-reverb-key')
+    vi.stubEnv('VITE_UTCP_WS_HOST', 'app.utcp.local.test')
+    vi.stubEnv('VITE_UTCP_WS_PORT', '443')
+    vi.stubEnv('VITE_UTCP_WS_SCHEME', 'wss')
+    vi.stubEnv('VITE_UTCP_WS_PATH', '/app')
+    const realtime = createMockRealtimeEcho()
+    const wrapper = await mountApp('/admin/tenants')
+    const catalogCallsBeforeNavigation = calls.filter((call) => call.url.endsWith('/api/v1/admin/runtime-node-catalog')).length
+    const listCallsBeforeNavigation = calls.filter((call) => call.url.endsWith('/api/v1/admin/runtime-nodes')).length
+
+    await wrapper.findAll('a').find((link) => link.text() === 'Runtime nodes')?.trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/admin/runtime-nodes')
+    expect(wrapper.text()).toContain('Proof Runtime')
+    expect(realtime.privateChannels).toEqual(['tenant.tenant-1.runtime-nodes'])
+    expect(calls.filter((call) => call.url.endsWith('/api/v1/admin/runtime-node-catalog'))).toHaveLength(catalogCallsBeforeNavigation + 1)
+    expect(calls.filter((call) => call.url.endsWith('/api/v1/admin/runtime-nodes'))).toHaveLength(listCallsBeforeNavigation + 1)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/adapter-configuration'))).toBe(false)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/runtime-evidence'))).toBe(false)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/history?limit=10'))).toBe(false)
+  })
+
   it('renders runtime-node administration without exposing credential secrets', async () => {
     const calls: Array<{ url: string; body?: unknown }> = []
     mockRuntimeAdminFetch(calls)
@@ -702,6 +827,7 @@ describe('C1 App shell', () => {
     expect(calls.some((call) => call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/history?limit=10'))).toBe(false)
 
     realtime.emitConnection('state_change', { current: 'connected' })
+    realtime.emitSubscriptionSucceeded('tenant.tenant-1.runtime-nodes')
     await nextTick()
     expect(wrapper.text()).toContain('Live updates connected')
 
@@ -773,6 +899,58 @@ describe('C1 App shell', () => {
       call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/runtime-evidence') ||
       call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/history?limit=10'),
     )).toHaveLength(detailCallCountAfterFirstOpen)
+  })
+
+  it('renders Conference operations with bounded list, detail, and participant request budgets', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockConferenceAdminFetch(calls)
+    vi.stubEnv('VITE_UTCP_REVERB_APP_KEY', 'public-reverb-key')
+    vi.stubEnv('VITE_UTCP_WS_HOST', 'app.utcp.local.test')
+    vi.stubEnv('VITE_UTCP_WS_PORT', '443')
+    vi.stubEnv('VITE_UTCP_WS_SCHEME', 'wss')
+    vi.stubEnv('VITE_UTCP_WS_PATH', '/app')
+    const realtime = createMockRealtimeEcho()
+
+    const wrapper = await mountApp('/operations/conferences')
+
+    expect(router.currentRoute.value.path).toBe('/operations/conferences')
+    expect(wrapper.text()).toContain('Conferences')
+    expect(wrapper.text()).toContain('Daily Ops')
+    expect(wrapper.text()).toContain('Support Room')
+    expect(wrapper.text()).toContain('Live updates connecting')
+    expect(wrapper.text()).toContain('Conferences')
+    expect(realtime.createdConfigs).toEqual([{
+      appKey: 'public-reverb-key',
+      wsHost: 'app.utcp.local.test',
+      wsPort: 443,
+      wsScheme: 'wss',
+      wsPath: '/app',
+      authEndpoint: '/api/broadcasting/auth',
+    }])
+    expect(realtime.privateChannels).toEqual(['tenant.tenant-1.conferences'])
+    expect(calls.filter((call) => call.url.endsWith('/api/v1/admin/conferences'))).toHaveLength(1)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/conferences/conference-1'))).toBe(false)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/conferences/conference-1/participants'))).toBe(false)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/conferences/conference-2'))).toBe(false)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/conferences/conference-2/participants'))).toBe(false)
+
+    realtime.emitConnection('state_change', { current: 'connected' })
+    realtime.emitSubscriptionSucceeded('tenant.tenant-1.conferences')
+    await nextTick()
+    expect(wrapper.text()).toContain('Live updates connected')
+
+    await wrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Runtime node')
+    expect(wrapper.text()).toContain('Binding')
+    expect(wrapper.text()).toContain('Participants')
+    expect(wrapper.text()).toContain('host')
+    expect(calls.filter((call) => call.url.endsWith('/api/v1/admin/conferences'))).toHaveLength(1)
+    expect(calls.filter((call) => call.url.endsWith('/api/v1/admin/conferences/conference-1'))).toHaveLength(1)
+    expect(calls.filter((call) => call.url.endsWith('/api/v1/admin/conferences/conference-1/participants'))).toHaveLength(1)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/conferences/conference-2'))).toBe(false)
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/conferences/conference-2/participants'))).toBe(false)
   })
 
   it('preserves current capabilities and submits adapter configuration through canonical APIs', async () => {
@@ -1535,6 +1713,34 @@ describe('C1 App shell', () => {
     expect(calls).toHaveLength(callCountBeforeThemeChange)
   })
 
+  it('classifies only appearance as application storage and bounds the vendor Pusher transport cache', () => {
+    window.localStorage.setItem(appearanceStorageKey, 'dark')
+    window.localStorage.setItem('pusherTransportTLS', JSON.stringify({ timestamp: 1770000000000, transport: 'wss' }))
+
+    const keys = Object.keys(window.localStorage)
+    expect(keys).toEqual(expect.arrayContaining([appearanceStorageKey, 'pusherTransportTLS']))
+    expect(isPermittedPusherTransportCache(window.localStorage.getItem('pusherTransportTLS'))).toBe(true)
+    expect(window.localStorage.getItem('pusherTransportTLS')).not.toContain('tenant-1')
+    expect(window.localStorage.getItem('pusherTransportTLS')).not.toContain('user-1')
+    expect(window.localStorage.getItem('pusherTransportTLS')).not.toContain('private-tenant')
+    expect(window.localStorage.getItem('pusherTransportTLS')).not.toContain('auth')
+    expect(window.localStorage.getItem('pusherTransportTLS')).not.toContain('socket')
+    expect(window.localStorage.getItem('pusherTransportTLS')).not.toContain('public-reverb-key')
+    expect(window.sessionStorage.length).toBe(0)
+
+    const storageKeysArePermitted = () => Object.keys(window.localStorage).every((key) =>
+      key === appearanceStorageKey
+      || (key === 'pusherTransportTLS' && isPermittedPusherTransportCache(window.localStorage.getItem(key))),
+    )
+
+    expect(storageKeysArePermitted()).toBe(true)
+    window.localStorage.setItem('unexpected', 'value')
+    expect(storageKeysArePermitted()).toBe(false)
+    window.localStorage.removeItem('unexpected')
+    window.localStorage.setItem('pusherTransportTLS', JSON.stringify({ timestamp: 1770000000000, transport: 'wss', tenant_id: 'tenant-1' }))
+    expect(storageKeysArePermitted()).toBe(false)
+  })
+
   it('loads dashboard summaries from existing APIs and preserves partial failures', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
       const url = input.toString()
@@ -1766,6 +1972,7 @@ describe('C1 App shell', () => {
       'ChangePasswordView.vue': changePasswordViewSource,
       'TenantsView.vue': tenantsViewSource,
       'MembershipsView.vue': membershipsViewSource,
+      'ConferenceOperationsView.vue': conferenceOperationsViewSource,
       'RuntimeNodesView.vue': runtimeNodesViewSource,
       'UserDetailView.vue': userDetailViewSource,
     }
