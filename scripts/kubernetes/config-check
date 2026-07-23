@@ -17,7 +17,7 @@ render_overlay > "$tmp"
 kubectl kustomize "$K8S_MIGRATION_OVERLAY" > "$migration_tmp"
 kubectl kustomize "$K8S_PLATFORM_OVERLAY" > "$platform_tmp"
 
-kube apply --dry-run=server -f "$tmp" >/dev/null
+kube apply --dry-run=client -f "$tmp" >/dev/null
 "$SCRIPT_DIR/static-check" "$tmp"
 python3 - "$migration_tmp" "$tmp" "$platform_tmp" <<'PY'
 from __future__ import annotations
@@ -70,6 +70,108 @@ def validate_reverb_allowed_origin(label: str, rendered_objects: dict[str, Any])
 
 validate_reverb_allowed_origin("local", local_objects)
 validate_reverb_allowed_origin("platform", platform_objects)
+
+REVERB_SECRET = "utcp-local-reverb-credentials"
+REVERB_CONFIG_KEYS = {"REVERB_HOST", "REVERB_PORT", "REVERB_SCHEME"}
+REVERB_SECRET_KEYS = {"REVERB_APP_ID", "REVERB_APP_KEY", "REVERB_APP_SECRET"}
+PUBLISHERS = {
+    "Deployment/utcp-platform/api",
+    "Deployment/utcp-platform/worker",
+    "Deployment/utcp-platform/control-plane-outbox-dispatcher",
+    "Deployment/utcp-platform/reverb",
+}
+NON_PUBLISHERS = {
+    "Deployment/utcp-platform/scheduler",
+    "Deployment/utcp-platform/telephony-command-worker",
+    "Deployment/utcp-platform/telephony-event-normalizer",
+    "Deployment/utcp-platform/telephony-reconciler",
+    "Deployment/utcp-platform/simulator-event-source",
+    "Deployment/utcp-platform/asterisk-ari-events",
+    "Deployment/utcp-platform/kamailio-registration-observer",
+    "Deployment/utcp-platform/utcp-runtime-fence-worker",
+}
+
+
+def workload_containers(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    spec = doc.get("spec") or {}
+    if doc.get("kind") == "Job":
+        return spec.get("template", {}).get("spec", {}).get("containers") or []
+    if doc.get("kind") == "Deployment":
+        return spec.get("template", {}).get("spec", {}).get("containers") or []
+    return []
+
+
+def env_from_names(container: dict[str, Any]) -> tuple[list[str], list[str]]:
+    config_maps: list[str] = []
+    secrets: list[str] = []
+    for entry in container.get("envFrom") or []:
+        config_name = (entry.get("configMapRef") or {}).get("name")
+        secret_name = (entry.get("secretRef") or {}).get("name")
+        if config_name:
+            config_maps.append(config_name)
+        if secret_name:
+            secrets.append(secret_name)
+    return config_maps, secrets
+
+
+def explicit_env(container: dict[str, Any]) -> dict[str, str]:
+    return {
+        entry.get("name"): entry.get("value")
+        for entry in container.get("env") or []
+        if entry.get("name")
+    }
+
+
+def effective_broadcast_connection(container: dict[str, Any], config_data: dict[str, Any]) -> str | None:
+    env = explicit_env(container)
+    if "BROADCAST_CONNECTION" in env:
+        return env["BROADCAST_CONNECTION"]
+    config_maps, _ = env_from_names(container)
+    if "utcp-application-config" in config_maps:
+        return config_data.get("BROADCAST_CONNECTION")
+    return None
+
+
+def validate_broadcasting_boundary(label: str, rendered_objects: dict[str, Any]) -> None:
+    config_data = (rendered_objects.get("ConfigMap/utcp-platform/utcp-application-config") or {}).get("data") or {}
+    reverb_secret = rendered_objects.get("Secret/utcp-platform/utcp-local-reverb-credentials")
+    secret_data = (reverb_secret or {}).get("data") or {}
+
+    for key, doc in rendered_objects.items():
+        if not key.startswith(("Deployment/", "Job/")):
+            continue
+        containers = workload_containers(doc)
+        if not containers:
+            continue
+        container = containers[0]
+        _, secrets = env_from_names(container)
+        env = explicit_env(container)
+        connection = effective_broadcast_connection(container, config_data)
+
+        if connection == "reverb":
+            if key not in PUBLISHERS:
+                fail(f"{label} {key} unexpectedly uses BROADCAST_CONNECTION=reverb")
+            if REVERB_SECRET not in secrets:
+                fail(f"{label} {key} uses Reverb without {REVERB_SECRET}")
+            missing_config = sorted(REVERB_CONFIG_KEYS - set(config_data))
+            if missing_config:
+                fail(f"{label} {key} publisher misses Reverb config keys: {missing_config}")
+            missing_secret = sorted(REVERB_SECRET_KEYS - set(secret_data))
+            if missing_secret:
+                fail(f"{label} {key} publisher misses Reverb credential keys: {missing_secret}")
+
+        if key in NON_PUBLISHERS:
+            if connection != "log":
+                fail(f"{label} {key} must use BROADCAST_CONNECTION=log")
+            if REVERB_SECRET in secrets:
+                fail(f"{label} {key} must not reference {REVERB_SECRET}")
+            for secret_key in REVERB_SECRET_KEYS:
+                if secret_key in env:
+                    fail(f"{label} {key} must not define {secret_key}")
+
+
+validate_broadcasting_boundary("local", local_objects)
+validate_broadcasting_boundary("platform", platform_objects)
 
 job = objects.get("Job/utcp-platform/utcp-migrate")
 config = objects.get("ConfigMap/utcp-platform/utcp-application-config")

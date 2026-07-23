@@ -49,12 +49,34 @@ authority_renders = {
 workload_renders = {
     "base": "infrastructure/kubernetes/base",
     "overlays/local": "infrastructure/kubernetes/overlays/local",
+    "overlays/local/platform": "infrastructure/kubernetes/overlays/local/platform",
+    "overlays/local/migration": "infrastructure/kubernetes/overlays/local/migration",
     "overlays/local/runtime": "infrastructure/kubernetes/overlays/local/runtime",
     "overlays/local-two-asterisk": "infrastructure/kubernetes/overlays/local-two-asterisk",
     "components/runtime-fencing": "infrastructure/kubernetes/components/runtime-fencing",
     "components/asterisk-instance": "infrastructure/kubernetes/components/asterisk-instance",
 }
 workload_kinds = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod"}
+reverb_secret = "utcp-local-reverb-credentials"
+reverb_config_keys = {"REVERB_HOST", "REVERB_PORT", "REVERB_SCHEME"}
+reverb_secret_keys = {"REVERB_APP_ID", "REVERB_APP_KEY", "REVERB_APP_SECRET"}
+publisher_workloads = {
+    "Deployment/utcp-platform/api",
+    "Deployment/utcp-platform/worker",
+    "Deployment/utcp-platform/control-plane-outbox-dispatcher",
+    "Deployment/utcp-platform/reverb",
+}
+non_publisher_workloads = {
+    "Deployment/utcp-platform/scheduler",
+    "Deployment/utcp-platform/telephony-command-worker",
+    "Deployment/utcp-platform/telephony-event-normalizer",
+    "Deployment/utcp-platform/telephony-reconciler",
+    "Deployment/utcp-platform/simulator-event-source",
+    "Deployment/utcp-platform/asterisk-ari-events",
+    "Deployment/utcp-platform/kamailio-registration-observer",
+    "Deployment/utcp-platform/utcp-runtime-fence-worker",
+    "Job/utcp-platform/utcp-migrate",
+}
 
 
 def fail(message: str) -> None:
@@ -112,6 +134,85 @@ def pod_template_spec(doc: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
         spec = doc.get("spec", {}).get("template", {}).get("spec")
         return identifier, spec or {}
     return None
+
+
+def workload_containers(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    template = pod_template_spec(doc)
+    if template is None:
+        return []
+    _, pod_spec = template
+    return pod_spec.get("containers") or []
+
+
+def env_from_names(container: dict[str, Any]) -> tuple[list[str], list[str]]:
+    config_maps: list[str] = []
+    secrets: list[str] = []
+    for entry in container.get("envFrom") or []:
+        config_name = (entry.get("configMapRef") or {}).get("name")
+        secret_name = (entry.get("secretRef") or {}).get("name")
+        if config_name:
+            config_maps.append(config_name)
+        if secret_name:
+            secrets.append(secret_name)
+    return config_maps, secrets
+
+
+def explicit_env(container: dict[str, Any]) -> dict[str, str]:
+    return {
+        entry.get("name"): entry.get("value")
+        for entry in container.get("env") or []
+        if entry.get("name")
+    }
+
+
+def effective_broadcast_connection(container: dict[str, Any], config_data: dict[str, Any]) -> str | None:
+    env = explicit_env(container)
+    if "BROADCAST_CONNECTION" in env:
+        return env["BROADCAST_CONNECTION"]
+    config_maps, _ = env_from_names(container)
+    if "utcp-application-config" in config_maps:
+        return config_data.get("BROADCAST_CONNECTION")
+    return None
+
+
+def validate_broadcasting_boundary(label: str, docs: list[dict[str, Any]]) -> None:
+    rendered_objects = {object_key(doc): doc for doc in docs}
+    config_data = (rendered_objects.get("ConfigMap/utcp-platform/utcp-application-config") or {}).get("data") or {}
+    secret_data = (
+        rendered_objects.get("Secret/utcp-platform/utcp-local-reverb-credentials") or {}
+    ).get("data") or {}
+
+    for key, doc in rendered_objects.items():
+        if doc.get("kind") not in workload_kinds:
+            continue
+        containers = workload_containers(doc)
+        if not containers:
+            continue
+        container = containers[0]
+        _, secrets = env_from_names(container)
+        env = explicit_env(container)
+        connection = effective_broadcast_connection(container, config_data)
+
+        if connection == "reverb":
+            if key not in publisher_workloads:
+                fail(f"{label} {key} unexpectedly uses BROADCAST_CONNECTION=reverb")
+            if reverb_secret not in secrets:
+                fail(f"{label} {key} uses Reverb without {reverb_secret}")
+            missing_config = sorted(reverb_config_keys - set(config_data))
+            if missing_config:
+                fail(f"{label} {key} publisher misses Reverb config keys: {missing_config}")
+            missing_secret = sorted(reverb_secret_keys - set(secret_data))
+            if missing_secret:
+                fail(f"{label} {key} publisher misses Reverb credential keys: {missing_secret}")
+
+        if key in non_publisher_workloads:
+            if connection != "log":
+                fail(f"{label} {key} must use BROADCAST_CONNECTION=log")
+            if reverb_secret in secrets:
+                fail(f"{label} {key} must not reference {reverb_secret}")
+            for secret_key in reverb_secret_keys:
+                if secret_key in env:
+                    fail(f"{label} {key} must not define {secret_key}")
 
 
 def validate_container_security(identifier: str, name: str, container: dict[str, Any]) -> None:
@@ -242,7 +343,9 @@ if sorted(redis_roles) != [
     fail("Redis ingress roles must preserve approved clients and include reverb")
 
 for label, path in workload_renders.items():
-    for doc in render(path):
+    rendered_docs = render(path)
+    validate_broadcasting_boundary(label, rendered_docs)
+    for doc in rendered_docs:
         if doc.get("kind") not in workload_kinds:
             continue
         template = pod_template_spec(doc)

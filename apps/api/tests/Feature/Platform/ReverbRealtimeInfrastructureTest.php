@@ -296,6 +296,34 @@ final class ReverbRealtimeInfrastructureTest extends TestCase
         }
     }
 
+    public function test_non_publisher_workloads_use_log_broadcaster_without_reverb_credentials(): void
+    {
+        $objects = $this->kustomizeObjects('infrastructure/kubernetes/overlays/local');
+        $config = $objects['ConfigMap/utcp-platform/utcp-application-config']['data'];
+
+        foreach ([
+            'Deployment/utcp-platform/scheduler',
+            'Deployment/utcp-platform/telephony-command-worker',
+            'Deployment/utcp-platform/telephony-event-normalizer',
+            'Deployment/utcp-platform/telephony-reconciler',
+            'Deployment/utcp-platform/simulator-event-source',
+            'Deployment/utcp-platform/asterisk-ari-events',
+            'Deployment/utcp-platform/kamailio-registration-observer',
+        ] as $key) {
+            $container = $objects[$key]['spec']['template']['spec']['containers'][0];
+            $this->assertSame('log', $this->effectiveBroadcastConnection($container, $config), $key);
+            $this->assertNotContains('utcp-local-reverb-credentials', $this->envFromNames($container)['secrets'], $key);
+            foreach (['REVERB_APP_ID', 'REVERB_APP_KEY', 'REVERB_APP_SECRET'] as $secretKey) {
+                $this->assertArrayNotHasKey($secretKey, $this->explicitEnvValues($container), $key);
+            }
+        }
+
+        $fencingObjects = $this->kustomizeObjects('infrastructure/kubernetes/components/runtime-fencing');
+        $fencingContainer = $fencingObjects['Deployment/utcp-platform/utcp-runtime-fence-worker']['spec']['template']['spec']['containers'][0];
+        $this->assertSame('log', $this->effectiveBroadcastConnection($fencingContainer, $config));
+        $this->assertNotContains('utcp-local-reverb-credentials', $this->envFromNames($fencingContainer)['secrets']);
+    }
+
     public function test_reverb_workload_keeps_credentials_and_private_clusterip_service(): void
     {
         $objects = $this->kustomizeObjects('infrastructure/kubernetes/overlays/local/platform');
@@ -481,5 +509,39 @@ PY], $root);
             'configMaps' => $configMaps,
             'secrets' => $secrets,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $container
+     * @return array<string, string>
+     */
+    private function explicitEnvValues(array $container): array
+    {
+        $env = [];
+        foreach ($container['env'] ?? [] as $entry) {
+            if (isset($entry['name'])) {
+                $env[$entry['name']] = $entry['value'] ?? '';
+            }
+        }
+
+        return $env;
+    }
+
+    /**
+     * @param  array<string, mixed>  $container
+     * @param  array<string, mixed>  $config
+     */
+    private function effectiveBroadcastConnection(array $container, array $config): ?string
+    {
+        $env = $this->explicitEnvValues($container);
+        if (array_key_exists('BROADCAST_CONNECTION', $env)) {
+            return $env['BROADCAST_CONNECTION'];
+        }
+
+        if (in_array('utcp-application-config', $this->envFromNames($container)['configMaps'], true)) {
+            return $config['BROADCAST_CONNECTION'] ?? null;
+        }
+
+        return null;
     }
 }

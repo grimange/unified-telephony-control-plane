@@ -4,19 +4,28 @@ namespace App\ControlPlane\RuntimeOperations;
 
 use App\ControlPlane\Messaging\EventEnvelope;
 use App\ControlPlane\Messaging\OutboxRepository;
+use App\ControlPlane\Shared\CausationId;
+use App\ControlPlane\Shared\CorrelationId;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\IdempotencyKey;
 use App\ControlPlane\Shared\PayloadSafety;
+use App\ControlPlane\Shared\RequestId;
 use App\ControlPlane\Shared\RuntimeOperationId;
 use App\ControlPlane\Shared\StableJson;
+use Carbon\CarbonImmutable;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 final class RuntimeOperationRepository
 {
+    private const EVENT_CREATED = 'runtime_operation.created';
+
+    private const EVENT_STATUS_CHANGED = 'runtime_operation.status_changed';
+
     public function __construct(
         private readonly OperationStateMachine $stateMachine = new OperationStateMachine,
         private readonly OperationLogger $logger = new OperationLogger,
+        private readonly OutboxRepository $outbox = new OutboxRepository,
     ) {}
 
     /**
@@ -44,27 +53,38 @@ final class RuntimeOperationRepository
         $id = RuntimeOperationId::new()->value();
         $safePayload = PayloadSafety::assertSafe($payload);
 
-        DB::table('runtime_operations')->insert([
-            'id' => $id,
-            'tenant_id' => $context->tenantId,
-            'runtime_node_id' => $runtimeNodeId,
-            'operation_type' => $operationType,
-            'aggregate_type' => $aggregateType,
-            'aggregate_id' => $aggregateId,
-            'payload_version' => $payloadVersion,
-            'payload' => StableJson::encode($safePayload),
-            'status' => OperationStatus::Pending->value,
-            'priority' => $priority,
-            'idempotency_key' => $idempotencyKey?->value(),
-            'correlation_id' => $context->correlationId->value(),
-            'causation_id' => $context->causationId?->value(),
-            'request_id' => $context->requestId->value(),
-            'attempt_count' => 0,
-            'max_attempts' => $maxAttempts,
-            'available_at' => now(),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        DB::transaction(function () use ($id, $operationType, $aggregateType, $aggregateId, $safePayload, $context, $idempotencyKey, $payloadVersion, $priority, $maxAttempts, $runtimeNodeId): void {
+            DB::table('runtime_operations')->insert([
+                'id' => $id,
+                'tenant_id' => $context->tenantId,
+                'runtime_node_id' => $runtimeNodeId,
+                'operation_type' => $operationType,
+                'aggregate_type' => $aggregateType,
+                'aggregate_id' => $aggregateId,
+                'payload_version' => $payloadVersion,
+                'payload' => StableJson::encode($safePayload),
+                'status' => OperationStatus::Pending->value,
+                'priority' => $priority,
+                'idempotency_key' => $idempotencyKey?->value(),
+                'correlation_id' => $context->correlationId->value(),
+                'causation_id' => $context->causationId?->value(),
+                'request_id' => $context->requestId->value(),
+                'attempt_count' => 0,
+                'max_attempts' => $maxAttempts,
+                'available_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $this->appendRuntimeOperationEvent(
+                $this->outbox,
+                self::EVENT_CREATED,
+                $id,
+                $context->tenantId,
+                $runtimeNodeId,
+                $context,
+            );
+        });
 
         $this->logger->info('runtime operation accepted', [
             'operation_id' => $id,
@@ -152,6 +172,15 @@ final class RuntimeOperationRepository
                     'updated_at' => now(),
                 ]);
 
+                $this->appendRuntimeOperationEvent(
+                    $this->outbox,
+                    self::EVENT_STATUS_CHANGED,
+                    (string) $row->id,
+                    is_string($row->tenant_id) ? $row->tenant_id : null,
+                    is_string($row->runtime_node_id) ? $row->runtime_node_id : null,
+                    $this->contextFromOperationRow($row, 'runtime operation claimed'),
+                );
+
                 $claimed[] = new ClaimedOperation($row->id, $leaseOwner, $token, $attempt);
             }
 
@@ -178,7 +207,10 @@ final class RuntimeOperationRepository
 
     public function markRunning(string $id, string $leaseToken): void
     {
-        $this->transitionWithFence($id, $leaseToken, OperationStatus::Running, []);
+        DB::transaction(function () use ($id, $leaseToken): void {
+            $row = $this->transitionWithFence($id, $leaseToken, OperationStatus::Running, []);
+            $this->appendStatusChangedEvent($this->outbox, $row, 'runtime operation running');
+        });
     }
 
     public function complete(string $id, string $leaseToken, EventEnvelope $event, OutboxRepository $outbox): void
@@ -208,6 +240,7 @@ final class RuntimeOperationRepository
                     'updated_at' => now(),
                 ]);
             $outbox->append($event);
+            $this->appendStatusChangedEvent($outbox, $operation, 'runtime operation completed');
         });
     }
 
@@ -238,6 +271,8 @@ final class RuntimeOperationRepository
                 'updated_at' => now(),
             ]);
 
+            $this->appendStatusChangedEvent($this->outbox, $row, 'runtime operation failed');
+
             return $next;
         });
     }
@@ -253,6 +288,8 @@ final class RuntimeOperationRepository
                 'cancelled_at' => now(),
                 'updated_at' => now(),
             ]);
+
+            $this->appendStatusChangedEvent($this->outbox, $row, 'runtime operation cancelled');
         });
     }
 
@@ -267,13 +304,15 @@ final class RuntimeOperationRepository
                 'completed_at' => now(),
                 'updated_at' => now(),
             ]);
+
+            $this->appendStatusChangedEvent($this->outbox, $row, 'runtime operation expired');
         });
     }
 
     /**
      * @param  array<string, mixed>  $fields
      */
-    private function transitionWithFence(string $id, string $leaseToken, OperationStatus $to, array $fields): void
+    private function transitionWithFence(string $id, string $leaseToken, OperationStatus $to, array $fields): object
     {
         $row = $this->lockedOperation($id);
         $this->assertFence($row, $leaseToken);
@@ -283,6 +322,8 @@ final class RuntimeOperationRepository
             'status' => $to->value,
             'updated_at' => now(),
         ]));
+
+        return $row;
     }
 
     private function lockedOperation(string $id): object
@@ -302,5 +343,61 @@ final class RuntimeOperationRepository
         if ($row->lease_token !== $leaseToken || $leaseExpiresAt === null || $leaseExpiresAt->lessThanOrEqualTo(now())) {
             throw new FencingViolation('runtime operation lease token is expired or superseded');
         }
+    }
+
+    private function appendStatusChangedEvent(OutboxRepository $outbox, object $row, string $reason): void
+    {
+        $this->appendRuntimeOperationEvent(
+            $outbox,
+            self::EVENT_STATUS_CHANGED,
+            (string) $row->id,
+            is_string($row->tenant_id) ? $row->tenant_id : null,
+            is_string($row->runtime_node_id) ? $row->runtime_node_id : null,
+            $this->contextFromOperationRow($row, $reason),
+        );
+    }
+
+    private function appendRuntimeOperationEvent(
+        OutboxRepository $outbox,
+        string $eventType,
+        string $runtimeOperationId,
+        ?string $tenantId,
+        ?string $runtimeNodeId,
+        ExecutionContext $context,
+    ): void {
+        if ($tenantId === null || $tenantId === '') {
+            return;
+        }
+
+        $payload = [
+            'runtime_operation_id' => $runtimeOperationId,
+        ];
+        if ($runtimeNodeId !== null && $runtimeNodeId !== '') {
+            $payload['runtime_node_id'] = $runtimeNodeId;
+        }
+
+        $outbox->append(EventEnvelope::forAggregate(
+            eventType: $eventType,
+            eventVersion: 1,
+            aggregateType: 'runtime_operation',
+            aggregateId: $runtimeOperationId,
+            payload: $payload,
+            context: $context,
+        ));
+    }
+
+    private function contextFromOperationRow(object $row, string $reason): ExecutionContext
+    {
+        return new ExecutionContext(
+            requestId: RequestId::fromString((string) $row->request_id),
+            correlationId: CorrelationId::fromString((string) $row->correlation_id),
+            causationId: is_string($row->causation_id) ? CausationId::fromString($row->causation_id) : null,
+            actorType: 'system',
+            actorId: null,
+            tenantId: is_string($row->tenant_id) ? $row->tenant_id : null,
+            reason: $reason,
+            origin: 'runtime-operation-repository',
+            occurredAt: CarbonImmutable::now(),
+        );
     }
 }

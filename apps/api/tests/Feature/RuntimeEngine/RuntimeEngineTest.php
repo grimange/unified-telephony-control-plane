@@ -129,7 +129,10 @@ final class RuntimeEngineTest extends TestCase
         $this->assertDatabaseHas('runtime_operations', ['id' => $retryId, 'status' => OperationStatus::RetryScheduled->value, 'last_failure_class' => 'transient_transport']);
         $this->assertDatabaseHas('runtime_operations', ['id' => $terminalId, 'status' => OperationStatus::TerminalFailed->value, 'last_failure_class' => 'invalid_request']);
         $this->assertDatabaseHas('runtime_operations', ['id' => $unsupportedHandlerId, 'status' => OperationStatus::TerminalFailed->value, 'last_failure_class' => 'unsupported_capability']);
-        $this->assertDatabaseCount('control_plane_outbox_messages', 1);
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')
+            ->where('aggregate_type', 'runtime_node')
+            ->where('event_type', 'runtime_operation.test_completed')
+            ->count());
 
         $unsupportedAdapterNode = $this->runtimeNode('active', 'adapterless')[1];
         DB::table('runtime_nodes')->where('id', $unsupportedAdapterNode)->update(['tenant_id' => $tenantId, 'adapter_key' => 'freeswitch-esl']);
@@ -171,7 +174,10 @@ final class RuntimeEngineTest extends TestCase
             includeOperationTypes: ['runtime.node.runtime.fence'],
         ));
         $this->assertDatabaseHas('runtime_operations', ['id' => $fenceId, 'status' => OperationStatus::Succeeded->value]);
-        $this->assertDatabaseCount('control_plane_outbox_messages', 2);
+        $this->assertSame(2, DB::table('control_plane_outbox_messages')
+            ->where('aggregate_type', 'runtime_node')
+            ->where('event_type', 'runtime_operation.test_completed')
+            ->count());
     }
 
     public function test_infrastructure_worker_filter_does_not_claim_normal_operations(): void

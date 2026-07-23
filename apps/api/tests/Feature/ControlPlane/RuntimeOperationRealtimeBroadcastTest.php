@@ -6,7 +6,9 @@ use App\ControlPlane\Messaging\EventEnvelope;
 use App\ControlPlane\Messaging\InboxRepository;
 use App\ControlPlane\Messaging\OutboxRepository;
 use App\ControlPlane\RuntimeOperations\OperationStatus;
+use App\ControlPlane\RuntimeOperations\RuntimeOperationRepository;
 use App\ControlPlane\Shared\ExecutionContext;
+use App\ControlPlane\Shared\IdempotencyKey;
 use App\ControlPlane\Shared\RuntimeOperationId;
 use App\Events\RuntimeNodeOperationalStateChanged;
 use App\Events\RuntimeOperationOperationalStateChanged;
@@ -141,27 +143,54 @@ final class RuntimeOperationRealtimeBroadcastTest extends TestCase
         $this->assertArrayNotHasKey('runtime_node_id', $event->broadcastWith());
     }
 
-    public function test_outbox_dispatcher_bridges_runtime_operation_events_only(): void
+    public function test_repository_transition_produces_runtime_operation_outbox_and_dispatcher_bridges_it(): void
     {
         Event::fake([RuntimeOperationOperationalStateChanged::class, RuntimeNodeOperationalStateChanged::class]);
-        [$tenantId, $runtimeNodeId, $operationId] = $this->createRuntimeOperationRecord();
+        [$admin, $tenantId] = $this->createTenantAdmin('runtime-operation-producer-admin@utcp.local.test', 'runtime-operation-producer');
+        $runtimeNodeId = $this->createRuntimeNode($tenantId, $admin->id);
+        $repository = new RuntimeOperationRepository;
+        $operationId = $repository->create(
+            'runtime.node.inspect',
+            'runtime_node',
+            $runtimeNodeId,
+            ['action' => 'inspect'],
+            ExecutionContext::system(tenantId: $tenantId, origin: 'ui-d16-producer-test'),
+            runtimeNodeId: $runtimeNodeId,
+        );
+        $claim = $repository->claimAvailable('runtime-operation-producer-worker')[0];
 
-        $createdId = $this->appendOutboxEvent($tenantId, $operationId, 'runtime_operation.created', 'runtime_operation', [
-            'runtime_node_id' => $runtimeNodeId,
-            'status' => 'terminal_failed',
-            'failure_message' => 'stack trace marker',
+        $rows = DB::table('control_plane_outbox_messages')
+            ->where('aggregate_type', 'runtime_operation')
+            ->where('aggregate_id', $operationId)
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get();
+
+        $this->assertCount(2, $rows);
+        $eventTypes = $rows->pluck('event_type')->all();
+        sort($eventTypes);
+        $this->assertSame(['runtime_operation.created', 'runtime_operation.status_changed'], $eventTypes);
+        foreach ($rows as $row) {
+            $payload = json_decode((string) $row->payload, true, 512, JSON_THROW_ON_ERROR);
+            $this->assertSame($operationId, $payload['runtime_operation_id']);
+            $this->assertSame($runtimeNodeId, $payload['runtime_node_id']);
+            $this->assertSame($tenantId, $row->tenant_id);
+            $this->assertSame('pending', $row->dispatch_status);
+            $this->assertSame(['runtime_node_id', 'runtime_operation_id'], array_keys(collect($payload)->sortKeys()->all()));
+            $serialized = json_encode($payload, JSON_THROW_ON_ERROR);
+            foreach (['payload', 'status', 'failure', 'stack', 'secret', 'credential', 'endpoint', 'command', 'provider', 'result', 'requested', 'lease'] as $forbidden) {
+                $this->assertStringNotContainsString($forbidden, $serialized);
+            }
+        }
+
+        $this->assertDatabaseHas('runtime_operations', [
+            'id' => $operationId,
+            'status' => OperationStatus::Leased->value,
+            'lease_token' => $claim->leaseToken,
         ]);
-        $updatedId = $this->appendOutboxEvent($tenantId, $operationId, 'runtime_operation.status_changed', 'runtime_operation', [
-            'runtime_node_id' => $runtimeNodeId,
-            'payload' => ['raw_marker' => 'must-not-broadcast'],
-        ]);
-        $wrongPrefixId = $this->appendOutboxEvent($tenantId, $operationId, 'runtime_node.updated', 'runtime_operation', [
-            'runtime_node_id' => $runtimeNodeId,
-        ]);
-        $otherAggregateId = $this->appendOutboxEvent($tenantId, $runtimeNodeId, 'runtime_operation.status_changed', 'runtime_node', []);
 
         $dispatcher = new OutboxDispatcher(new OutboxRepository, new InboxRepository);
-        $this->assertSame(4, $dispatcher->dispatchOnce('runtime-operation-realtime-worker', 10));
+        $this->assertSame(2, $dispatcher->dispatchOnce('runtime-operation-producer-dispatcher', 10));
 
         Event::assertDispatched(RuntimeOperationOperationalStateChanged::class, 2);
         Event::assertDispatched(
@@ -175,15 +204,32 @@ final class RuntimeOperationRealtimeBroadcastTest extends TestCase
         Event::assertDispatched(
             RuntimeOperationOperationalStateChanged::class,
             fn (RuntimeOperationOperationalStateChanged $event): bool => $event->eventType === 'runtime_operation.status_changed'
-                && $event->runtimeOperationId === $operationId,
+                && $event->runtimeOperationId === $operationId
+                && $event->tenantId === $tenantId,
         );
+        Event::assertNotDispatched(RuntimeNodeOperationalStateChanged::class);
+    }
+
+    public function test_outbox_bridge_rejects_non_runtime_operation_shapes(): void
+    {
+        Event::fake([RuntimeOperationOperationalStateChanged::class, RuntimeNodeOperationalStateChanged::class]);
+        [$tenantId, $runtimeNodeId, $operationId] = $this->createRuntimeOperationRecord();
+
+        $wrongPrefixId = $this->appendOutboxEvent($tenantId, $operationId, 'runtime_node.updated', 'runtime_operation', [
+            'runtime_node_id' => $runtimeNodeId,
+        ]);
+        $otherAggregateId = $this->appendOutboxEvent($tenantId, $runtimeNodeId, 'runtime_operation.status_changed', 'runtime_node', []);
+
+        $dispatcher = new OutboxDispatcher(new OutboxRepository, new InboxRepository);
+        $this->assertSame(2, $dispatcher->dispatchOnce('runtime-operation-realtime-worker', 10));
+
         Event::assertNotDispatched(
             RuntimeOperationOperationalStateChanged::class,
             fn (RuntimeOperationOperationalStateChanged $event): bool => $event->eventType === 'runtime_node.updated',
         );
         Event::assertNotDispatched(RuntimeNodeOperationalStateChanged::class);
 
-        foreach ([$createdId, $updatedId, $wrongPrefixId, $otherAggregateId] as $outboxId) {
+        foreach ([$wrongPrefixId, $otherAggregateId] as $outboxId) {
             $this->assertDatabaseHas('control_plane_outbox_messages', ['id' => $outboxId, 'dispatch_status' => 'dispatched']);
         }
     }
@@ -191,12 +237,19 @@ final class RuntimeOperationRealtimeBroadcastTest extends TestCase
     public function test_rolled_back_runtime_operation_outbox_event_produces_no_broadcast(): void
     {
         Event::fake([RuntimeOperationOperationalStateChanged::class]);
-        [$tenantId, $runtimeNodeId, $operationId] = $this->createRuntimeOperationRecord();
+        [$admin, $tenantId] = $this->createTenantAdmin('runtime-operation-rollback-admin@utcp.local.test', 'runtime-operation-rollback');
+        $runtimeNodeId = $this->createRuntimeNode($tenantId, $admin->id);
+        $repository = new RuntimeOperationRepository;
 
         DB::beginTransaction();
-        $this->appendOutboxEvent($tenantId, $operationId, 'runtime_operation.status_changed', 'runtime_operation', [
-            'runtime_node_id' => $runtimeNodeId,
-        ]);
+        $repository->create(
+            'runtime.node.inspect',
+            'runtime_node',
+            $runtimeNodeId,
+            ['action' => 'inspect'],
+            ExecutionContext::system(tenantId: $tenantId, origin: 'ui-d16-rollback-test'),
+            runtimeNodeId: $runtimeNodeId,
+        );
         DB::rollBack();
 
         $dispatcher = new OutboxDispatcher(new OutboxRepository, new InboxRepository);
@@ -207,14 +260,23 @@ final class RuntimeOperationRealtimeBroadcastTest extends TestCase
     public function test_broadcast_bridge_failure_does_not_reverse_committed_runtime_operation_mutation(): void
     {
         Queue::fake();
-        [$tenantId, $runtimeNodeId, $operationId] = $this->createRuntimeOperationRecord();
-        DB::table('runtime_operations')->where('id', $operationId)->update([
-            'status' => OperationStatus::Running->value,
-            'updated_at' => now(),
-        ]);
-        $outboxId = $this->appendOutboxEvent($tenantId, $operationId, 'runtime_operation.status_changed', 'runtime_operation', [
-            'runtime_node_id' => $runtimeNodeId,
-        ]);
+        [$admin, $tenantId] = $this->createTenantAdmin('runtime-operation-failure-admin@utcp.local.test', 'runtime-operation-failure');
+        $runtimeNodeId = $this->createRuntimeNode($tenantId, $admin->id);
+        $repository = new RuntimeOperationRepository;
+        $operationId = $repository->create(
+            'runtime.node.inspect',
+            'runtime_node',
+            $runtimeNodeId,
+            ['action' => 'inspect'],
+            ExecutionContext::system(tenantId: $tenantId, origin: 'ui-d16-failure-test'),
+            runtimeNodeId: $runtimeNodeId,
+        );
+        $claim = $repository->claimAvailable('runtime-operation-failure-worker')[0];
+        $outboxId = DB::table('control_plane_outbox_messages')
+            ->where('aggregate_type', 'runtime_operation')
+            ->where('aggregate_id', $operationId)
+            ->where('event_type', 'runtime_operation.created')
+            ->value('id');
 
         $bridge = new class extends OperationalBroadcastBridge
         {
@@ -229,7 +291,8 @@ final class RuntimeOperationRealtimeBroadcastTest extends TestCase
 
         $this->assertDatabaseHas('runtime_operations', [
             'id' => $operationId,
-            'status' => OperationStatus::Running->value,
+            'status' => OperationStatus::Leased->value,
+            'lease_token' => $claim->leaseToken,
         ]);
         $this->assertDatabaseHas('control_plane_outbox_messages', [
             'id' => $outboxId,
@@ -238,6 +301,41 @@ final class RuntimeOperationRealtimeBroadcastTest extends TestCase
             'last_failure_code' => 'queue_delivery_failed',
         ]);
         Queue::assertNothingPushed();
+    }
+
+    public function test_idempotent_runtime_operation_create_does_not_duplicate_runtime_operation_outbox(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin('runtime-operation-idempotent-admin@utcp.local.test', 'runtime-operation-idempotent');
+        $runtimeNodeId = $this->createRuntimeNode($tenantId, $admin->id);
+        $repository = new RuntimeOperationRepository;
+        $idempotencyKey = IdempotencyKey::fromString('runtime-operation-idempotent-key');
+        $context = ExecutionContext::system(tenantId: $tenantId, origin: 'ui-d16-idempotent-test');
+
+        $first = $repository->create(
+            'runtime.node.inspect',
+            'runtime_node',
+            $runtimeNodeId,
+            ['action' => 'inspect'],
+            $context,
+            $idempotencyKey,
+            runtimeNodeId: $runtimeNodeId,
+        );
+        $second = $repository->create(
+            'runtime.node.inspect',
+            'runtime_node',
+            $runtimeNodeId,
+            ['action' => 'inspect'],
+            $context,
+            $idempotencyKey,
+            runtimeNodeId: $runtimeNodeId,
+        );
+
+        $this->assertSame($first, $second);
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')
+            ->where('aggregate_type', 'runtime_operation')
+            ->where('aggregate_id', $first)
+            ->where('event_type', 'runtime_operation.created')
+            ->count());
     }
 
     /**

@@ -37,6 +37,9 @@ spec:
                 name: utcp-local-data-credentials
             - secretRef:
                 name: utcp-local-kamailio-db-credentials
+          env:
+            - name: BROADCAST_CONNECTION
+              value: log
           resources:
             requests:
               cpu: 100m

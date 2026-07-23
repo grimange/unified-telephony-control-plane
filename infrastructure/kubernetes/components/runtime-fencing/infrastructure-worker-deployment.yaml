@@ -36,6 +36,9 @@ spec:
           image: utcp-api:local
           imagePullPolicy: IfNotPresent
           args: ["telephony-infrastructure-worker"]
+          env:
+            - name: BROADCAST_CONNECTION
+              value: log
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

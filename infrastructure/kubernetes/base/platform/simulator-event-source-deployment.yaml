@@ -33,6 +33,9 @@ spec:
           imagePullPolicy: Always
           args:
             - simulator-event-source
+          env:
+            - name: BROADCAST_CONNECTION
+              value: log
           envFrom:
             - configMapRef:
                 name: utcp-application-config
