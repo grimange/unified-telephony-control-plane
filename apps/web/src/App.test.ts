@@ -552,7 +552,7 @@ function mockUserAdminFetch(calls: Array<{ url: string; body?: unknown }>): void
 function createMockRealtimeEcho() {
   const connectionCallbacks: Record<string, Array<(payload?: unknown) => void>> = {}
   const channelErrorCallbacks: Record<string, Array<(error: unknown) => void>> = {}
-  const channelBindCallbacks: Record<string, Record<string, Array<(payload?: unknown) => void>>> = {}
+  const channelSubscribedCallbacks: Record<string, Array<() => void>> = {}
   const privateChannels: string[] = []
   const leftChannels: string[] = []
   const createdConfigs: RuntimeNodeRealtimeConfig[] = []
@@ -571,14 +571,8 @@ function createMockRealtimeEcho() {
 
         return channel
       },
-      bind(event, callback) {
-        channelBindCallbacks[channelName] = {
-          ...(channelBindCallbacks[channelName] ?? {}),
-          [event]: [...(channelBindCallbacks[channelName]?.[event] ?? []), callback],
-        }
-        if (event === 'pusher:subscription_error') {
-          channelErrorCallbacks[channelName] = [...(channelErrorCallbacks[channelName] ?? []), callback]
-        }
+      subscribed(callback) {
+        channelSubscribedCallbacks[channelName] = [...(channelSubscribedCallbacks[channelName] ?? []), callback]
 
         return channel
       },
@@ -630,7 +624,7 @@ function createMockRealtimeEcho() {
       for (const callback of channelErrorCallbacks[channelName] ?? []) callback(error)
     },
     emitSubscriptionSucceeded(channelName = privateChannels.at(-1) ?? '') {
-      for (const callback of channelBindCallbacks[channelName]?.['pusher:subscription_succeeded'] ?? []) callback({})
+      for (const callback of channelSubscribedCallbacks[channelName] ?? []) callback()
     },
   }
 }

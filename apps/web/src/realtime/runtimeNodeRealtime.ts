@@ -51,8 +51,8 @@ type EchoConnection = {
 export type EchoChannel = {
   listen: (event: string, callback: (payload: unknown) => void) => EchoChannel
   stopListening?: (event: string, callback?: (payload: unknown) => void) => EchoChannel
+  subscribed: (callback: () => void) => EchoChannel
   error?: (callback: (error: unknown) => void) => EchoChannel
-  bind?: (event: string, callback: (payload?: unknown) => void) => EchoChannel
 }
 
 export type EchoClient = {
@@ -124,6 +124,8 @@ let connectedOnce = false
 let socketConnected = false
 let requiresReconnectResync = false
 let resynchronizing = false
+let realtimeGeneration = 0
+let completedResyncGeneration = 0
 
 export function setRuntimeNodeRealtimeClientFactory(factory: EchoClientFactory): void {
   echoClientFactory = factory
@@ -200,12 +202,12 @@ export function subscribeRuntimeNodeRealtime(subscription: RuntimeNodeRealtimeSu
   activeRuntimeNodeSnapshotReady = true
   activeRuntimeNodeSubscriptionReady = false
   const generation = ++activeRuntimeNodeToken
-  activeRuntimeNodeChannel = echoClient.private(nextChannelName)
-  activeRuntimeNodeChannel.listen(runtimeNodeEventName, handleRuntimeNodeNotification)
-  activeRuntimeNodeChannel.error?.(handleAuthorizationFailure)
-  activeRuntimeNodeChannel.bind?.('pusher:subscription_error', handleAuthorizationFailure)
-  activeRuntimeNodeChannel.bind?.('pusher:subscription_succeeded', () => {
-    if (activeRuntimeNodeToken !== generation) return
+  const channel = echoClient.private(nextChannelName)
+  activeRuntimeNodeChannel = channel
+  channel.listen(runtimeNodeEventName, handleRuntimeNodeNotification)
+  channel.error?.((error) => handleRuntimeNodeSubscriptionError(error, generation, nextChannelName, channel))
+  channel.subscribed(() => {
+    if (!isCurrentRuntimeNodeSubscription(generation, nextChannelName, channel)) return
     activeRuntimeNodeSubscriptionReady = true
     void maybeCompleteLiveConnection()
   })
@@ -257,12 +259,12 @@ export function subscribeConferenceRealtime(subscription: ConferenceRealtimeSubs
   activeConferenceSnapshotReady = true
   activeConferenceSubscriptionReady = false
   const generation = ++activeConferenceToken
-  activeConferenceChannel = echoClient.private(nextChannelName)
-  activeConferenceChannel.listen(conferenceEventName, handleConferenceNotification)
-  activeConferenceChannel.error?.(handleAuthorizationFailure)
-  activeConferenceChannel.bind?.('pusher:subscription_error', handleAuthorizationFailure)
-  activeConferenceChannel.bind?.('pusher:subscription_succeeded', () => {
-    if (activeConferenceToken !== generation) return
+  const channel = echoClient.private(nextChannelName)
+  activeConferenceChannel = channel
+  channel.listen(conferenceEventName, handleConferenceNotification)
+  channel.error?.((error) => handleConferenceSubscriptionError(error, generation, nextChannelName, channel))
+  channel.subscribed(() => {
+    if (!isCurrentConferenceSubscription(generation, nextChannelName, channel)) return
     activeConferenceSubscriptionReady = true
     void maybeCompleteLiveConnection()
   })
@@ -286,6 +288,8 @@ export function disconnectRuntimeNodeRealtime(): void {
   socketConnected = false
   requiresReconnectResync = false
   resynchronizing = false
+  realtimeGeneration++
+  completedResyncGeneration = realtimeGeneration
   runtimeNodeRealtimeConnectionState.value = 'idle'
   runtimeNodeRealtimeLastConnectedAt.value = null
   runtimeNodeRealtimeError.value = ''
@@ -351,6 +355,7 @@ function readRuntimeNodeRealtimeConfig(): RuntimeNodeRealtimeConfig | null {
 function bindConnectionEvents(client: EchoClient): void {
   const connection = client.connector?.pusher?.connection
   connection?.bind?.('state_change', (payload) => {
+    if (echoClient !== client) return
     if (runtimeNodeRealtimeConnectionState.value === 'unauthorized') return
 
     const current = (payload as { current?: unknown } | undefined)?.current
@@ -363,21 +368,25 @@ function bindConnectionEvents(client: EchoClient): void {
     }
   })
   connection?.bind?.('connected', () => {
+    if (echoClient !== client) return
     if (runtimeNodeRealtimeConnectionState.value === 'unauthorized') return
 
     void handleConnected()
   })
   connection?.bind?.('disconnected', () => {
+    if (echoClient !== client) return
     if (runtimeNodeRealtimeConnectionState.value === 'unauthorized') return
 
     markSocketDisconnected('reconnecting')
   })
   connection?.bind?.('unavailable', () => {
+    if (echoClient !== client) return
     if (runtimeNodeRealtimeConnectionState.value === 'unauthorized') return
 
     markSocketDisconnected('disconnected')
   })
   connection?.bind?.('failed', () => {
+    if (echoClient !== client) return
     if (runtimeNodeRealtimeConnectionState.value === 'unauthorized') return
 
     markSocketDisconnected('disconnected')
@@ -396,20 +405,40 @@ function markSocketDisconnected(state: Extract<RuntimeNodeRealtimeConnectionStat
   socketConnected = false
   if (connectedOnce) {
     requiresReconnectResync = true
+    realtimeGeneration++
     activeRuntimeNodeSubscriptionReady = false
     activeConferenceSubscriptionReady = false
   }
   runtimeNodeRealtimeConnectionState.value = connectedOnce ? state : 'disconnected'
 }
 
-function handleAuthorizationFailure(error: unknown): void {
+function handleRuntimeNodeSubscriptionError(error: unknown, generation: number, channelName: string, channel: EchoChannel): void {
+  if (!isCurrentRuntimeNodeSubscription(generation, channelName, channel)) return
+
+  activeRuntimeNodeSubscriptionReady = false
+  handleSubscriptionFailure(error)
+  leaveRuntimeNodeChannel()
+}
+
+function handleConferenceSubscriptionError(error: unknown, generation: number, channelName: string, channel: EchoChannel): void {
+  if (!isCurrentConferenceSubscription(generation, channelName, channel)) return
+
+  activeConferenceSubscriptionReady = false
+  handleSubscriptionFailure(error)
+  leaveConferenceChannel()
+}
+
+function handleSubscriptionFailure(error: unknown): void {
   const status = Number((error as { status?: unknown })?.status ?? (error as { statusCode?: unknown })?.statusCode)
   if (status === 403 || status === 401 || Number.isNaN(status)) {
     runtimeNodeRealtimeConnectionState.value = 'unauthorized'
     runtimeNodeRealtimeError.value = 'Live updates are unavailable for this session.'
-    leaveRuntimeNodeChannel()
-    leaveConferenceChannel()
+
+    return
   }
+
+  runtimeNodeRealtimeConnectionState.value = 'disconnected'
+  runtimeNodeRealtimeError.value = 'Live updates disconnected — displayed data may be stale.'
 }
 
 function handleRuntimeNodeNotification(payload: unknown): void {
@@ -493,11 +522,15 @@ async function maybeCompleteLiveConnection(): Promise<void> {
   }
 
   if (requiresReconnectResync) {
+    const generation = realtimeGeneration
+    if (completedResyncGeneration === generation) return
+    if (resynchronizing) return
     if (!(await resynchronizeCanonicalSnapshots())) {
       runtimeNodeRealtimeConnectionState.value = 'disconnected'
 
       return
     }
+    completedResyncGeneration = generation
     requiresReconnectResync = false
   }
 
@@ -513,6 +546,22 @@ function activeSubscriptionsReady(): boolean {
     || (activeConferenceSnapshotReady && activeConferenceSubscriptionReady && activeConferenceSubscription.sessionActive())
 
   return runtimeReady && conferenceReady && (activeRuntimeNodeSubscription !== null || activeConferenceSubscription !== null)
+}
+
+function isCurrentRuntimeNodeSubscription(generation: number, channelName: string, channel: EchoChannel): boolean {
+  return activeRuntimeNodeToken === generation
+    && activeRuntimeNodeChannelName === channelName
+    && activeRuntimeNodeChannel === channel
+    && activeRuntimeNodeSubscription !== null
+    && activeRuntimeNodeSubscription.sessionActive()
+}
+
+function isCurrentConferenceSubscription(generation: number, channelName: string, channel: EchoChannel): boolean {
+  return activeConferenceToken === generation
+    && activeConferenceChannelName === channelName
+    && activeConferenceChannel === channel
+    && activeConferenceSubscription !== null
+    && activeConferenceSubscription.sessionActive()
 }
 
 function isRuntimeNodeNotification(payload: unknown, activeTenantId: string): payload is RuntimeNodeOperationalNotification {
