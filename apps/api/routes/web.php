@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\ControlPlane\AdminRuntimeOperationController;
 use App\Http\Controllers\Identity\AdminMembershipController;
 use App\Http\Controllers\Identity\AdminRoleController;
 use App\Http\Controllers\Identity\AdminTenantController;
@@ -49,6 +50,9 @@ Route::prefix('api/v1/admin')->middleware(['identity.session'])->group(function 
     Route::patch('/memberships/{membershipId}', [AdminMembershipController::class, 'update']);
 
     Route::get('/roles', [AdminRoleController::class, 'index']);
+
+    Route::get('/runtime-operations', [AdminRuntimeOperationController::class, 'index']);
+    Route::get('/runtime-operations/{runtimeOperation}', [AdminRuntimeOperationController::class, 'show']);
 
     Route::get('/runtime-node-catalog', [AdminRuntimeNodeController::class, 'catalog']);
     Route::get('/runtime-nodes', [AdminRuntimeNodeController::class, 'index']);
