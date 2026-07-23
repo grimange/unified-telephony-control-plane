@@ -4,6 +4,7 @@ namespace App\RuntimeEngine\Outbox;
 
 use App\Events\ConferenceOperationalStateChanged;
 use App\Events\RuntimeNodeOperationalStateChanged;
+use App\Events\RuntimeOperationOperationalStateChanged;
 use Carbon\CarbonImmutable;
 
 class OperationalBroadcastBridge
@@ -11,7 +12,8 @@ class OperationalBroadcastBridge
     public function dispatchForOutboxRow(object $row): bool
     {
         return $this->dispatchRuntimeNodeNotification($row)
-            || $this->dispatchConferenceNotification($row);
+            || $this->dispatchConferenceNotification($row)
+            || $this->dispatchRuntimeOperationNotification($row);
     }
 
     private function dispatchRuntimeNodeNotification(object $row): bool
@@ -77,6 +79,33 @@ class OperationalBroadcastBridge
         return true;
     }
 
+    private function dispatchRuntimeOperationNotification(object $row): bool
+    {
+        $eventType = (string) $row->event_type;
+        $aggregateType = (string) $row->aggregate_type;
+        $aggregateId = (string) $row->aggregate_id;
+        $tenantId = $row->tenant_id;
+
+        if ($aggregateType !== 'runtime_operation' || ! str_starts_with($eventType, 'runtime_operation.')) {
+            return false;
+        }
+
+        if (! is_string($tenantId) || $tenantId === '' || $aggregateId === '') {
+            return false;
+        }
+
+        event(new RuntimeOperationOperationalStateChanged(
+            eventType: $eventType,
+            aggregateId: $aggregateId,
+            runtimeOperationId: $aggregateId,
+            runtimeNodeId: $this->runtimeOperationRuntimeNodeId($row),
+            tenantId: $tenantId,
+            occurredAt: CarbonImmutable::parse((string) $row->occurred_at),
+        ));
+
+        return true;
+    }
+
     private function participantConferenceId(object $row): ?string
     {
         $payload = json_decode((string) $row->payload, true);
@@ -87,5 +116,17 @@ class OperationalBroadcastBridge
         $conferenceId = $payload['conference_id'] ?? null;
 
         return is_string($conferenceId) ? $conferenceId : null;
+    }
+
+    private function runtimeOperationRuntimeNodeId(object $row): ?string
+    {
+        $payload = json_decode((string) $row->payload, true);
+        if (! is_array($payload)) {
+            return null;
+        }
+
+        $runtimeNodeId = $payload['runtime_node_id'] ?? null;
+
+        return is_string($runtimeNodeId) && $runtimeNodeId !== '' ? $runtimeNodeId : null;
     }
 }

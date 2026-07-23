@@ -506,11 +506,13 @@ h3 {
   overflow-wrap: anywhere;
 }
 
-.conference-detail-grid {
+.conference-detail-grid,
+.runtime-operation-detail-grid {
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
 }
 
 .conference-row,
+.operation-row,
 .participant-row {
   max-width: 100%;
 }
@@ -799,13 +801,14 @@ h3 {
     justify-content: stretch;
   }
 
-  .inline-form,
-  .ui-filter-bar__controls,
-  .subgrid,
-  .conference-detail-grid,
-  .definition-grid {
-    grid-template-columns: 1fr;
-  }
+    .inline-form,
+    .ui-filter-bar__controls,
+    .subgrid,
+    .conference-detail-grid,
+    .runtime-operation-detail-grid,
+    .definition-grid {
+      grid-template-columns: 1fr;
+    }
 
   .ui-filter-bar__actions,
   .ui-pagination {

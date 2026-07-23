@@ -43,6 +43,24 @@ export type ConferenceRealtimeSubscription = {
   sessionActive: () => boolean
 }
 
+export type RuntimeOperationOperationalNotification = {
+  event_type: unknown
+  aggregate_type: unknown
+  aggregate_id: unknown
+  runtime_operation_id: unknown
+  runtime_node_id?: unknown
+  tenant_id: unknown
+  occurred_at: unknown
+}
+
+export type RuntimeOperationRealtimeSubscription = {
+  tenantId: string
+  refreshList: () => Promise<unknown>
+  refreshSelectedRuntimeOperation: (runtimeOperationId: string) => Promise<unknown>
+  selectedRuntimeOperationId: () => string | null
+  sessionActive: () => boolean
+}
+
 type EchoConnection = {
   bind?: (event: string, callback: (payload?: unknown) => void) => void
   unbind?: (event: string, callback?: (payload?: unknown) => void) => void
@@ -96,8 +114,10 @@ export type RuntimeNodeEchoOptions = {
 
 const runtimeNodeEventName = '.runtime-node.operational-state.changed'
 const conferenceEventName = '.conference.operational-state.changed'
+const runtimeOperationEventName = '.runtime-operation.operational-state.changed'
 const publicRuntimeNodeIdPattern = /^[A-Za-z0-9._:-]{1,128}$/
 const publicConferenceIdPattern = /^[A-Za-z0-9._:-]{1,128}$/
+const publicRuntimeOperationIdPattern = /^[A-Za-z0-9._:-]{1,128}$/
 
 export const runtimeNodeRealtimeConnectionState = ref<RuntimeNodeRealtimeConnectionState>('idle')
 export const runtimeNodeRealtimeLastConnectedAt = ref<string | null>(null)
@@ -119,6 +139,12 @@ let activeConferenceChannel: EchoChannel | null = null
 let activeConferenceToken = 0
 let activeConferenceSnapshotReady = false
 let activeConferenceSubscriptionReady = false
+let activeRuntimeOperationChannelName: string | null = null
+let activeRuntimeOperationSubscription: RuntimeOperationRealtimeSubscription | null = null
+let activeRuntimeOperationChannel: EchoChannel | null = null
+let activeRuntimeOperationToken = 0
+let activeRuntimeOperationSnapshotReady = false
+let activeRuntimeOperationSubscriptionReady = false
 let echoClientFactory: EchoClientFactory = createEchoClient
 let connectedOnce = false
 let socketConnected = false
@@ -216,8 +242,10 @@ export function subscribeRuntimeNodeRealtime(subscription: RuntimeNodeRealtimeSu
 export function leaveRuntimeNodeRealtimeTenant(): void {
   leaveRuntimeNodeChannel()
   leaveConferenceChannel()
+  leaveRuntimeOperationChannel()
   activeRuntimeNodeSubscription = null
   activeConferenceSubscription = null
+  activeRuntimeOperationSubscription = null
   runtimeNodeRealtimeConnectionState.value = echoClient === null ? 'idle' : 'connecting'
 }
 
@@ -277,11 +305,69 @@ export function leaveConferenceRealtimeTenant(): void {
   void maybeCompleteLiveConnection()
 }
 
+export function subscribeRuntimeOperationRealtime(subscription: RuntimeOperationRealtimeSubscription): void {
+  if (!subscription.sessionActive() || subscription.tenantId === '') {
+    leaveRuntimeOperationChannel()
+    activeRuntimeOperationSubscription = null
+
+    return
+  }
+
+  const nextChannelName = `tenant.${subscription.tenantId}.runtime-operations`
+  activeRuntimeOperationSubscription = subscription
+
+  if (activeRuntimeOperationChannelName === nextChannelName && echoClient !== null) {
+    activeRuntimeOperationSnapshotReady = true
+    void maybeCompleteLiveConnection()
+
+    return
+  }
+
+  leaveRuntimeOperationChannel()
+  const config = readRuntimeNodeRealtimeConfig()
+  if (config === null) {
+    runtimeNodeRealtimeConnectionState.value = 'disconnected'
+    runtimeNodeRealtimeError.value = 'Live update transport configuration is incomplete.'
+
+    return
+  }
+
+  if (echoClient === null) {
+    runtimeNodeRealtimeConnectionState.value = 'connecting'
+    echoClient = echoClientFactory(config)
+    bindConnectionEvents(echoClient)
+  }
+
+  runtimeNodeRealtimeConnectionState.value = requiresReconnectResync ? 'reconnecting' : 'connecting'
+  activeRuntimeOperationChannelName = nextChannelName
+  activeRuntimeOperationSnapshotReady = true
+  activeRuntimeOperationSubscriptionReady = false
+  const generation = ++activeRuntimeOperationToken
+  const channel = echoClient.private(nextChannelName)
+  activeRuntimeOperationChannel = channel
+  channel.listen(runtimeOperationEventName, handleRuntimeOperationNotification)
+  channel.error?.((error) => handleRuntimeOperationSubscriptionError(error, generation, nextChannelName, channel))
+  channel.subscribed(() => {
+    if (!isCurrentRuntimeOperationSubscription(generation, nextChannelName, channel)) return
+    activeRuntimeOperationSubscriptionReady = true
+    void maybeCompleteLiveConnection()
+  })
+}
+
+export function leaveRuntimeOperationRealtimeTenant(): void {
+  leaveRuntimeOperationChannel()
+  activeRuntimeOperationSubscription = null
+  runtimeNodeRealtimeConnectionState.value = echoClient === null ? 'idle' : 'connecting'
+  void maybeCompleteLiveConnection()
+}
+
 export function disconnectRuntimeNodeRealtime(): void {
   leaveRuntimeNodeChannel()
   leaveConferenceChannel()
+  leaveRuntimeOperationChannel()
   activeRuntimeNodeSubscription = null
   activeConferenceSubscription = null
+  activeRuntimeOperationSubscription = null
   echoClient?.disconnect()
   echoClient = null
   connectedOnce = false
@@ -408,6 +494,7 @@ function markSocketDisconnected(state: Extract<RuntimeNodeRealtimeConnectionStat
     realtimeGeneration++
     activeRuntimeNodeSubscriptionReady = false
     activeConferenceSubscriptionReady = false
+    activeRuntimeOperationSubscriptionReady = false
   }
   runtimeNodeRealtimeConnectionState.value = connectedOnce ? state : 'disconnected'
 }
@@ -426,6 +513,14 @@ function handleConferenceSubscriptionError(error: unknown, generation: number, c
   activeConferenceSubscriptionReady = false
   handleSubscriptionFailure(error)
   leaveConferenceChannel()
+}
+
+function handleRuntimeOperationSubscriptionError(error: unknown, generation: number, channelName: string, channel: EchoChannel): void {
+  if (!isCurrentRuntimeOperationSubscription(generation, channelName, channel)) return
+
+  activeRuntimeOperationSubscriptionReady = false
+  handleSubscriptionFailure(error)
+  leaveRuntimeOperationChannel()
 }
 
 function handleSubscriptionFailure(error: unknown): void {
@@ -463,9 +558,11 @@ async function resynchronizeCanonicalSnapshots(): Promise<boolean> {
   if (resynchronizing) return false
   const runtimeNodeSubscription = activeRuntimeNodeSubscription
   const conferenceSubscription = activeConferenceSubscription
+  const runtimeOperationSubscription = activeRuntimeOperationSubscription
   if (
     (runtimeNodeSubscription === null || !runtimeNodeSubscription.sessionActive())
     && (conferenceSubscription === null || !conferenceSubscription.sessionActive())
+    && (runtimeOperationSubscription === null || !runtimeOperationSubscription.sessionActive())
   ) return false
 
   resynchronizing = true
@@ -480,6 +577,12 @@ async function resynchronizeCanonicalSnapshots(): Promise<boolean> {
       const selectedConferenceId = conferenceSubscription.selectedConferenceId()
       if (selectedConferenceId !== null) await conferenceSubscription.refreshSelectedConference(selectedConferenceId)
       activeConferenceSnapshotReady = true
+    }
+    if (runtimeOperationSubscription !== null && runtimeOperationSubscription.sessionActive()) {
+      await runtimeOperationSubscription.refreshList()
+      const selectedRuntimeOperationId = runtimeOperationSubscription.selectedRuntimeOperationId()
+      if (selectedRuntimeOperationId !== null) await runtimeOperationSubscription.refreshSelectedRuntimeOperation(selectedRuntimeOperationId)
+      activeRuntimeOperationSnapshotReady = true
     }
     if (runtimeNodeRealtimeConnectionState.value !== 'unauthorized') {
       runtimeNodeRealtimeConnectionState.value = 'connected'
@@ -510,6 +613,24 @@ async function refreshConferenceSnapshotsForNotification(conferenceId: string): 
   await subscription.refreshList()
   if (subscription.selectedConferenceId() === conferenceId) {
     await subscription.refreshSelectedConference(conferenceId)
+  }
+}
+
+function handleRuntimeOperationNotification(payload: unknown): void {
+  const subscription = activeRuntimeOperationSubscription
+  if (subscription === null || !subscription.sessionActive()) return
+  if (!isRuntimeOperationNotification(payload, subscription.tenantId)) return
+
+  void refreshRuntimeOperationSnapshotsForNotification(String(payload.runtime_operation_id))
+}
+
+async function refreshRuntimeOperationSnapshotsForNotification(runtimeOperationId: string): Promise<void> {
+  const subscription = activeRuntimeOperationSubscription
+  if (subscription === null) return
+
+  await subscription.refreshList()
+  if (subscription.selectedRuntimeOperationId() === runtimeOperationId) {
+    await subscription.refreshSelectedRuntimeOperation(runtimeOperationId)
   }
 }
 
@@ -544,8 +665,17 @@ function activeSubscriptionsReady(): boolean {
     || (activeRuntimeNodeSnapshotReady && activeRuntimeNodeSubscriptionReady && activeRuntimeNodeSubscription.sessionActive())
   const conferenceReady = activeConferenceSubscription === null
     || (activeConferenceSnapshotReady && activeConferenceSubscriptionReady && activeConferenceSubscription.sessionActive())
+  const runtimeOperationReady = activeRuntimeOperationSubscription === null
+    || (activeRuntimeOperationSnapshotReady && activeRuntimeOperationSubscriptionReady && activeRuntimeOperationSubscription.sessionActive())
 
-  return runtimeReady && conferenceReady && (activeRuntimeNodeSubscription !== null || activeConferenceSubscription !== null)
+  return runtimeReady
+    && conferenceReady
+    && runtimeOperationReady
+    && (
+      activeRuntimeNodeSubscription !== null
+      || activeConferenceSubscription !== null
+      || activeRuntimeOperationSubscription !== null
+    )
 }
 
 function isCurrentRuntimeNodeSubscription(generation: number, channelName: string, channel: EchoChannel): boolean {
@@ -562,6 +692,14 @@ function isCurrentConferenceSubscription(generation: number, channelName: string
     && activeConferenceChannel === channel
     && activeConferenceSubscription !== null
     && activeConferenceSubscription.sessionActive()
+}
+
+function isCurrentRuntimeOperationSubscription(generation: number, channelName: string, channel: EchoChannel): boolean {
+  return activeRuntimeOperationToken === generation
+    && activeRuntimeOperationChannelName === channelName
+    && activeRuntimeOperationChannel === channel
+    && activeRuntimeOperationSubscription !== null
+    && activeRuntimeOperationSubscription.sessionActive()
 }
 
 function isRuntimeNodeNotification(payload: unknown, activeTenantId: string): payload is RuntimeNodeOperationalNotification {
@@ -593,6 +731,22 @@ function isConferenceNotification(payload: unknown, activeTenantId: string): pay
     && typeof candidate.occurred_at === 'string'
 }
 
+function isRuntimeOperationNotification(payload: unknown, activeTenantId: string): payload is RuntimeOperationOperationalNotification {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false
+
+  const candidate = payload as RuntimeOperationOperationalNotification
+
+  return candidate.aggregate_type === 'runtime_operation'
+    && candidate.tenant_id === activeTenantId
+    && typeof candidate.event_type === 'string'
+    && candidate.event_type.startsWith('runtime_operation.')
+    && typeof candidate.aggregate_id === 'string'
+    && typeof candidate.runtime_operation_id === 'string'
+    && candidate.aggregate_id === candidate.runtime_operation_id
+    && publicRuntimeOperationIdPattern.test(candidate.runtime_operation_id)
+    && typeof candidate.occurred_at === 'string'
+}
+
 function leaveRuntimeNodeChannel(): void {
   if (echoClient !== null && activeRuntimeNodeChannelName !== null) {
     activeRuntimeNodeChannel?.stopListening?.(runtimeNodeEventName)
@@ -615,4 +769,16 @@ function leaveConferenceChannel(): void {
   activeConferenceSnapshotReady = false
   activeConferenceSubscriptionReady = false
   activeConferenceToken++
+}
+
+function leaveRuntimeOperationChannel(): void {
+  if (echoClient !== null && activeRuntimeOperationChannelName !== null) {
+    activeRuntimeOperationChannel?.stopListening?.(runtimeOperationEventName)
+    echoClient.leave(activeRuntimeOperationChannelName)
+  }
+  activeRuntimeOperationChannelName = null
+  activeRuntimeOperationChannel = null
+  activeRuntimeOperationSnapshotReady = false
+  activeRuntimeOperationSubscriptionReady = false
+  activeRuntimeOperationToken++
 }

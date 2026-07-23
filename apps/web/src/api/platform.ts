@@ -348,6 +348,95 @@ export type ConferenceParticipant = {
   updated_at: string
 }
 
+export type RuntimeOperationStatus =
+  | 'pending'
+  | 'leased'
+  | 'running'
+  | 'retry_scheduled'
+  | 'succeeded'
+  | 'terminal_failed'
+  | 'cancelled'
+  | 'expired'
+
+export type RuntimeOperationType = string
+
+export type RuntimeOperationRuntimeNodeReference = {
+  id: string
+  name: string
+  slug: string
+  runtime_family: string
+  adapter_key: string
+}
+
+export type RuntimeOperationAttempt = {
+  count: number
+  max: number
+}
+
+export type RuntimeOperationAggregateReference = {
+  type: string
+  id: string
+}
+
+export type RuntimeOperationFailure = {
+  class: string | null
+  code: string | null
+  summary: string
+  occurred_at: string | null
+}
+
+export type RuntimeOperationReconciliationReference = {
+  id: string
+  target_type: string
+  target_id: string
+  status: string
+}
+
+export type RuntimeOperation = {
+  id: string
+  runtime_node_id: string | null
+  runtime_node: RuntimeOperationRuntimeNodeReference | null
+  operation_type: RuntimeOperationType
+  aggregate: RuntimeOperationAggregateReference
+  status: RuntimeOperationStatus
+  attempt: RuntimeOperationAttempt
+  priority: number
+  correlation_id: string
+  failure: RuntimeOperationFailure | null
+  available_at: string
+  started_at: string | null
+  completed_at: string | null
+  cancelled_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type RuntimeOperationDetail = RuntimeOperation & {
+  payload_version: number
+  causation_id: string | null
+  request_id: string
+  expires_at: string | null
+  reconciliation: RuntimeOperationReconciliationReference | null
+}
+
+export type RuntimeOperationPagination = {
+  page: number
+  per_page: number
+  total: number
+  has_more: boolean
+}
+
+export type RuntimeOperationListFilters = {
+  runtime_node_id?: string
+  status?: RuntimeOperationStatus | ''
+  operation_type?: RuntimeOperationType
+  created_from?: string
+  created_to?: string
+  correlation_id?: string
+  page?: number
+  per_page?: number
+}
+
 class ApiRequestError extends Error {
   status: number
   details: unknown
@@ -568,6 +657,22 @@ export const identityApi = {
     fetchJson<{ runtime_evidence: RuntimeEvidence }>(`/api/v1/admin/runtime-nodes/${runtimeNodeId}/runtime-evidence`),
   runtimeHistory: (runtimeNodeId: string) =>
     fetchJson<RuntimeHistoryResponse>(`/api/v1/admin/runtime-nodes/${runtimeNodeId}/history?limit=10`),
+  runtimeOperations: (params: RuntimeOperationListFilters = {}) => {
+    const query = new URLSearchParams()
+    if (params.runtime_node_id) query.set('runtime_node_id', params.runtime_node_id)
+    if (params.status) query.set('status', params.status)
+    if (params.operation_type) query.set('operation_type', params.operation_type)
+    if (params.created_from) query.set('created_from', params.created_from)
+    if (params.created_to) query.set('created_to', params.created_to)
+    if (params.correlation_id) query.set('correlation_id', params.correlation_id)
+    if (params.page) query.set('page', String(params.page))
+    if (params.per_page) query.set('per_page', String(params.per_page))
+    const suffix = query.toString() === '' ? '' : `?${query.toString()}`
+
+    return fetchJson<{ runtime_operations: RuntimeOperation[]; pagination: RuntimeOperationPagination }>(`/api/v1/admin/runtime-operations${suffix}`)
+  },
+  runtimeOperation: (runtimeOperationId: string) =>
+    fetchJson<{ runtime_operation: RuntimeOperationDetail }>(`/api/v1/admin/runtime-operations/${runtimeOperationId}`),
   conferences: () => fetchJson<{ conferences: Conference[] }>('/api/v1/admin/conferences'),
   conference: (conferenceId: string) => fetchJson<{ conference: Conference }>(`/api/v1/admin/conferences/${conferenceId}`),
   conferenceParticipants: (conferenceId: string) =>

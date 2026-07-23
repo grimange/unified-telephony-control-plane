@@ -23,6 +23,7 @@ import loginViewSource from './views/LoginView.vue?raw'
 import membershipsViewSource from './views/MembershipsView.vue?raw'
 import appStateSource from './state/appState.ts?raw'
 import runtimeNodesViewSource from './views/RuntimeNodesView.vue?raw'
+import runtimeOperationsViewSource from './views/RuntimeOperationsView.vue?raw'
 import tenantsViewSource from './views/TenantsView.vue?raw'
 import userDetailViewSource from './views/UserDetailView.vue?raw'
 import usersViewSource from './views/UsersView.vue?raw'
@@ -436,6 +437,54 @@ const conferenceParticipant = {
   updated_at: '2026-07-22T10:01:00Z',
 }
 
+const runtimeOperation = {
+  id: 'operation-1',
+  runtime_node_id: 'runtime-1',
+  runtime_node: {
+    id: 'runtime-1',
+    name: 'Proof Runtime',
+    slug: 'proof-runtime',
+    runtime_family: 'asterisk',
+    adapter_key: 'asterisk-ari',
+  },
+  operation_type: 'runtime.node.inspect',
+  aggregate: { type: 'runtime_node', id: 'runtime-1' },
+  status: 'running',
+  attempt: { count: 1, max: 3 },
+  priority: 100,
+  correlation_id: 'correlation-1',
+  failure: null,
+  available_at: '2026-07-23T10:00:00Z',
+  started_at: '2026-07-23T10:01:00Z',
+  completed_at: null,
+  cancelled_at: null,
+  created_at: '2026-07-23T09:59:00Z',
+  updated_at: '2026-07-23T10:01:00Z',
+}
+
+const secondRuntimeOperation = {
+  ...runtimeOperation,
+  id: 'operation-2',
+  operation_type: 'runtime.node.restore',
+  status: 'pending',
+  correlation_id: 'correlation-2',
+  started_at: null,
+}
+
+const runtimeOperationDetail = {
+  ...runtimeOperation,
+  payload_version: 1,
+  causation_id: null,
+  request_id: 'request-1',
+  expires_at: '2026-07-23T10:30:00Z',
+  reconciliation: {
+    id: 'reconciliation-1',
+    target_type: 'runtime_node',
+    target_id: 'runtime-1',
+    status: 'waiting',
+  },
+}
+
 function mockRuntimeAdminFetch(calls: Array<{ url: string; body?: unknown }>): void {
   vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString()
@@ -512,6 +561,39 @@ function mockConferenceAdminFetch(calls: Array<{ url: string; body?: unknown }>)
   })
 }
 
+function mockRuntimeOperationAdminFetch(calls: Array<{ url: string; body?: unknown }>, options: { listStatus?: number; detailStatus?: number; empty?: boolean } = {}): void {
+  vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString()
+    calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+    if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+    if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+    if (url.includes('/api/v1/admin/runtime-operations/operation-1')) {
+      if (options.detailStatus) return Promise.resolve(jsonResponse({ message: 'detail unavailable' }, options.detailStatus))
+
+      return Promise.resolve(jsonResponse({ runtime_operation: runtimeOperationDetail }))
+    }
+    if (url.includes('/api/v1/admin/runtime-operations/operation-2')) {
+      return Promise.resolve(jsonResponse({ message: 'Unselected Runtime Operation detail was requested.' }, 500))
+    }
+    if (url.includes('/api/v1/admin/runtime-operations')) {
+      if (options.listStatus) return Promise.resolve(jsonResponse({ message: 'list unavailable' }, options.listStatus))
+
+      const params = new URL(url, 'http://utcp.local.test').searchParams
+      return Promise.resolve(jsonResponse({
+        runtime_operations: options.empty ? [] : [runtimeOperation, secondRuntimeOperation],
+        pagination: {
+          page: params.get('page') === '2' ? 2 : 1,
+          per_page: params.get('per_page') === '10' ? 10 : 20,
+          total: options.empty ? 0 : 2,
+          has_more: params.get('page') !== '2' && !options.empty,
+        },
+      }))
+    }
+
+    return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+  })
+}
+
 function mockUserAdminFetch(calls: Array<{ url: string; body?: unknown }>): void {
   vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString()
@@ -553,6 +635,7 @@ function createMockRealtimeEcho() {
   const connectionCallbacks: Record<string, Array<(payload?: unknown) => void>> = {}
   const channelErrorCallbacks: Record<string, Array<(error: unknown) => void>> = {}
   const channelSubscribedCallbacks: Record<string, Array<() => void>> = {}
+  const notificationCallbacks: Record<string, Record<string, (payload: unknown) => void>> = {}
   const privateChannels: string[] = []
   const leftChannels: string[] = []
   const createdConfigs: RuntimeNodeRealtimeConfig[] = []
@@ -560,10 +643,17 @@ function createMockRealtimeEcho() {
 
   function createChannel(channelName: string): EchoChannel {
     const channel: EchoChannel = {
-      listen() {
+      listen(event, callback) {
+        notificationCallbacks[channelName] = {
+          ...(notificationCallbacks[channelName] ?? {}),
+          [event]: callback,
+        }
+
         return channel
       },
-      stopListening() {
+      stopListening(event) {
+        if (notificationCallbacks[channelName]) delete notificationCallbacks[channelName][event]
+
         return channel
       },
       error(callback) {
@@ -626,6 +716,9 @@ function createMockRealtimeEcho() {
     emitSubscriptionSucceeded(channelName = privateChannels.at(-1) ?? '') {
       for (const callback of channelSubscribedCallbacks[channelName] ?? []) callback()
     },
+    emitRuntimeOperationNotification(channelName: string, payload: unknown) {
+      notificationCallbacks[channelName]?.['.runtime-operation.operational-state.changed']?.(payload)
+    },
   }
 }
 
@@ -649,8 +742,18 @@ describe('C1 App shell', () => {
     window.localStorage.clear()
   })
 
+  function routeLocationFor(path: string) {
+    const url = new URL(path, 'http://utcp.local.test')
+    const query: Record<string, string> = {}
+    for (const [key, value] of url.searchParams.entries()) query[key] = value
+
+    return { path: url.pathname, query }
+  }
+
   async function mountApp(path = '/login') {
-    await router.push(path)
+    await router.replace({ path: '/login', query: {} })
+    await router.isReady()
+    await router.push(routeLocationFor(path))
     await router.isReady()
     const wrapper = mount(App, {
       global: {
@@ -945,6 +1048,179 @@ describe('C1 App shell', () => {
     expect(calls.filter((call) => call.url.endsWith('/api/v1/admin/conferences/conference-1/participants'))).toHaveLength(1)
     expect(calls.some((call) => call.url.endsWith('/api/v1/admin/conferences/conference-2'))).toBe(false)
     expect(calls.some((call) => call.url.endsWith('/api/v1/admin/conferences/conference-2/participants'))).toBe(false)
+  })
+
+  it('renders Runtime Operations as a read-only capability-gated route with bounded request budgets', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockRuntimeOperationAdminFetch(calls)
+    vi.stubEnv('VITE_UTCP_REVERB_APP_KEY', 'public-reverb-key')
+    vi.stubEnv('VITE_UTCP_WS_HOST', 'app.utcp.local.test')
+    vi.stubEnv('VITE_UTCP_WS_PORT', '443')
+    vi.stubEnv('VITE_UTCP_WS_SCHEME', 'wss')
+    vi.stubEnv('VITE_UTCP_WS_PATH', '/app')
+    const realtime = createMockRealtimeEcho()
+
+    const wrapper = await mountApp('/operations/runtime-operations')
+
+    expect(router.currentRoute.value.path).toBe('/operations/runtime-operations')
+    expect(wrapper.text()).toContain('Runtime operations')
+    expect(wrapper.text()).toContain('Runtime Operation list')
+    expect(wrapper.text()).toContain('runtime.node.inspect')
+    expect(wrapper.text()).toContain('Proof Runtime')
+    expect(wrapper.text()).toContain('Live updates connecting')
+    expect(wrapper.text()).toContain('Page 1 of 1')
+    expect(wrapper.text()).not.toContain('Retry')
+    expect(wrapper.text()).not.toContain('Cancel')
+    expect(wrapper.text()).not.toContain('Reconcile')
+    expect(wrapper.text()).not.toContain('must-not-leak')
+    expect(realtime.privateChannels).toEqual(['tenant.tenant-1.runtime-operations'])
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/runtime-operations') && !call.url.includes('/operation-'))).toHaveLength(1)
+    expect(calls.some((call) => call.url.includes('/api/v1/admin/runtime-operations/operation-1'))).toBe(false)
+    expect(calls.some((call) => call.url.includes('/api/v1/admin/runtime-operations/operation-2'))).toBe(false)
+
+    realtime.emitConnection('state_change', { current: 'connected' })
+    realtime.emitSubscriptionSucceeded('tenant.tenant-1.runtime-operations')
+    await nextTick()
+    expect(wrapper.text()).toContain('Live updates connected')
+
+    await wrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Payload version')
+    expect(wrapper.text()).toContain('Reconciliation')
+    expect(wrapper.text()).toContain('request')
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/runtime-operations') && !call.url.includes('/operation-'))).toHaveLength(1)
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/runtime-operations/operation-1'))).toHaveLength(1)
+    expect(calls.some((call) => call.url.includes('/api/v1/admin/runtime-operations/operation-2'))).toBe(false)
+  })
+
+  it('maps Runtime Operation filters and pagination to canonical query parameters', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockRuntimeOperationAdminFetch(calls)
+    const wrapper = await mountApp('/operations/runtime-operations?page=2&per_page=10&status=running&runtime_node_id=runtime-1&operation_type=runtime.node.inspect&correlation_id=correlation-1&created_from=2026-07-23T10:00:00Z')
+    await flushPromises()
+
+    expect(calls.some((call) =>
+      call.url.includes('/api/v1/admin/runtime-operations?')
+      && call.url.includes('page=2')
+      && call.url.includes('per_page=10')
+      && call.url.includes('status=running')
+      && call.url.includes('runtime_node_id=runtime-1')
+      && call.url.includes('operation_type=runtime.node.inspect')
+      && call.url.includes('correlation_id=correlation-1')
+      && call.url.includes('created_from=2026-07-23T10%3A00%3A00Z'),
+    )).toBe(true)
+
+    await wrapper.find('#runtime-operation-status-filter').setValue('succeeded')
+    await wrapper.find('form[role="search"]').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query.page).toBeUndefined()
+    expect(router.currentRoute.value.query.status).toBe('succeeded')
+    expect(calls.at(-1)?.url).toContain('status=succeeded')
+    expect(calls.at(-1)?.url).not.toContain('page=2')
+
+    await wrapper.find('.ui-pagination button[aria-label="Go to next page"]').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query.page).toBe('2')
+    expect(calls.at(-1)?.url).toContain('status=succeeded')
+    expect(calls.at(-1)?.url).toContain('page=2')
+  })
+
+  it('preserves Runtime Operation pagination and filters during notification rereads', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockRuntimeOperationAdminFetch(calls)
+    vi.stubEnv('VITE_UTCP_REVERB_APP_KEY', 'public-reverb-key')
+    vi.stubEnv('VITE_UTCP_WS_HOST', 'app.utcp.local.test')
+    vi.stubEnv('VITE_UTCP_WS_PORT', '443')
+    vi.stubEnv('VITE_UTCP_WS_SCHEME', 'wss')
+    vi.stubEnv('VITE_UTCP_WS_PATH', '/app')
+    const realtime = createMockRealtimeEcho()
+    const wrapper = await mountApp('/operations/runtime-operations?page=2&per_page=10&status=running')
+
+    await wrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
+    await flushPromises()
+    const listCountAfterSelect = calls.filter((call) => call.url.includes('/api/v1/admin/runtime-operations') && !call.url.includes('/operation-')).length
+    const detailCountAfterSelect = calls.filter((call) => call.url.includes('/api/v1/admin/runtime-operations/operation-1')).length
+
+    realtime.emitRuntimeOperationNotification('tenant.tenant-1.runtime-operations', {
+      event_type: 'runtime_operation.status_changed',
+      aggregate_type: 'runtime_operation',
+      aggregate_id: 'operation-1',
+      runtime_operation_id: 'operation-1',
+      tenant_id: 'tenant-1',
+      occurred_at: '2026-07-23T10:02:00Z',
+      status: 'terminal_failed',
+      payload: { secret: 'must-not-use' },
+    })
+    await flushPromises()
+
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/runtime-operations') && !call.url.includes('/operation-'))).toHaveLength(listCountAfterSelect + 1)
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/runtime-operations/operation-1'))).toHaveLength(detailCountAfterSelect + 1)
+    expect(calls.at(-2)?.url).toContain('page=2')
+    expect(calls.at(-2)?.url).toContain('per_page=10')
+    expect(calls.at(-2)?.url).toContain('status=running')
+
+    realtime.emitRuntimeOperationNotification('tenant.tenant-1.runtime-operations', {
+      event_type: 'runtime_operation.status_changed',
+      aggregate_type: 'runtime_operation',
+      aggregate_id: 'operation-2',
+      runtime_operation_id: 'operation-2',
+      tenant_id: 'tenant-1',
+      occurred_at: '2026-07-23T10:03:00Z',
+    })
+    await flushPromises()
+
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/runtime-operations') && !call.url.includes('/operation-'))).toHaveLength(listCountAfterSelect + 2)
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/runtime-operations/operation-1'))).toHaveLength(detailCountAfterSelect + 1)
+    expect(calls.some((call) => call.url.includes('/api/v1/admin/runtime-operations/operation-2'))).toBe(false)
+    expect(JSON.stringify(window.localStorage)).not.toContain('operation-1')
+    expect(JSON.stringify(window.sessionStorage)).not.toContain('must-not-use')
+  })
+
+  it('handles Runtime Operation empty, forbidden, validation, and not-found states', async () => {
+    const emptyCalls: Array<{ url: string; body?: unknown }> = []
+    mockRuntimeOperationAdminFetch(emptyCalls, { empty: true })
+    const emptyWrapper = await mountApp('/operations/runtime-operations')
+    expect(emptyWrapper.text()).toContain('No Runtime Operations')
+    emptyWrapper.unmount()
+
+    const forbiddenCalls: Array<{ url: string; body?: unknown }> = []
+    mockRuntimeOperationAdminFetch(forbiddenCalls, { listStatus: 403 })
+    const forbiddenWrapper = await mountApp('/operations/runtime-operations')
+    expect(forbiddenWrapper.text()).toContain('Runtime Operations forbidden')
+    forbiddenWrapper.unmount()
+
+    const validationCalls: Array<{ url: string; body?: unknown }> = []
+    mockRuntimeOperationAdminFetch(validationCalls, { listStatus: 422 })
+    const validationWrapper = await mountApp('/operations/runtime-operations?operation_type=invalid.operation')
+    expect(validationWrapper.text()).toContain('Runtime Operations unavailable')
+    validationWrapper.unmount()
+
+    const notFoundCalls: Array<{ url: string; body?: unknown }> = []
+    mockRuntimeOperationAdminFetch(notFoundCalls, { detailStatus: 404 })
+    const notFoundWrapper = await mountApp('/operations/runtime-operations')
+    await notFoundWrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
+    await flushPromises()
+    expect(notFoundWrapper.text()).toContain('Runtime Operation detail unavailable')
+  })
+
+  it('hides Runtime Operations navigation and blocks the route without runtime.nodes.view', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
+      const url = input.toString()
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(limitedSession))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/dashboard')
+    expect(wrapper.text()).not.toContain('Runtime operations')
+
+    await router.push('/operations/runtime-operations')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/forbidden')
   })
 
   it('preserves current capabilities and submits adapter configuration through canonical APIs', async () => {
@@ -1968,6 +2244,7 @@ describe('C1 App shell', () => {
       'MembershipsView.vue': membershipsViewSource,
       'ConferenceOperationsView.vue': conferenceOperationsViewSource,
       'RuntimeNodesView.vue': runtimeNodesViewSource,
+      'RuntimeOperationsView.vue': runtimeOperationsViewSource,
       'UserDetailView.vue': userDetailViewSource,
     }
 
@@ -1991,6 +2268,14 @@ describe('C1 App shell', () => {
     expect(runtimeSource).not.toContain("adapter_key === 'asterisk-ari'")
     expect(runtimeSource).not.toContain('saveAsteriskAdapterConfiguration')
     expect(runtimeSource).not.toContain('asteriskConfigurationForm')
+    expect(viewSources['RuntimeOperationsView.vue']).not.toContain('localStorage')
+    expect(viewSources['RuntimeOperationsView.vue']).not.toContain('sessionStorage')
+    expect(viewSources['RuntimeOperationsView.vue']).not.toContain('event.payload')
+    expect(viewSources['RuntimeOperationsView.vue']).not.toContain('notification.payload')
+    expect(viewSources['RuntimeOperationsView.vue']).not.toContain('payload:')
+    expect(viewSources['RuntimeOperationsView.vue']).not.toContain('lease_id')
+    expect(viewSources['RuntimeOperationsView.vue']).not.toContain('leased_by')
+    expect(viewSources['RuntimeOperationsView.vue']).not.toContain('lease_expires_at')
     expect(appStateSource).not.toContain('saveAsteriskAdapterConfiguration')
     expect(appStateSource).not.toContain('asteriskConfigurationForm')
     expect(appStateSource).toContain('saveRuntimeAdapterConfiguration')

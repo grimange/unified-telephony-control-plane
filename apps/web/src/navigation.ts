@@ -24,6 +24,7 @@ export const navigationEntries: NavigationEntry[] = [
   },
   { route: '/admin/memberships', label: 'Memberships', exact: true, requiredCapability: 'tenant.memberships.view' },
   { route: '/admin/runtime-nodes', label: 'Runtime nodes', exact: true, requiredCapability: 'runtime.nodes.view' },
+  { route: '/operations/runtime-operations', label: 'Runtime operations', exact: true, requiredCapability: 'runtime.nodes.view' },
   { route: '/operations/conferences', label: 'Conferences', exact: true, requiredCapability: 'telephony.conferences.view' },
 ]
 

@@ -10,12 +10,14 @@ import {
   runtimeNodeRealtimeStatusText,
   setRuntimeNodeRealtimeClientFactory,
   subscribeConferenceRealtime,
+  subscribeRuntimeOperationRealtime,
   subscribeRuntimeNodeRealtime,
   type ConferenceRealtimeSubscription,
   type EchoChannel,
   type EchoClient,
   type RuntimeNodeRealtimeConfig,
   type RuntimeNodeRealtimeSubscription,
+  type RuntimeOperationRealtimeSubscription,
 } from './runtimeNodeRealtime'
 
 type ConnectionCallback = (payload?: unknown) => void
@@ -108,6 +110,9 @@ function createMockEcho() {
     emitConferenceNotification(channelName: string, payload: unknown) {
       channels[channelName]?.notificationCallbacks['.conference.operational-state.changed']?.(payload)
     },
+    emitRuntimeOperationNotification(channelName: string, payload: unknown) {
+      channels[channelName]?.notificationCallbacks['.runtime-operation.operational-state.changed']?.(payload)
+    },
     emitSubscriptionSucceeded(channelName: string) {
       for (const callback of channels[channelName]?.subscribedCallbacks ?? []) callback()
     },
@@ -171,6 +176,33 @@ function conferenceSubscription(overrides: Partial<ConferenceRealtimeSubscriptio
     sessionActive: vi.fn(() => true),
     ...overrides,
   } satisfies ConferenceRealtimeSubscription
+}
+
+function runtimeOperationNotification(overrides: Record<string, unknown> = {}) {
+  return {
+    event_type: 'runtime_operation.status_changed',
+    aggregate_type: 'runtime_operation',
+    aggregate_id: 'operation-1',
+    runtime_operation_id: 'operation-1',
+    runtime_node_id: 'runtime-1',
+    tenant_id: 'tenant-1',
+    occurred_at: '2026-07-23T01:02:03.000000Z',
+    status: 'terminal_failed',
+    payload: { secret: 'must-not-be-used' },
+    failure: 'must-not-be-used',
+    ...overrides,
+  }
+}
+
+function runtimeOperationSubscription(overrides: Partial<RuntimeOperationRealtimeSubscription> = {}) {
+  return {
+    tenantId: 'tenant-1',
+    refreshList: vi.fn().mockResolvedValue({ runtime_operations: [{ id: 'operation-1', status: 'canonical-running' }] }),
+    refreshSelectedRuntimeOperation: vi.fn().mockResolvedValue({ runtime_operation: { id: 'operation-1', status: 'canonical-running' } }),
+    selectedRuntimeOperationId: vi.fn(() => 'operation-1'),
+    sessionActive: vi.fn(() => true),
+    ...overrides,
+  } satisfies RuntimeOperationRealtimeSubscription
 }
 
 describe('runtimeNodeRealtime', () => {
@@ -449,6 +481,132 @@ describe('runtimeNodeRealtime', () => {
     expect(activeConferenceSubscription.refreshSelectedConference).toHaveBeenCalledTimes(2)
   })
 
+  it('uses one Echo client for Runtime Operation subscriptions with scoped snapshot rereads', async () => {
+    const echo = createMockEcho()
+    const factory = vi.fn(() => echo.client)
+    setRuntimeNodeRealtimeClientFactory(factory)
+    const runtimeSubscription = subscription()
+    const operationSubscription = runtimeOperationSubscription()
+
+    subscribeRuntimeNodeRealtime(runtimeSubscription)
+    subscribeRuntimeOperationRealtime(operationSubscription)
+
+    expect(factory).toHaveBeenCalledTimes(1)
+    expect(echo.privateChannels).toEqual(['tenant.tenant-1.runtime-nodes', 'tenant.tenant-1.runtime-operations'])
+    expect(echo.subscriptionCallbackCount('tenant.tenant-1.runtime-operations')).toBe(1)
+    expect(echo.errorCallbackCount('tenant.tenant-1.runtime-operations')).toBe(1)
+
+    echo.emitConnection('state_change', { current: 'connected' })
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-nodes')
+    await flushAsync()
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connecting')
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-operations')
+    await flushAsync()
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connected')
+
+    echo.emitRuntimeOperationNotification('tenant.tenant-1.runtime-operations', runtimeOperationNotification())
+    await flushAsync()
+
+    expect(operationSubscription.refreshList).toHaveBeenCalledTimes(1)
+    expect(operationSubscription.refreshSelectedRuntimeOperation).toHaveBeenCalledTimes(1)
+    expect(operationSubscription.refreshSelectedRuntimeOperation).toHaveBeenCalledWith('operation-1')
+    expect(JSON.stringify(window.localStorage)).not.toContain('must-not-be-used')
+    expect(JSON.stringify(window.sessionStorage)).not.toContain('terminal_failed')
+
+    echo.emitRuntimeOperationNotification('tenant.tenant-1.runtime-operations', runtimeOperationNotification({ runtime_operation_id: 'operation-2', aggregate_id: 'operation-2' }))
+    await flushAsync()
+
+    expect(operationSubscription.refreshList).toHaveBeenCalledTimes(2)
+    expect(operationSubscription.refreshSelectedRuntimeOperation).toHaveBeenCalledTimes(1)
+
+    echo.emitRuntimeOperationNotification('tenant.tenant-1.runtime-operations', runtimeOperationNotification({ tenant_id: 'tenant-2' }))
+    echo.emitRuntimeOperationNotification('tenant.tenant-1.runtime-operations', runtimeOperationNotification({ aggregate_type: 'runtime_node' }))
+    echo.emitRuntimeOperationNotification('tenant.tenant-1.runtime-operations', runtimeOperationNotification({ runtime_operation_id: '../operation-1', aggregate_id: '../operation-1' }))
+    echo.emitRuntimeOperationNotification('tenant.tenant-1.runtime-operations', runtimeOperationNotification({ aggregate_id: 'operation-2' }))
+    await flushAsync()
+
+    expect(operationSubscription.refreshList).toHaveBeenCalledTimes(2)
+    expect(operationSubscription.refreshSelectedRuntimeOperation).toHaveBeenCalledTimes(1)
+  })
+
+  it('runs bounded Runtime Operation reconnect resync and list-only when no operation is selected', async () => {
+    const echo = createMockEcho()
+    setRuntimeNodeRealtimeClientFactory(() => echo.client)
+    const operationSubscription = runtimeOperationSubscription()
+
+    subscribeRuntimeOperationRealtime(operationSubscription)
+    echo.emitConnection('state_change', { current: 'connected' })
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-operations')
+    await flushAsync()
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connected')
+
+    echo.emitConnection('state_change', { current: 'disconnected' })
+    echo.emitConnection('state_change', { current: 'connected' })
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-operations')
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-operations')
+    await flushAsync()
+
+    expect(operationSubscription.refreshList).toHaveBeenCalledTimes(1)
+    expect(operationSubscription.refreshSelectedRuntimeOperation).toHaveBeenCalledTimes(1)
+    expect(operationSubscription.refreshSelectedRuntimeOperation).toHaveBeenCalledWith('operation-1')
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connected')
+
+    disconnectRuntimeNodeRealtime()
+    const echoWithoutSelection = createMockEcho()
+    setRuntimeNodeRealtimeClientFactory(() => echoWithoutSelection.client)
+    const noSelectionSubscription = runtimeOperationSubscription({
+      selectedRuntimeOperationId: vi.fn(() => null),
+    })
+
+    subscribeRuntimeOperationRealtime(noSelectionSubscription)
+    echoWithoutSelection.emitConnection('state_change', { current: 'connected' })
+    echoWithoutSelection.emitSubscriptionSucceeded('tenant.tenant-1.runtime-operations')
+    await flushAsync()
+    echoWithoutSelection.emitConnection('state_change', { current: 'disconnected' })
+    echoWithoutSelection.emitConnection('state_change', { current: 'connected' })
+    echoWithoutSelection.emitSubscriptionSucceeded('tenant.tenant-1.runtime-operations')
+    await flushAsync()
+
+    expect(noSelectionSubscription.refreshList).toHaveBeenCalledTimes(1)
+    expect(noSelectionSubscription.refreshSelectedRuntimeOperation).not.toHaveBeenCalled()
+  })
+
+  it('leaves Runtime Operation channels and ignores late-generation callbacks', async () => {
+    const echo = createMockEcho()
+    setRuntimeNodeRealtimeClientFactory(() => echo.client)
+    const tenantA = runtimeOperationSubscription({ tenantId: 'tenant-a' })
+    const tenantB = runtimeOperationSubscription({ tenantId: 'tenant-b' })
+
+    subscribeRuntimeOperationRealtime(tenantA)
+    echo.emitConnection('state_change', { current: 'connected' })
+    echo.emitSubscriptionSucceeded('tenant.tenant-a.runtime-operations')
+    await flushAsync()
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connected')
+
+    subscribeRuntimeOperationRealtime(tenantB)
+    expect(echo.leftChannels).toContain('tenant.tenant-a.runtime-operations')
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connecting')
+
+    echo.emitSubscriptionSucceeded('tenant.tenant-a.runtime-operations')
+    echo.emitRuntimeOperationNotification('tenant.tenant-a.runtime-operations', runtimeOperationNotification({ tenant_id: 'tenant-a' }))
+    await flushAsync()
+
+    expect(tenantA.refreshList).not.toHaveBeenCalled()
+    expect(tenantB.refreshList).not.toHaveBeenCalled()
+
+    echo.emitSubscriptionSucceeded('tenant.tenant-b.runtime-operations')
+    await flushAsync()
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connected')
+
+    disconnectRuntimeNodeRealtime()
+    echo.emitRuntimeOperationNotification('tenant.tenant-b.runtime-operations', runtimeOperationNotification({ tenant_id: 'tenant-b' }))
+    await flushAsync()
+
+    expect(echo.leftChannels).toContain('tenant.tenant-b.runtime-operations')
+    expect(echo.disconnected).toBe(true)
+    expect(tenantB.refreshList).not.toHaveBeenCalled()
+  })
+
   it('runs scoped Conference reconnect resync and keeps list-only when no conference is selected', async () => {
     const echo = createMockEcho()
     const factory = vi.fn(() => echo.client)
@@ -500,8 +658,10 @@ describe('runtimeNodeRealtime', () => {
 
     subscribeRuntimeNodeRealtime(subscription())
     subscribeConferenceRealtime(conferenceSubscription())
+    subscribeRuntimeOperationRealtime(runtimeOperationSubscription())
     echo.emitConnection('state_change', { current: 'connected' })
     echo.emitSubscriptionSucceeded('tenant.tenant-1.conferences')
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-operations')
     await flushAsync()
 
     expect(runtimeNodeRealtimeConnectionState.value).toBe('connecting')
@@ -516,8 +676,10 @@ describe('runtimeNodeRealtime', () => {
     setRuntimeNodeRealtimeClientFactory(() => reversedEcho.client)
     subscribeRuntimeNodeRealtime(subscription())
     subscribeConferenceRealtime(conferenceSubscription())
+    subscribeRuntimeOperationRealtime(runtimeOperationSubscription())
     reversedEcho.emitConnection('state_change', { current: 'connected' })
     reversedEcho.emitSubscriptionSucceeded('tenant.tenant-1.runtime-nodes')
+    reversedEcho.emitSubscriptionSucceeded('tenant.tenant-1.runtime-operations')
     await flushAsync()
     expect(runtimeNodeRealtimeConnectionState.value).toBe('connecting')
     reversedEcho.emitSubscriptionSucceeded('tenant.tenant-1.conferences')

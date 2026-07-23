@@ -4,7 +4,7 @@ import type { LocationQueryRaw, Router } from 'vue-router'
 type QueryValue = string | null
 type FilterDefinition = {
   query: string
-  allowedValues: readonly string[]
+  allowedValues?: readonly string[]
   defaultValue?: string
 }
 
@@ -91,7 +91,10 @@ export function useListQueryState<TFilters extends Record<string, string> = Reco
     for (const [filterKey, filter] of Object.entries(filterConfig)) {
       const raw = firstQueryValue(routeQuery[filter.query])
       const defaultValue = filter.defaultValue ?? ''
-      const value = raw !== null && filter.allowedValues.includes(raw) ? raw : defaultValue
+      const normalized = raw?.trim() ?? null
+      const value = normalized !== null && normalized !== ''
+        ? (filter.allowedValues === undefined || filter.allowedValues.includes(normalized) ? normalized : defaultValue)
+        : defaultValue
       filters[filterKey] = value
     }
 
