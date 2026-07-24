@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\ControlPlane\AdminAuditRecordController;
 use App\Http\Controllers\ControlPlane\AdminRuntimeOperationController;
 use App\Http\Controllers\ControlPlane\AdminRuntimeReconciliationController;
 use App\Http\Controllers\Identity\AdminMembershipController;
@@ -56,6 +57,8 @@ Route::prefix('api/v1/admin')->middleware(['identity.session'])->group(function 
     Route::get('/runtime-operations/{runtimeOperation}', [AdminRuntimeOperationController::class, 'show']);
     Route::get('/runtime-reconciliations', [AdminRuntimeReconciliationController::class, 'index']);
     Route::get('/runtime-reconciliations/{runtimeReconciliation}', [AdminRuntimeReconciliationController::class, 'show']);
+    Route::get('/audit-records', [AdminAuditRecordController::class, 'index']);
+    Route::get('/audit-records/{auditRecord}', [AdminAuditRecordController::class, 'show']);
 
     Route::get('/runtime-node-catalog', [AdminRuntimeNodeController::class, 'catalog']);
     Route::get('/runtime-nodes', [AdminRuntimeNodeController::class, 'index']);
