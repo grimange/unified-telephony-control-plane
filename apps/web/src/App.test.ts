@@ -24,6 +24,7 @@ import membershipsViewSource from './views/MembershipsView.vue?raw'
 import appStateSource from './state/appState.ts?raw'
 import runtimeNodesViewSource from './views/RuntimeNodesView.vue?raw'
 import runtimeOperationsViewSource from './views/RuntimeOperationsView.vue?raw'
+import runtimeReconciliationsViewSource from './views/RuntimeReconciliationsView.vue?raw'
 import tenantsViewSource from './views/TenantsView.vue?raw'
 import userDetailViewSource from './views/UserDetailView.vue?raw'
 import usersViewSource from './views/UsersView.vue?raw'
@@ -485,6 +486,53 @@ const runtimeOperationDetail = {
   },
 }
 
+const runtimeReconciliation = {
+  id: 'reconciliation-1',
+  target: { type: 'runtime_node', id: 'runtime-1' },
+  runtime_node: {
+    id: 'runtime-1',
+    name: 'Proof Runtime',
+    slug: 'proof-runtime',
+    runtime_family: 'asterisk',
+    adapter_key: 'asterisk-ari',
+  },
+  status: 'operation_required',
+  desired_generation: 4,
+  observed_generation: 3,
+  has_drift: true,
+  attempt_count: 2,
+  last_checked_at: '2026-07-24T10:01:00Z',
+  next_check_at: '2026-07-24T10:05:00Z',
+  last_operation_id: 'operation-1',
+  runtime_operation: {
+    id: 'operation-1',
+    operation_type: 'runtime.node.inspect',
+    status: 'running',
+    created_at: '2026-07-24T10:00:00Z',
+    completed_at: null,
+  },
+  failure: {
+    category: 'runtime_unavailable',
+    code: 'profile_missing',
+    summary: 'runtime_unavailable:profile_missing',
+    occurred_at: '2026-07-24T10:01:00Z',
+  },
+  created_at: '2026-07-24T09:50:00Z',
+  updated_at: '2026-07-24T10:01:00Z',
+}
+
+const secondRuntimeReconciliation = {
+  ...runtimeReconciliation,
+  id: 'reconciliation-2',
+  status: 'waiting',
+  desired_generation: 2,
+  observed_generation: 2,
+  has_drift: false,
+  last_operation_id: null,
+  runtime_operation: null,
+  failure: null,
+}
+
 function mockRuntimeAdminFetch(calls: Array<{ url: string; body?: unknown }>): void {
   vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString()
@@ -581,6 +629,39 @@ function mockRuntimeOperationAdminFetch(calls: Array<{ url: string; body?: unkno
       const params = new URL(url, 'http://utcp.local.test').searchParams
       return Promise.resolve(jsonResponse({
         runtime_operations: options.empty ? [] : [runtimeOperation, secondRuntimeOperation],
+        pagination: {
+          page: params.get('page') === '2' ? 2 : 1,
+          per_page: params.get('per_page') === '10' ? 10 : 20,
+          total: options.empty ? 0 : 2,
+          has_more: params.get('page') !== '2' && !options.empty,
+        },
+      }))
+    }
+
+    return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+  })
+}
+
+function mockRuntimeReconciliationAdminFetch(calls: Array<{ url: string; body?: unknown }>, options: { listStatus?: number; detailStatus?: number; empty?: boolean } = {}): void {
+  vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString()
+    calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+    if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+    if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+    if (url.includes('/api/v1/admin/runtime-reconciliations/reconciliation-1')) {
+      if (options.detailStatus) return Promise.resolve(jsonResponse({ message: 'detail unavailable' }, options.detailStatus))
+
+      return Promise.resolve(jsonResponse({ runtime_reconciliation: runtimeReconciliation }))
+    }
+    if (url.includes('/api/v1/admin/runtime-reconciliations/reconciliation-2')) {
+      return Promise.resolve(jsonResponse({ message: 'Unselected Runtime Reconciliation detail was requested.' }, 500))
+    }
+    if (url.includes('/api/v1/admin/runtime-reconciliations')) {
+      if (options.listStatus) return Promise.resolve(jsonResponse({ message: 'list unavailable' }, options.listStatus))
+
+      const params = new URL(url, 'http://utcp.local.test').searchParams
+      return Promise.resolve(jsonResponse({
+        runtime_reconciliations: options.empty ? [] : [runtimeReconciliation, secondRuntimeReconciliation],
         pagination: {
           page: params.get('page') === '2' ? 2 : 1,
           per_page: params.get('per_page') === '10' ? 10 : 20,
@@ -718,6 +799,9 @@ function createMockRealtimeEcho() {
     },
     emitRuntimeOperationNotification(channelName: string, payload: unknown) {
       notificationCallbacks[channelName]?.['.runtime-operation.operational-state.changed']?.(payload)
+    },
+    emitRuntimeReconciliationNotification(channelName: string, payload: unknown) {
+      notificationCallbacks[channelName]?.['.runtime-reconciliation.operational-state.changed']?.(payload)
     },
   }
 }
@@ -1204,6 +1288,184 @@ describe('C1 App shell', () => {
     await notFoundWrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
     await flushPromises()
     expect(notFoundWrapper.text()).toContain('Runtime Operation detail unavailable')
+  })
+
+  it('renders Runtime Reconciliations as a read-only capability-gated route with bounded request budgets', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockRuntimeReconciliationAdminFetch(calls)
+    vi.stubEnv('VITE_UTCP_REVERB_APP_KEY', 'public-reverb-key')
+    vi.stubEnv('VITE_UTCP_WS_HOST', 'app.utcp.local.test')
+    vi.stubEnv('VITE_UTCP_WS_PORT', '443')
+    vi.stubEnv('VITE_UTCP_WS_SCHEME', 'wss')
+    vi.stubEnv('VITE_UTCP_WS_PATH', '/app')
+    const realtime = createMockRealtimeEcho()
+
+    const wrapper = await mountApp('/operations/runtime-reconciliations')
+
+    expect(router.currentRoute.value.path).toBe('/operations/runtime-reconciliations')
+    expect(wrapper.text()).toContain('Runtime reconciliations')
+    expect(wrapper.text()).toContain('Runtime Reconciliation list')
+    expect(wrapper.text()).toContain('Proof Runtime')
+    expect(wrapper.text()).toContain('operation required')
+    expect(wrapper.text()).toContain('Drift detected')
+    expect(wrapper.text()).toContain('Desired 4')
+    expect(wrapper.text()).toContain('Observed 3')
+    expect(wrapper.text()).toContain('runtime_unavailable:profile_missing')
+    expect(wrapper.text()).toContain('Live updates connecting')
+    expect(wrapper.text()).toContain('Page 1 of 1')
+    expect(wrapper.text()).not.toContain('Retry')
+    expect(wrapper.text()).not.toContain('Reconcile now')
+    expect(wrapper.text()).not.toContain('Repair')
+    expect(wrapper.text()).not.toContain('raw-desired-secret')
+    expect(realtime.privateChannels).toEqual(['tenant.tenant-1.runtime-reconciliations'])
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/runtime-reconciliations') && !call.url.includes('/reconciliation-'))).toHaveLength(1)
+    expect(calls.some((call) => call.url.includes('/api/v1/admin/runtime-reconciliations/reconciliation-1'))).toBe(false)
+    expect(calls.some((call) => call.url.includes('/api/v1/admin/runtime-reconciliations/reconciliation-2'))).toBe(false)
+
+    realtime.emitConnection('state_change', { current: 'connected' })
+    realtime.emitSubscriptionSucceeded('tenant.tenant-1.runtime-reconciliations')
+    await nextTick()
+    expect(wrapper.text()).toContain('Live updates connected')
+
+    await wrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Next check')
+    expect(wrapper.text()).toContain('Last operation')
+    expect(wrapper.text()).toContain('runtime.node.inspect')
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/runtime-reconciliations') && !call.url.includes('/reconciliation-'))).toHaveLength(1)
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/runtime-reconciliations/reconciliation-1'))).toHaveLength(1)
+    expect(calls.some((call) => call.url.includes('/api/v1/admin/runtime-reconciliations/reconciliation-2'))).toBe(false)
+  })
+
+  it('maps Runtime Reconciliation filters and pagination to canonical query parameters', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockRuntimeReconciliationAdminFetch(calls)
+    const wrapper = await mountApp('/operations/runtime-reconciliations?page=2&per_page=10&status=operation_required&runtime_node_id=runtime-1&target_type=runtime_node&runtime_operation_id=operation-1&updated_from=2026-07-24T10:00:00Z')
+    await flushPromises()
+
+    expect(calls.some((call) =>
+      call.url.includes('/api/v1/admin/runtime-reconciliations?')
+      && call.url.includes('page=2')
+      && call.url.includes('per_page=10')
+      && call.url.includes('status=operation_required')
+      && call.url.includes('runtime_node_id=runtime-1')
+      && call.url.includes('target_type=runtime_node')
+      && call.url.includes('runtime_operation_id=operation-1')
+      && call.url.includes('updated_from=2026-07-24T10%3A00%3A00Z'),
+    )).toBe(true)
+
+    await wrapper.find('#runtime-reconciliation-status-filter').setValue('converged')
+    await wrapper.find('form[role="search"]').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query.page).toBeUndefined()
+    expect(router.currentRoute.value.query.status).toBe('converged')
+    expect(calls.at(-1)?.url).toContain('status=converged')
+    expect(calls.at(-1)?.url).not.toContain('page=2')
+
+    await wrapper.find('.ui-pagination button[aria-label="Go to next page"]').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query.page).toBe('2')
+    expect(calls.at(-1)?.url).toContain('status=converged')
+    expect(calls.at(-1)?.url).toContain('page=2')
+  })
+
+  it('preserves Runtime Reconciliation pagination and filters during notification rereads', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockRuntimeReconciliationAdminFetch(calls)
+    vi.stubEnv('VITE_UTCP_REVERB_APP_KEY', 'public-reverb-key')
+    vi.stubEnv('VITE_UTCP_WS_HOST', 'app.utcp.local.test')
+    vi.stubEnv('VITE_UTCP_WS_PORT', '443')
+    vi.stubEnv('VITE_UTCP_WS_SCHEME', 'wss')
+    vi.stubEnv('VITE_UTCP_WS_PATH', '/app')
+    const realtime = createMockRealtimeEcho()
+    const wrapper = await mountApp('/operations/runtime-reconciliations?page=2&per_page=10&status=operation_required')
+
+    await wrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
+    await flushPromises()
+    const listCountAfterSelect = calls.filter((call) => call.url.includes('/api/v1/admin/runtime-reconciliations') && !call.url.includes('/reconciliation-')).length
+    const detailCountAfterSelect = calls.filter((call) => call.url.includes('/api/v1/admin/runtime-reconciliations/reconciliation-1')).length
+
+    realtime.emitRuntimeReconciliationNotification('tenant.tenant-1.runtime-reconciliations', {
+      event_type: 'runtime_reconciliation.converged',
+      aggregate_type: 'runtime_reconciliation',
+      aggregate_id: 'reconciliation-1',
+      runtime_reconciliation_id: 'reconciliation-1',
+      tenant_id: 'tenant-1',
+      occurred_at: '2026-07-24T10:02:00Z',
+      status: 'converged',
+      desired_state: { secret: 'must-not-use' },
+      observed_state: { secret: 'must-not-use' },
+    })
+    await flushPromises()
+
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/runtime-reconciliations') && !call.url.includes('/reconciliation-'))).toHaveLength(listCountAfterSelect + 1)
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/runtime-reconciliations/reconciliation-1'))).toHaveLength(detailCountAfterSelect + 1)
+    expect(calls.at(-2)?.url).toContain('page=2')
+    expect(calls.at(-2)?.url).toContain('per_page=10')
+    expect(calls.at(-2)?.url).toContain('status=operation_required')
+
+    realtime.emitRuntimeReconciliationNotification('tenant.tenant-1.runtime-reconciliations', {
+      event_type: 'runtime_reconciliation.converged',
+      aggregate_type: 'runtime_reconciliation',
+      aggregate_id: 'reconciliation-2',
+      runtime_reconciliation_id: 'reconciliation-2',
+      tenant_id: 'tenant-1',
+      occurred_at: '2026-07-24T10:03:00Z',
+    })
+    await flushPromises()
+
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/runtime-reconciliations') && !call.url.includes('/reconciliation-'))).toHaveLength(listCountAfterSelect + 2)
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/runtime-reconciliations/reconciliation-1'))).toHaveLength(detailCountAfterSelect + 1)
+    expect(calls.some((call) => call.url.includes('/api/v1/admin/runtime-reconciliations/reconciliation-2'))).toBe(false)
+    expect(JSON.stringify(window.localStorage)).not.toContain('reconciliation-1')
+    expect(JSON.stringify(window.sessionStorage)).not.toContain('must-not-use')
+  })
+
+  it('handles Runtime Reconciliation empty, forbidden, validation, and not-found states', async () => {
+    const emptyCalls: Array<{ url: string; body?: unknown }> = []
+    mockRuntimeReconciliationAdminFetch(emptyCalls, { empty: true })
+    const emptyWrapper = await mountApp('/operations/runtime-reconciliations')
+    expect(emptyWrapper.text()).toContain('No Runtime Reconciliations')
+    emptyWrapper.unmount()
+
+    const forbiddenCalls: Array<{ url: string; body?: unknown }> = []
+    mockRuntimeReconciliationAdminFetch(forbiddenCalls, { listStatus: 403 })
+    const forbiddenWrapper = await mountApp('/operations/runtime-reconciliations')
+    expect(forbiddenWrapper.text()).toContain('Runtime Reconciliations forbidden')
+    forbiddenWrapper.unmount()
+
+    const validationCalls: Array<{ url: string; body?: unknown }> = []
+    mockRuntimeReconciliationAdminFetch(validationCalls, { listStatus: 422 })
+    const validationWrapper = await mountApp('/operations/runtime-reconciliations?status=invalid')
+    expect(validationWrapper.text()).toContain('Runtime Reconciliations unavailable')
+    validationWrapper.unmount()
+
+    const notFoundCalls: Array<{ url: string; body?: unknown }> = []
+    mockRuntimeReconciliationAdminFetch(notFoundCalls, { detailStatus: 404 })
+    const notFoundWrapper = await mountApp('/operations/runtime-reconciliations')
+    await notFoundWrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
+    await flushPromises()
+    expect(notFoundWrapper.text()).toContain('Runtime Reconciliation detail unavailable')
+  })
+
+  it('hides Runtime Reconciliations navigation and blocks the route without runtime.nodes.view', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
+      const url = input.toString()
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(limitedSession))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/dashboard')
+    expect(wrapper.text()).not.toContain('Runtime reconciliations')
+
+    await router.push('/operations/runtime-reconciliations')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/forbidden')
   })
 
   it('hides Runtime Operations navigation and blocks the route without runtime.nodes.view', async () => {
@@ -2245,6 +2507,7 @@ describe('C1 App shell', () => {
       'ConferenceOperationsView.vue': conferenceOperationsViewSource,
       'RuntimeNodesView.vue': runtimeNodesViewSource,
       'RuntimeOperationsView.vue': runtimeOperationsViewSource,
+      'RuntimeReconciliationsView.vue': runtimeReconciliationsViewSource,
       'UserDetailView.vue': userDetailViewSource,
     }
 
@@ -2276,6 +2539,16 @@ describe('C1 App shell', () => {
     expect(viewSources['RuntimeOperationsView.vue']).not.toContain('lease_id')
     expect(viewSources['RuntimeOperationsView.vue']).not.toContain('leased_by')
     expect(viewSources['RuntimeOperationsView.vue']).not.toContain('lease_expires_at')
+    expect(viewSources['RuntimeReconciliationsView.vue']).not.toContain('localStorage')
+    expect(viewSources['RuntimeReconciliationsView.vue']).not.toContain('sessionStorage')
+    expect(viewSources['RuntimeReconciliationsView.vue']).not.toContain('event.payload')
+    expect(viewSources['RuntimeReconciliationsView.vue']).not.toContain('notification.payload')
+    expect(viewSources['RuntimeReconciliationsView.vue']).not.toContain('desired_state')
+    expect(viewSources['RuntimeReconciliationsView.vue']).not.toContain('observed_state')
+    expect(viewSources['RuntimeReconciliationsView.vue']).not.toContain('audit')
+    expect(viewSources['RuntimeReconciliationsView.vue']).not.toContain('outbox')
+    expect(viewSources['RuntimeReconciliationsView.vue']).not.toContain('credentials')
+    expect(viewSources['RuntimeReconciliationsView.vue']).not.toContain('endpoint')
     expect(appStateSource).not.toContain('saveAsteriskAdapterConfiguration')
     expect(appStateSource).not.toContain('asteriskConfigurationForm')
     expect(appStateSource).toContain('saveRuntimeAdapterConfiguration')

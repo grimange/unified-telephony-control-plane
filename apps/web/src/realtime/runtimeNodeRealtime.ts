@@ -61,6 +61,25 @@ export type RuntimeOperationRealtimeSubscription = {
   sessionActive: () => boolean
 }
 
+export type RuntimeReconciliationOperationalNotification = {
+  event_type: unknown
+  aggregate_type: unknown
+  aggregate_id: unknown
+  runtime_reconciliation_id: unknown
+  runtime_node_id?: unknown
+  runtime_operation_id?: unknown
+  tenant_id: unknown
+  occurred_at: unknown
+}
+
+export type RuntimeReconciliationRealtimeSubscription = {
+  tenantId: string
+  refreshList: () => Promise<unknown>
+  refreshSelectedRuntimeReconciliation: (runtimeReconciliationId: string) => Promise<unknown>
+  selectedRuntimeReconciliationId: () => string | null
+  sessionActive: () => boolean
+}
+
 type EchoConnection = {
   bind?: (event: string, callback: (payload?: unknown) => void) => void
   unbind?: (event: string, callback?: (payload?: unknown) => void) => void
@@ -115,9 +134,11 @@ export type RuntimeNodeEchoOptions = {
 const runtimeNodeEventName = '.runtime-node.operational-state.changed'
 const conferenceEventName = '.conference.operational-state.changed'
 const runtimeOperationEventName = '.runtime-operation.operational-state.changed'
+const runtimeReconciliationEventName = '.runtime-reconciliation.operational-state.changed'
 const publicRuntimeNodeIdPattern = /^[A-Za-z0-9._:-]{1,128}$/
 const publicConferenceIdPattern = /^[A-Za-z0-9._:-]{1,128}$/
 const publicRuntimeOperationIdPattern = /^[A-Za-z0-9._:-]{1,128}$/
+const publicRuntimeReconciliationIdPattern = /^[A-Za-z0-9._:-]{1,128}$/
 
 export const runtimeNodeRealtimeConnectionState = ref<RuntimeNodeRealtimeConnectionState>('idle')
 export const runtimeNodeRealtimeLastConnectedAt = ref<string | null>(null)
@@ -145,6 +166,12 @@ let activeRuntimeOperationChannel: EchoChannel | null = null
 let activeRuntimeOperationToken = 0
 let activeRuntimeOperationSnapshotReady = false
 let activeRuntimeOperationSubscriptionReady = false
+let activeRuntimeReconciliationChannelName: string | null = null
+let activeRuntimeReconciliationSubscription: RuntimeReconciliationRealtimeSubscription | null = null
+let activeRuntimeReconciliationChannel: EchoChannel | null = null
+let activeRuntimeReconciliationToken = 0
+let activeRuntimeReconciliationSnapshotReady = false
+let activeRuntimeReconciliationSubscriptionReady = false
 let echoClientFactory: EchoClientFactory = createEchoClient
 let connectedOnce = false
 let socketConnected = false
@@ -243,9 +270,11 @@ export function leaveRuntimeNodeRealtimeTenant(): void {
   leaveRuntimeNodeChannel()
   leaveConferenceChannel()
   leaveRuntimeOperationChannel()
+  leaveRuntimeReconciliationChannel()
   activeRuntimeNodeSubscription = null
   activeConferenceSubscription = null
   activeRuntimeOperationSubscription = null
+  activeRuntimeReconciliationSubscription = null
   runtimeNodeRealtimeConnectionState.value = echoClient === null ? 'idle' : 'connecting'
 }
 
@@ -361,13 +390,71 @@ export function leaveRuntimeOperationRealtimeTenant(): void {
   void maybeCompleteLiveConnection()
 }
 
+export function subscribeRuntimeReconciliationRealtime(subscription: RuntimeReconciliationRealtimeSubscription): void {
+  if (!subscription.sessionActive() || subscription.tenantId === '') {
+    leaveRuntimeReconciliationChannel()
+    activeRuntimeReconciliationSubscription = null
+
+    return
+  }
+
+  const nextChannelName = `tenant.${subscription.tenantId}.runtime-reconciliations`
+  activeRuntimeReconciliationSubscription = subscription
+
+  if (activeRuntimeReconciliationChannelName === nextChannelName && echoClient !== null) {
+    activeRuntimeReconciliationSnapshotReady = true
+    void maybeCompleteLiveConnection()
+
+    return
+  }
+
+  leaveRuntimeReconciliationChannel()
+  const config = readRuntimeNodeRealtimeConfig()
+  if (config === null) {
+    runtimeNodeRealtimeConnectionState.value = 'disconnected'
+    runtimeNodeRealtimeError.value = 'Live update transport configuration is incomplete.'
+
+    return
+  }
+
+  if (echoClient === null) {
+    runtimeNodeRealtimeConnectionState.value = 'connecting'
+    echoClient = echoClientFactory(config)
+    bindConnectionEvents(echoClient)
+  }
+
+  runtimeNodeRealtimeConnectionState.value = requiresReconnectResync ? 'reconnecting' : 'connecting'
+  activeRuntimeReconciliationChannelName = nextChannelName
+  activeRuntimeReconciliationSnapshotReady = true
+  activeRuntimeReconciliationSubscriptionReady = false
+  const generation = ++activeRuntimeReconciliationToken
+  const channel = echoClient.private(nextChannelName)
+  activeRuntimeReconciliationChannel = channel
+  channel.listen(runtimeReconciliationEventName, handleRuntimeReconciliationNotification)
+  channel.error?.((error) => handleRuntimeReconciliationSubscriptionError(error, generation, nextChannelName, channel))
+  channel.subscribed(() => {
+    if (!isCurrentRuntimeReconciliationSubscription(generation, nextChannelName, channel)) return
+    activeRuntimeReconciliationSubscriptionReady = true
+    void maybeCompleteLiveConnection()
+  })
+}
+
+export function leaveRuntimeReconciliationRealtimeTenant(): void {
+  leaveRuntimeReconciliationChannel()
+  activeRuntimeReconciliationSubscription = null
+  runtimeNodeRealtimeConnectionState.value = echoClient === null ? 'idle' : 'connecting'
+  void maybeCompleteLiveConnection()
+}
+
 export function disconnectRuntimeNodeRealtime(): void {
   leaveRuntimeNodeChannel()
   leaveConferenceChannel()
   leaveRuntimeOperationChannel()
+  leaveRuntimeReconciliationChannel()
   activeRuntimeNodeSubscription = null
   activeConferenceSubscription = null
   activeRuntimeOperationSubscription = null
+  activeRuntimeReconciliationSubscription = null
   echoClient?.disconnect()
   echoClient = null
   connectedOnce = false
@@ -495,6 +582,7 @@ function markSocketDisconnected(state: Extract<RuntimeNodeRealtimeConnectionStat
     activeRuntimeNodeSubscriptionReady = false
     activeConferenceSubscriptionReady = false
     activeRuntimeOperationSubscriptionReady = false
+    activeRuntimeReconciliationSubscriptionReady = false
   }
   runtimeNodeRealtimeConnectionState.value = connectedOnce ? state : 'disconnected'
 }
@@ -521,6 +609,14 @@ function handleRuntimeOperationSubscriptionError(error: unknown, generation: num
   activeRuntimeOperationSubscriptionReady = false
   handleSubscriptionFailure(error)
   leaveRuntimeOperationChannel()
+}
+
+function handleRuntimeReconciliationSubscriptionError(error: unknown, generation: number, channelName: string, channel: EchoChannel): void {
+  if (!isCurrentRuntimeReconciliationSubscription(generation, channelName, channel)) return
+
+  activeRuntimeReconciliationSubscriptionReady = false
+  handleSubscriptionFailure(error)
+  leaveRuntimeReconciliationChannel()
 }
 
 function handleSubscriptionFailure(error: unknown): void {
@@ -559,10 +655,12 @@ async function resynchronizeCanonicalSnapshots(): Promise<boolean> {
   const runtimeNodeSubscription = activeRuntimeNodeSubscription
   const conferenceSubscription = activeConferenceSubscription
   const runtimeOperationSubscription = activeRuntimeOperationSubscription
+  const runtimeReconciliationSubscription = activeRuntimeReconciliationSubscription
   if (
     (runtimeNodeSubscription === null || !runtimeNodeSubscription.sessionActive())
     && (conferenceSubscription === null || !conferenceSubscription.sessionActive())
     && (runtimeOperationSubscription === null || !runtimeOperationSubscription.sessionActive())
+    && (runtimeReconciliationSubscription === null || !runtimeReconciliationSubscription.sessionActive())
   ) return false
 
   resynchronizing = true
@@ -583,6 +681,12 @@ async function resynchronizeCanonicalSnapshots(): Promise<boolean> {
       const selectedRuntimeOperationId = runtimeOperationSubscription.selectedRuntimeOperationId()
       if (selectedRuntimeOperationId !== null) await runtimeOperationSubscription.refreshSelectedRuntimeOperation(selectedRuntimeOperationId)
       activeRuntimeOperationSnapshotReady = true
+    }
+    if (runtimeReconciliationSubscription !== null && runtimeReconciliationSubscription.sessionActive()) {
+      await runtimeReconciliationSubscription.refreshList()
+      const selectedRuntimeReconciliationId = runtimeReconciliationSubscription.selectedRuntimeReconciliationId()
+      if (selectedRuntimeReconciliationId !== null) await runtimeReconciliationSubscription.refreshSelectedRuntimeReconciliation(selectedRuntimeReconciliationId)
+      activeRuntimeReconciliationSnapshotReady = true
     }
     if (runtimeNodeRealtimeConnectionState.value !== 'unauthorized') {
       runtimeNodeRealtimeConnectionState.value = 'connected'
@@ -634,6 +738,24 @@ async function refreshRuntimeOperationSnapshotsForNotification(runtimeOperationI
   }
 }
 
+function handleRuntimeReconciliationNotification(payload: unknown): void {
+  const subscription = activeRuntimeReconciliationSubscription
+  if (subscription === null || !subscription.sessionActive()) return
+  if (!isRuntimeReconciliationNotification(payload, subscription.tenantId)) return
+
+  void refreshRuntimeReconciliationSnapshotsForNotification(String(payload.runtime_reconciliation_id))
+}
+
+async function refreshRuntimeReconciliationSnapshotsForNotification(runtimeReconciliationId: string): Promise<void> {
+  const subscription = activeRuntimeReconciliationSubscription
+  if (subscription === null) return
+
+  await subscription.refreshList()
+  if (subscription.selectedRuntimeReconciliationId() === runtimeReconciliationId) {
+    await subscription.refreshSelectedRuntimeReconciliation(runtimeReconciliationId)
+  }
+}
+
 async function maybeCompleteLiveConnection(): Promise<void> {
   if (runtimeNodeRealtimeConnectionState.value === 'unauthorized' || !socketConnected) return
   if (!activeSubscriptionsReady()) {
@@ -667,14 +789,18 @@ function activeSubscriptionsReady(): boolean {
     || (activeConferenceSnapshotReady && activeConferenceSubscriptionReady && activeConferenceSubscription.sessionActive())
   const runtimeOperationReady = activeRuntimeOperationSubscription === null
     || (activeRuntimeOperationSnapshotReady && activeRuntimeOperationSubscriptionReady && activeRuntimeOperationSubscription.sessionActive())
+  const runtimeReconciliationReady = activeRuntimeReconciliationSubscription === null
+    || (activeRuntimeReconciliationSnapshotReady && activeRuntimeReconciliationSubscriptionReady && activeRuntimeReconciliationSubscription.sessionActive())
 
   return runtimeReady
     && conferenceReady
     && runtimeOperationReady
+    && runtimeReconciliationReady
     && (
       activeRuntimeNodeSubscription !== null
       || activeConferenceSubscription !== null
       || activeRuntimeOperationSubscription !== null
+      || activeRuntimeReconciliationSubscription !== null
     )
 }
 
@@ -700,6 +826,14 @@ function isCurrentRuntimeOperationSubscription(generation: number, channelName: 
     && activeRuntimeOperationChannel === channel
     && activeRuntimeOperationSubscription !== null
     && activeRuntimeOperationSubscription.sessionActive()
+}
+
+function isCurrentRuntimeReconciliationSubscription(generation: number, channelName: string, channel: EchoChannel): boolean {
+  return activeRuntimeReconciliationToken === generation
+    && activeRuntimeReconciliationChannelName === channelName
+    && activeRuntimeReconciliationChannel === channel
+    && activeRuntimeReconciliationSubscription !== null
+    && activeRuntimeReconciliationSubscription.sessionActive()
 }
 
 function isRuntimeNodeNotification(payload: unknown, activeTenantId: string): payload is RuntimeNodeOperationalNotification {
@@ -747,6 +881,22 @@ function isRuntimeOperationNotification(payload: unknown, activeTenantId: string
     && typeof candidate.occurred_at === 'string'
 }
 
+function isRuntimeReconciliationNotification(payload: unknown, activeTenantId: string): payload is RuntimeReconciliationOperationalNotification {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false
+
+  const candidate = payload as RuntimeReconciliationOperationalNotification
+
+  return candidate.aggregate_type === 'runtime_reconciliation'
+    && candidate.tenant_id === activeTenantId
+    && typeof candidate.event_type === 'string'
+    && candidate.event_type.startsWith('runtime_reconciliation.')
+    && typeof candidate.aggregate_id === 'string'
+    && typeof candidate.runtime_reconciliation_id === 'string'
+    && candidate.aggregate_id === candidate.runtime_reconciliation_id
+    && publicRuntimeReconciliationIdPattern.test(candidate.runtime_reconciliation_id)
+    && typeof candidate.occurred_at === 'string'
+}
+
 function leaveRuntimeNodeChannel(): void {
   if (echoClient !== null && activeRuntimeNodeChannelName !== null) {
     activeRuntimeNodeChannel?.stopListening?.(runtimeNodeEventName)
@@ -781,4 +931,16 @@ function leaveRuntimeOperationChannel(): void {
   activeRuntimeOperationSnapshotReady = false
   activeRuntimeOperationSubscriptionReady = false
   activeRuntimeOperationToken++
+}
+
+function leaveRuntimeReconciliationChannel(): void {
+  if (echoClient !== null && activeRuntimeReconciliationChannelName !== null) {
+    activeRuntimeReconciliationChannel?.stopListening?.(runtimeReconciliationEventName)
+    echoClient.leave(activeRuntimeReconciliationChannelName)
+  }
+  activeRuntimeReconciliationChannelName = null
+  activeRuntimeReconciliationChannel = null
+  activeRuntimeReconciliationSnapshotReady = false
+  activeRuntimeReconciliationSubscriptionReady = false
+  activeRuntimeReconciliationToken++
 }

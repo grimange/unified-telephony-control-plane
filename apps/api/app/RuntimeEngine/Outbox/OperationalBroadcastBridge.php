@@ -5,6 +5,7 @@ namespace App\RuntimeEngine\Outbox;
 use App\Events\ConferenceOperationalStateChanged;
 use App\Events\RuntimeNodeOperationalStateChanged;
 use App\Events\RuntimeOperationOperationalStateChanged;
+use App\Events\RuntimeReconciliationOperationalStateChanged;
 use Carbon\CarbonImmutable;
 
 class OperationalBroadcastBridge
@@ -13,7 +14,8 @@ class OperationalBroadcastBridge
     {
         return $this->dispatchRuntimeNodeNotification($row)
             || $this->dispatchConferenceNotification($row)
-            || $this->dispatchRuntimeOperationNotification($row);
+            || $this->dispatchRuntimeOperationNotification($row)
+            || $this->dispatchRuntimeReconciliationNotification($row);
     }
 
     private function dispatchRuntimeNodeNotification(object $row): bool
@@ -106,6 +108,39 @@ class OperationalBroadcastBridge
         return true;
     }
 
+    private function dispatchRuntimeReconciliationNotification(object $row): bool
+    {
+        $eventType = (string) $row->event_type;
+        $aggregateType = (string) $row->aggregate_type;
+        $aggregateId = (string) $row->aggregate_id;
+        $tenantId = $row->tenant_id;
+
+        if ($aggregateType !== 'runtime_reconciliation' || ! str_starts_with($eventType, 'runtime_reconciliation.')) {
+            return false;
+        }
+
+        if (! is_string($tenantId) || $tenantId === '' || $aggregateId === '') {
+            return false;
+        }
+
+        $runtimeReconciliationId = $this->runtimeReconciliationId($row);
+        if ($runtimeReconciliationId === null || $runtimeReconciliationId !== $aggregateId) {
+            return false;
+        }
+
+        event(new RuntimeReconciliationOperationalStateChanged(
+            eventType: $eventType,
+            aggregateId: $aggregateId,
+            runtimeReconciliationId: $runtimeReconciliationId,
+            runtimeNodeId: $this->runtimeReconciliationRuntimeNodeId($row),
+            runtimeOperationId: $this->runtimeReconciliationRuntimeOperationId($row),
+            tenantId: $tenantId,
+            occurredAt: CarbonImmutable::parse((string) $row->occurred_at),
+        ));
+
+        return true;
+    }
+
     private function participantConferenceId(object $row): ?string
     {
         $payload = json_decode((string) $row->payload, true);
@@ -128,5 +163,41 @@ class OperationalBroadcastBridge
         $runtimeNodeId = $payload['runtime_node_id'] ?? null;
 
         return is_string($runtimeNodeId) && $runtimeNodeId !== '' ? $runtimeNodeId : null;
+    }
+
+    private function runtimeReconciliationId(object $row): ?string
+    {
+        $payload = json_decode((string) $row->payload, true);
+        if (! is_array($payload)) {
+            return null;
+        }
+
+        $runtimeReconciliationId = $payload['runtime_reconciliation_id'] ?? null;
+
+        return is_string($runtimeReconciliationId) && $runtimeReconciliationId !== '' ? $runtimeReconciliationId : null;
+    }
+
+    private function runtimeReconciliationRuntimeNodeId(object $row): ?string
+    {
+        $payload = json_decode((string) $row->payload, true);
+        if (! is_array($payload)) {
+            return null;
+        }
+
+        $runtimeNodeId = $payload['runtime_node_id'] ?? null;
+
+        return is_string($runtimeNodeId) && $runtimeNodeId !== '' ? $runtimeNodeId : null;
+    }
+
+    private function runtimeReconciliationRuntimeOperationId(object $row): ?string
+    {
+        $payload = json_decode((string) $row->payload, true);
+        if (! is_array($payload)) {
+            return null;
+        }
+
+        $runtimeOperationId = $payload['runtime_operation_id'] ?? null;
+
+        return is_string($runtimeOperationId) && $runtimeOperationId !== '' ? $runtimeOperationId : null;
     }
 }

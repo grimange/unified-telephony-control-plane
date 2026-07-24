@@ -437,6 +437,87 @@ export type RuntimeOperationListFilters = {
   per_page?: number
 }
 
+export type RuntimeReconciliationStatus =
+  | 'waiting'
+  | 'leased'
+  | 'converged'
+  | 'operation_required'
+  | 'blocked'
+  | 'unsupported'
+  | 'retry_scheduled'
+
+export type RuntimeReconciliationTargetType =
+  | 'runtime_node'
+  | 'conference'
+  | 'conference_participant'
+  | 'signaling_registration'
+
+export type RuntimeReconciliationTargetReference = {
+  type: RuntimeReconciliationTargetType
+  id: string
+}
+
+export type RuntimeReconciliationRuntimeNodeReference = {
+  id: string
+  name: string
+  slug: string
+  runtime_family: string
+  adapter_key: string
+}
+
+export type RuntimeReconciliationRuntimeOperationReference = {
+  id: string
+  operation_type: string
+  status: RuntimeOperationStatus
+  created_at: string | null
+  completed_at: string | null
+}
+
+export type RuntimeReconciliationFailure = {
+  category: string
+  code: string | null
+  summary: string
+  occurred_at: string | null
+}
+
+export type RuntimeReconciliation = {
+  id: string
+  target: RuntimeReconciliationTargetReference
+  runtime_node: RuntimeReconciliationRuntimeNodeReference | null
+  status: RuntimeReconciliationStatus
+  desired_generation: number
+  observed_generation: number | null
+  has_drift: boolean | null
+  attempt_count: number
+  last_checked_at: string | null
+  next_check_at: string | null
+  last_operation_id: string | null
+  runtime_operation: RuntimeReconciliationRuntimeOperationReference | null
+  failure: RuntimeReconciliationFailure | null
+  created_at: string
+  updated_at: string
+}
+
+export type RuntimeReconciliationDetail = RuntimeReconciliation
+
+export type RuntimeReconciliationPagination = {
+  page: number
+  per_page: number
+  total: number
+  has_more: boolean
+}
+
+export type RuntimeReconciliationListFilters = {
+  runtime_node_id?: string
+  status?: RuntimeReconciliationStatus | ''
+  target_type?: RuntimeReconciliationTargetType | ''
+  runtime_operation_id?: string
+  updated_from?: string
+  updated_to?: string
+  page?: number
+  per_page?: number
+}
+
 class ApiRequestError extends Error {
   status: number
   details: unknown
@@ -673,6 +754,22 @@ export const identityApi = {
   },
   runtimeOperation: (runtimeOperationId: string) =>
     fetchJson<{ runtime_operation: RuntimeOperationDetail }>(`/api/v1/admin/runtime-operations/${runtimeOperationId}`),
+  runtimeReconciliations: (params: RuntimeReconciliationListFilters = {}) => {
+    const query = new URLSearchParams()
+    if (params.runtime_node_id) query.set('runtime_node_id', params.runtime_node_id)
+    if (params.status) query.set('status', params.status)
+    if (params.target_type) query.set('target_type', params.target_type)
+    if (params.runtime_operation_id) query.set('runtime_operation_id', params.runtime_operation_id)
+    if (params.updated_from) query.set('updated_from', params.updated_from)
+    if (params.updated_to) query.set('updated_to', params.updated_to)
+    if (params.page) query.set('page', String(params.page))
+    if (params.per_page) query.set('per_page', String(params.per_page))
+    const suffix = query.toString() === '' ? '' : `?${query.toString()}`
+
+    return fetchJson<{ runtime_reconciliations: RuntimeReconciliation[]; pagination: RuntimeReconciliationPagination }>(`/api/v1/admin/runtime-reconciliations${suffix}`)
+  },
+  runtimeReconciliation: (runtimeReconciliationId: string) =>
+    fetchJson<{ runtime_reconciliation: RuntimeReconciliationDetail }>(`/api/v1/admin/runtime-reconciliations/${runtimeReconciliationId}`),
   conferences: () => fetchJson<{ conferences: Conference[] }>('/api/v1/admin/conferences'),
   conference: (conferenceId: string) => fetchJson<{ conference: Conference }>(`/api/v1/admin/conferences/${conferenceId}`),
   conferenceParticipants: (conferenceId: string) =>

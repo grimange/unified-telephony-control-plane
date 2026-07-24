@@ -10,6 +10,7 @@ import {
   runtimeNodeRealtimeStatusText,
   setRuntimeNodeRealtimeClientFactory,
   subscribeConferenceRealtime,
+  subscribeRuntimeReconciliationRealtime,
   subscribeRuntimeOperationRealtime,
   subscribeRuntimeNodeRealtime,
   type ConferenceRealtimeSubscription,
@@ -17,6 +18,7 @@ import {
   type EchoClient,
   type RuntimeNodeRealtimeConfig,
   type RuntimeNodeRealtimeSubscription,
+  type RuntimeReconciliationRealtimeSubscription,
   type RuntimeOperationRealtimeSubscription,
 } from './runtimeNodeRealtime'
 
@@ -113,6 +115,9 @@ function createMockEcho() {
     emitRuntimeOperationNotification(channelName: string, payload: unknown) {
       channels[channelName]?.notificationCallbacks['.runtime-operation.operational-state.changed']?.(payload)
     },
+    emitRuntimeReconciliationNotification(channelName: string, payload: unknown) {
+      channels[channelName]?.notificationCallbacks['.runtime-reconciliation.operational-state.changed']?.(payload)
+    },
     emitSubscriptionSucceeded(channelName: string) {
       for (const callback of channels[channelName]?.subscribedCallbacks ?? []) callback()
     },
@@ -203,6 +208,35 @@ function runtimeOperationSubscription(overrides: Partial<RuntimeOperationRealtim
     sessionActive: vi.fn(() => true),
     ...overrides,
   } satisfies RuntimeOperationRealtimeSubscription
+}
+
+function runtimeReconciliationNotification(overrides: Record<string, unknown> = {}) {
+  return {
+    event_type: 'runtime_reconciliation.converged',
+    aggregate_type: 'runtime_reconciliation',
+    aggregate_id: 'reconciliation-1',
+    runtime_reconciliation_id: 'reconciliation-1',
+    runtime_node_id: 'runtime-1',
+    runtime_operation_id: 'operation-1',
+    tenant_id: 'tenant-1',
+    occurred_at: '2026-07-23T01:02:03.000000Z',
+    status: 'blocked',
+    desired_state: { secret: 'must-not-be-used' },
+    observed_state: { secret: 'must-not-be-used' },
+    failure: 'must-not-be-used',
+    ...overrides,
+  }
+}
+
+function runtimeReconciliationSubscription(overrides: Partial<RuntimeReconciliationRealtimeSubscription> = {}) {
+  return {
+    tenantId: 'tenant-1',
+    refreshList: vi.fn().mockResolvedValue({ runtime_reconciliations: [{ id: 'reconciliation-1', status: 'canonical-converged' }] }),
+    refreshSelectedRuntimeReconciliation: vi.fn().mockResolvedValue({ runtime_reconciliation: { id: 'reconciliation-1', status: 'canonical-converged' } }),
+    selectedRuntimeReconciliationId: vi.fn(() => 'reconciliation-1'),
+    sessionActive: vi.fn(() => true),
+    ...overrides,
+  } satisfies RuntimeReconciliationRealtimeSubscription
 }
 
 describe('runtimeNodeRealtime', () => {
@@ -571,6 +605,132 @@ describe('runtimeNodeRealtime', () => {
     expect(noSelectionSubscription.refreshSelectedRuntimeOperation).not.toHaveBeenCalled()
   })
 
+  it('uses one Echo client for Runtime Reconciliation subscriptions with scoped snapshot rereads', async () => {
+    const echo = createMockEcho()
+    const factory = vi.fn(() => echo.client)
+    setRuntimeNodeRealtimeClientFactory(factory)
+    const runtimeSubscription = subscription()
+    const reconciliationSubscription = runtimeReconciliationSubscription()
+
+    subscribeRuntimeNodeRealtime(runtimeSubscription)
+    subscribeRuntimeReconciliationRealtime(reconciliationSubscription)
+
+    expect(factory).toHaveBeenCalledTimes(1)
+    expect(echo.privateChannels).toEqual(['tenant.tenant-1.runtime-nodes', 'tenant.tenant-1.runtime-reconciliations'])
+    expect(echo.subscriptionCallbackCount('tenant.tenant-1.runtime-reconciliations')).toBe(1)
+    expect(echo.errorCallbackCount('tenant.tenant-1.runtime-reconciliations')).toBe(1)
+
+    echo.emitConnection('state_change', { current: 'connected' })
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-nodes')
+    await flushAsync()
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connecting')
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-reconciliations')
+    await flushAsync()
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connected')
+
+    echo.emitRuntimeReconciliationNotification('tenant.tenant-1.runtime-reconciliations', runtimeReconciliationNotification())
+    await flushAsync()
+
+    expect(reconciliationSubscription.refreshList).toHaveBeenCalledTimes(1)
+    expect(reconciliationSubscription.refreshSelectedRuntimeReconciliation).toHaveBeenCalledTimes(1)
+    expect(reconciliationSubscription.refreshSelectedRuntimeReconciliation).toHaveBeenCalledWith('reconciliation-1')
+    expect(JSON.stringify(window.localStorage)).not.toContain('must-not-be-used')
+    expect(JSON.stringify(window.sessionStorage)).not.toContain('blocked')
+
+    echo.emitRuntimeReconciliationNotification('tenant.tenant-1.runtime-reconciliations', runtimeReconciliationNotification({ runtime_reconciliation_id: 'reconciliation-2', aggregate_id: 'reconciliation-2' }))
+    await flushAsync()
+
+    expect(reconciliationSubscription.refreshList).toHaveBeenCalledTimes(2)
+    expect(reconciliationSubscription.refreshSelectedRuntimeReconciliation).toHaveBeenCalledTimes(1)
+
+    echo.emitRuntimeReconciliationNotification('tenant.tenant-1.runtime-reconciliations', runtimeReconciliationNotification({ tenant_id: 'tenant-2' }))
+    echo.emitRuntimeReconciliationNotification('tenant.tenant-1.runtime-reconciliations', runtimeReconciliationNotification({ aggregate_type: 'runtime_operation' }))
+    echo.emitRuntimeReconciliationNotification('tenant.tenant-1.runtime-reconciliations', runtimeReconciliationNotification({ runtime_reconciliation_id: '../reconciliation-1', aggregate_id: '../reconciliation-1' }))
+    echo.emitRuntimeReconciliationNotification('tenant.tenant-1.runtime-reconciliations', runtimeReconciliationNotification({ aggregate_id: 'reconciliation-2' }))
+    await flushAsync()
+
+    expect(reconciliationSubscription.refreshList).toHaveBeenCalledTimes(2)
+    expect(reconciliationSubscription.refreshSelectedRuntimeReconciliation).toHaveBeenCalledTimes(1)
+  })
+
+  it('runs bounded Runtime Reconciliation reconnect resync and list-only when no reconciliation is selected', async () => {
+    const echo = createMockEcho()
+    setRuntimeNodeRealtimeClientFactory(() => echo.client)
+    const reconciliationSubscription = runtimeReconciliationSubscription()
+
+    subscribeRuntimeReconciliationRealtime(reconciliationSubscription)
+    echo.emitConnection('state_change', { current: 'connected' })
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-reconciliations')
+    await flushAsync()
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connected')
+
+    echo.emitConnection('state_change', { current: 'disconnected' })
+    echo.emitConnection('state_change', { current: 'connected' })
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-reconciliations')
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-reconciliations')
+    await flushAsync()
+
+    expect(reconciliationSubscription.refreshList).toHaveBeenCalledTimes(1)
+    expect(reconciliationSubscription.refreshSelectedRuntimeReconciliation).toHaveBeenCalledTimes(1)
+    expect(reconciliationSubscription.refreshSelectedRuntimeReconciliation).toHaveBeenCalledWith('reconciliation-1')
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connected')
+
+    disconnectRuntimeNodeRealtime()
+    const echoWithoutSelection = createMockEcho()
+    setRuntimeNodeRealtimeClientFactory(() => echoWithoutSelection.client)
+    const noSelectionSubscription = runtimeReconciliationSubscription({
+      selectedRuntimeReconciliationId: vi.fn(() => null),
+    })
+
+    subscribeRuntimeReconciliationRealtime(noSelectionSubscription)
+    echoWithoutSelection.emitConnection('state_change', { current: 'connected' })
+    echoWithoutSelection.emitSubscriptionSucceeded('tenant.tenant-1.runtime-reconciliations')
+    await flushAsync()
+    echoWithoutSelection.emitConnection('state_change', { current: 'disconnected' })
+    echoWithoutSelection.emitConnection('state_change', { current: 'connected' })
+    echoWithoutSelection.emitSubscriptionSucceeded('tenant.tenant-1.runtime-reconciliations')
+    await flushAsync()
+
+    expect(noSelectionSubscription.refreshList).toHaveBeenCalledTimes(1)
+    expect(noSelectionSubscription.refreshSelectedRuntimeReconciliation).not.toHaveBeenCalled()
+  })
+
+  it('leaves Runtime Reconciliation channels and ignores late-generation callbacks', async () => {
+    const echo = createMockEcho()
+    setRuntimeNodeRealtimeClientFactory(() => echo.client)
+    const tenantA = runtimeReconciliationSubscription({ tenantId: 'tenant-a' })
+    const tenantB = runtimeReconciliationSubscription({ tenantId: 'tenant-b' })
+
+    subscribeRuntimeReconciliationRealtime(tenantA)
+    echo.emitConnection('state_change', { current: 'connected' })
+    echo.emitSubscriptionSucceeded('tenant.tenant-a.runtime-reconciliations')
+    await flushAsync()
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connected')
+
+    subscribeRuntimeReconciliationRealtime(tenantB)
+    expect(echo.leftChannels).toContain('tenant.tenant-a.runtime-reconciliations')
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connecting')
+
+    echo.emitSubscriptionSucceeded('tenant.tenant-a.runtime-reconciliations')
+    echo.emitRuntimeReconciliationNotification('tenant.tenant-a.runtime-reconciliations', runtimeReconciliationNotification({ tenant_id: 'tenant-a' }))
+    await flushAsync()
+
+    expect(tenantA.refreshList).not.toHaveBeenCalled()
+    expect(tenantB.refreshList).not.toHaveBeenCalled()
+
+    echo.emitSubscriptionSucceeded('tenant.tenant-b.runtime-reconciliations')
+    await flushAsync()
+    expect(runtimeNodeRealtimeConnectionState.value).toBe('connected')
+
+    disconnectRuntimeNodeRealtime()
+    echo.emitRuntimeReconciliationNotification('tenant.tenant-b.runtime-reconciliations', runtimeReconciliationNotification({ tenant_id: 'tenant-b' }))
+    await flushAsync()
+
+    expect(echo.leftChannels).toContain('tenant.tenant-b.runtime-reconciliations')
+    expect(echo.disconnected).toBe(true)
+    expect(tenantB.refreshList).not.toHaveBeenCalled()
+  })
+
   it('leaves Runtime Operation channels and ignores late-generation callbacks', async () => {
     const echo = createMockEcho()
     setRuntimeNodeRealtimeClientFactory(() => echo.client)
@@ -659,9 +819,11 @@ describe('runtimeNodeRealtime', () => {
     subscribeRuntimeNodeRealtime(subscription())
     subscribeConferenceRealtime(conferenceSubscription())
     subscribeRuntimeOperationRealtime(runtimeOperationSubscription())
+    subscribeRuntimeReconciliationRealtime(runtimeReconciliationSubscription())
     echo.emitConnection('state_change', { current: 'connected' })
     echo.emitSubscriptionSucceeded('tenant.tenant-1.conferences')
     echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-operations')
+    echo.emitSubscriptionSucceeded('tenant.tenant-1.runtime-reconciliations')
     await flushAsync()
 
     expect(runtimeNodeRealtimeConnectionState.value).toBe('connecting')
@@ -677,9 +839,11 @@ describe('runtimeNodeRealtime', () => {
     subscribeRuntimeNodeRealtime(subscription())
     subscribeConferenceRealtime(conferenceSubscription())
     subscribeRuntimeOperationRealtime(runtimeOperationSubscription())
+    subscribeRuntimeReconciliationRealtime(runtimeReconciliationSubscription())
     reversedEcho.emitConnection('state_change', { current: 'connected' })
     reversedEcho.emitSubscriptionSucceeded('tenant.tenant-1.runtime-nodes')
     reversedEcho.emitSubscriptionSucceeded('tenant.tenant-1.runtime-operations')
+    reversedEcho.emitSubscriptionSucceeded('tenant.tenant-1.runtime-reconciliations')
     await flushAsync()
     expect(runtimeNodeRealtimeConnectionState.value).toBe('connecting')
     reversedEcho.emitSubscriptionSucceeded('tenant.tenant-1.conferences')
