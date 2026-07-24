@@ -105,12 +105,21 @@ final class ReconciliationRepository
                 return $this->ensureTarget($tenantId, $targetType, $targetId, $desiredGeneration, $nextCheckSeconds);
             }
 
-            DB::table('runtime_reconciliation_states')->where('id', $existing->id)->update([
-                'tenant_id' => $tenantId,
-                'desired_generation' => max((int) $existing->desired_generation, $desiredGeneration),
+            $priorFingerprint = $this->transitionFingerprint($existing);
+            $nextFingerprint = [
                 'status' => 'waiting',
+                'desired_generation' => max((int) $existing->desired_generation, $desiredGeneration),
+                'observed_generation' => $existing->observed_generation === null ? null : (int) $existing->observed_generation,
                 'last_operation_id' => null,
                 'blocked_reason' => null,
+            ];
+
+            DB::table('runtime_reconciliation_states')->where('id', $existing->id)->update([
+                'tenant_id' => $tenantId,
+                'desired_generation' => $nextFingerprint['desired_generation'],
+                'status' => $nextFingerprint['status'],
+                'last_operation_id' => $nextFingerprint['last_operation_id'],
+                'blocked_reason' => $nextFingerprint['blocked_reason'],
                 'next_check_at' => now()->addSeconds($nextCheckSeconds),
                 'lease_owner' => null,
                 'lease_token' => null,
@@ -118,13 +127,15 @@ final class ReconciliationRepository
                 'updated_at' => now(),
             ]);
 
-            $this->appendReconciliationEvent(
-                self::EVENT_DRIFT_DETECTED,
-                (string) $existing->id,
-                $tenantId,
-                $targetType,
-                $targetId,
-            );
+            if ($priorFingerprint !== $nextFingerprint) {
+                $this->appendReconciliationEvent(
+                    self::EVENT_DRIFT_DETECTED,
+                    (string) $existing->id,
+                    $tenantId,
+                    $targetType,
+                    $targetId,
+                );
+            }
 
             return (string) $existing->id;
         });
@@ -159,22 +170,12 @@ final class ReconciliationRepository
             foreach ($rows as $row) {
                 $row->lease_token = EngineIds::token();
                 DB::table('runtime_reconciliation_states')->where('id', $row->id)->update([
-                    'status' => 'leased',
                     'lease_owner' => $leaseOwner,
                     'lease_token' => $row->lease_token,
                     'lease_expires_at' => now()->addSeconds($leaseSeconds),
                     'attempt_count' => ((int) $row->attempt_count) + 1,
                     'updated_at' => now(),
                 ]);
-
-                $this->appendReconciliationEvent(
-                    self::EVENT_RECONCILIATION_STARTED,
-                    (string) $row->id,
-                    (string) $row->tenant_id,
-                    (string) $row->target_type,
-                    (string) $row->target_id,
-                    is_string($row->last_operation_id) ? $row->last_operation_id : null,
-                );
             }
 
             return $rows->all();
@@ -195,6 +196,17 @@ final class ReconciliationRepository
                 return false;
             }
 
+            $priorFingerprint = $this->transitionFingerprint($row);
+            $blockedReason = $result->status === 'blocked' ? mb_substr((string) $result->reasonCode, 0, 120) : null;
+            $lastOperationId = $operationId ?? (is_string($row->last_operation_id) ? $row->last_operation_id : null);
+            $nextFingerprint = [
+                'status' => $result->status,
+                'desired_generation' => (int) $row->desired_generation,
+                'observed_generation' => $row->observed_generation === null ? null : (int) $row->observed_generation,
+                'last_operation_id' => $lastOperationId,
+                'blocked_reason' => $blockedReason,
+            ];
+
             $updated = DB::table('runtime_reconciliation_states')
                 ->where('id', $id)
                 ->where('lease_token', $leaseToken)
@@ -203,8 +215,8 @@ final class ReconciliationRepository
                     'status' => $result->status,
                     'last_checked_at' => now(),
                     'next_check_at' => now()->addSeconds($result->nextCheckSeconds),
-                    'last_operation_id' => $operationId,
-                    'blocked_reason' => $result->status === 'blocked' ? mb_substr((string) $result->reasonCode, 0, 120) : null,
+                    'last_operation_id' => $lastOperationId,
+                    'blocked_reason' => $blockedReason,
                     'lease_owner' => null,
                     'lease_token' => null,
                     'lease_expires_at' => null,
@@ -215,28 +227,58 @@ final class ReconciliationRepository
                 return false;
             }
 
-            $this->appendReconciliationEvent(
-                $this->eventTypeForResult($result),
-                $id,
-                (string) $row->tenant_id,
-                (string) $row->target_type,
-                (string) $row->target_id,
-                $operationId,
-            );
+            if ($priorFingerprint !== $nextFingerprint) {
+                $this->appendReconciliationEvent(
+                    $this->eventTypeForTransition($priorFingerprint, $nextFingerprint),
+                    $id,
+                    (string) $row->tenant_id,
+                    (string) $row->target_type,
+                    (string) $row->target_id,
+                    $lastOperationId,
+                );
+            }
 
             return true;
         });
     }
 
-    private function eventTypeForResult(ReconciliationResult $result): string
+    /**
+     * @param  array{status:string,desired_generation:int,observed_generation:int|null,last_operation_id:string|null,blocked_reason:string|null}  $prior
+     * @param  array{status:string,desired_generation:int,observed_generation:int|null,last_operation_id:string|null,blocked_reason:string|null}  $next
+     */
+    private function eventTypeForTransition(array $prior, array $next): string
     {
-        return match ($result->status) {
-            'converged' => self::EVENT_CONVERGED,
-            'operation_required' => self::EVENT_OPERATION_REQUIRED,
-            'retry_scheduled', 'waiting' => self::EVENT_RETRY_SCHEDULED,
-            'blocked', 'unsupported' => self::EVENT_FAILED,
-            default => self::EVENT_DRIFT_DETECTED,
-        };
+        if ($next['status'] === 'converged') {
+            return self::EVENT_CONVERGED;
+        }
+
+        if ($next['status'] === 'operation_required' || $prior['last_operation_id'] !== $next['last_operation_id']) {
+            return self::EVENT_OPERATION_REQUIRED;
+        }
+
+        if ($next['status'] === 'waiting' || $next['status'] === 'retry_scheduled') {
+            return self::EVENT_RETRY_SCHEDULED;
+        }
+
+        if (in_array($next['status'], ['blocked', 'unsupported'], true) || $prior['blocked_reason'] !== $next['blocked_reason']) {
+            return self::EVENT_FAILED;
+        }
+
+        return self::EVENT_DRIFT_DETECTED;
+    }
+
+    /**
+     * @return array{status:string,desired_generation:int,observed_generation:int|null,last_operation_id:string|null,blocked_reason:string|null}
+     */
+    private function transitionFingerprint(object $row): array
+    {
+        return [
+            'status' => (string) $row->status,
+            'desired_generation' => (int) $row->desired_generation,
+            'observed_generation' => $row->observed_generation === null ? null : (int) $row->observed_generation,
+            'last_operation_id' => is_string($row->last_operation_id) ? $row->last_operation_id : null,
+            'blocked_reason' => is_string($row->blocked_reason) ? $row->blocked_reason : null,
+        ];
     }
 
     private function appendReconciliationEvent(

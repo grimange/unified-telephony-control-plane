@@ -162,9 +162,9 @@ final class RuntimeReconciliationRealtimeBroadcastTest extends TestCase
             ->orderBy('id')
             ->get();
 
-        $this->assertCount(3, $rows);
+        $this->assertCount(2, $rows);
         $this->assertSame(
-            ['runtime_reconciliation.created', 'runtime_reconciliation.operation_required', 'runtime_reconciliation.reconciliation_started'],
+            ['runtime_reconciliation.created', 'runtime_reconciliation.operation_required'],
             $rows->pluck('event_type')->sort()->values()->all(),
         );
         foreach ($rows as $row) {
@@ -182,9 +182,9 @@ final class RuntimeReconciliationRealtimeBroadcastTest extends TestCase
         }
 
         $dispatcher = new OutboxDispatcher(new OutboxRepository, new InboxRepository);
-        $this->assertSame(3, $dispatcher->dispatchOnce('runtime-reconciliation-producer-dispatcher', 10));
+        $this->assertSame(2, $dispatcher->dispatchOnce('runtime-reconciliation-producer-dispatcher', 10));
 
-        Event::assertDispatched(RuntimeReconciliationOperationalStateChanged::class, 3);
+        Event::assertDispatched(RuntimeReconciliationOperationalStateChanged::class, 2);
         Event::assertDispatched(
             RuntimeReconciliationOperationalStateChanged::class,
             fn (RuntimeReconciliationOperationalStateChanged $event): bool => $event->eventType === 'runtime_reconciliation.operation_required'
@@ -269,7 +269,7 @@ final class RuntimeReconciliationRealtimeBroadcastTest extends TestCase
 
         $this->assertDatabaseHas('runtime_reconciliation_states', [
             'id' => $reconciliationId,
-            'status' => 'leased',
+            'status' => 'waiting',
             'lease_token' => $claim->lease_token,
         ]);
         $this->assertDatabaseHas('control_plane_outbox_messages', [

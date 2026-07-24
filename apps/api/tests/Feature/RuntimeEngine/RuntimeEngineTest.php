@@ -8,6 +8,7 @@ use App\ControlPlane\Messaging\OutboxRepository;
 use App\ControlPlane\RuntimeOperations\OperationStatus;
 use App\ControlPlane\RuntimeOperations\RuntimeOperationRepository;
 use App\ControlPlane\Shared\ExecutionContext;
+use App\ControlPlane\Shared\RuntimeOperationId;
 use App\Identity\IdentityIds;
 use App\RuntimeEngine\Commands\CommandWorker;
 use App\RuntimeEngine\Commands\RuntimeAdapter;
@@ -600,7 +601,7 @@ final class RuntimeEngineTest extends TestCase
         $this->assertSame($stateId, $claim[0]->id);
         $this->assertDatabaseHas('runtime_reconciliation_states', [
             'id' => $stateId,
-            'status' => 'leased',
+            'status' => 'converged',
             'lease_owner' => 'reconciler-periodic',
         ]);
     }
@@ -629,7 +630,7 @@ final class RuntimeEngineTest extends TestCase
         $this->assertSame($stateId, $claim[0]->id);
         $this->assertDatabaseHas('runtime_reconciliation_states', [
             'id' => $stateId,
-            'status' => 'leased',
+            'status' => 'waiting',
             'lease_owner' => 'reconciler-reconnect',
             'last_operation_id' => null,
         ]);
@@ -665,7 +666,7 @@ final class RuntimeEngineTest extends TestCase
         $this->assertSame($waitingId, $claim[0]->id);
         $this->assertDatabaseHas('runtime_reconciliation_states', [
             'id' => $waitingId,
-            'status' => 'leased',
+            'status' => 'waiting',
             'lease_owner' => 'reconciler-fresh-work',
         ]);
         $this->assertDatabaseHas('runtime_reconciliation_states', [
@@ -703,7 +704,7 @@ final class RuntimeEngineTest extends TestCase
         $this->assertSame($operationFollowUpId, $claim[0]->id);
         $this->assertDatabaseHas('runtime_reconciliation_states', [
             'id' => $operationFollowUpId,
-            'status' => 'leased',
+            'status' => 'waiting',
             'lease_owner' => 'reconciler-operation-follow-up',
         ]);
         $this->assertDatabaseHas('runtime_reconciliation_states', [
@@ -741,7 +742,7 @@ final class RuntimeEngineTest extends TestCase
         $this->assertSame($freshLifecycleId, $claim[0]->id);
         $this->assertDatabaseHas('runtime_reconciliation_states', [
             'id' => $freshLifecycleId,
-            'status' => 'leased',
+            'status' => 'waiting',
             'lease_owner' => 'reconciler-fresh-lifecycle',
         ]);
         $this->assertDatabaseHas('runtime_reconciliation_states', [
@@ -779,7 +780,7 @@ final class RuntimeEngineTest extends TestCase
         $this->assertSame($conferenceFollowUpId, $claim[0]->id);
         $this->assertDatabaseHas('runtime_reconciliation_states', [
             'id' => $conferenceFollowUpId,
-            'status' => 'leased',
+            'status' => 'waiting',
             'lease_owner' => 'reconciler-waiting-follow-up',
         ]);
         $this->assertDatabaseHas('runtime_reconciliation_states', [
@@ -787,6 +788,196 @@ final class RuntimeEngineTest extends TestCase
             'status' => 'operation_required',
             'lease_owner' => null,
         ]);
+    }
+
+    public function test_noop_reconciliation_claim_and_result_cycles_emit_no_outbox_events(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('active', 'noop-reconciliation-node');
+        $repository = new ReconciliationRepository;
+        $stateId = $repository->ensureTarget($tenantId, 'runtime_node', $nodeId, 1);
+
+        DB::table('runtime_reconciliation_states')->where('id', $stateId)->update([
+            'status' => 'waiting',
+            'observed_generation' => null,
+            'last_operation_id' => null,
+            'blocked_reason' => null,
+            'next_check_at' => now()->subSecond(),
+            'lease_owner' => null,
+            'lease_token' => null,
+            'lease_expires_at' => null,
+            'updated_at' => now(),
+        ]);
+
+        $baseline = $this->runtimeReconciliationOutboxCount();
+
+        for ($cycle = 0; $cycle < 10; $cycle++) {
+            $claim = $repository->claimDue('noop-reconciler-'.$cycle, batchSize: 1, leaseSeconds: 60);
+
+            $this->assertCount(1, $claim);
+            $this->assertSame($stateId, $claim[0]->id);
+            $this->assertDatabaseHas('runtime_reconciliation_states', [
+                'id' => $stateId,
+                'status' => 'waiting',
+                'lease_owner' => 'noop-reconciler-'.$cycle,
+            ]);
+            $this->assertTrue($repository->markResult($stateId, (string) $claim[0]->lease_token, ReconciliationResult::waiting('stable', 0)));
+            $this->assertDatabaseHas('runtime_reconciliation_states', [
+                'id' => $stateId,
+                'status' => 'waiting',
+                'last_operation_id' => null,
+                'blocked_reason' => null,
+            ]);
+        }
+
+        $this->assertSame($baseline, $this->runtimeReconciliationOutboxCount());
+    }
+
+    public function test_claim_due_only_changes_lease_fields_and_emits_no_reconciliation_events(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('active', 'claim-silent-node');
+        $repository = new ReconciliationRepository;
+        $stateId = $repository->ensureTarget($tenantId, 'runtime_node', $nodeId, 1);
+
+        DB::table('runtime_reconciliation_states')->where('id', $stateId)->update([
+            'status' => 'converged',
+            'observed_generation' => 1,
+            'next_check_at' => now()->subSecond(),
+            'lease_owner' => null,
+            'lease_token' => null,
+            'lease_expires_at' => null,
+            'updated_at' => now(),
+        ]);
+
+        $baseline = $this->runtimeReconciliationOutboxCount();
+
+        for ($cycle = 0; $cycle < 3; $cycle++) {
+            $claim = $repository->claimDue('claim-silent-reconciler-'.$cycle, batchSize: 1, leaseSeconds: 60);
+
+            $this->assertCount(1, $claim);
+            $this->assertSame($stateId, $claim[0]->id);
+            $this->assertDatabaseHas('runtime_reconciliation_states', [
+                'id' => $stateId,
+                'status' => 'converged',
+                'observed_generation' => 1,
+                'lease_owner' => 'claim-silent-reconciler-'.$cycle,
+            ]);
+            $this->assertSame($baseline, $this->runtimeReconciliationOutboxCount());
+
+            DB::table('runtime_reconciliation_states')->where('id', $stateId)->update([
+                'next_check_at' => now()->subSecond(),
+                'lease_owner' => null,
+                'lease_token' => null,
+                'lease_expires_at' => null,
+                'updated_at' => now(),
+            ]);
+        }
+    }
+
+    public function test_reconciliation_result_events_are_emitted_only_for_real_fingerprint_transitions(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('active', 'transition-events-node');
+        $repository = new ReconciliationRepository;
+
+        $convergedId = $repository->ensureTarget($tenantId, 'runtime_node', $nodeId, 1);
+        $baseline = $this->runtimeReconciliationOutboxCount();
+        $this->claimAndMark($repository, $convergedId, ReconciliationResult::converged(0));
+        $this->assertSame($baseline + 1, $this->runtimeReconciliationOutboxCount());
+        $this->assertSame(1, $this->runtimeReconciliationEventCount($convergedId, 'runtime_reconciliation.converged'));
+        $this->makeReconciliationDue($convergedId);
+        $this->claimAndMark($repository, $convergedId, ReconciliationResult::converged(0));
+        $this->assertSame($baseline + 1, $this->runtimeReconciliationOutboxCount());
+
+        $driftId = $repository->ensureTarget($tenantId, 'conference', 'transition-drift-conference', 1);
+        $beforeDrift = $this->runtimeReconciliationOutboxCount();
+        $this->assertSame($driftId, $repository->ensureTarget($tenantId, 'conference', 'transition-drift-conference', 2));
+        $this->assertSame($beforeDrift + 1, $this->runtimeReconciliationOutboxCount());
+        $this->assertSame(1, $this->runtimeReconciliationEventCount($driftId, 'runtime_reconciliation.drift_detected'));
+        $this->assertSame($driftId, $repository->ensureTarget($tenantId, 'conference', 'transition-drift-conference', 2));
+        $this->assertSame($beforeDrift + 1, $this->runtimeReconciliationOutboxCount());
+
+        $operationId = RuntimeOperationId::new()->value();
+        $operationRequiredId = $repository->ensureTarget($tenantId, 'conference', 'transition-operation-conference', 1);
+        $beforeOperation = $this->runtimeReconciliationOutboxCount();
+        $this->claimAndMark(
+            $repository,
+            $operationRequiredId,
+            ReconciliationResult::operationRequired('conference.inspect', ['conference_id' => 'transition-operation-conference']),
+            $operationId,
+        );
+        $this->assertSame($beforeOperation + 1, $this->runtimeReconciliationOutboxCount());
+        $this->assertSame(1, $this->runtimeReconciliationEventCount($operationRequiredId, 'runtime_reconciliation.operation_required'));
+        $this->makeReconciliationDue($operationRequiredId);
+        $this->claimAndMark(
+            $repository,
+            $operationRequiredId,
+            ReconciliationResult::operationRequired('conference.inspect', ['conference_id' => 'transition-operation-conference']),
+            $operationId,
+        );
+        $this->assertSame($beforeOperation + 1, $this->runtimeReconciliationOutboxCount());
+
+        $failureId = $repository->ensureTarget($tenantId, 'conference', 'transition-failure-conference', 1);
+        $beforeFailure = $this->runtimeReconciliationOutboxCount();
+        $this->claimAndMark($repository, $failureId, ReconciliationResult::blocked('test_blocked', 0));
+        $this->assertSame($beforeFailure + 1, $this->runtimeReconciliationOutboxCount());
+        $this->assertSame(1, $this->runtimeReconciliationEventCount($failureId, 'runtime_reconciliation.failed'));
+        $this->makeReconciliationDue($failureId);
+        $this->claimAndMark($repository, $failureId, ReconciliationResult::blocked('test_blocked', 0));
+        $this->assertSame($beforeFailure + 1, $this->runtimeReconciliationOutboxCount());
+        $this->makeReconciliationDue($failureId);
+        $this->claimAndMark($repository, $failureId, ReconciliationResult::blocked('test_blocked_changed', 0));
+        $this->assertSame($beforeFailure + 2, $this->runtimeReconciliationOutboxCount());
+
+        $retryId = $repository->ensureTarget($tenantId, 'conference', 'transition-retry-conference', 1);
+        DB::table('runtime_reconciliation_states')->where('id', $retryId)->update([
+            'status' => 'blocked',
+            'blocked_reason' => 'transient_failure',
+            'next_check_at' => now()->subSecond(),
+            'updated_at' => now(),
+        ]);
+        $beforeRetry = $this->runtimeReconciliationOutboxCount();
+        $this->claimAndMark($repository, $retryId, ReconciliationResult::waiting('ready_for_retry', 0));
+        $this->assertSame($beforeRetry + 1, $this->runtimeReconciliationOutboxCount());
+        $this->assertSame(1, $this->runtimeReconciliationEventCount($retryId, 'runtime_reconciliation.retry_scheduled'));
+        $this->makeReconciliationDue($retryId);
+        $this->claimAndMark($repository, $retryId, ReconciliationResult::waiting('ready_for_retry', 0));
+        $this->assertSame($beforeRetry + 1, $this->runtimeReconciliationOutboxCount());
+    }
+
+    public function test_repeated_polling_over_stable_reconciliation_rows_produces_no_event_storm(): void
+    {
+        [$tenantId] = $this->runtimeNode('active', 'volume-tenant-seed');
+        $repository = new ReconciliationRepository;
+        $stateIds = [];
+
+        for ($row = 0; $row < 20; $row++) {
+            $stateId = $repository->ensureTarget($tenantId, 'conference', 'stable-conference-'.$row, 1);
+            DB::table('runtime_reconciliation_states')->where('id', $stateId)->update([
+                'status' => 'waiting',
+                'observed_generation' => null,
+                'last_operation_id' => null,
+                'blocked_reason' => null,
+                'next_check_at' => now()->subSecond(),
+                'updated_at' => now(),
+            ]);
+            $stateIds[] = $stateId;
+        }
+
+        $baseline = $this->runtimeReconciliationOutboxCount();
+
+        for ($cycle = 0; $cycle < 5; $cycle++) {
+            $claims = $repository->claimDue('volume-reconciler-'.$cycle, batchSize: 20, leaseSeconds: 60);
+            $this->assertCount(20, $claims);
+
+            foreach ($claims as $claim) {
+                $this->assertTrue($repository->markResult((string) $claim->id, (string) $claim->lease_token, ReconciliationResult::waiting('stable', 0)));
+            }
+
+            DB::table('runtime_reconciliation_states')
+                ->whereIn('id', $stateIds)
+                ->update(['next_check_at' => now()->subSecond()]);
+        }
+
+        $this->assertSame($baseline, $this->runtimeReconciliationOutboxCount());
     }
 
     public function test_stale_observation_derivation(): void
@@ -838,6 +1029,51 @@ final class RuntimeEngineTest extends TestCase
         ]);
 
         return [$tenantId, $nodeId];
+    }
+
+    private function claimAndMark(ReconciliationRepository $repository, string $stateId, ReconciliationResult $result, ?string $operationId = null): void
+    {
+        DB::table('runtime_reconciliation_states')->where('id', '!=', $stateId)->update([
+            'next_check_at' => now()->addHour(),
+            'lease_owner' => null,
+            'lease_token' => null,
+            'lease_expires_at' => null,
+            'updated_at' => now(),
+        ]);
+        $this->makeReconciliationDue($stateId);
+        $claim = $repository->claimDue('transition-reconciler', batchSize: 1, leaseSeconds: 60);
+
+        $this->assertCount(1, $claim);
+        $this->assertSame($stateId, $claim[0]->id);
+        $this->assertTrue($repository->markResult($stateId, (string) $claim[0]->lease_token, $result, $operationId));
+    }
+
+    private function makeReconciliationDue(string $stateId): void
+    {
+        DB::table('runtime_reconciliation_states')->where('id', $stateId)->update([
+            'next_check_at' => now()->subSecond(),
+            'lease_owner' => null,
+            'lease_token' => null,
+            'lease_expires_at' => null,
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function runtimeReconciliationOutboxCount(): int
+    {
+        return DB::table('control_plane_outbox_messages')
+            ->where('aggregate_type', 'runtime_reconciliation')
+            ->where('event_type', 'like', 'runtime_reconciliation.%')
+            ->count();
+    }
+
+    private function runtimeReconciliationEventCount(string $stateId, string $eventType): int
+    {
+        return DB::table('control_plane_outbox_messages')
+            ->where('aggregate_type', 'runtime_reconciliation')
+            ->where('aggregate_id', $stateId)
+            ->where('event_type', $eventType)
+            ->count();
     }
 }
 

@@ -135,6 +135,83 @@ final class RuntimeReconciliationPostgresReadApiTest extends TestCase
             ->assertNotFound();
     }
 
+    public function test_runtime_reconciliation_noop_event_suppression_runs_on_postgres(): void
+    {
+        if (DB::getDriverName() !== 'pgsql') {
+            $this->markTestSkipped('PostgreSQL reconciliation transition proof runs only on the PostgreSQL integration target.');
+        }
+
+        [, $tenantId] = $this->createTenantAdmin('runtime-reconciliation-pg-noop-admin@utcp.local.test', 'runtime-reconciliation-pg-noop');
+        $runtimeNodeId = $this->createRuntimeNode($tenantId, 'runtime-reconciliation-pg-noop-node');
+        $repository = new ReconciliationRepository;
+        $stateId = $repository->ensureTarget($tenantId, 'runtime_node', $runtimeNodeId, 1);
+
+        DB::table('runtime_reconciliation_states')->where('id', $stateId)->update([
+            'status' => 'waiting',
+            'observed_generation' => null,
+            'last_operation_id' => null,
+            'blocked_reason' => null,
+            'next_check_at' => now()->subSecond(),
+            'lease_owner' => null,
+            'lease_token' => null,
+            'lease_expires_at' => null,
+            'updated_at' => now(),
+        ]);
+
+        $baseline = $this->runtimeReconciliationOutboxCount();
+
+        for ($cycle = 0; $cycle < 5; $cycle++) {
+            $claim = $repository->claimDue('runtime-reconciliation-pg-noop-'.$cycle, 1, 60);
+
+            $this->assertCount(1, $claim);
+            $this->assertSame($stateId, $claim[0]->id);
+            $this->assertDatabaseHas('runtime_reconciliation_states', [
+                'id' => $stateId,
+                'status' => 'waiting',
+                'lease_owner' => 'runtime-reconciliation-pg-noop-'.$cycle,
+            ]);
+            $this->assertTrue($repository->markResult($stateId, (string) $claim[0]->lease_token, ReconciliationResult::waiting('stable', 0)));
+        }
+
+        $this->assertSame($baseline, $this->runtimeReconciliationOutboxCount());
+
+        $firstClaim = $repository->claimDue('runtime-reconciliation-pg-fence-a', 1, 60)[0];
+        DB::table('runtime_reconciliation_states')->where('id', $stateId)->update([
+            'lease_expires_at' => now()->subSecond(),
+            'next_check_at' => now()->subSecond(),
+        ]);
+        $secondClaim = $repository->claimDue('runtime-reconciliation-pg-fence-b', 1, 60)[0];
+
+        $this->assertFalse($repository->markResult($stateId, (string) $firstClaim->lease_token, ReconciliationResult::converged(0)));
+        $this->assertSame($baseline, $this->runtimeReconciliationOutboxCount());
+        $this->assertTrue($repository->markResult($stateId, (string) $secondClaim->lease_token, ReconciliationResult::converged(0)));
+        $this->assertSame($baseline + 1, $this->runtimeReconciliationOutboxCount());
+        $this->assertSame(1, DB::table('control_plane_outbox_messages')
+            ->where('aggregate_type', 'runtime_reconciliation')
+            ->where('aggregate_id', $stateId)
+            ->where('event_type', 'runtime_reconciliation.converged')
+            ->count());
+
+        $beforeRollback = $this->runtimeReconciliationOutboxCount();
+
+        try {
+            DB::transaction(function () use ($repository, $tenantId): void {
+                $repository->ensureTarget($tenantId, 'conference', 'runtime-reconciliation-pg-rollback', 1);
+
+                throw new \RuntimeException('rollback runtime reconciliation proof');
+            });
+            $this->fail('rolled back PostgreSQL reconciliation transaction did not throw');
+        } catch (\RuntimeException $exception) {
+            $this->assertSame('rollback runtime reconciliation proof', $exception->getMessage());
+        }
+
+        $this->assertDatabaseMissing('runtime_reconciliation_states', [
+            'target_type' => 'conference',
+            'target_id' => 'runtime-reconciliation-pg-rollback',
+        ]);
+        $this->assertSame($beforeRollback, $this->runtimeReconciliationOutboxCount());
+    }
+
     private function postgresColumnType(string $table, string $column): string
     {
         return (string) DB::scalar(
@@ -147,6 +224,14 @@ final class RuntimeReconciliationPostgresReadApiTest extends TestCase
             SQL,
             [$table, $column],
         );
+    }
+
+    private function runtimeReconciliationOutboxCount(): int
+    {
+        return DB::table('control_plane_outbox_messages')
+            ->where('aggregate_type', 'runtime_reconciliation')
+            ->where('event_type', 'like', 'runtime_reconciliation.%')
+            ->count();
     }
 
     /**
