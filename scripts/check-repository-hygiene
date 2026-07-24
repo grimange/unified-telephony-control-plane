@@ -84,16 +84,16 @@ if not re.search(r"\.topbar,\s*\.section-heading,\s*\.data-row\s*\{[^}]*align-it
     sys.stderr.write("narrow RuntimeNodes heading must stack without page-level overflow\n")
     sys.exit(1)
 
-if not re.search(r"\.conference-detail-grid,\s*\.runtime-operation-detail-grid\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,\s*0\.9fr\)\s*minmax\(0,\s*1\.1fr\)", css, re.S):
-    sys.stderr.write("Conference and Runtime Operation detail layout must bound grid tracks with minmax(0,...)\n")
+if not re.search(r"\.conference-detail-grid,\s*\.runtime-operation-detail-grid,\s*\.audit-record-detail-grid\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,\s*0\.9fr\)\s*minmax\(0,\s*1\.1fr\)", css, re.S):
+    sys.stderr.write("Conference, Runtime Operation, and Audit detail layout must bound grid tracks with minmax(0,...)\n")
     sys.exit(1)
 
-if not re.search(r"\.conference-row,\s*\.operation-row,\s*\.participant-row\s*\{[^}]*max-width\s*:\s*100%", css, re.S):
-    sys.stderr.write("Conference and Runtime Operation rows must remain bounded in narrow layouts\n")
+if not re.search(r"\.conference-row,\s*\.operation-row,\s*\.audit-record-row,\s*\.participant-row\s*\{[^}]*max-width\s*:\s*100%", css, re.S):
+    sys.stderr.write("Conference, Runtime Operation, and Audit rows must remain bounded in narrow layouts\n")
     sys.exit(1)
 
-if not re.search(r"\.conference-detail-grid,\s*\.runtime-operation-detail-grid,\s*\.definition-grid\s*\{[^}]*grid-template-columns\s*:\s*1fr", body, re.S):
-    sys.stderr.write("Conference and Runtime Operation detail grids must collapse to one column in narrow layouts\n")
+if not re.search(r"\.conference-detail-grid,\s*\.runtime-operation-detail-grid,\s*\.audit-record-detail-grid,\s*\.definition-grid\s*\{[^}]*grid-template-columns\s*:\s*1fr", body, re.S):
+    sys.stderr.write("Conference, Runtime Operation, and Audit detail grids must collapse to one column in narrow layouts\n")
     sys.exit(1)
 PY
 
@@ -104,6 +104,7 @@ import sys
 
 runtime_view = Path("apps/web/src/views/RuntimeNodesView.vue").read_text(encoding="utf-8")
 runtime_operations_view = Path("apps/web/src/views/RuntimeOperationsView.vue").read_text(encoding="utf-8")
+audit_records_view = Path("apps/web/src/views/AuditRecordsView.vue").read_text(encoding="utf-8")
 app_state = Path("apps/web/src/state/appState.ts").read_text(encoding="utf-8")
 notifications = Path("apps/web/src/state/notifications.ts").read_text(encoding="utf-8")
 
@@ -120,9 +121,9 @@ if "loadRuntimeNodeDetails" in refresh_match.group("body"):
     sys.stderr.write("refreshRuntimeNodes must not eagerly fetch every RuntimeNode detail\n")
     sys.exit(1)
 
-restricted_storage_sources = runtime_view + "\n" + runtime_operations_view + "\n" + notifications
+restricted_storage_sources = runtime_view + "\n" + runtime_operations_view + "\n" + audit_records_view + "\n" + notifications
 if re.search(r"\b(localStorage|sessionStorage|indexedDB)\b", restricted_storage_sources):
-    sys.stderr.write("RuntimeNode, Runtime Operation, and notification state must not use browser persistence\n")
+    sys.stderr.write("RuntimeNode, Runtime Operation, Audit, and notification state must not use browser persistence\n")
     sys.exit(1)
 
 if re.search(r"notify\([^)]*(credentialForm\.secret|temporaryPassword|oneTimeSignalingCredential|sip_secret|temporary_password)", app_state, re.S):
@@ -184,6 +185,7 @@ frontend_sources = "\n".join(
         Path("apps/web/src/views/TenantsView.vue"),
         Path("apps/web/src/views/RuntimeNodesView.vue"),
         Path("apps/web/src/views/RuntimeOperationsView.vue"),
+        Path("apps/web/src/views/AuditRecordsView.vue"),
         Path("apps/web/src/views/ConferenceOperationsView.vue"),
     ]
 )
@@ -196,11 +198,11 @@ if re.search(r"\b(localStorage|sessionStorage|indexedDB)\b", frontend_sources):
     sys.stderr.write("list query state must not persist protected list data in browser storage\n")
     sys.exit(1)
 
-if re.search(r"\b(users|memberships|tenants|runtimeNodes|runtimeOperations)\.value\.sort\s*\(", frontend_sources):
+if re.search(r"\b(users|memberships|tenants|runtimeNodes|runtimeOperations|auditRecords)\.value\.sort\s*\(", frontend_sources):
     sys.stderr.write("frontend must not fake global sorting over one server-paginated page\n")
     sys.exit(1)
 
-for view_name in ["UsersView.vue", "MembershipsView.vue", "TenantsView.vue", "RuntimeNodesView.vue", "RuntimeOperationsView.vue"]:
+for view_name in ["UsersView.vue", "MembershipsView.vue", "TenantsView.vue", "RuntimeNodesView.vue", "RuntimeOperationsView.vue", "AuditRecordsView.vue"]:
     source = Path("apps/web/src/views") / view_name
     if "useListQueryState" not in source.read_text(encoding="utf-8"):
         sys.stderr.write(f"{view_name} must use the shared list query state contract\n")

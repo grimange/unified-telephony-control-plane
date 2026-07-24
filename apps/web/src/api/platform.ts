@@ -518,6 +518,64 @@ export type RuntimeReconciliationListFilters = {
   per_page?: number
 }
 
+export type AuditActorReference = {
+  type: string | null
+  id: string | null
+}
+
+export type AuditSubjectReference = {
+  type: string | null
+  id: string | null
+}
+
+export type AuditOutcome = {
+  status: string | null
+  code: string | null
+  summary: string | null
+} | null
+
+export type AuditSafeMetadataValue = string | number | boolean | null | AuditSafeMetadataValue[] | { [key: string]: AuditSafeMetadataValue }
+
+export type AuditSafeMetadata = Record<string, AuditSafeMetadataValue>
+
+export type AuditRecord = {
+  id: string
+  action: string
+  actor: AuditActorReference
+  subject: AuditSubjectReference
+  outcome: AuditOutcome
+  correlation_id: string | null
+  request_id: string | null
+  occurred_at: string | null
+  created_at: string | null
+}
+
+export type AuditRecordDetail = AuditRecord & {
+  reason: string | null
+  metadata: AuditSafeMetadata
+}
+
+export type AuditRecordPagination = {
+  page: number
+  per_page: number
+  total: number
+  has_more: boolean
+}
+
+export type AuditRecordListFilters = {
+  actor_id?: string
+  actor_type?: string
+  action?: string
+  subject_type?: string
+  subject_id?: string
+  correlation_id?: string
+  request_id?: string
+  occurred_from?: string
+  occurred_to?: string
+  page?: number
+  per_page?: number
+}
+
 class ApiRequestError extends Error {
   status: number
   details: unknown
@@ -770,6 +828,25 @@ export const identityApi = {
   },
   runtimeReconciliation: (runtimeReconciliationId: string) =>
     fetchJson<{ runtime_reconciliation: RuntimeReconciliationDetail }>(`/api/v1/admin/runtime-reconciliations/${runtimeReconciliationId}`),
+  listAuditRecords: (params: AuditRecordListFilters = {}) => {
+    const query = new URLSearchParams()
+    if (params.actor_id) query.set('actor_id', params.actor_id)
+    if (params.actor_type) query.set('actor_type', params.actor_type)
+    if (params.action) query.set('action', params.action)
+    if (params.subject_type) query.set('subject_type', params.subject_type)
+    if (params.subject_id) query.set('subject_id', params.subject_id)
+    if (params.correlation_id) query.set('correlation_id', params.correlation_id)
+    if (params.request_id) query.set('request_id', params.request_id)
+    if (params.occurred_from) query.set('occurred_from', params.occurred_from)
+    if (params.occurred_to) query.set('occurred_to', params.occurred_to)
+    if (params.page) query.set('page', String(params.page))
+    if (params.per_page) query.set('per_page', String(params.per_page))
+    const suffix = query.toString() === '' ? '' : `?${query.toString()}`
+
+    return fetchJson<{ audit_records: AuditRecord[]; pagination: AuditRecordPagination }>(`/api/v1/admin/audit-records${suffix}`)
+  },
+  getAuditRecord: (auditRecordId: string) =>
+    fetchJson<{ audit_record: AuditRecordDetail }>(`/api/v1/admin/audit-records/${auditRecordId}`),
   conferences: () => fetchJson<{ conferences: Conference[] }>('/api/v1/admin/conferences'),
   conference: (conferenceId: string) => fetchJson<{ conference: Conference }>(`/api/v1/admin/conferences/${conferenceId}`),
   conferenceParticipants: (conferenceId: string) =>

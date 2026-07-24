@@ -5,6 +5,7 @@ export type NavigationEntry = {
   label: string
   exact?: boolean
   requiredCapability?: string
+  requiresActiveTenant?: boolean
   isVisible?: (session: IdentitySession) => boolean
 }
 
@@ -23,6 +24,7 @@ export const navigationEntries: NavigationEntry[] = [
       hasCapability(session, 'tenant.memberships.view'),
   },
   { route: '/admin/memberships', label: 'Memberships', exact: true, requiredCapability: 'tenant.memberships.view' },
+  { route: '/admin/audit-records', label: 'Audit records', exact: true, requiredCapability: 'tenant.memberships.manage', requiresActiveTenant: true },
   { route: '/admin/runtime-nodes', label: 'Runtime nodes', exact: true, requiredCapability: 'runtime.nodes.view' },
   { route: '/operations/runtime-operations', label: 'Runtime operations', exact: true, requiredCapability: 'runtime.nodes.view' },
   { route: '/operations/runtime-reconciliations', label: 'Runtime reconciliations', exact: true, requiredCapability: 'runtime.nodes.view' },
@@ -33,6 +35,7 @@ export function visibleNavigationEntries(session: IdentitySession | null): Navig
   if (session === null) return []
 
   return navigationEntries.filter((entry) => {
+    if (entry.requiresActiveTenant && session.active_tenant === null) return false
     if (entry.requiredCapability) return hasCapability(session, entry.requiredCapability)
     if (entry.isVisible) return entry.isVisible(session)
 

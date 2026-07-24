@@ -507,12 +507,14 @@ h3 {
 }
 
 .conference-detail-grid,
-.runtime-operation-detail-grid {
+.runtime-operation-detail-grid,
+.audit-record-detail-grid {
   grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
 }
 
 .conference-row,
 .operation-row,
+.audit-record-row,
 .participant-row {
   max-width: 100%;
 }
@@ -806,6 +808,7 @@ h3 {
     .subgrid,
     .conference-detail-grid,
     .runtime-operation-detail-grid,
+    .audit-record-detail-grid,
     .definition-grid {
       grid-template-columns: 1fr;
     }

@@ -17,6 +17,7 @@ import {
 import { createUtcpRouter, router } from './router'
 import { resetAppStateForTests } from './state/appState'
 import { appearanceStorageKey, resetAppearanceForTests } from './state/theme'
+import auditRecordsViewSource from './views/AuditRecordsView.vue?raw'
 import changePasswordViewSource from './views/ChangePasswordView.vue?raw'
 import conferenceOperationsViewSource from './views/ConferenceOperationsView.vue?raw'
 import loginViewSource from './views/LoginView.vue?raw'
@@ -72,6 +73,12 @@ const session = {
 const limitedSession = {
   ...session,
   capabilities: [],
+}
+
+const noActiveTenantAuditSession = {
+  ...session,
+  active_tenant: null,
+  capabilities: ['tenant.memberships.manage'],
 }
 
 const adminUser = {
@@ -533,6 +540,47 @@ const secondRuntimeReconciliation = {
   failure: null,
 }
 
+const auditRecord = {
+  id: 'audit-1',
+  action: 'runtime_node.created',
+  actor: { type: 'user', id: 'deleted-user-1' },
+  subject: { type: 'runtime_node', id: 'deleted-runtime-1' },
+  outcome: { status: 'succeeded', code: null, summary: 'succeeded' },
+  correlation_id: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  request_id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+  occurred_at: '2026-07-24T10:00:00Z',
+  created_at: '2026-07-24T10:00:01Z',
+}
+
+const secondAuditRecord = {
+  ...auditRecord,
+  id: 'audit-2',
+  action: 'runtime_node.updated',
+  actor: { type: 'system', id: null },
+  subject: { type: 'runtime_node', id: 'runtime-2' },
+  outcome: { status: 'failed', code: 'blocked', summary: 'failed:blocked' },
+  correlation_id: 'cccccccccccccccccccccccccccccccc',
+  request_id: 'dddddddddddddddddddddddddddddddd',
+  occurred_at: '2026-07-24T09:00:00Z',
+}
+
+const auditRecordDetail = {
+  ...auditRecord,
+  reason: 'routine operator review',
+  metadata: {
+    safe: 'visible',
+    count: 2,
+    nested: { approved: true, password: '[redacted]' },
+    password: '[redacted]',
+    api_token: '[redacted]',
+    authorization: '[redacted]',
+    request_body: '[redacted]',
+    desired_state: '[redacted]',
+    observed_state: '[redacted]',
+    provider_response: '[redacted]',
+  },
+}
+
 function mockRuntimeAdminFetch(calls: Array<{ url: string; body?: unknown }>): void {
   vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString()
@@ -662,6 +710,39 @@ function mockRuntimeReconciliationAdminFetch(calls: Array<{ url: string; body?: 
       const params = new URL(url, 'http://utcp.local.test').searchParams
       return Promise.resolve(jsonResponse({
         runtime_reconciliations: options.empty ? [] : [runtimeReconciliation, secondRuntimeReconciliation],
+        pagination: {
+          page: params.get('page') === '2' ? 2 : 1,
+          per_page: params.get('per_page') === '10' ? 10 : 20,
+          total: options.empty ? 0 : 2,
+          has_more: params.get('page') !== '2' && !options.empty,
+        },
+      }))
+    }
+
+    return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+  })
+}
+
+function mockAuditRecordAdminFetch(calls: Array<{ url: string; body?: unknown }>, options: { listStatus?: number; detailStatus?: number; empty?: boolean } = {}): void {
+  vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString()
+    calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+    if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+    if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+    if (url.includes('/api/v1/admin/audit-records/audit-1')) {
+      if (options.detailStatus) return Promise.resolve(jsonResponse({ message: 'detail unavailable' }, options.detailStatus))
+
+      return Promise.resolve(jsonResponse({ audit_record: auditRecordDetail }))
+    }
+    if (url.includes('/api/v1/admin/audit-records/audit-2')) {
+      return Promise.resolve(jsonResponse({ message: 'Unselected Audit record detail was requested.' }, 500))
+    }
+    if (url.includes('/api/v1/admin/audit-records')) {
+      if (options.listStatus) return Promise.resolve(jsonResponse({ message: 'list unavailable' }, options.listStatus))
+
+      const params = new URL(url, 'http://utcp.local.test').searchParams
+      return Promise.resolve(jsonResponse({
+        audit_records: options.empty ? [] : [auditRecord, secondAuditRecord],
         pagination: {
           page: params.get('page') === '2' ? 2 : 1,
           per_page: params.get('per_page') === '10' ? 10 : 20,
@@ -1449,6 +1530,224 @@ describe('C1 App shell', () => {
     await notFoundWrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
     await flushPromises()
     expect(notFoundWrapper.text()).toContain('Runtime Reconciliation detail unavailable')
+  })
+
+  it('renders Audit records as a read-only capability-gated route with bounded request budgets', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockAuditRecordAdminFetch(calls)
+
+    const wrapper = await mountApp('/admin/audit-records')
+
+    expect(router.currentRoute.value.path).toBe('/admin/audit-records')
+    expect(wrapper.text()).toContain('Audit records')
+    expect(wrapper.text()).toContain('Audit record list')
+    expect(wrapper.text()).toContain('runtime_node.created')
+    expect(wrapper.text()).toContain('Actor user deleted-user-1')
+    expect(wrapper.text()).toContain('Subject runtime_node deleted-runtime-1')
+    expect(wrapper.text()).toContain('succeeded')
+    expect(wrapper.text()).toContain('Page 1 of 1')
+    expect(wrapper.text()).not.toContain('Delete')
+    expect(wrapper.text()).not.toContain('Redact')
+    expect(wrapper.text()).not.toContain('Replay')
+    expect(wrapper.text()).not.toContain('Export')
+    expect(wrapper.text()).not.toContain('must-not-leak')
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/audit-records') && !call.url.includes('/api/v1/admin/audit-records/audit-'))).toHaveLength(1)
+    expect(calls.some((call) => call.url.includes('/api/v1/admin/audit-records/audit-1'))).toBe(false)
+    expect(calls.some((call) => call.url.includes('/api/v1/admin/audit-records/audit-2'))).toBe(false)
+
+    await wrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('routine operator review')
+    expect(wrapper.text()).toContain('Safe metadata')
+    expect(wrapper.text()).toContain('visible')
+    expect(wrapper.text()).toContain('deleted-user-1')
+    expect(wrapper.text()).toContain('deleted-runtime-1')
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/audit-records') && !call.url.includes('/api/v1/admin/audit-records/audit-'))).toHaveLength(1)
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/audit-records/audit-1'))).toHaveLength(1)
+    expect(calls.some((call) => call.url.includes('/api/v1/admin/audit-records/audit-2'))).toBe(false)
+    expect(wrapper.text()).not.toContain('password')
+    expect(wrapper.text()).not.toContain('api_token')
+    expect(wrapper.text()).not.toContain('authorization')
+    expect(wrapper.text()).not.toContain('request_body')
+    expect(wrapper.text()).not.toContain('desired_state')
+    expect(wrapper.text()).not.toContain('observed_state')
+    expect(wrapper.text()).not.toContain('provider_response')
+  })
+
+  it('maps every Audit filter and pagination control to canonical query parameters', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockAuditRecordAdminFetch(calls)
+    const wrapper = await mountApp('/admin/audit-records?page=2&per_page=10&actor_type=user&actor_id=deleted-user-1&action=runtime_node.created&subject_type=runtime_node&subject_id=deleted-runtime-1&correlation_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&request_id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb&occurred_from=2026-07-24T10:00:00Z&occurred_to=2026-07-24T11:00:00Z')
+    await flushPromises()
+
+    expect(calls.some((call) =>
+      call.url.includes('/api/v1/admin/audit-records?')
+      && call.url.includes('page=2')
+      && call.url.includes('per_page=10')
+      && call.url.includes('actor_type=user')
+      && call.url.includes('actor_id=deleted-user-1')
+      && call.url.includes('action=runtime_node.created')
+      && call.url.includes('subject_type=runtime_node')
+      && call.url.includes('subject_id=deleted-runtime-1')
+      && call.url.includes('correlation_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+      && call.url.includes('request_id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')
+      && call.url.includes('occurred_from=2026-07-24T10%3A00%3A00Z')
+      && call.url.includes('occurred_to=2026-07-24T11%3A00%3A00Z'),
+    )).toBe(true)
+
+    await wrapper.find('#audit-action-filter').setValue('runtime_node.updated')
+    await wrapper.find('form[role="search"]').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query.page).toBeUndefined()
+    expect(router.currentRoute.value.query.action).toBe('runtime_node.updated')
+    expect(calls.at(-1)?.url).toContain('action=runtime_node.updated')
+    expect(calls.at(-1)?.url).not.toContain('page=2')
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/audit-records/audit-'))).toHaveLength(0)
+
+    await wrapper.find('.ui-pagination button[aria-label="Go to next page"]').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query.page).toBe('2')
+    expect(calls.at(-1)?.url).toContain('action=runtime_node.updated')
+    expect(calls.at(-1)?.url).toContain('page=2')
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/audit-records/audit-'))).toHaveLength(0)
+
+    await wrapper.find('form[role="search"]').trigger('reset')
+    await flushPromises()
+
+    expect(router.currentRoute.value.query.action).toBeUndefined()
+    expect(router.currentRoute.value.query.page).toBeUndefined()
+    expect(calls.at(-1)?.url).not.toContain('action=')
+  })
+
+  it('preserves Audit pagination and filters during explicit refresh without detail fan-out', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockAuditRecordAdminFetch(calls)
+    const wrapper = await mountApp('/admin/audit-records?page=2&per_page=10&actor_type=user&action=runtime_node.created')
+    await flushPromises()
+
+    await wrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
+    await flushPromises()
+    const listCountAfterSelect = calls.filter((call) => call.url.includes('/api/v1/admin/audit-records') && !call.url.includes('/api/v1/admin/audit-records/audit-')).length
+    const detailCountAfterSelect = calls.filter((call) => call.url.includes('/api/v1/admin/audit-records/audit-1')).length
+
+    await wrapper.findAll('button').find((button) => button.text() === 'Refresh')?.trigger('click')
+    await flushPromises()
+
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/audit-records') && !call.url.includes('/api/v1/admin/audit-records/audit-'))).toHaveLength(listCountAfterSelect + 1)
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/audit-records/audit-1'))).toHaveLength(detailCountAfterSelect)
+    expect(calls.at(-1)?.url).toContain('page=2')
+    expect(calls.at(-1)?.url).toContain('per_page=10')
+    expect(calls.at(-1)?.url).toContain('actor_type=user')
+    expect(calls.at(-1)?.url).toContain('action=runtime_node.created')
+  })
+
+  it('handles Audit empty, forbidden, validation, refresh failure, and not-found states', async () => {
+    const emptyCalls: Array<{ url: string; body?: unknown }> = []
+    mockAuditRecordAdminFetch(emptyCalls, { empty: true })
+    const emptyWrapper = await mountApp('/admin/audit-records')
+    expect(emptyWrapper.text()).toContain('No Audit records')
+    emptyWrapper.unmount()
+
+    const forbiddenCalls: Array<{ url: string; body?: unknown }> = []
+    mockAuditRecordAdminFetch(forbiddenCalls, { listStatus: 403 })
+    const forbiddenWrapper = await mountApp('/admin/audit-records')
+    expect(forbiddenWrapper.text()).toContain('Audit records forbidden')
+    forbiddenWrapper.unmount()
+
+    const validationCalls: Array<{ url: string; body?: unknown }> = []
+    mockAuditRecordAdminFetch(validationCalls, { listStatus: 422 })
+    const validationWrapper = await mountApp('/admin/audit-records?correlation_id=not-a-correlation')
+    expect(validationWrapper.text()).toContain('Audit records unavailable')
+    expect(validationWrapper.text()).toContain('list unavailable')
+    validationWrapper.unmount()
+
+    const notFoundCalls: Array<{ url: string; body?: unknown }> = []
+    mockAuditRecordAdminFetch(notFoundCalls, { detailStatus: 404 })
+    const notFoundWrapper = await mountApp('/admin/audit-records')
+    await notFoundWrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
+    await flushPromises()
+    expect(notFoundWrapper.text()).toContain('Audit record detail unavailable')
+    expect(notFoundWrapper.text()).toContain('runtime_node.created')
+    notFoundWrapper.unmount()
+
+    const refreshCalls: Array<{ url: string; body?: unknown }> = []
+    let failRefresh = false
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString()
+      refreshCalls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.includes('/api/v1/admin/audit-records')) {
+        if (failRefresh) return Promise.resolve(jsonResponse({ message: 'refresh failed' }, 500))
+
+        return Promise.resolve(jsonResponse({
+          audit_records: [auditRecord],
+          pagination: { page: 1, per_page: 20, total: 1, has_more: false },
+        }))
+      }
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+    const refreshWrapper = await mountApp('/admin/audit-records')
+    expect(refreshWrapper.text()).toContain('runtime_node.created')
+    failRefresh = true
+    await refreshWrapper.findAll('button').find((button) => button.text() === 'Refresh')?.trigger('click')
+    await flushPromises()
+    expect(refreshWrapper.text()).toContain('Audit records unavailable')
+    expect(refreshWrapper.text()).toContain('refresh failed')
+    expect(refreshWrapper.text()).toContain('runtime_node.created')
+  })
+
+  it('hides Audit navigation and blocks the route without tenant membership management capability', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
+      const url = input.toString()
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(limitedSession))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/dashboard')
+    expect(wrapper.text()).not.toContain('Audit records')
+
+    await router.push('/admin/audit-records')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/forbidden')
+  })
+
+  it('blocks the Audit route when the session has no active tenant', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
+      const url = input.toString()
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(noActiveTenantAuditSession))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    await mountApp('/admin/audit-records')
+
+    expect(router.currentRoute.value.path).toBe('/forbidden')
+  })
+
+  it('keeps Audit source free of realtime, polling, mutation controls, raw payload rendering, and browser persistence', () => {
+    expect(auditRecordsViewSource).not.toContain('setInterval')
+    expect(auditRecordsViewSource).not.toContain('setTimeout')
+    expect(auditRecordsViewSource).not.toContain('visibilitychange')
+    expect(auditRecordsViewSource).not.toContain('Echo')
+    expect(auditRecordsViewSource).not.toContain('subscribe')
+    expect(auditRecordsViewSource).not.toContain('localStorage')
+    expect(auditRecordsViewSource).not.toContain('sessionStorage')
+    expect(auditRecordsViewSource).not.toContain('indexedDB')
+    expect(auditRecordsViewSource).not.toContain('JSON.stringify')
+    expect(auditRecordsViewSource).not.toContain('raw')
+    expect(auditRecordsViewSource).not.toContain('credential')
+    expect(auditRecordsViewSource).not.toContain('token')
+    expect(auditRecordsViewSource).not.toContain('cookie')
+    expect(auditRecordsViewSource).not.toContain('request_body')
+    expect(auditRecordsViewSource).not.toContain('desired_state')
+    expect(auditRecordsViewSource).not.toContain('observed_state')
+    expect(auditRecordsViewSource).not.toContain('provider_response')
   })
 
   it('hides Runtime Reconciliations navigation and blocks the route without runtime.nodes.view', async () => {
@@ -2502,6 +2801,7 @@ describe('C1 App shell', () => {
     const viewSources = {
       'LoginView.vue': loginViewSource,
       'ChangePasswordView.vue': changePasswordViewSource,
+      'AuditRecordsView.vue': auditRecordsViewSource,
       'TenantsView.vue': tenantsViewSource,
       'MembershipsView.vue': membershipsViewSource,
       'ConferenceOperationsView.vue': conferenceOperationsViewSource,
@@ -2549,6 +2849,11 @@ describe('C1 App shell', () => {
     expect(viewSources['RuntimeReconciliationsView.vue']).not.toContain('outbox')
     expect(viewSources['RuntimeReconciliationsView.vue']).not.toContain('credentials')
     expect(viewSources['RuntimeReconciliationsView.vue']).not.toContain('endpoint')
+    expect(viewSources['AuditRecordsView.vue']).not.toContain('localStorage')
+    expect(viewSources['AuditRecordsView.vue']).not.toContain('sessionStorage')
+    expect(viewSources['AuditRecordsView.vue']).not.toContain('setInterval')
+    expect(viewSources['AuditRecordsView.vue']).not.toContain('visibilitychange')
+    expect(viewSources['AuditRecordsView.vue']).not.toContain('subscribe')
     expect(appStateSource).not.toContain('saveAsteriskAdapterConfiguration')
     expect(appStateSource).not.toContain('asteriskConfigurationForm')
     expect(appStateSource).toContain('saveRuntimeAdapterConfiguration')
