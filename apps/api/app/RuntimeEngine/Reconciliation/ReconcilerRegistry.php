@@ -26,4 +26,15 @@ final class ReconcilerRegistry
     {
         return $this->reconcilers[$targetType] ?? null;
     }
+
+    /**
+     * @return list<string>
+     */
+    public function targetTypes(): array
+    {
+        $types = array_keys($this->reconcilers);
+        sort($types);
+
+        return $types;
+    }
 }
