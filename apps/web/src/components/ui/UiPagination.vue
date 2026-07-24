@@ -31,9 +31,11 @@
     <label
       v-if="pageSizeOptions.length > 1"
       class="ui-pagination__size"
+      :for="pageSizeId"
     >
       <span>Rows per page</span>
       <select
+        :id="pageSizeId"
         :value="perPage"
         @change="$emit('update:perPage', Number(($event.target as HTMLSelectElement).value))"
       >
@@ -50,7 +52,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
 import UiButton from './UiButton.vue'
 
 const props = withDefaults(defineProps<{
@@ -74,4 +76,5 @@ defineEmits<{
 const totalPages = computed(() => (
   props.total === undefined ? null : Math.max(1, Math.ceil(props.total / props.perPage))
 ))
+const pageSizeId = `pagination-page-size-${useId()}`
 </script>

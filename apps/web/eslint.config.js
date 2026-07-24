@@ -1,5 +1,6 @@
 import js from '@eslint/js'
 import vue from 'eslint-plugin-vue'
+import vueA11y from 'eslint-plugin-vuejs-accessibility'
 import vitest from '@vitest/eslint-plugin'
 import tseslint from 'typescript-eslint'
 
@@ -10,6 +11,7 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   ...vue.configs['flat/recommended'],
+  ...vueA11y.configs['flat/recommended'],
   {
     files: ['**/*.vue'],
     languageOptions: {

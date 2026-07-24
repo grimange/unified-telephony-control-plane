@@ -103,7 +103,7 @@ Replace the monolithic handmade application-routing structure with a maintainabl
 - Route-level views now own login, password change, dashboard, tenants, memberships, users, user detail, runtime nodes, forbidden, and not-found screens.
 - A shared authenticated `AppShell` provides product identity, capability-aware navigation, tenant context, current user context, logout, route title context, and responsive navigation.
 - The dashboard uses existing canonical APIs for RuntimeNode, user, TelephonySession-summary, and membership orientation where server-returned capabilities permit them.
-- Frontend tests were strengthened from sixteen to twenty-one tests covering router guards, direct URLs, dashboard summaries, capability-filtered navigation, forbidden/not-found routes, and existing management regressions.
+- Frontend tests cover router guards, direct URLs, dashboard summaries, capability-filtered navigation, forbidden/not-found routes, and existing management regressions; the canonical test command is the durable authority for the current count.
 - UI-A2 controlled natural browser proof (evidence: [`docs/evidence/ui/ui-a2-application-shell-dashboard-browser-proof.md`](../evidence/ui/ui-a2-application-shell-dashboard-browser-proof.md)) live-proved the deployed `90d02b4` frontend (web image digest `sha256:29abd658…`) through Playwright MCP: real-login with forced password change, dashboard as the authenticated landing page, dashboard summaries each backed by a canonical authenticated API, capability-aware navigation across no-tenant and tenant-selected states for a broad-capability user, a zero-capability limited user (dashboard usable, admin navigation absent, `/admin/users` guarded to `/forbidden`), a management route through the UI, direct URL and reload, browser back/forward, not-found handling, tenant switching with session and dashboard recalculation, transient secret handling, and logout with post-logout protection.
 
 ### Remaining Implementation
@@ -396,16 +396,16 @@ Make the UTCP frontend accessible, responsive, testable, clean under browser dia
 ### Current Evidence
 
 - ARIA labels exist in current screens.
-- Sixteen frontend unit tests pass.
+- UI-E1 repository enforcement (evidence: [`docs/evidence/ui/ui-e1-accessibility-static-unit-enforcement.md`](../evidence/ui/ui-e1-accessibility-static-unit-enforcement.md)) adds Vue accessibility linting to the canonical flat ESLint config, introduces axe-core serious/critical Vitest assertions, covers shared primitives and primary UI-A through UI-D route views, and documents accessibility, keyboard, focus, responsive, unit-test, and natural browser-proof conventions.
 - Natural browser proofs were performed for T1.
 - One responsive breakpoint exists.
-- No systematic accessibility or responsive contract exists.
+- Layout-dependent contrast, real focus movement, tab order, responsive behavior, and console/network hygiene remain for natural browser proof.
 
 ### Remaining Implementation
 
-- Define accessibility and keyboard-operation standards.
-- Add systematic focus, label, contrast, and responsive checks where practical.
-- Establish frontend unit-test and natural Playwright browser-proof conventions.
+- Continue applying the documented accessibility and keyboard-operation standards.
+- Add systematic focus, contrast, and responsive checks where practical, with layout-dependent claims reserved for browser proof.
+- Maintain the documented frontend unit-test and natural Playwright browser-proof conventions.
 - Track console and network error hygiene during browser proof.
 - Apply a portfolio-quality information architecture and finish pass after UI-A through UI-D have stable surfaces.
 
@@ -413,6 +413,7 @@ Make the UTCP frontend accessible, responsive, testable, clean under browser dia
 
 - Preserve and strengthen frontend unit-test conventions.
 - Add accessibility and responsive regression checks where practical.
+- Run `npm run test` as the durable authority for the current frontend unit-test count.
 - Use natural browser proof for keyboard operation, responsive behavior, and console/network hygiene when material.
 
 ### Browser-Proof Contract
@@ -446,7 +447,7 @@ Implemented repository scope:
 - Add `/dashboard` as the default authenticated landing page.
 - Add capability-aware navigation and explicit forbidden/not-found views.
 - Preserve current URLs, redirects, capability gates, tenant switching, login, logout, and secret handling.
-- Preserve and strengthen the existing sixteen tests; twenty-one frontend tests now pass locally.
+- Preserve and strengthen existing frontend coverage; use the canonical frontend test command as the durable authority for the current count.
 - Add focused router, dashboard, AppShell, and capability-navigation tests.
 
 Remaining proof:

@@ -17,6 +17,7 @@ import {
 import { createUtcpRouter, router } from './router'
 import { resetAppStateForTests } from './state/appState'
 import { appearanceStorageKey, resetAppearanceForTests } from './state/theme'
+import { assertNoSeriousAxeViolations } from './test/accessibility'
 import auditRecordsViewSource from './views/AuditRecordsView.vue?raw'
 import changePasswordViewSource from './views/ChangePasswordView.vue?raw'
 import conferenceOperationsViewSource from './views/ConferenceOperationsView.vue?raw'
@@ -793,6 +794,73 @@ function mockUserAdminFetch(calls: Array<{ url: string; body?: unknown }>): void
   })
 }
 
+function mockPrimaryRouteFetch(calls: Array<{ url: string; body?: unknown }>, activeSession = session): void {
+  vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = input.toString()
+    calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+    if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(activeSession))
+    if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+    if (url.endsWith('/api/v1/admin/tenants')) {
+      return Promise.resolve(jsonResponse({
+        tenants: [{ id: 'tenant-1', slug: 'local', display_name: 'Local Tenant', status: 'active' }],
+      }))
+    }
+    if (url.includes('/api/v1/admin/users?') || url.endsWith('/api/v1/admin/users')) {
+      return Promise.resolve(jsonResponse({
+        users: [adminUser],
+        pagination: { page: 1, per_page: 20, total: 1, has_more: false },
+      }))
+    }
+    if (url.endsWith('/api/v1/admin/memberships')) {
+      return Promise.resolve(jsonResponse({
+        memberships: [{
+          id: 'membership-2',
+          user_id: adminUser.id,
+          email: adminUser.email,
+          display_name: adminUser.display_name,
+          status: 'active',
+        }],
+      }))
+    }
+    if (url.endsWith('/api/v1/admin/roles')) {
+      return Promise.resolve(jsonResponse({
+        catalog_version: 'roles.v1',
+        roles: {
+          'tenant-member': {
+            scope: 'tenant',
+            display_name: 'Tenant member',
+            capabilities: ['telephony.signaling.view_own'],
+          },
+        },
+        capabilities: ['telephony.signaling.view_own'],
+      }))
+    }
+    if (url.endsWith('/api/v1/admin/runtime-node-catalog')) return Promise.resolve(jsonResponse({ catalog: runtimeCatalog }))
+    if (url.endsWith('/api/v1/admin/runtime-nodes')) return Promise.resolve(jsonResponse({ runtime_nodes: [runtimeNode] }))
+    if (url.endsWith('/api/v1/admin/conferences')) return Promise.resolve(jsonResponse({ conferences: [conference] }))
+    if (url.includes('/api/v1/admin/runtime-operations')) {
+      return Promise.resolve(jsonResponse({
+        runtime_operations: [runtimeOperation],
+        pagination: { page: 1, per_page: 20, total: 1, has_more: false },
+      }))
+    }
+    if (url.includes('/api/v1/admin/runtime-reconciliations')) {
+      return Promise.resolve(jsonResponse({
+        runtime_reconciliations: [runtimeReconciliation],
+        pagination: { page: 1, per_page: 20, total: 1, has_more: false },
+      }))
+    }
+    if (url.includes('/api/v1/admin/audit-records')) {
+      return Promise.resolve(jsonResponse({
+        audit_records: [auditRecord],
+        pagination: { page: 1, per_page: 20, total: 1, has_more: false },
+      }))
+    }
+
+    return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+  })
+}
+
 function createMockRealtimeEcho() {
   const connectionCallbacks: Record<string, Array<(payload?: unknown) => void>> = {}
   const channelErrorCallbacks: Record<string, Array<(error: unknown) => void>> = {}
@@ -941,6 +1009,35 @@ describe('C1 App shell', () => {
     expect(wrapper.text()).toContain('Sign in')
     expect(wrapper.find('input[type="email"]').exists()).toBe(true)
     expect(wrapper.html()).not.toContain('localStorage')
+  })
+
+  it('has no serious or critical axe violations on the login route', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ message: 'Unauthenticated.' }, 401))
+
+    const wrapper = await mountApp('/login')
+
+    expect(wrapper.text()).toContain('Sign in')
+    await assertNoSeriousAxeViolations(wrapper.element)
+  })
+
+  it.each([
+    ['/dashboard', 'Dashboard'],
+    ['/admin/users', 'Operator User'],
+    ['/admin/tenants', 'Local Tenant'],
+    ['/admin/memberships', 'Operator User'],
+    ['/admin/runtime-nodes', 'Proof Runtime'],
+    ['/operations/conferences', 'Daily Ops'],
+    ['/operations/runtime-operations', 'runtime.node.inspect'],
+    ['/operations/runtime-reconciliations', 'Runtime reconciliations'],
+    ['/admin/audit-records', 'runtime_node.created'],
+  ])('has no serious or critical axe violations on %s', async (path, expectedText) => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockPrimaryRouteFetch(calls)
+
+    const wrapper = await mountApp(path)
+
+    expect(wrapper.text()).toContain(expectedText)
+    await assertNoSeriousAxeViolations(wrapper.element)
   })
 
   it('renders capability-gated administration from the server session', async () => {

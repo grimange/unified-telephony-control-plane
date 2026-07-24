@@ -15,6 +15,7 @@ import UiSelect from './UiSelect.vue'
 import UiStatusBadge from './UiStatusBadge.vue'
 import UiTextInput from './UiTextInput.vue'
 import { notify, resetNotificationsForTests } from '../../state/notifications'
+import { assertNoSeriousAxeViolations } from '../../test/accessibility'
 
 describe('core UI components', () => {
   afterEach(() => {
@@ -237,6 +238,127 @@ describe('core UI components', () => {
 
     await wrapper.find(`button[aria-label="Dismiss Credential failed"]`).trigger('click')
     expect(wrapper.text()).not.toContain('Credential failed')
+
+    wrapper.unmount()
+  })
+
+  it('has no serious or critical axe violations across shared primitives', async () => {
+    notify({ variant: 'information', title: 'Saved', message: 'Settings changed.', autoExpireMs: 0 })
+
+    const wrapper = mount({
+      components: {
+        UiAlert,
+        UiButton,
+        UiDataList,
+        UiEmptyState,
+        UiFilterBar,
+        UiFormField,
+        UiLoadingState,
+        UiNotificationRegion,
+        UiPagination,
+        UiPanel,
+        UiSelect,
+        UiStatusBadge,
+        UiTextInput,
+      },
+      data: () => ({
+        email: '',
+        enabled: true,
+        mode: 'system',
+      }),
+      template: `
+        <main>
+          <UiPanel title="Primitive accessibility" label="Design system">
+            <template #actions>
+              <UiButton type="button" variant="secondary">Refresh</UiButton>
+            </template>
+
+            <UiAlert title="Request failed" variant="error">Try again.</UiAlert>
+            <UiLoadingState label="Loading records." />
+            <UiEmptyState title="No records" message="No records were returned." />
+            <UiStatusBadge label="active" category="success" />
+
+            <UiFormField id="primitive-email" label="Email" help="Use a work address." error="Email is required" required>
+              <template #default="{ id, describedBy, invalid }">
+                <UiTextInput
+                  :id="id"
+                  v-model="email"
+                  :aria-describedby="describedBy"
+                  :invalid="invalid"
+                  autocomplete="email"
+                  required
+                />
+              </template>
+            </UiFormField>
+
+            <UiFormField id="primitive-mode" label="Mode">
+              <template #default="{ id, describedBy }">
+                <UiSelect
+                  :id="id"
+                  v-model="mode"
+                  :aria-describedby="describedBy"
+                >
+                  <option value="system">System</option>
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                </UiSelect>
+              </template>
+            </UiFormField>
+
+            <UiFormField id="primitive-enabled" label="Enabled">
+              <template #default="{ id, describedBy }">
+                <input
+                  :id="id"
+                  v-model="enabled"
+                  type="checkbox"
+                  :aria-describedby="describedBy"
+                >
+              </template>
+            </UiFormField>
+
+            <UiFilterBar>
+              <label>Search <input name="search" value="operator"></label>
+            </UiFilterBar>
+
+            <UiDataList
+              status="success"
+              has-data
+              title="User list"
+              label="Directory"
+              loading-label="Loading users."
+              refreshing-label="Refreshing users."
+              empty-title="No users"
+              empty-message="No users were returned."
+              error-title="Users unavailable"
+              forbidden-title="Users forbidden"
+            >
+              <div class="data-table" role="table" aria-label="Users">
+                <div class="data-table__head" role="row">
+                  <span role="columnheader">Name</span>
+                  <span role="columnheader">Status</span>
+                </div>
+                <div class="data-row" role="row">
+                  <span role="cell">Operator User</span>
+                  <span role="cell">active</span>
+                </div>
+              </div>
+            </UiDataList>
+
+            <UiPagination
+              :page="1"
+              :per-page="20"
+              :total="40"
+              :has-more="true"
+              :page-size-options="[10, 20]"
+            />
+            <UiNotificationRegion />
+          </UiPanel>
+        </main>
+      `,
+    })
+
+    expect(wrapper.find('main').exists()).toBe(true)
+    await assertNoSeriousAxeViolations(wrapper.element)
 
     wrapper.unmount()
   })

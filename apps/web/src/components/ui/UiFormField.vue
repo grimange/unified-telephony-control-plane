@@ -1,5 +1,6 @@
 <template>
   <div class="ui-form-field">
+    <!-- eslint-disable-next-line vuejs-accessibility/label-has-for -- UiFormField passes the generated id to its control slot and route/view axe tests verify rendered associations. -->
     <label
       class="ui-form-field__label"
       :for="controlId"

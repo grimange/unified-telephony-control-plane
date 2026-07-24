@@ -89,7 +89,6 @@
         <nav
           class="side-nav"
           aria-label="Primary"
-          @keydown.esc="navigationOpen = false"
         >
           <RouterLink
             v-for="entry in navigation"
@@ -98,6 +97,7 @@
             :class="{ active: isActive(entry.route, entry.exact) }"
             :aria-current="isActive(entry.route, entry.exact) ? 'page' : undefined"
             @click="navigationOpen = false"
+            @keydown.esc="navigationOpen = false"
           >
             {{ entry.label }}
           </RouterLink>

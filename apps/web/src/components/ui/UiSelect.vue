@@ -1,4 +1,5 @@
 <template>
+  <!-- eslint-disable-next-line vuejs-accessibility/form-control-has-label -- UiSelect is a native-control primitive labelled by UiFormField or caller-provided aria-label at render sites. -->
   <select
     class="ui-control"
     :value="modelValue"

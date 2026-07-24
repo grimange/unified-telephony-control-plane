@@ -348,8 +348,10 @@
                 v-for="capability in capabilityOptionsFor(node)"
                 :key="capability"
                 class="check-label"
+                :for="capabilityInputId(node.id, capability)"
               >
                 <input
+                  :id="capabilityInputId(node.id, capability)"
                   v-model="runtimeCapabilitySelections[node.id]"
                   type="checkbox"
                   :value="capability"
@@ -682,6 +684,10 @@ function runtimeEndpointRemoveActionKey(node: RuntimeNode, endpointId: string): 
 
 function runtimeCapabilitiesActionKey(node: RuntimeNode): string {
   return `runtime-node:${node.id}:capabilities`
+}
+
+function capabilityInputId(nodeId: string, capability: string): string {
+  return `runtime-capability-${nodeId}-${capability.replace(/[^a-z0-9_-]/gi, '-')}`
 }
 
 function runtimeCredentialCreateActionKey(node: RuntimeNode): string {
