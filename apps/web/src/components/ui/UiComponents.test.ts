@@ -1,5 +1,6 @@
 import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import UiAlert from './UiAlert.vue'
 import UiButton from './UiButton.vue'
 import UiDataList from './UiDataList.vue'
@@ -30,10 +31,107 @@ describe('core UI components', () => {
     })
 
     expect(wrapper.classes()).toContain('ui-button--danger')
-    expect(wrapper.attributes('disabled')).toBeDefined()
+    expect(wrapper.attributes('disabled')).toBeUndefined()
+    expect(wrapper.attributes('aria-disabled')).toBe('true')
     expect(wrapper.attributes('aria-busy')).toBe('true')
-    expect(wrapper.text()).toBe('Saving user')
+    expect(wrapper.text()).toContain('Delete')
+    expect(wrapper.text()).toContain('Saving user')
     expect(wrapper.element.tagName).toBe('BUTTON')
+  })
+
+  it('keeps a loading button focusable and exposes busy semantics without native disabling', async () => {
+    const wrapper = mount(UiButton, {
+      props: { loading: false, loadingLabel: 'Saving user' },
+      slots: { default: 'Delete' },
+      attachTo: document.body,
+    })
+    const button = wrapper.find('button').element
+
+    button.focus()
+    expect(document.activeElement).toBe(button)
+
+    await wrapper.setProps({ loading: true })
+    await nextTick()
+
+    expect(document.activeElement).toBe(button)
+    expect(wrapper.attributes('disabled')).toBeUndefined()
+    expect(wrapper.attributes('aria-disabled')).toBe('true')
+    expect(wrapper.attributes('aria-busy')).toBe('true')
+    expect(wrapper.text()).toContain('Delete')
+    expect(wrapper.text()).toContain('Saving user')
+
+    await wrapper.setProps({ loading: false })
+    expect(wrapper.attributes('aria-disabled')).toBeUndefined()
+    expect(wrapper.attributes('aria-busy')).toBeUndefined()
+
+    wrapper.unmount()
+  })
+
+  it('blocks duplicate click and keyboard activation while loading without blocking the first activation', async () => {
+    const wrapper = mount({
+      components: { UiButton },
+      data: () => ({ loading: false, activations: 0 }),
+      template: `
+        <UiButton
+          type="button"
+          :loading="loading"
+          loading-label="Saving user"
+          @click="activations += 1; loading = true"
+        >
+          Save
+        </UiButton>
+      `,
+    })
+    const button = wrapper.find('button')
+
+    await button.trigger('click')
+    await nextTick()
+
+    expect((wrapper.vm as unknown as { activations: number }).activations).toBe(1)
+    expect(button.attributes('disabled')).toBeUndefined()
+    expect(button.attributes('aria-disabled')).toBe('true')
+
+    await button.trigger('click')
+    await button.trigger('keydown.enter')
+    await button.trigger('click')
+    await button.trigger('keydown.space')
+    await button.trigger('click')
+
+    expect((wrapper.vm as unknown as { activations: number }).activations).toBe(1)
+  })
+
+  it('keeps explicit disabled behavior native and blocks activation', async () => {
+    const wrapper = mount(UiButton, {
+      props: { disabled: true },
+      slots: { default: 'Delete' },
+    })
+
+    await wrapper.find('button').trigger('click')
+
+    expect(wrapper.attributes('disabled')).toBeDefined()
+    expect(wrapper.emitted('click')).toBeUndefined()
+  })
+
+  it('prevents a loading submit button from submitting its form again', async () => {
+    const wrapper = mount({
+      components: { UiButton },
+      template: `
+        <form @submit="submissions += 1">
+          <UiButton type="submit" loading loading-label="Saving">
+            Save
+          </UiButton>
+        </form>
+      `,
+      data: () => ({ submissions: 0 }),
+      attachTo: document.body,
+    })
+
+    ;(wrapper.find('button').element as HTMLButtonElement).click()
+    await nextTick()
+
+    expect((wrapper.vm as unknown as { submissions: number }).submissions).toBe(0)
+
+    wrapper.unmount()
   })
 
   it('associates form labels, help, errors, and native input attributes', async () => {

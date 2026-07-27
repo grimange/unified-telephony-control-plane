@@ -1001,6 +1001,10 @@ describe('C1 App shell', () => {
     return wrapper
   }
 
+  function attachWrapperToDocument(wrapper: VueWrapper): void {
+    if (!wrapper.element.isConnected) document.body.append(wrapper.element)
+  }
+
   it('renders the natural login form without client-side tokens', async () => {
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({ message: 'Unauthenticated.' }, 401))
 
@@ -1739,6 +1743,216 @@ describe('C1 App shell', () => {
     expect(calls.at(-1)?.url).toContain('per_page=10')
     expect(calls.at(-1)?.url).toContain('actor_type=user')
     expect(calls.at(-1)?.url).toContain('action=runtime_node.created')
+  })
+
+  it('preserves Audit UiButton focus and request budgets during pending loading actions', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    const pendingListResponses: Array<ReturnType<typeof deferredResponse>> = []
+    const pendingDetailResponses: Array<ReturnType<typeof deferredResponse>> = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString()
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+      if (url.includes('/api/v1/admin/audit-records/audit-1')) {
+        const pending = pendingDetailResponses.shift()
+        if (pending) return pending.promise
+
+        return Promise.resolve(jsonResponse({ audit_record: auditRecordDetail }))
+      }
+      if (url.includes('/api/v1/admin/audit-records')) {
+        const pending = pendingListResponses.shift()
+        if (pending) return pending.promise
+
+        const params = new URL(url, 'http://utcp.local.test').searchParams
+        return Promise.resolve(jsonResponse({
+          audit_records: [auditRecord, secondAuditRecord],
+          pagination: {
+            page: params.get('page') === '2' ? 2 : 1,
+            per_page: params.get('per_page') === '10' ? 10 : 20,
+            total: 2,
+            has_more: params.get('page') !== '2',
+          },
+        }))
+      }
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+    const wrapper = await mountApp('/admin/audit-records')
+    attachWrapperToDocument(wrapper)
+    const listCalls = () => calls.filter((call) => call.url.includes('/api/v1/admin/audit-records') && !call.url.includes('/api/v1/admin/audit-records/audit-'))
+    const detailCalls = () => calls.filter((call) => call.url.includes('/api/v1/admin/audit-records/audit-1'))
+
+    expect(listCalls()).toHaveLength(1)
+
+    const refreshPending = deferredResponse()
+    pendingListResponses.push(refreshPending)
+    const refreshButton = wrapper.findAll('button').find((button) => button.text() === 'Refresh')
+    expect(refreshButton).toBeDefined()
+    refreshButton?.element.focus()
+    ;(refreshButton?.element as HTMLButtonElement).click()
+    await nextTick()
+
+    expect(document.activeElement).toBe(refreshButton?.element)
+    expect(listCalls()).toHaveLength(2)
+
+    await refreshButton?.trigger('keydown.enter')
+    ;(refreshButton?.element as HTMLButtonElement).click()
+    await refreshButton?.trigger('keydown.space')
+    ;(refreshButton?.element as HTMLButtonElement).click()
+
+    expect(listCalls()).toHaveLength(2)
+    refreshPending.resolve(jsonResponse({
+      audit_records: [auditRecord, secondAuditRecord],
+      pagination: { page: 1, per_page: 20, total: 2, has_more: true },
+    }))
+    await flushPromises()
+    expect(document.activeElement).toBe(refreshButton?.element)
+
+    const detailPending = deferredResponse()
+    pendingDetailResponses.push(detailPending)
+    const detailButton = wrapper.findAll('button').find((button) => button.text() === 'Details')
+    expect(detailButton).toBeDefined()
+    detailButton?.element.focus()
+    ;(detailButton?.element as HTMLButtonElement).click()
+    await nextTick()
+
+    expect(document.activeElement).toBe(detailButton?.element)
+    expect(document.activeElement).not.toBe(document.body)
+    expect(detailCalls()).toHaveLength(1)
+
+    await detailButton?.trigger('keydown.enter')
+    ;(detailButton?.element as HTMLButtonElement).click()
+    expect(detailCalls()).toHaveLength(1)
+    detailPending.resolve(jsonResponse({ audit_record: auditRecordDetail }))
+    await flushPromises()
+    expect(wrapper.text()).toContain('routine operator review')
+    expect(document.activeElement).toBe(detailButton?.element)
+
+    const filterPending = deferredResponse()
+    pendingListResponses.push(filterPending)
+    await wrapper.find('#audit-action-filter').setValue('runtime_node.updated')
+    const applyButton = wrapper.findAll('button').find((button) => button.text() === 'Apply')
+    expect(applyButton).toBeDefined()
+    applyButton?.element.focus()
+    ;(applyButton?.element as HTMLButtonElement).click()
+    await flushPromises()
+
+    expect(document.activeElement).toBe(applyButton?.element)
+    expect(listCalls()).toHaveLength(3)
+    filterPending.resolve(jsonResponse({
+      audit_records: [auditRecord, secondAuditRecord],
+      pagination: { page: 1, per_page: 20, total: 2, has_more: true },
+    }))
+    await flushPromises()
+
+    const paginationPending = deferredResponse()
+    pendingListResponses.push(paginationPending)
+    const nextButton = wrapper.find('.ui-pagination button[aria-label="Go to next page"]')
+    const nextButtonElement = nextButton.element as HTMLButtonElement
+    nextButtonElement.focus()
+    nextButtonElement.click()
+    await flushPromises()
+
+    expect(document.activeElement).toBe(nextButtonElement)
+    expect(listCalls()).toHaveLength(4)
+    paginationPending.resolve(jsonResponse({
+      audit_records: [auditRecord, secondAuditRecord],
+      pagination: { page: 2, per_page: 20, total: 2, has_more: false },
+    }))
+    await flushPromises()
+  })
+
+  it('returns Audit detail close focus to the originating Details trigger without rereading the list', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockAuditRecordAdminFetch(calls)
+    const wrapper = await mountApp('/admin/audit-records')
+    attachWrapperToDocument(wrapper)
+    const listCountAfterMount = calls.filter((call) => call.url.includes('/api/v1/admin/audit-records') && !call.url.includes('/api/v1/admin/audit-records/audit-')).length
+    const detailButton = wrapper.findAll('button').find((button) => button.text() === 'Details')
+    expect(detailButton).toBeDefined()
+
+    detailButton?.element.focus()
+    ;(detailButton?.element as HTMLButtonElement).click()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('routine operator review')
+    const closeButton = wrapper.findAll('button').find((button) => button.text() === 'Close')
+    expect(closeButton).toBeDefined()
+    closeButton?.element.focus()
+    ;(closeButton?.element as HTMLButtonElement).click()
+    await nextTick()
+
+    expect(wrapper.text()).not.toContain('routine operator review')
+    expect(document.activeElement).toBe(detailButton?.element)
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/audit-records') && !call.url.includes('/api/v1/admin/audit-records/audit-'))).toHaveLength(listCountAfterMount)
+  })
+
+  it('updates Audit detail focus return when switching selection', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString()
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+      if (url.includes('/api/v1/admin/audit-records/audit-1')) return Promise.resolve(jsonResponse({ audit_record: auditRecordDetail }))
+      if (url.includes('/api/v1/admin/audit-records/audit-2')) {
+        return Promise.resolve(jsonResponse({ audit_record: { ...auditRecordDetail, ...secondAuditRecord, reason: 'second operator review' } }))
+      }
+      if (url.includes('/api/v1/admin/audit-records')) {
+        return Promise.resolve(jsonResponse({
+          audit_records: [auditRecord, secondAuditRecord],
+          pagination: { page: 1, per_page: 20, total: 2, has_more: true },
+        }))
+      }
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+    const wrapper = await mountApp('/admin/audit-records')
+    attachWrapperToDocument(wrapper)
+
+    const firstDetails = wrapper.findAll('button').filter((button) => button.text() === 'Details')[0]
+    firstDetails.element.focus()
+    ;(firstDetails.element as HTMLButtonElement).click()
+    await flushPromises()
+
+    const secondDetails = wrapper.findAll('button').filter((button) => button.text() === 'Details')[0]
+    secondDetails.element.focus()
+    ;(secondDetails.element as HTMLButtonElement).click()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('second operator review')
+    const closeButton = wrapper.findAll('button').find((button) => button.text() === 'Close')
+    closeButton?.element.focus()
+    ;(closeButton?.element as HTMLButtonElement).click()
+    await nextTick()
+
+    expect(document.activeElement).toBe(secondDetails.element)
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/audit-records/audit-1'))).toHaveLength(1)
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/audit-records/audit-2'))).toHaveLength(1)
+  })
+
+  it('does not focus a detached Audit detail opener when closing', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockAuditRecordAdminFetch(calls)
+    const wrapper = await mountApp('/admin/audit-records')
+    attachWrapperToDocument(wrapper)
+    const detailButton = wrapper.findAll('button').find((button) => button.text() === 'Details')
+    expect(detailButton).toBeDefined()
+
+    detailButton?.element.focus()
+    ;(detailButton?.element as HTMLButtonElement).click()
+    await flushPromises()
+    detailButton?.element.remove()
+
+    const closeButton = wrapper.findAll('button').find((button) => button.text() === 'Close')
+    closeButton?.element.focus()
+    ;(closeButton?.element as HTMLButtonElement).click()
+    await nextTick()
+
+    expect(wrapper.text()).not.toContain('routine operator review')
+    expect(document.activeElement).not.toBe(detailButton?.element)
+    expect(calls.filter((call) => call.url.includes('/api/v1/admin/audit-records') && !call.url.includes('/api/v1/admin/audit-records/audit-'))).toHaveLength(1)
   })
 
   it('handles Audit empty, forbidden, validation, refresh failure, and not-found states', async () => {

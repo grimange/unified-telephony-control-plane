@@ -213,7 +213,7 @@
               variant="secondary"
               :loading="selectedAuditRecordId === record.id && selectedAuditRecordResource.state.status === 'loading'"
               loading-label="Loading details"
-              @click="selectAuditRecord(record.id)"
+              @click="selectAuditRecord(record.id, $event)"
             >
               {{ selectedAuditRecordId === record.id ? 'Selected' : 'Details' }}
             </UiButton>
@@ -243,7 +243,7 @@
                 <UiButton
                   type="button"
                   variant="ghost"
-                  @click="clearSelectedAuditRecord"
+                  @click="clearSelectedAuditRecord({ restoreFocus: true })"
                 >
                   Close
                 </UiButton>
@@ -331,7 +331,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import {
   identityApi,
   type AuditActorReference,
@@ -408,6 +408,7 @@ const auditRecords = ref<AuditRecord[]>([])
 const auditRecordPagination = ref({ page: 1, per_page: 20, total: 0, has_more: false })
 const selectedAuditRecordId = ref<string | null>(null)
 const selectedAuditRecord = ref<AuditRecordDetail | null>(null)
+const selectedAuditRecordTrigger = ref<HTMLElement | null>(null)
 let detailRequestGeneration = 0
 
 const auditRecordsResource = useAsyncResource(async () => identityApi.listAuditRecords({
@@ -452,7 +453,8 @@ async function loadAuditRecords(): Promise<void> {
   auditRecordPagination.value = loaded.pagination
 }
 
-async function selectAuditRecord(auditRecordId: string): Promise<void> {
+async function selectAuditRecord(auditRecordId: string, event?: MouseEvent): Promise<void> {
+  rememberAuditRecordTrigger(event)
   if (selectedAuditRecordId.value !== auditRecordId) {
     selectedAuditRecord.value = null
     selectedAuditRecordResource.reset()
@@ -493,11 +495,30 @@ async function setPerPage(perPage: number): Promise<void> {
   await loadAuditRecords()
 }
 
-function clearSelectedAuditRecord(): void {
+function clearSelectedAuditRecord(options: { restoreFocus?: boolean } = {}): void {
+  const restoreTarget = selectedAuditRecordTrigger.value
   selectedAuditRecordId.value = null
   selectedAuditRecord.value = null
+  selectedAuditRecordTrigger.value = null
   detailRequestGeneration++
   selectedAuditRecordResource.reset()
+  if (options.restoreFocus) {
+    void nextTick(() => {
+      if (isFocusableConnectedElement(restoreTarget)) restoreTarget.focus()
+    })
+  }
+}
+
+function rememberAuditRecordTrigger(event?: MouseEvent): void {
+  const trigger = event?.currentTarget
+  selectedAuditRecordTrigger.value = trigger instanceof HTMLElement ? trigger : null
+}
+
+function isFocusableConnectedElement(element: HTMLElement | null): element is HTMLElement {
+  if (element === null || !element.isConnected) return false
+  if (element instanceof HTMLButtonElement && element.disabled) return false
+
+  return element.tabIndex >= 0
 }
 
 function syncFilterDraftFromQuery(): void {
@@ -566,5 +587,9 @@ watch(
 watch(tenantContextVersion, () => {
   clearSelectedAuditRecord()
   void loadAuditRecords()
+})
+
+onBeforeUnmount(() => {
+  selectedAuditRecordTrigger.value = null
 })
 </script>
