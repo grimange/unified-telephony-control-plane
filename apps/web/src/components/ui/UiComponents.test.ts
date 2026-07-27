@@ -247,6 +247,112 @@ describe('core UI components', () => {
     expect(bounded.find('button[aria-label="Go to next page"]').attributes('disabled')).toBeDefined()
   })
 
+  it('forwards loading semantics to available pagination controls without native disabling', () => {
+    const wrapper = mount(UiPagination, {
+      props: { page: 2, perPage: 20, total: 60, hasMore: true, loading: true },
+    })
+    const previous = wrapper.find('button[aria-label="Go to previous page"]')
+    const next = wrapper.find('button[aria-label="Go to next page"]')
+
+    expect(previous.attributes('disabled')).toBeUndefined()
+    expect(previous.attributes('aria-disabled')).toBe('true')
+    expect(previous.attributes('aria-busy')).toBe('true')
+    expect(next.attributes('disabled')).toBeUndefined()
+    expect(next.attributes('aria-disabled')).toBe('true')
+    expect(next.attributes('aria-busy')).toBe('true')
+    expect(previous.text()).toContain('Previous')
+    expect(next.text()).toContain('Next')
+  })
+
+  it('blocks duplicate previous activation while pagination is loading', async () => {
+    const wrapper = mount(UiPagination, {
+      props: { page: 2, perPage: 20, total: 60, hasMore: true },
+    })
+    const previous = wrapper.find('button[aria-label="Go to previous page"]')
+
+    await previous.trigger('click')
+    expect(wrapper.emitted('previous')).toHaveLength(1)
+
+    await wrapper.setProps({ loading: true })
+    await previous.trigger('click')
+    await previous.trigger('keydown.enter')
+    await previous.trigger('click')
+    await previous.trigger('keydown.space')
+    await previous.trigger('click')
+
+    expect(wrapper.emitted('previous')).toHaveLength(1)
+  })
+
+  it('blocks duplicate next activation while pagination is loading', async () => {
+    const wrapper = mount(UiPagination, {
+      props: { page: 1, perPage: 20, total: 60, hasMore: true },
+    })
+    const next = wrapper.find('button[aria-label="Go to next page"]')
+
+    await next.trigger('click')
+    expect(wrapper.emitted('next')).toHaveLength(1)
+
+    await wrapper.setProps({ loading: true })
+    await next.trigger('click')
+    await next.trigger('keydown.enter')
+    await next.trigger('click')
+    await next.trigger('keydown.space')
+    await next.trigger('click')
+
+    expect(wrapper.emitted('next')).toHaveLength(1)
+  })
+
+  it('keeps an available pagination control focused when loading starts', async () => {
+    const wrapper = mount(UiPagination, {
+      props: { page: 1, perPage: 20, total: 60, hasMore: true },
+      attachTo: document.body,
+    })
+    const next = wrapper.find('button[aria-label="Go to next page"]').element as HTMLButtonElement
+
+    next.focus()
+    expect(document.activeElement).toBe(next)
+
+    await wrapper.setProps({ loading: true })
+    await nextTick()
+
+    expect(document.activeElement).toBe(next)
+    expect(wrapper.find('button[aria-label="Go to next page"]').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('button[aria-label="Go to next page"]').attributes('aria-disabled')).toBe('true')
+    expect(wrapper.find('button[aria-label="Go to next page"]').attributes('aria-busy')).toBe('true')
+
+    wrapper.unmount()
+  })
+
+  it('keeps unavailable pagination boundaries natively disabled and non-emitting', async () => {
+    const firstPage = mount(UiPagination, {
+      props: { page: 1, perPage: 20, total: 60, hasMore: true, loading: true },
+    })
+    const previous = firstPage.find('button[aria-label="Go to previous page"]')
+
+    await previous.trigger('click')
+    await previous.trigger('keydown.enter')
+    await previous.trigger('click')
+    await previous.trigger('keydown.space')
+    await previous.trigger('click')
+
+    expect(previous.attributes('disabled')).toBeDefined()
+    expect(firstPage.emitted('previous')).toBeUndefined()
+
+    const lastPage = mount(UiPagination, {
+      props: { page: 3, perPage: 20, total: 60, hasMore: false, loading: true },
+    })
+    const next = lastPage.find('button[aria-label="Go to next page"]')
+
+    await next.trigger('click')
+    await next.trigger('keydown.enter')
+    await next.trigger('click')
+    await next.trigger('keydown.space')
+    await next.trigger('click')
+
+    expect(next.attributes('disabled')).toBeDefined()
+    expect(lastPage.emitted('next')).toBeUndefined()
+  })
+
   it('renders list summaries and data-list states from supplied metadata only', () => {
     const summary = mount(UiListSummary, {
       props: { page: 2, total: 45, count: 20, itemLabel: 'users' },

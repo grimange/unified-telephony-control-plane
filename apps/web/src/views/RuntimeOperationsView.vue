@@ -304,6 +304,7 @@
       :per-page="runtimeOperationPagination.per_page"
       :total="runtimeOperationPagination.total"
       :has-more="runtimeOperationPagination.has_more"
+      :loading="runtimeOperationsResource.isRefreshing.value"
       :page-size-options="[10, 20, 50]"
       @previous="setPage(runtimeOperationPagination.page - 1)"
       @next="setPage(runtimeOperationPagination.page + 1)"

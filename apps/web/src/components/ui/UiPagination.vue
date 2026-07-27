@@ -7,6 +7,7 @@
       type="button"
       variant="secondary"
       :disabled="page <= 1"
+      :loading="loading"
       aria-label="Go to previous page"
       @click="$emit('previous')"
     >
@@ -23,6 +24,7 @@
       type="button"
       variant="secondary"
       :disabled="!hasMore"
+      :loading="loading"
       aria-label="Go to next page"
       @click="$emit('next')"
     >
@@ -61,10 +63,12 @@ const props = withDefaults(defineProps<{
   total?: number
   hasMore?: boolean
   pageSizeOptions?: number[]
+  loading?: boolean
 }>(), {
   total: undefined,
   hasMore: false,
   pageSizeOptions: () => [],
+  loading: false,
 })
 
 defineEmits<{

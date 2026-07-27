@@ -1394,6 +1394,73 @@ describe('C1 App shell', () => {
     expect(calls.at(-1)?.url).toContain('page=2')
   })
 
+  it('guards Runtime Operation pagination while the canonical list request is pending', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    const pendingListResponses: Array<ReturnType<typeof deferredResponse>> = []
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString()
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+      if (url.includes('/api/v1/admin/runtime-operations')) {
+        const pending = pendingListResponses.shift()
+        if (pending) return pending.promise
+
+        const params = new URL(url, 'http://utcp.local.test').searchParams
+        return Promise.resolve(jsonResponse({
+          runtime_operations: [runtimeOperation, secondRuntimeOperation],
+          pagination: {
+            page: params.get('page') === '2' ? 2 : 1,
+            per_page: params.get('per_page') === '10' ? 10 : 20,
+            total: 40,
+            has_more: params.get('page') !== '2',
+          },
+        }))
+      }
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+    const wrapper = await mountApp('/operations/runtime-operations?per_page=10&status=running')
+    attachWrapperToDocument(wrapper)
+    const listCalls = () => calls.filter((call) => call.url.includes('/api/v1/admin/runtime-operations'))
+    const firstListCount = listCalls().length
+    const paginationPending = deferredResponse()
+    pendingListResponses.push(paginationPending)
+    const nextButton = wrapper.find('.ui-pagination button[aria-label="Go to next page"]')
+    const nextButtonElement = nextButton.element as HTMLButtonElement
+
+    nextButtonElement.focus()
+    nextButtonElement.click()
+    await flushPromises()
+
+    expect(listCalls()).toHaveLength(firstListCount + 1)
+    expect(document.activeElement).toBe(nextButtonElement)
+    expect(nextButton.attributes('disabled')).toBeUndefined()
+    expect(nextButton.attributes('aria-disabled')).toBe('true')
+    expect(nextButton.attributes('aria-busy')).toBe('true')
+    expect(router.currentRoute.value.query).toMatchObject({ page: '2', per_page: '10', status: 'running' })
+
+    await nextButton.trigger('keydown.enter')
+    nextButtonElement.click()
+    await nextButton.trigger('keydown.space')
+    nextButtonElement.click()
+    await flushPromises()
+
+    expect(listCalls()).toHaveLength(firstListCount + 1)
+    expect(router.currentRoute.value.query).toMatchObject({ page: '2', per_page: '10', status: 'running' })
+    paginationPending.resolve(jsonResponse({
+      runtime_operations: [runtimeOperation, secondRuntimeOperation],
+      pagination: { page: 2, per_page: 10, total: 40, has_more: false },
+    }))
+    await flushPromises()
+
+    expect(nextButton.attributes('aria-disabled')).toBeUndefined()
+    expect(nextButton.attributes('aria-busy')).toBeUndefined()
+    expect(wrapper.text()).toContain('Page 2')
+    expect(calls.at(-1)?.url).toContain('per_page=10')
+    expect(calls.at(-1)?.url).toContain('status=running')
+  })
+
   it('preserves Runtime Operation pagination and filters during notification rereads', async () => {
     const calls: Array<{ url: string; body?: unknown }> = []
     mockRuntimeOperationAdminFetch(calls)
@@ -1855,12 +1922,27 @@ describe('C1 App shell', () => {
     await flushPromises()
 
     expect(document.activeElement).toBe(nextButtonElement)
+    expect(nextButton.attributes('disabled')).toBeUndefined()
+    expect(nextButton.attributes('aria-disabled')).toBe('true')
+    expect(nextButton.attributes('aria-busy')).toBe('true')
+    expect(listCalls()).toHaveLength(4)
+
+    await nextButton.trigger('keydown.enter')
+    nextButtonElement.click()
+    await nextButton.trigger('keydown.space')
+    nextButtonElement.click()
+    await flushPromises()
+
+    expect(document.activeElement).toBe(nextButtonElement)
+    expect(router.currentRoute.value.query.page).toBe('2')
     expect(listCalls()).toHaveLength(4)
     paginationPending.resolve(jsonResponse({
       audit_records: [auditRecord, secondAuditRecord],
       pagination: { page: 2, per_page: 20, total: 2, has_more: false },
     }))
     await flushPromises()
+    expect(nextButton.attributes('aria-disabled')).toBeUndefined()
+    expect(nextButton.attributes('aria-busy')).toBeUndefined()
   })
 
   it('returns Audit detail close focus to the originating Details trigger without rereading the list', async () => {

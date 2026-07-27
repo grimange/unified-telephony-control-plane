@@ -218,6 +218,7 @@
       :per-page="renderedPagination.per_page"
       :total="renderedPagination.total"
       :has-more="renderedPagination.has_more"
+      :loading="usersResource.isRefreshing.value"
       :page-size-options="[10, 20, 50]"
       @previous="setPage(renderedPagination.page - 1)"
       @next="setPage(renderedPagination.page + 1)"

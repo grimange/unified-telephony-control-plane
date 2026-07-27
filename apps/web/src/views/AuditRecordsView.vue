@@ -322,6 +322,7 @@
       :per-page="auditRecordPagination.per_page"
       :total="auditRecordPagination.total"
       :has-more="auditRecordPagination.has_more"
+      :loading="auditRecordsResource.isRefreshing.value"
       :page-size-options="[10, 20, 50]"
       @previous="setPage(auditRecordPagination.page - 1)"
       @next="setPage(auditRecordPagination.page + 1)"

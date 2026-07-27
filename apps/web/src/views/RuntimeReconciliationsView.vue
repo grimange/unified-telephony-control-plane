@@ -298,6 +298,7 @@
       :per-page="runtimeReconciliationPagination.per_page"
       :total="runtimeReconciliationPagination.total"
       :has-more="runtimeReconciliationPagination.has_more"
+      :loading="runtimeReconciliationsResource.isRefreshing.value"
       :page-size-options="[10, 20, 50]"
       @previous="setPage(runtimeReconciliationPagination.page - 1)"
       @next="setPage(runtimeReconciliationPagination.page + 1)"
