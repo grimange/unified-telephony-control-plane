@@ -201,10 +201,11 @@ button,
   font-weight: var(--font-weight-semibold);
 }
 
-button:hover:not(:disabled),
-.ui-button:hover:not(:disabled) {
+button:hover:not(:disabled):not([aria-disabled='true']):not(.ui-button),
+.ui-button--primary:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: var(--color-primary-hover);
   background: var(--color-primary-hover);
+  color: var(--color-surface);
 }
 
 button:disabled,
@@ -220,7 +221,19 @@ button:disabled,
   color: var(--color-text);
 }
 
+.ui-button--secondary:hover:not(:disabled):not([aria-disabled='true']) {
+  border-color: var(--color-primary);
+  background: var(--color-primary-muted);
+  color: var(--color-text);
+}
+
 .ui-button--danger {
+  border-color: var(--color-danger);
+  background: var(--color-danger);
+  color: var(--color-surface);
+}
+
+.ui-button--danger:hover:not(:disabled):not([aria-disabled='true']) {
   border-color: var(--color-danger);
   background: var(--color-danger);
   color: var(--color-surface);
@@ -230,6 +243,12 @@ button:disabled,
   border-color: transparent;
   background: transparent;
   color: var(--color-primary);
+}
+
+.ui-button--ghost:hover:not(:disabled):not([aria-disabled='true']) {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: var(--color-surface);
 }
 
 .notification-region {

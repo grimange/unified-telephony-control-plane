@@ -37,6 +37,85 @@ import userDetailViewSource from './views/UserDetailView.vue?raw'
 import usersViewSource from './views/UsersView.vue?raw'
 
 const styleSource = readFileSync('src/style.css', 'utf-8')
+const tokenSource = readFileSync('src/styles/tokens.css', 'utf-8')
+
+type ThemeName = 'light' | 'dark'
+type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
+type CssDeclarations = Record<string, string>
+
+function escapeSelectorForRegExp(selector: string): string {
+  return selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function parseDeclarations(source: string): CssDeclarations {
+  return Object.fromEntries(
+    [...source.matchAll(/(--[\w-]+|[\w-]+)\s*:\s*([^;]+);/g)].map((match) => [match[1], match[2].trim()]),
+  )
+}
+
+function cssRule(selector: string): CssDeclarations {
+  const ruleMatch = styleSource.match(new RegExp(`${escapeSelectorForRegExp(selector)}\\s*\\{([^}]*)\\}`, 's'))
+  if (!ruleMatch) throw new Error(`Missing CSS rule for ${selector}`)
+
+  return parseDeclarations(ruleMatch[1])
+}
+
+function themeTokens(theme: ThemeName): CssDeclarations {
+  const rootMatch = tokenSource.match(/:root\s*\{([^}]*)\}/s)
+  if (!rootMatch) throw new Error('Missing light theme tokens')
+
+  const tokens = parseDeclarations(rootMatch[1])
+  if (theme === 'dark') {
+    const darkMatch = tokenSource.match(/:root\[data-theme='dark'\]\s*\{([^}]*)\}/s)
+    if (!darkMatch) throw new Error('Missing dark theme tokens')
+    Object.assign(tokens, parseDeclarations(darkMatch[1]))
+  }
+
+  return tokens
+}
+
+function resolveCssValue(value: string, tokens: CssDeclarations): string {
+  const variableMatch = value.match(/^var\((--[\w-]+)\)$/)
+  if (!variableMatch) return value
+
+  const resolved = tokens[variableMatch[1]]
+  if (!resolved) throw new Error(`Missing CSS token ${variableMatch[1]}`)
+
+  return resolved
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  const normalized = hex.replace('#', '')
+  if (normalized.length !== 6) throw new Error(`Unsupported color literal ${hex}`)
+
+  return [0, 2, 4].map((offset) => Number.parseInt(normalized.slice(offset, offset + 2), 16)) as [number, number, number]
+}
+
+function relativeLuminance(hex: string): number {
+  const [red, green, blue] = hexToRgb(hex).map((channel) => {
+    const value = channel / 255
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  })
+
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+}
+
+function contrastRatio(foreground: string, background: string): number {
+  const foregroundLuminance = relativeLuminance(foreground)
+  const backgroundLuminance = relativeLuminance(background)
+  const lighter = Math.max(foregroundLuminance, backgroundLuminance)
+  const darker = Math.min(foregroundLuminance, backgroundLuminance)
+
+  return (lighter + 0.05) / (darker + 0.05)
+}
+
+function hoverRuleForVariant(variant: ButtonVariant): CssDeclarations {
+  if (variant === 'primary') {
+    return cssRule(".ui-button--primary:hover:not(:disabled):not([aria-disabled='true'])")
+  }
+
+  return cssRule(`.ui-button--${variant}:hover:not(:disabled):not([aria-disabled='true'])`)
+}
 
 const session = {
   user: {
@@ -3348,6 +3427,63 @@ describe('C1 App shell', () => {
     expect(styleSource).toMatch(/@media \(max-width:\s*720px\)\s*\{[\s\S]*\.conference-detail-grid,\s*[\s\S]*?\.runtime-reconciliation-detail-grid,\s*[\s\S]*?\.definition-grid\s*\{[\s\S]*?grid-template-columns\s*:\s*1fr/s)
     expect(styleSource).toMatch(/\.data-table\s*\{[^}]*max-width\s*:\s*100%/s)
     expect(styleSource).toMatch(/\.ui-pagination\s*\{[^}]*flex-wrap\s*:\s*wrap[^}]*max-width\s*:\s*100%/s)
+  })
+
+  it('keeps button hover colors owned by each variant instead of a shared conflicting hover rule', () => {
+    expect(styleSource).not.toMatch(/button:hover:not\(:disabled\),\s*\.ui-button:hover:not\(:disabled\)\s*\{[^}]*background\s*:/s)
+    expect(styleSource).not.toMatch(/\.ui-button:hover:not\(:disabled\)\s*\{[^}]*background\s*:/s)
+
+    for (const variant of ['primary', 'secondary', 'ghost', 'danger'] satisfies ButtonVariant[]) {
+      const declarations = hoverRuleForVariant(variant)
+
+      expect(declarations.background, `${variant} hover must own a background`).toBeDefined()
+      expect(declarations.color, `${variant} hover must own a foreground`).toBeDefined()
+    }
+
+    expect(cssRule(".ui-button--primary:hover:not(:disabled):not([aria-disabled='true'])")).toMatchObject({
+      background: 'var(--color-primary-hover)',
+      color: 'var(--color-surface)',
+    })
+    expect(cssRule(".ui-button--secondary:hover:not(:disabled):not([aria-disabled='true'])")).toMatchObject({
+      background: 'var(--color-primary-muted)',
+      color: 'var(--color-text)',
+    })
+    expect(cssRule(".ui-button--ghost:hover:not(:disabled):not([aria-disabled='true'])")).toMatchObject({
+      background: 'var(--color-primary)',
+      color: 'var(--color-surface)',
+    })
+    expect(cssRule(".ui-button--danger:hover:not(:disabled):not([aria-disabled='true'])")).toMatchObject({
+      background: 'var(--color-danger)',
+      color: 'var(--color-surface)',
+    })
+  })
+
+  it('keeps all variant-owned hover color pairs above the normal text contrast threshold in both themes', () => {
+    const ratios: Record<ThemeName, Record<ButtonVariant, number>> = {
+      light: { primary: 0, secondary: 0, ghost: 0, danger: 0 },
+      dark: { primary: 0, secondary: 0, ghost: 0, danger: 0 },
+    }
+
+    for (const theme of ['light', 'dark'] satisfies ThemeName[]) {
+      const tokens = themeTokens(theme)
+
+      for (const variant of ['primary', 'secondary', 'ghost', 'danger'] satisfies ButtonVariant[]) {
+        const declarations = hoverRuleForVariant(variant)
+        const foreground = resolveCssValue(declarations.color, tokens)
+        const background = resolveCssValue(declarations.background, tokens)
+        ratios[theme][variant] = contrastRatio(foreground, background)
+
+        expect(
+          ratios[theme][variant],
+          `${theme} ${variant} hover contrast for ${foreground} on ${background}`,
+        ).toBeGreaterThanOrEqual(4.5)
+      }
+    }
+
+    expect(ratios.light.secondary).toBeGreaterThan(15)
+    expect(ratios.dark.secondary).toBeGreaterThan(10)
+    expect(ratios.light.ghost).toBeGreaterThan(7)
+    expect(ratios.dark.ghost).toBeGreaterThan(7)
   })
 
   it('accepts runtime adapter configuration descriptors in the catalog contract and cuts over rendering authority', () => {

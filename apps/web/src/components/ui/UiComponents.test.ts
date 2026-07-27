@@ -39,6 +39,38 @@ describe('core UI components', () => {
     expect(wrapper.element.tagName).toBe('BUTTON')
   })
 
+  it('emits stable variant hooks and accessible names for every button variant', () => {
+    for (const variant of ['primary', 'secondary', 'ghost', 'danger'] as const) {
+      const wrapper = mount(UiButton, {
+        props: { variant },
+        slots: { default: `${variant} action` },
+      })
+
+      expect(wrapper.classes()).toContain('ui-button')
+      expect(wrapper.classes()).toContain(`ui-button--${variant}`)
+      expect(wrapper.find('button').text()).toBe(`${variant} action`)
+      expect(wrapper.attributes('disabled')).toBeUndefined()
+      expect(wrapper.attributes('aria-disabled')).toBeUndefined()
+      expect(wrapper.attributes('aria-busy')).toBeUndefined()
+    }
+  })
+
+  it('preserves loading names and busy semantics on every variant without native disabling', () => {
+    for (const variant of ['primary', 'secondary', 'ghost', 'danger'] as const) {
+      const wrapper = mount(UiButton, {
+        props: { variant, loading: true, loadingLabel: 'Saving' },
+        slots: { default: `${variant} action` },
+      })
+
+      expect(wrapper.classes()).toContain(`ui-button--${variant}`)
+      expect(wrapper.find('button').text()).toContain(`${variant} action`)
+      expect(wrapper.find('button').text()).toContain('Saving')
+      expect(wrapper.attributes('disabled')).toBeUndefined()
+      expect(wrapper.attributes('aria-disabled')).toBe('true')
+      expect(wrapper.attributes('aria-busy')).toBe('true')
+    }
+  })
+
   it('keeps a loading button focusable and exposes busy semantics without native disabling', async () => {
     const wrapper = mount(UiButton, {
       props: { loading: false, loadingLabel: 'Saving user' },
