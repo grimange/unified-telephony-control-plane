@@ -1,4 +1,7 @@
+/// <reference types="node" />
+
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { createMemoryHistory } from 'vue-router'
@@ -18,9 +21,11 @@ import { createUtcpRouter, router } from './router'
 import { resetAppStateForTests } from './state/appState'
 import { appearanceStorageKey, resetAppearanceForTests } from './state/theme'
 import { assertNoSeriousAxeViolations } from './test/accessibility'
+import appShellSource from './layouts/AppShell.vue?raw'
 import auditRecordsViewSource from './views/AuditRecordsView.vue?raw'
 import changePasswordViewSource from './views/ChangePasswordView.vue?raw'
 import conferenceOperationsViewSource from './views/ConferenceOperationsView.vue?raw'
+import dashboardViewSource from './views/DashboardView.vue?raw'
 import loginViewSource from './views/LoginView.vue?raw'
 import membershipsViewSource from './views/MembershipsView.vue?raw'
 import appStateSource from './state/appState.ts?raw'
@@ -30,6 +35,8 @@ import runtimeReconciliationsViewSource from './views/RuntimeReconciliationsView
 import tenantsViewSource from './views/TenantsView.vue?raw'
 import userDetailViewSource from './views/UserDetailView.vue?raw'
 import usersViewSource from './views/UsersView.vue?raw'
+
+const styleSource = readFileSync('src/style.css', 'utf-8')
 
 const session = {
   user: {
@@ -3256,6 +3263,91 @@ describe('C1 App shell', () => {
     expect(usersViewSource).toContain('class="subgrid"')
     expect(usersViewSource).toContain('Memberships:')
     expect(usersViewSource).toContain('TelephonySession:')
+  })
+
+  it('codifies the shared responsive layout contract for stable UI routes', () => {
+    const primaryRouteSources = {
+      Dashboard: dashboardViewSource,
+      Users: usersViewSource,
+      Tenants: tenantsViewSource,
+      Memberships: membershipsViewSource,
+      'Runtime Nodes': runtimeNodesViewSource,
+      'Conference Operations': conferenceOperationsViewSource,
+      'Runtime Operations': runtimeOperationsViewSource,
+      'Runtime Reconciliations': runtimeReconciliationsViewSource,
+      'Audit Records': auditRecordsViewSource,
+    }
+
+    expect(loginViewSource).toContain('class="app-shell"')
+    expect(appShellSource).toContain('class="app-shell app-shell--wide"')
+    expect(appShellSource).toContain('class="topbar app-topbar"')
+    expect(appShellSource).toContain('class="topbar-actions"')
+    expect(appShellSource).toContain('class="shell-grid"')
+    expect(appShellSource).toContain('class="shell-content"')
+
+    for (const [routeName, source] of Object.entries(primaryRouteSources)) {
+      expect(source, `${routeName} must use the shared page container`).toContain('class="workspace')
+      expect(source, `${routeName} must use the shared wrapping page heading`).toContain('class="section-heading"')
+      expect(source, `${routeName} must use shared panels or data lists`).toMatch(/<Ui(?:Panel|DataList)\b/)
+    }
+
+    for (const [routeName, source] of Object.entries({
+      Users: usersViewSource,
+      'Runtime Operations': runtimeOperationsViewSource,
+      'Runtime Reconciliations': runtimeReconciliationsViewSource,
+      'Audit Records': auditRecordsViewSource,
+    })) {
+      expect(source, `${routeName} filters must use the shared responsive filter bar`).toContain('<UiFilterBar')
+    }
+
+    for (const [routeName, source] of Object.entries({
+      Users: usersViewSource,
+      'Runtime Nodes': runtimeNodesViewSource,
+      'Conference Operations': conferenceOperationsViewSource,
+      'Runtime Operations': runtimeOperationsViewSource,
+      'Runtime Reconciliations': runtimeReconciliationsViewSource,
+      'Audit Records': auditRecordsViewSource,
+    })) {
+      expect(source, `${routeName} row actions must use the shared wrapping action group`).toContain('class="row-actions"')
+      expect(source, `${routeName} data rows must use the bounded data-list row contract`).toContain('class="data-row')
+      expect(source, `${routeName} long identifiers must be placed in shared wrapping row/detail text containers`).toMatch(/class="(?:subgrid|badge-row|definition-grid|inline-record)/)
+    }
+
+    for (const [routeName, source] of Object.entries({
+      Users: usersViewSource,
+      'Runtime Operations': runtimeOperationsViewSource,
+      'Runtime Reconciliations': runtimeReconciliationsViewSource,
+      'Audit Records': auditRecordsViewSource,
+    })) {
+      expect(source, `${routeName} pagination must remain outside the data-list local container`).toMatch(/<\/UiDataList>[\s\S]*<UiPagination\b/)
+      expect(source, `${routeName} pagination must forward loading state`).toContain(':loading=')
+    }
+
+    expect(conferenceOperationsViewSource).toContain('conference-detail-grid')
+    expect(runtimeOperationsViewSource).toContain('runtime-operation-detail-grid')
+    expect(runtimeReconciliationsViewSource).toContain('runtime-reconciliation-detail-grid')
+    expect(auditRecordsViewSource).toContain('audit-record-detail-grid')
+    expect(runtimeNodesViewSource).toContain('class="subgrid"')
+  })
+
+  it('keeps responsive layout source contracts enforceable without root overflow clipping', () => {
+    expect(styleSource).not.toMatch(/overflow-x\s*:\s*hidden/)
+
+    expect(styleSource).toMatch(/#app\s*\{[^}]*min-width\s*:\s*0/s)
+    expect(styleSource).toMatch(/\.app-shell\s*\{[^}]*width\s*:\s*min\([^}]*min-width\s*:\s*0/s)
+    expect(styleSource).toMatch(/\.workspace\s*\{[^}]*width\s*:\s*100%[^}]*max-width\s*:\s*100%/s)
+    expect(styleSource).toMatch(/\.shell-grid\s*\{[^}]*grid-template-columns\s*:\s*minmax\(220px,\s*0\.24fr\)\s*minmax\(0,\s*1fr\)[^}]*min-width\s*:\s*0/s)
+    expect(styleSource).toMatch(/\.shell-content\s*\{[^}]*min-width\s*:\s*0/s)
+    expect(styleSource).toMatch(/\.topbar,\s*[\s\S]*?\.section-heading\s*\{[^}]*flex-wrap\s*:\s*wrap/s)
+    expect(styleSource).toMatch(/\.topbar-actions\s*\{[^}]*flex-wrap\s*:\s*wrap[^}]*max-width\s*:\s*100%/s)
+    expect(styleSource).toMatch(/\.ui-filter-bar__controls\s*\{[^}]*grid-template-columns\s*:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)[^}]*min-width\s*:\s*0/s)
+    expect(styleSource).toMatch(/\.inline-form\s*\{[^}]*min-width\s*:\s*0/s)
+    expect(styleSource).toMatch(/\.data-row strong,\s*[\s\S]*?code\s*\{[^}]*overflow-wrap\s*:\s*anywhere/s)
+    expect(styleSource).toMatch(/\.ui-panel,\s*[\s\S]*?\.detail-section\s*\{[^}]*min-width\s*:\s*0[^}]*max-width\s*:\s*100%/s)
+    expect(styleSource).toMatch(/\.conference-detail-grid,\s*[\s\S]*?\.runtime-reconciliation-detail-grid,\s*[\s\S]*?\.audit-record-detail-grid\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,\s*0\.9fr\)\s*minmax\(0,\s*1\.1fr\)/s)
+    expect(styleSource).toMatch(/@media \(max-width:\s*720px\)\s*\{[\s\S]*\.conference-detail-grid,\s*[\s\S]*?\.runtime-reconciliation-detail-grid,\s*[\s\S]*?\.definition-grid\s*\{[\s\S]*?grid-template-columns\s*:\s*1fr/s)
+    expect(styleSource).toMatch(/\.data-table\s*\{[^}]*max-width\s*:\s*100%/s)
+    expect(styleSource).toMatch(/\.ui-pagination\s*\{[^}]*flex-wrap\s*:\s*wrap[^}]*max-width\s*:\s*100%/s)
   })
 
   it('accepts runtime adapter configuration descriptors in the catalog contract and cuts over rendering authority', () => {

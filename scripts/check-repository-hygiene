@@ -53,9 +53,56 @@ from pathlib import Path
 import re
 import sys
 
-css = Path("apps/web/src/style.css").read_text(encoding="utf-8")
-if re.search(r"overflow-x\s*:\s*hidden", css):
-    sys.stderr.write("Users mobile overflow must not be masked with overflow-x:hidden\n")
+style_path = Path("apps/web/src/style.css")
+css = style_path.read_text(encoding="utf-8")
+production_layout_sources = [style_path, *Path("apps/web/src").glob("**/*.vue")]
+
+for source_path in production_layout_sources:
+    source = source_path.read_text(encoding="utf-8")
+    if re.search(r"overflow-x\s*:\s*hidden", source):
+        sys.stderr.write(f"responsive overflow must not be masked with overflow-x:hidden: {source_path}\n")
+        sys.exit(1)
+
+for selector in ["#app", ".app-shell", ".shell", ".workspace", ".shell-content"]:
+    selector_pattern = re.escape(selector).replace(r"\ ", r"\s+")
+    if re.search(rf"{selector_pattern}\s*\{{[^}}]*overflow-x\s*:\s*(hidden|clip)", css, re.S):
+        sys.stderr.write(f"{selector} must not clip horizontal overflow at the root or page boundary\n")
+        sys.exit(1)
+
+if not re.search(r"#app\s*\{[^}]*min-width\s*:\s*0", css, re.S):
+    sys.stderr.write("App root must keep bounded sizing semantics with min-width:0\n")
+    sys.exit(1)
+
+if not re.search(r"\.app-shell\s*\{[^}]*width\s*:\s*min\([^}]*min-width\s*:\s*0", css, re.S):
+    sys.stderr.write("AppShell must retain viewport-bounded width and min-width:0\n")
+    sys.exit(1)
+
+if not re.search(r"\.workspace\s*\{[^}]*width\s*:\s*100%[^}]*max-width\s*:\s*100%", css, re.S):
+    sys.stderr.write("stable route page containers must be width-bounded\n")
+    sys.exit(1)
+
+if not re.search(r"\.topbar,\s*[\s\S]*?\.section-heading\s*\{[^}]*flex-wrap\s*:\s*wrap", css, re.S):
+    sys.stderr.write("AppShell and page headings must retain shared wrapping behavior\n")
+    sys.exit(1)
+
+if not re.search(r"\.topbar-actions\s*\{[^}]*flex-wrap\s*:\s*wrap[^}]*max-width\s*:\s*100%", css, re.S):
+    sys.stderr.write("AppShell action groups must retain wrapping and width containment\n")
+    sys.exit(1)
+
+if not re.search(r"\.ui-filter-bar__controls\s*\{[^}]*grid-template-columns\s*:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)[^}]*min-width\s*:\s*0", css, re.S):
+    sys.stderr.write("filter controls must use bounded responsive grid tracks\n")
+    sys.exit(1)
+
+if not re.search(r"\.inline-form\s*\{[^}]*min-width\s*:\s*0", css, re.S):
+    sys.stderr.write("inline forms must use bounded sizing semantics\n")
+    sys.exit(1)
+
+if not re.search(r"\.data-row strong,\s*[\s\S]*?code\s*\{[^}]*overflow-wrap\s*:\s*anywhere", css, re.S):
+    sys.stderr.write("long identifiers and inline code must retain wrapping behavior\n")
+    sys.exit(1)
+
+if not re.search(r"\.ui-panel,\s*[\s\S]*?\.detail-section\s*\{[^}]*min-width\s*:\s*0[^}]*max-width\s*:\s*100%", css, re.S):
+    sys.stderr.write("shared panels and detail panels must remain width-contained\n")
     sys.exit(1)
 
 match = re.search(r"@media \(max-width: 720px\) \{(?P<body>.*)\n\}", css, re.S)
@@ -84,16 +131,16 @@ if not re.search(r"\.topbar,\s*\.section-heading,\s*\.data-row\s*\{[^}]*align-it
     sys.stderr.write("narrow RuntimeNodes heading must stack without page-level overflow\n")
     sys.exit(1)
 
-if not re.search(r"\.conference-detail-grid,\s*\.runtime-operation-detail-grid,\s*\.audit-record-detail-grid\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,\s*0\.9fr\)\s*minmax\(0,\s*1\.1fr\)", css, re.S):
-    sys.stderr.write("Conference, Runtime Operation, and Audit detail layout must bound grid tracks with minmax(0,...)\n")
+if not re.search(r"\.conference-detail-grid,\s*\.runtime-operation-detail-grid,\s*\.runtime-reconciliation-detail-grid,\s*\.audit-record-detail-grid\s*\{[^}]*grid-template-columns\s*:\s*minmax\(0,\s*0\.9fr\)\s*minmax\(0,\s*1\.1fr\)", css, re.S):
+    sys.stderr.write("Conference, Runtime Operation, Runtime Reconciliation, and Audit detail layout must bound grid tracks with minmax(0,...)\n")
     sys.exit(1)
 
 if not re.search(r"\.conference-row,\s*\.operation-row,\s*\.audit-record-row,\s*\.participant-row\s*\{[^}]*max-width\s*:\s*100%", css, re.S):
     sys.stderr.write("Conference, Runtime Operation, and Audit rows must remain bounded in narrow layouts\n")
     sys.exit(1)
 
-if not re.search(r"\.conference-detail-grid,\s*\.runtime-operation-detail-grid,\s*\.audit-record-detail-grid,\s*\.definition-grid\s*\{[^}]*grid-template-columns\s*:\s*1fr", body, re.S):
-    sys.stderr.write("Conference, Runtime Operation, and Audit detail grids must collapse to one column in narrow layouts\n")
+if not re.search(r"\.conference-detail-grid,\s*\.runtime-operation-detail-grid,\s*\.runtime-reconciliation-detail-grid,\s*\.audit-record-detail-grid,\s*\.definition-grid\s*\{[^}]*grid-template-columns\s*:\s*1fr", body, re.S):
+    sys.stderr.write("Conference, Runtime Operation, Runtime Reconciliation, and Audit detail grids must collapse to one column in narrow layouts\n")
     sys.exit(1)
 PY
 
