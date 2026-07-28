@@ -1,0 +1,22 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: rtpengine
+  namespace: utcp-observability
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: observability
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - utcp-platform
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: utcp
+      app.kubernetes.io/component: rtpengine
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s

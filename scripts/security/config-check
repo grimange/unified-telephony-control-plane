@@ -456,6 +456,9 @@ objects = {key(doc): doc for doc in docs}
 policy = objects.get("NetworkPolicy/utcp-platform/allow-rtpengine-media")
 if not policy:
     fail("security render must include allow-rtpengine-media")
+kamailio_policy = objects.get("NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic")
+if not kamailio_policy:
+    fail("security render must include allow-kamailio-signaling-required-traffic")
 
 spec = policy.get("spec") or {}
 if (spec.get("podSelector") or {}).get("matchLabels") != {"utcp.io/network-role": "rtpengine-media"}:
@@ -487,6 +490,25 @@ if "utcp.io/network-role: asterisk-ari" not in rendered:
     fail("allow-rtpengine-media must bound in-cluster media to the selected runtime role")
 if "app.kubernetes.io/name" not in rendered or "prometheus" not in rendered:
     fail("allow-rtpengine-media must bound metrics ingress to Prometheus")
+
+kamailio_spec = kamailio_policy.get("spec") or {}
+if (kamailio_spec.get("podSelector") or {}).get("matchLabels") != {"utcp.io/network-role": "kamailio-signaling"}:
+    fail("allow-kamailio-signaling-required-traffic must target only Kamailio signaling Pods")
+kamailio_rtpengine_egress = [
+    rule
+    for rule in kamailio_spec.get("egress") or []
+    if rule.get("ports") == [{"protocol": "UDP", "port": 2223}]
+]
+if len(kamailio_rtpengine_egress) != 1:
+    fail("allow-kamailio-signaling-required-traffic must include exactly one rtpengine UDP 2223 egress rule")
+rtpengine_peers = kamailio_rtpengine_egress[0].get("to") or []
+if rtpengine_peers != [
+    {
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
+        "podSelector": {"matchLabels": {"app.kubernetes.io/component": "rtpengine"}},
+    }
+]:
+    fail("Kamailio rtpengine egress must use the exact utcp-platform rtpengine destination selector")
 PY
 
 if grep -Fq 'kamailio-signaling' "$tmp"; then

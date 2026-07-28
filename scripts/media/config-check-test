@@ -6,6 +6,8 @@ CHECK="$ROOT/scripts/media/config-check"
 SOURCE_DOCKERFILE="$ROOT/infrastructure/docker/rtpengine/Dockerfile"
 SOURCE_ENTRYPOINT="$ROOT/infrastructure/docker/rtpengine/entrypoint"
 SOURCE_DEPLOYMENT="$ROOT/infrastructure/kubernetes/base/platform/rtpengine-deployment.yaml"
+SOURCE_SECURITY="$ROOT/infrastructure/kubernetes/security"
+SOURCE_OBSERVABILITY="$ROOT/infrastructure/kubernetes/observability"
 TMP_DIR="$(mktemp -d)"
 
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -15,10 +17,14 @@ pass_case() {
   local dockerfile="$2"
   local entrypoint="${3:-$SOURCE_ENTRYPOINT}"
   local deployment="${4:-$SOURCE_DEPLOYMENT}"
+  local security_dir="${5:-$SOURCE_SECURITY}"
+  local observability_dir="${6:-$SOURCE_OBSERVABILITY}"
 
   if ! UTCP_RTPENGINE_DOCKERFILE="$dockerfile" \
     UTCP_RTPENGINE_ENTRYPOINT="$entrypoint" \
     UTCP_RTPENGINE_DEPLOYMENT="$deployment" \
+    UTCP_SECURITY_DIR="$security_dir" \
+    UTCP_OBSERVABILITY_DIR="$observability_dir" \
     "$CHECK" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
     printf 'expected media config check to pass: %s\n' "$name" >&2
     cat "$TMP_DIR/err" >&2
@@ -32,10 +38,14 @@ fail_case() {
   local expected="$3"
   local entrypoint="${4:-$SOURCE_ENTRYPOINT}"
   local deployment="${5:-$SOURCE_DEPLOYMENT}"
+  local security_dir="${6:-$SOURCE_SECURITY}"
+  local observability_dir="${7:-$SOURCE_OBSERVABILITY}"
 
   if UTCP_RTPENGINE_DOCKERFILE="$dockerfile" \
     UTCP_RTPENGINE_ENTRYPOINT="$entrypoint" \
     UTCP_RTPENGINE_DEPLOYMENT="$deployment" \
+    UTCP_SECURITY_DIR="$security_dir" \
+    UTCP_OBSERVABILITY_DIR="$observability_dir" \
     "$CHECK" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
     printf 'expected media config check to fail: %s\n' "$name" >&2
     cat "$TMP_DIR/out" >&2
@@ -48,6 +58,115 @@ fail_case() {
   fi
 }
 
+copy_security() {
+  local name="$1"
+  local target="$TMP_DIR/security-$name"
+
+  cp -R "$SOURCE_SECURITY" "$target"
+  printf '%s\n' "$target"
+}
+
+copy_observability() {
+  local name="$1"
+  local target="$TMP_DIR/observability-$name"
+
+  cp -R "$SOURCE_OBSERVABILITY" "$target"
+  printf '%s\n' "$target"
+}
+
+mutate_yaml() {
+  local file="$1"
+  local mutation="$2"
+
+  python3 - "$file" "$mutation" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+mutation = sys.argv[2]
+docs = [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(doc, dict)]
+
+
+def metadata_name(doc: dict) -> str:
+    return (doc.get("metadata") or {}).get("name", "")
+
+
+def egress_rules(doc: dict) -> list[dict]:
+    return (doc.get("spec") or {}).get("egress") or []
+
+
+def is_rtpengine_peer(peer: dict) -> bool:
+    labels = ((peer.get("podSelector") or {}).get("matchLabels") or {})
+    return labels.get("app.kubernetes.io/component") == "rtpengine"
+
+
+def is_rtpengine_rule(rule: dict) -> bool:
+    return any(is_rtpengine_peer(peer) for peer in rule.get("to") or [])
+
+
+if mutation == "remove-kamailio-rtpengine-egress":
+    doc = docs[0]
+    doc["spec"]["egress"] = [rule for rule in egress_rules(doc) if not is_rtpengine_rule(rule)]
+elif mutation == "kamailio-wrong-port":
+    for rule in egress_rules(docs[0]):
+        if is_rtpengine_rule(rule):
+            rule["ports"] = [{"protocol": "UDP", "port": 2224}]
+elif mutation == "kamailio-wide-destination":
+    for rule in egress_rules(docs[0]):
+        if is_rtpengine_rule(rule):
+            for peer in rule.get("to") or []:
+                if is_rtpengine_peer(peer):
+                    peer.pop("podSelector", None)
+elif mutation == "remove-prometheus-rtpengine-egress":
+    for doc in docs:
+        if metadata_name(doc) == "allow-prometheus-egress-to-application-metrics":
+            doc["spec"]["egress"] = [rule for rule in egress_rules(doc) if not is_rtpengine_rule(rule)]
+elif mutation == "prometheus-wrong-port":
+    for doc in docs:
+        if metadata_name(doc) == "allow-prometheus-egress-to-application-metrics":
+            for rule in egress_rules(doc):
+                if is_rtpengine_rule(rule):
+                    rule["ports"] = [{"protocol": "TCP", "port": 2223}]
+elif mutation == "prometheus-wide-destination":
+    for doc in docs:
+        if metadata_name(doc) == "allow-prometheus-egress-to-application-metrics":
+            for rule in egress_rules(doc):
+                if is_rtpengine_rule(rule):
+                    for peer in rule.get("to") or []:
+                        if is_rtpengine_peer(peer):
+                            peer.pop("podSelector", None)
+elif mutation == "scrape-wrong-path":
+    docs[0]["spec"]["podMetricsEndpoints"][0]["path"] = "/not-metrics"
+elif mutation == "scrape-selector-drift":
+    docs[0]["spec"]["selector"]["matchLabels"]["app.kubernetes.io/component"] = "gateway"
+elif mutation == "add-public-metrics-service":
+    docs.append(
+        {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {
+                "name": "rtpengine-public-metrics",
+                "namespace": "utcp-platform",
+                "labels": {"app.kubernetes.io/component": "rtpengine"},
+            },
+            "spec": {
+                "type": "LoadBalancer",
+                "selector": {"app.kubernetes.io/component": "rtpengine"},
+                "ports": [{"name": "metrics", "protocol": "TCP", "port": 2224, "targetPort": "metrics"}],
+            },
+        }
+    )
+else:
+    raise SystemExit(f"unknown mutation: {mutation}")
+
+path.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
+PY
+}
+
 corrected="$TMP_DIR/Dockerfile.corrected"
 tilde="$TMP_DIR/Dockerfile.tilde"
 mismatch="$TMP_DIR/Dockerfile.mismatch"
@@ -57,6 +176,16 @@ other_pidfile="$TMP_DIR/entrypoint.other-pidfile"
 duplicate_pidfile="$TMP_DIR/entrypoint.duplicate-pidfile"
 missing_run_mount="$TMP_DIR/rtpengine-deployment.missing-run.yaml"
 readonly_run_mount="$TMP_DIR/rtpengine-deployment.readonly-run.yaml"
+missing_kamailio_egress="$(copy_security missing-kamailio-egress)"
+wrong_kamailio_port="$(copy_security wrong-kamailio-port)"
+wide_kamailio_destination="$(copy_security wide-kamailio-destination)"
+missing_prometheus_egress="$(copy_observability missing-prometheus-egress)"
+wrong_prometheus_port="$(copy_observability wrong-prometheus-port)"
+wide_prometheus_destination="$(copy_observability wide-prometheus-destination)"
+missing_scrape_target="$(copy_observability missing-scrape-target)"
+wrong_scrape_path="$(copy_observability wrong-scrape-path)"
+wrong_scrape_selector="$(copy_observability wrong-scrape-selector)"
+public_metrics_service="$(copy_observability public-metrics-service)"
 
 cp "$SOURCE_DOCKERFILE" "$corrected"
 sed 's/+0\./+0~/g' "$SOURCE_DOCKERFILE" >"$tilde"
@@ -70,6 +199,17 @@ sed 's|--pidfile=/run/rtpengine/rtpengine.pid|--pidfile=/run/rtpengine/rtpengine
 chmod 0755 "$duplicate_pidfile"
 sed '/mountPath: \/run\/rtpengine/,+1d; /name: run$/,+1d' "$SOURCE_DEPLOYMENT" >"$missing_run_mount"
 sed '/mountPath: \/run\/rtpengine/a\              readOnly: true' "$SOURCE_DEPLOYMENT" >"$readonly_run_mount"
+mutate_yaml "$missing_kamailio_egress/platform/allow-kamailio-signaling.yaml" remove-kamailio-rtpengine-egress
+mutate_yaml "$wrong_kamailio_port/platform/allow-kamailio-signaling.yaml" kamailio-wrong-port
+mutate_yaml "$wide_kamailio_destination/platform/allow-kamailio-signaling.yaml" kamailio-wide-destination
+mutate_yaml "$missing_prometheus_egress/network-policies/allow-application-metrics.yaml" remove-prometheus-rtpengine-egress
+mutate_yaml "$wrong_prometheus_port/network-policies/allow-application-metrics.yaml" prometheus-wrong-port
+mutate_yaml "$wide_prometheus_destination/network-policies/allow-application-metrics.yaml" prometheus-wide-destination
+rm -f "$missing_scrape_target/monitors/rtpengine-podmonitor.yaml"
+sed -i '/monitors\/rtpengine-podmonitor.yaml/d' "$missing_scrape_target/kustomization.yaml"
+mutate_yaml "$wrong_scrape_path/monitors/rtpengine-podmonitor.yaml" scrape-wrong-path
+mutate_yaml "$wrong_scrape_selector/monitors/rtpengine-podmonitor.yaml" scrape-selector-drift
+mutate_yaml "$public_metrics_service/network-policies/allow-application-metrics.yaml" add-public-metrics-service
 
 pass_case "corrected Dockerfile" "$corrected"
 fail_case "tilde package separator" "$tilde" "uses '+0~'; expected convention is +0.mr26.0.1.19"
@@ -80,5 +220,15 @@ fail_case "missing runtime mount rejected" "$corrected" "requires expected writa
 fail_case "read-only runtime mount rejected" "$corrected" "requires writable mount /run/rtpengine; readOnly=true" "$SOURCE_ENTRYPOINT" "$readonly_run_mount"
 fail_case "unapproved pidfile path rejected" "$corrected" "entrypoint PID path /var/run/rtpengine.pid must be /run/rtpengine/rtpengine.pid" "$other_pidfile"
 fail_case "duplicate pidfile arguments rejected" "$corrected" "entrypoint must define exactly one --pidfile argument; found 2" "$duplicate_pidfile"
+fail_case "missing Kamailio reciprocal egress rejected" "$corrected" "missing source policy Kamailio egress to rtpengine UDP 2223" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$missing_kamailio_egress"
+fail_case "wrong Kamailio reciprocal port rejected" "$corrected" "missing source policy Kamailio egress to rtpengine UDP 2223" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$wrong_kamailio_port"
+fail_case "wide Kamailio reciprocal destination rejected" "$corrected" "Kamailio source policy rtpengine egress has overbroad destination namespace" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$wide_kamailio_destination"
+fail_case "missing Prometheus reciprocal egress rejected" "$corrected" "missing source policy Prometheus egress to rtpengine TCP 2224" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$SOURCE_SECURITY" "$missing_prometheus_egress"
+fail_case "wrong Prometheus reciprocal port rejected" "$corrected" "missing source policy Prometheus egress to rtpengine TCP 2224" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$SOURCE_SECURITY" "$wrong_prometheus_port"
+fail_case "wide Prometheus reciprocal destination rejected" "$corrected" "Prometheus source policy rtpengine egress has overbroad destination namespace" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$SOURCE_SECURITY" "$wide_prometheus_destination"
+fail_case "missing scrape target rejected" "$corrected" "missing scrape target PodMonitor/utcp-observability/rtpengine" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$SOURCE_SECURITY" "$missing_scrape_target"
+fail_case "wrong scrape path rejected" "$corrected" "rtpengine scrape target must use /metrics" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$SOURCE_SECURITY" "$wrong_scrape_path"
+fail_case "scrape selector drift rejected" "$corrected" "rtpengine scrape selector drifted from app.kubernetes.io/component=rtpengine" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$SOURCE_SECURITY" "$wrong_scrape_selector"
+fail_case "public metrics Service rejected" "$corrected" "public metrics resource exists" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$SOURCE_SECURITY" "$public_metrics_service"
 
 printf 'media config check regression tests passed\n'

@@ -32,10 +32,18 @@ esac
 dockerfile="${UTCP_RTPENGINE_DOCKERFILE:-$ROOT/infrastructure/docker/rtpengine/Dockerfile}"
 entrypoint="${UTCP_RTPENGINE_ENTRYPOINT:-$ROOT/infrastructure/docker/rtpengine/entrypoint}"
 deployment_source="${UTCP_RTPENGINE_DEPLOYMENT:-$ROOT/infrastructure/kubernetes/base/platform/rtpengine-deployment.yaml}"
+platform_dir="${UTCP_PLATFORM_DIR:-$ROOT/infrastructure/kubernetes/base/platform}"
+security_dir="${UTCP_SECURITY_DIR:-$ROOT/infrastructure/kubernetes/security}"
+observability_dir="${UTCP_OBSERVABILITY_DIR:-$ROOT/infrastructure/kubernetes/observability}"
+gateway_dir="${UTCP_GATEWAY_DIR:-$ROOT/infrastructure/kubernetes/gateway-api}"
 readiness="$ROOT/infrastructure/docker/rtpengine/readiness"
 [ -f "$dockerfile" ] || fail "rtpengine Dockerfile is missing"
 [ -x "$entrypoint" ] || fail "rtpengine entrypoint must be executable"
 [ -f "$deployment_source" ] || fail "rtpengine Deployment source is missing"
+[ -d "$platform_dir" ] || fail "platform Kustomize directory is missing"
+[ -d "$security_dir" ] || fail "security Kustomize directory is missing"
+[ -d "$observability_dir" ] || fail "observability Kustomize directory is missing"
+[ -d "$gateway_dir" ] || fail "gateway Kustomize directory is missing"
 [ -x "$readiness" ] || fail "rtpengine ng ping helper must be executable"
 
 grep -Fq "ARG RTPENGINE_VERSION=$RTPENGINE_VERSION" "$dockerfile" || fail "Dockerfile must pin the selected rtpengine version"
@@ -116,14 +124,16 @@ grep -Fq '6:result4:pong' "$readiness" || fail "ng ping helper must validate res
 
 tmp_platform="$(mktemp)"
 tmp_security="$(mktemp)"
+tmp_observability="$(mktemp)"
 tmp_gateway="$(mktemp)"
-trap 'rm -f "$tmp_platform" "$tmp_security" "$tmp_gateway"' EXIT
+trap 'rm -f "$tmp_platform" "$tmp_security" "$tmp_observability" "$tmp_gateway"' EXIT
 
-kubectl kustomize "$ROOT/infrastructure/kubernetes/base/platform" >"$tmp_platform"
-kubectl kustomize "$ROOT/infrastructure/kubernetes/security" >"$tmp_security"
-kubectl kustomize "$ROOT/infrastructure/kubernetes/gateway-api" >"$tmp_gateway"
+kubectl kustomize "$platform_dir" >"$tmp_platform"
+kubectl kustomize "$security_dir" >"$tmp_security"
+kubectl kustomize "$observability_dir" >"$tmp_observability"
+kubectl kustomize "$gateway_dir" >"$tmp_gateway"
 
-python3 - "$tmp_platform" "$tmp_security" "$ROOT" "$entrypoint" "$deployment_source" <<'PY'
+python3 - "$tmp_platform" "$tmp_security" "$tmp_observability" "$ROOT" "$entrypoint" "$deployment_source" <<'PY'
 from __future__ import annotations
 
 import re
@@ -136,9 +146,10 @@ import yaml
 
 platform_path = Path(sys.argv[1])
 security_path = Path(sys.argv[2])
-root = Path(sys.argv[3])
-entrypoint_path = Path(sys.argv[4])
-deployment_source_path = Path(sys.argv[5])
+observability_path = Path(sys.argv[3])
+root = Path(sys.argv[4])
+entrypoint_path = Path(sys.argv[5])
+deployment_source_path = Path(sys.argv[6])
 EXPECTED_PIDFILE = "/run/rtpengine/rtpengine.pid"
 EXPECTED_WRITABLE_MOUNT = "/run/rtpengine"
 TMP_MOUNT = "/tmp"
@@ -158,8 +169,78 @@ def key(doc: dict[str, Any]) -> str:
     return f"{doc.get('kind')}/{metadata.get('namespace')}/{metadata.get('name')}"
 
 
+def selector_labels(selector: dict[str, Any]) -> dict[str, Any]:
+    return selector.get("matchLabels") or {}
+
+
+def selector_expressions(selector: dict[str, Any]) -> list[dict[str, Any]]:
+    return selector.get("matchExpressions") or []
+
+
+def exact_peer(
+    peer: dict[str, Any],
+    namespace: str,
+    *,
+    pod_labels: dict[str, str] | None = None,
+    pod_expression: dict[str, Any] | None = None,
+) -> bool:
+    if "ipBlock" in peer:
+        return False
+    namespace_selector = selector_labels(peer.get("namespaceSelector") or {})
+    if namespace_selector != {"kubernetes.io/metadata.name": namespace}:
+        return False
+    pod_selector = peer.get("podSelector") or {}
+    if pod_labels is not None:
+        return selector_labels(pod_selector) == pod_labels and not selector_expressions(pod_selector)
+    if pod_expression is not None:
+        return not selector_labels(pod_selector) and selector_expressions(pod_selector) == [pod_expression]
+    return False
+
+
+def exact_ports(ports: list[dict[str, Any]], protocol: str, port: int, end_port: int | None = None) -> bool:
+    expected: dict[str, Any] = {"protocol": protocol, "port": port}
+    if end_port is not None:
+        expected["endPort"] = end_port
+    return ports == [expected]
+
+
+def has_exact_policy_rule(
+    rules: list[dict[str, Any]],
+    direction: str,
+    namespace: str,
+    protocol: str,
+    port: int,
+    *,
+    pod_labels: dict[str, str] | None = None,
+    pod_expression: dict[str, Any] | None = None,
+    end_port: int | None = None,
+) -> bool:
+    peer_key = "from" if direction == "ingress" else "to"
+    for rule in rules:
+        peers = rule.get(peer_key) or []
+        ports = rule.get("ports") or []
+        if len(peers) != 1:
+            continue
+        if exact_peer(peers[0], namespace, pod_labels=pod_labels, pod_expression=pod_expression) and exact_ports(
+            ports, protocol, port, end_port
+        ):
+            return True
+    return False
+
+
+def reject_overbroad_destination(policy: dict[str, Any], policy_name: str) -> None:
+    for rule in (policy.get("spec") or {}).get("egress") or []:
+        for peer in rule.get("to") or []:
+            if "ipBlock" in peer:
+                fail(f"{policy_name} rtpengine egress must not use ipBlock")
+            namespace_selector = selector_labels(peer.get("namespaceSelector") or {})
+            if namespace_selector == {"kubernetes.io/metadata.name": "utcp-platform"} and "podSelector" not in peer:
+                fail(f"{policy_name} rtpengine egress has overbroad destination namespace without rtpengine Pod selector")
+
+
 platform = {key(doc): doc for doc in docs(platform_path)}
 security = {key(doc): doc for doc in docs(security_path)}
+observability = {key(doc): doc for doc in docs(observability_path)}
 source_deployments = [
     doc
     for doc in docs(deployment_source_path)
@@ -322,6 +403,9 @@ if service_spec.get("ports") != [{"name": "ng", "protocol": "UDP", "port": 2223,
 policy = security.get("NetworkPolicy/utcp-platform/allow-rtpengine-media")
 if not policy:
     fail("allow-rtpengine-media NetworkPolicy is missing")
+policy_spec = policy.get("spec") or {}
+ingress = policy_spec.get("ingress") or []
+egress = policy_spec.get("egress") or []
 policy_text = yaml.safe_dump(policy, sort_keys=True)
 for forbidden in ("utcp-data", "postgres", "redis", "kube-system", "0.0.0.0/0", "::/0"):
     if forbidden in policy_text:
@@ -339,6 +423,90 @@ for required in (
 ):
     if required not in policy_text:
         fail(f"NetworkPolicy missing required selector or port: {required}")
+if (policy_spec.get("podSelector") or {}).get("matchLabels") != {"utcp.io/network-role": "rtpengine-media"}:
+    fail("allow-rtpengine-media must target only rtpengine-media Pods")
+if not has_exact_policy_rule(
+    ingress,
+    "ingress",
+    "utcp-platform",
+    "UDP",
+    2223,
+    pod_labels={"utcp.io/network-role": "kamailio-signaling"},
+):
+    fail("rtpengine destination ingress missing Kamailio identity to rtpengine UDP 2223")
+if not has_exact_policy_rule(
+    ingress,
+    "ingress",
+    "utcp-observability",
+    "TCP",
+    2224,
+    pod_expression={"key": "app.kubernetes.io/name", "operator": "In", "values": ["prometheus"]},
+):
+    fail("rtpengine destination ingress missing Prometheus identity to rtpengine TCP 2224")
+
+kamailio_policy = security.get("NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic")
+if not kamailio_policy:
+    fail("missing source policy allow-kamailio-signaling-required-traffic")
+kamailio_spec = kamailio_policy.get("spec") or {}
+if (kamailio_spec.get("podSelector") or {}).get("matchLabels") != {"utcp.io/network-role": "kamailio-signaling"}:
+    fail("Kamailio source policy selector drifted from kamailio-signaling")
+reject_overbroad_destination(kamailio_policy, "Kamailio source policy")
+if not has_exact_policy_rule(
+    kamailio_spec.get("egress") or [],
+    "egress",
+    "utcp-platform",
+    "UDP",
+    2223,
+    pod_labels={"app.kubernetes.io/component": "rtpengine"},
+):
+    fail("missing source policy Kamailio egress to rtpengine UDP 2223 with exact destination selector")
+
+prometheus_policy = observability.get("NetworkPolicy/utcp-observability/allow-prometheus-egress-to-application-metrics")
+if not prometheus_policy:
+    fail("missing source policy allow-prometheus-egress-to-application-metrics")
+prometheus_spec = prometheus_policy.get("spec") or {}
+if selector_expressions(prometheus_spec.get("podSelector") or {}) != [
+    {"key": "app.kubernetes.io/name", "operator": "In", "values": ["prometheus"]}
+] or selector_labels(prometheus_spec.get("podSelector") or {}):
+    fail("Prometheus source policy selector drifted from prometheus")
+reject_overbroad_destination(prometheus_policy, "Prometheus source policy")
+if not has_exact_policy_rule(
+    prometheus_spec.get("egress") or [],
+    "egress",
+    "utcp-platform",
+    "TCP",
+    2224,
+    pod_labels={"app.kubernetes.io/component": "rtpengine"},
+):
+    fail("missing source policy Prometheus egress to rtpengine TCP 2224 with exact destination selector")
+
+pod_monitor = observability.get("PodMonitor/utcp-observability/rtpengine")
+if not pod_monitor:
+    fail("missing scrape target PodMonitor/utcp-observability/rtpengine")
+monitor_spec = pod_monitor.get("spec") or {}
+if monitor_spec.get("namespaceSelector") != {"matchNames": ["utcp-platform"]}:
+    fail("rtpengine scrape target must select only namespace utcp-platform")
+if (monitor_spec.get("selector") or {}).get("matchLabels") != {
+    "app.kubernetes.io/part-of": "utcp",
+    "app.kubernetes.io/component": "rtpengine",
+}:
+    fail("rtpengine scrape selector drifted from app.kubernetes.io/component=rtpengine")
+endpoints = monitor_spec.get("podMetricsEndpoints") or []
+if endpoints != [{"port": "metrics", "path": "/metrics", "interval": "30s", "scrapeTimeout": "10s"}]:
+    fail("rtpengine scrape target must use /metrics on the named metrics port with repository-standard interval")
+if ports.get(("metrics", "TCP")) != 2224:
+    fail("rtpengine scrape port metrics must resolve to TCP 2224")
+
+for object_id, doc in {**platform, **observability}.items():
+    if doc.get("kind") != "Service":
+        continue
+    spec = doc.get("spec") or {}
+    service_text = yaml.safe_dump(doc, sort_keys=True)
+    if "rtpengine" in service_text and spec.get("type") in {"NodePort", "LoadBalancer"}:
+        fail(f"public metrics resource exists through {object_id}")
+    for service_port in spec.get("ports") or []:
+        if service_port.get("port") == 2224 and spec.get("type") in {"NodePort", "LoadBalancer"}:
+            fail(f"public metrics resource exposes TCP 2224 through {object_id}")
 
 cluster_config = (root / "infrastructure/k3d/cluster.yaml").read_text(encoding="utf-8")
 for forbidden in ("2223", "40000", "40099", "rtpengine"):
@@ -351,7 +519,7 @@ for forbidden in ("rtpengine_offer", "rtpengine_answer", "rtpengine_manage", "rt
         fail("T3-S1 must not add production Kamailio media routing")
 PY
 
-if grep -Eiq 'kind:[[:space:]]*(UDPRoute|TCPRoute|TLSRoute)|rtpengine|40000|40099|2223' "$tmp_gateway"; then
+if grep -Eiq 'kind:[[:space:]]*(UDPRoute|TCPRoute|TLSRoute)|rtpengine|40000|40099|2223|2224' "$tmp_gateway"; then
   fail "Gateway API render must not expose RTP or rtpengine control"
 fi
 

@@ -4,6 +4,7 @@ resources:
   - alerts/utcp-alerts.yaml
   - dashboards/platform-overview.yaml
   - dashboards/workload-logs.yaml
+  - monitors/rtpengine-podmonitor.yaml
   - monitors/traefik-servicemonitor.yaml
   - monitors/utcp-application-servicemonitor.yaml
   - network-policies/allow-application-metrics.yaml
