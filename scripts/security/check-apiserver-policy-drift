@@ -70,50 +70,50 @@ for path in paths:
     with path.open("r", encoding="utf-8") as handle:
         docs = [doc for doc in yaml.safe_load_all(handle) if doc]
     policies = [doc for doc in docs if doc.get("kind") == "NetworkPolicy"]
-    if len(policies) != 1:
-        fail(f"{path}: expected exactly one NetworkPolicy, found {len(policies)}")
-    policy = policies[0]
-    name = policy.get("metadata", {}).get("name", str(path))
-    egress = policy.get("spec", {}).get("egress") or []
-    cidrs: list[str] = []
-    ports: list[tuple[str, int]] = []
-    for rule in egress:
-        for target in rule.get("to") or []:
-            ip_block = target.get("ipBlock") or {}
-            cidr = ip_block.get("cidr")
-            if cidr:
-                cidrs.append(str(cidr))
-        for port in rule.get("ports") or []:
-            value = port.get("port")
-            try:
-                value = int(value)
-            except (TypeError, ValueError):
-                fail(f"{name}: non-numeric API endpoint port {value!r}")
-            ports.append((str(port.get("protocol", "TCP")).upper(), value))
+    if not policies:
+        fail(f"{path}: expected at least one NetworkPolicy, found 0")
+    for policy in policies:
+        name = policy.get("metadata", {}).get("name", str(path))
+        egress = policy.get("spec", {}).get("egress") or []
+        cidrs: list[str] = []
+        ports: list[tuple[str, int]] = []
+        for rule in egress:
+            for target in rule.get("to") or []:
+                ip_block = target.get("ipBlock") or {}
+                cidr = ip_block.get("cidr")
+                if cidr:
+                    cidrs.append(str(cidr))
+            for port in rule.get("ports") or []:
+                value = port.get("port")
+                try:
+                    value = int(value)
+                except (TypeError, ValueError):
+                    fail(f"{name}: non-numeric API endpoint port {value!r}")
+                ports.append((str(port.get("protocol", "TCP")).upper(), value))
 
-    if len(cidrs) != 1:
-        fail(f"{name}: expected one destination {expected_cidr}, found {cidrs}")
-    if len(ports) != 1:
-        fail(f"{name}: expected one TCP port {expected_port}, found {ports}")
+        if len(cidrs) != 1:
+            fail(f"{name}: expected one destination {expected_cidr}, found {cidrs}")
+        if len(ports) != 1:
+            fail(f"{name}: expected one TCP port {expected_port}, found {ports}")
 
-    actual_cidr = cidrs[0]
-    actual_protocol, actual_port = ports[0]
-    if actual_cidr == "0.0.0.0/0" or actual_cidr == "::/0":
-        fail(f"{name}: broad all-destination CIDR is forbidden: {actual_cidr}")
-    if actual_cidr in broad_prefixes:
-        fail(f"{name}: broad node or cluster CIDR is forbidden: {actual_cidr}")
-    try:
-        network = ipaddress.ip_network(actual_cidr, strict=False)
-    except ValueError:
-        fail(f"{name}: invalid CIDR {actual_cidr}")
-    if network.prefixlen != 32:
-        fail(f"{name}: expected /32 destination {expected_cidr}, found {actual_cidr}")
-    if service_cidr and actual_cidr == service_cidr:
-        fail(f"{name}: Service ClusterIP destination is forbidden: {actual_cidr}")
-    if actual_cidr != expected_cidr:
-        fail(f"{name}: stale endpoint destination, expected {expected_cidr}, found {actual_cidr}")
-    if actual_protocol != "TCP" or actual_port != expected_port:
-        fail(f"{name}: stale endpoint port, expected TCP {expected_port}, found {actual_protocol} {actual_port}")
+        actual_cidr = cidrs[0]
+        actual_protocol, actual_port = ports[0]
+        if actual_cidr == "0.0.0.0/0" or actual_cidr == "::/0":
+            fail(f"{name}: broad all-destination CIDR is forbidden: {actual_cidr}")
+        if actual_cidr in broad_prefixes:
+            fail(f"{name}: broad node or cluster CIDR is forbidden: {actual_cidr}")
+        try:
+            network = ipaddress.ip_network(actual_cidr, strict=False)
+        except ValueError:
+            fail(f"{name}: invalid CIDR {actual_cidr}")
+        if network.prefixlen != 32:
+            fail(f"{name}: expected /32 destination {expected_cidr}, found {actual_cidr}")
+        if service_cidr and actual_cidr == service_cidr:
+            fail(f"{name}: Service ClusterIP destination is forbidden: {actual_cidr}")
+        if actual_cidr != expected_cidr:
+            fail(f"{name}: stale endpoint destination, expected {expected_cidr}, found {actual_cidr}")
+        if actual_protocol != "TCP" or actual_port != expected_port:
+            fail(f"{name}: stale endpoint port, expected TCP {expected_port}, found {actual_protocol} {actual_port}")
 
 print(f"Kubernetes API egress drift check passed endpoint={expected_cidr}:{expected_port}")
 PY

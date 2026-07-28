@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+INVENTORY="${1:-$ROOT/scripts/security/observability-api-workloads.yaml}"
+POLICY_FILE="${2:-$ROOT/.runtime/observability/allow-apiserver-egress.yaml}"
+
+python3 - "$INVENTORY" "$POLICY_FILE" <<'PY'
+from __future__ import annotations
+
+import ipaddress
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+inventory_path = Path(sys.argv[1])
+policy_path = Path(sys.argv[2])
+
+
+def fail(message: str) -> None:
+    print(f"observability API egress validation failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def load_yaml_documents(path: Path) -> list[dict[str, Any]]:
+    if not path.exists() or path.stat().st_size == 0:
+        fail(f"missing source policy file: {path}")
+    with path.open("r", encoding="utf-8") as handle:
+        return [doc for doc in yaml.safe_load_all(handle) if isinstance(doc, dict)]
+
+
+def label_selector_matches(selector: dict[str, Any], labels: dict[str, str]) -> bool:
+    match_labels = selector.get("matchLabels") or {}
+    for key, value in match_labels.items():
+        if labels.get(str(key)) != str(value):
+            return False
+
+    for expression in selector.get("matchExpressions") or []:
+        key = str(expression.get("key", ""))
+        operator = str(expression.get("operator", ""))
+        values = [str(value) for value in expression.get("values") or []]
+        if operator == "In":
+            if labels.get(key) not in values:
+                return False
+        elif operator == "NotIn":
+            if labels.get(key) in values:
+                return False
+        elif operator == "Exists":
+            if key not in labels:
+                return False
+        elif operator == "DoesNotExist":
+            if key in labels:
+                return False
+        else:
+            fail(f"unsupported selector operator {operator!r}")
+    return True
+
+
+def selector_is_empty(selector: dict[str, Any] | None) -> bool:
+    if selector is None:
+        return True
+    return not (selector.get("matchLabels") or selector.get("matchExpressions"))
+
+
+def validate_api_policy(policy: dict[str, Any]) -> None:
+    metadata = policy.get("metadata") or {}
+    name = str(metadata.get("name", "<unnamed>"))
+    namespace = str(metadata.get("namespace", ""))
+    if namespace != "utcp-observability":
+        fail(f"{name}: API egress policy must be in utcp-observability")
+
+    spec = policy.get("spec") or {}
+    if "Egress" not in (spec.get("policyTypes") or []):
+        fail(f"{name}: API egress policy must declare Egress policy type")
+    if selector_is_empty(spec.get("podSelector")):
+        fail(f"{name}: overbroad source selector selects all observability Pods")
+
+    egress = spec.get("egress") or []
+    if len(egress) != 1:
+        fail(f"{name}: expected exactly one canonical API egress rule, found {len(egress)}")
+    rule = egress[0]
+    targets = rule.get("to") or []
+    ports = rule.get("ports") or []
+    if len(targets) != 1 or len(ports) != 1:
+        fail(f"{name}: expected exactly one API destination and one TCP port")
+
+    target = targets[0]
+    if "ipBlock" not in target:
+        fail(f"{name}: missing destination selector for pinned API ipBlock")
+    if "namespaceSelector" in target or "podSelector" in target:
+        fail(f"{name}: API egress must not use a namespace or pod selector substitute")
+    ip_block = target.get("ipBlock") or {}
+    cidr = str(ip_block.get("cidr", ""))
+    if ip_block.get("except"):
+        fail(f"{name}: API egress must not use ipBlock exceptions")
+    if cidr in {"0.0.0.0/0", "::/0"}:
+        fail(f"{name}: unrestricted egress is forbidden")
+    try:
+        network = ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        fail(f"{name}: invalid pinned API CIDR {cidr!r}")
+    if network.prefixlen != network.max_prefixlen:
+        fail(f"{name}: API destination must be a single pinned host, found {cidr}")
+
+    port = ports[0]
+    if str(port.get("protocol", "TCP")).upper() != "TCP":
+        fail(f"{name}: wrong API protocol; expected TCP")
+    try:
+        port_number = int(port.get("port"))
+    except (TypeError, ValueError):
+        fail(f"{name}: API port must be numeric")
+    if port_number not in {443, 6443}:
+        fail(f"{name}: wrong API port {port_number}; expected canonical TCP 443/6443 contract")
+
+
+inventory_docs = load_yaml_documents(inventory_path)
+inventory = inventory_docs[0]
+workloads = inventory.get("workloads") or []
+if not workloads:
+    fail("API-dependent workload inventory is empty")
+
+policy_docs = load_yaml_documents(policy_path)
+policies = [doc for doc in policy_docs if doc.get("kind") == "NetworkPolicy"]
+if not policies:
+    fail("missing source policy: no observability API egress NetworkPolicy rendered")
+
+for policy in policies:
+    validate_api_policy(policy)
+
+all_workload_labels = [
+    {str(key): str(value) for key, value in (workload.get("podLabels") or {}).items()}
+    for workload in workloads
+]
+legacy_name_live = any(
+    labels.get("app.kubernetes.io/name") == "prometheus-operator" for labels in all_workload_labels
+)
+for policy in policies:
+    name = (policy.get("metadata") or {}).get("name", "<unnamed>")
+    selector = ((policy.get("spec") or {}).get("podSelector") or {})
+    values: list[str] = []
+    for expression in selector.get("matchExpressions") or []:
+        if expression.get("key") == "app.kubernetes.io/name" and expression.get("operator") == "In":
+            values.extend(str(value) for value in expression.get("values") or [])
+    if "prometheus-operator" in values and not legacy_name_live:
+        fail(
+            f"{name}: ineffective legacy selector app.kubernetes.io/name=prometheus-operator "
+            "matches no rendered API-dependent workload"
+        )
+
+operator_policy = next(
+    (
+        policy
+        for policy in policies
+        if (policy.get("metadata") or {}).get("name") == "allow-prometheus-operator-apiserver-egress"
+    ),
+    None,
+)
+if operator_policy is None:
+    fail("missing source policy allow-prometheus-operator-apiserver-egress")
+operator_selector = (operator_policy.get("spec") or {}).get("podSelector") or {}
+if operator_selector != {"matchLabels": {"app.kubernetes.io/component": "prometheus-operator"}}:
+    fail("Prometheus Operator source policy must select app.kubernetes.io/component=prometheus-operator")
+
+for workload in workloads:
+    workload_id = str(workload.get("id", "<missing-id>"))
+    namespace = str(workload.get("namespace", ""))
+    labels = {str(key): str(value) for key, value in (workload.get("podLabels") or {}).items()}
+    if namespace != "utcp-observability":
+        fail(f"{workload_id}: API-dependent workload must be in utcp-observability")
+    if not labels:
+        fail(f"{workload_id}: missing pod-template labels")
+
+    selected_by = []
+    for policy in policies:
+        selector = (policy.get("spec") or {}).get("podSelector") or {}
+        if label_selector_matches(selector, labels):
+            selected_by.append((policy.get("metadata") or {}).get("name", "<unnamed>"))
+    if not selected_by:
+        fail(f"missing source policy selecting API-dependent workload {workload_id}")
+
+print("observability_api_egress_workload_coverage=ok")
+PY

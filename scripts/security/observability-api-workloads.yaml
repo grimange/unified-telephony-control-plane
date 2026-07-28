@@ -1,0 +1,36 @@
+apiVersion: utcp.io/v1
+kind: ObservabilityApiEgressInventory
+metadata:
+  name: observability-api-dependent-workloads
+workloads:
+  - id: prometheus
+    namespace: utcp-observability
+    kind: StatefulSet
+    name: prometheus-utcp-monitoring-prometheus
+    podLabels:
+      app.kubernetes.io/name: prometheus
+  - id: prometheus-operator
+    namespace: utcp-observability
+    kind: Deployment
+    name: utcp-monitoring-operator
+    podLabels:
+      app.kubernetes.io/name: kube-prometheus-stack-prometheus-operator
+      app.kubernetes.io/component: prometheus-operator
+  - id: grafana-sidecar
+    namespace: utcp-observability
+    kind: Deployment
+    name: kube-prometheus-stack-grafana
+    podLabels:
+      app.kubernetes.io/name: grafana
+  - id: alloy
+    namespace: utcp-observability
+    kind: Deployment
+    name: alloy
+    podLabels:
+      app.kubernetes.io/name: alloy
+  - id: kube-state-metrics
+    namespace: utcp-observability
+    kind: Deployment
+    name: utcp-kube-state-metrics
+    podLabels:
+      app.kubernetes.io/name: kube-state-metrics

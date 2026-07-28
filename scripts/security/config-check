@@ -358,6 +358,9 @@ print("namespace_psa_authority=ok")
 print("restricted_workload_compatibility=ok")
 PY
 render_apiserver_policy >/dev/null
+"$SCRIPT_DIR/validate-observability-apiserver-egress" \
+  "$SCRIPT_DIR/observability-api-workloads.yaml" \
+  "$OBSERVABILITY_APISERVER_POLICY" >/dev/null
 kube apply --dry-run=server -f "$tmp" >/dev/null
 "$SCRIPT_DIR/check-apiserver-policy-drift" >/dev/null
 kube apply --dry-run=server -f "$SECURITY_APISERVER_POLICY" >/dev/null

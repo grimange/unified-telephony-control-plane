@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+VALIDATOR="$ROOT/scripts/security/validate-observability-apiserver-egress"
+SOURCE_TEMPLATE="$ROOT/infrastructure/kubernetes/observability/network-policies/allow-apiserver-egress.template.yaml"
+SOURCE_INVENTORY="$ROOT/scripts/security/observability-api-workloads.yaml"
+TMP_DIR="$(mktemp -d)"
+
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+render_policy() {
+  local target="$1"
+
+  sed \
+    -e "s#__KUBERNETES_API_ENDPOINT_CIDR__#172.24.0.2/32#g" \
+    -e "s#__KUBERNETES_API_ENDPOINT_PORT__#6443#g" \
+    "$SOURCE_TEMPLATE" > "$target"
+}
+
+pass_case() {
+  local name="$1"
+  local inventory="$2"
+  local policy="$3"
+
+  if ! "$VALIDATOR" "$inventory" "$policy" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
+    printf 'expected security config check to pass: %s\n' "$name" >&2
+    cat "$TMP_DIR/err" >&2
+    exit 1
+  fi
+}
+
+fail_case() {
+  local name="$1"
+  local expected="$2"
+  local inventory="$3"
+  local policy="$4"
+
+  if "$VALIDATOR" "$inventory" "$policy" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
+    printf 'expected security config check to fail: %s\n' "$name" >&2
+    cat "$TMP_DIR/out" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$expected" "$TMP_DIR/err"; then
+    printf 'expected failure for %s to include: %s\n' "$name" "$expected" >&2
+    cat "$TMP_DIR/err" >&2
+    exit 1
+  fi
+}
+
+mutate_policy() {
+  local file="$1"
+  local mutation="$2"
+
+  python3 - "$file" "$mutation" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+mutation = sys.argv[2]
+docs = [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(doc, dict)]
+
+
+def name(doc: dict) -> str:
+    return (doc.get("metadata") or {}).get("name", "")
+
+
+def operator_policy() -> dict:
+    for doc in docs:
+        if name(doc) == "allow-prometheus-operator-apiserver-egress":
+            return doc
+    raise SystemExit("operator policy not found")
+
+
+def name_policy() -> dict:
+    for doc in docs:
+        if name(doc) == "allow-observability-kubernetes-api-egress":
+            return doc
+    raise SystemExit("name policy not found")
+
+
+if mutation == "remove-operator-policy":
+    docs = [doc for doc in docs if name(doc) != "allow-prometheus-operator-apiserver-egress"]
+elif mutation == "wrong-operator-component":
+    operator_policy()["spec"]["podSelector"]["matchLabels"]["app.kubernetes.io/component"] = "wrong-operator"
+elif mutation == "legacy-name-only":
+    docs = [doc for doc in docs if name(doc) != "allow-prometheus-operator-apiserver-egress"]
+    selector = name_policy()["spec"]["podSelector"]
+    for expression in selector.get("matchExpressions") or []:
+        if expression.get("key") == "app.kubernetes.io/name":
+            expression.setdefault("values", []).append("prometheus-operator")
+elif mutation == "operator-selector-all-pods":
+    operator_policy()["spec"]["podSelector"] = {}
+elif mutation == "remove-api-destination":
+    operator_policy()["spec"]["egress"] = []
+elif mutation == "unrestricted-api-egress":
+    operator_policy()["spec"]["egress"][0]["to"][0]["ipBlock"]["cidr"] = "0.0.0.0/0"
+else:
+    raise SystemExit(f"unknown policy mutation: {mutation}")
+
+path.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
+PY
+}
+
+mutate_inventory() {
+  local file="$1"
+  local mutation="$2"
+
+  python3 - "$file" "$mutation" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+mutation = sys.argv[2]
+doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+if mutation == "add-uncovered-client":
+    doc.setdefault("workloads", []).append(
+        {
+            "id": "uncovered-api-client",
+            "namespace": "utcp-observability",
+            "kind": "Deployment",
+            "name": "uncovered-api-client",
+            "podLabels": {"app.kubernetes.io/name": "uncovered-api-client"},
+        }
+    )
+else:
+    raise SystemExit(f"unknown inventory mutation: {mutation}")
+
+path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+PY
+}
+
+correct_policy="$TMP_DIR/allow-apiserver-egress.correct.yaml"
+missing_operator_policy="$TMP_DIR/allow-apiserver-egress.missing-operator.yaml"
+wrong_operator_component="$TMP_DIR/allow-apiserver-egress.wrong-operator.yaml"
+legacy_only="$TMP_DIR/allow-apiserver-egress.legacy-only.yaml"
+wide_operator_selector="$TMP_DIR/allow-apiserver-egress.wide-operator.yaml"
+missing_destination="$TMP_DIR/allow-apiserver-egress.missing-destination.yaml"
+unrestricted_destination="$TMP_DIR/allow-apiserver-egress.unrestricted.yaml"
+uncovered_inventory="$TMP_DIR/observability-api-workloads.uncovered.yaml"
+
+render_policy "$correct_policy"
+cp "$correct_policy" "$missing_operator_policy"
+cp "$correct_policy" "$wrong_operator_component"
+cp "$correct_policy" "$legacy_only"
+cp "$correct_policy" "$wide_operator_selector"
+cp "$correct_policy" "$missing_destination"
+cp "$correct_policy" "$unrestricted_destination"
+cp "$SOURCE_INVENTORY" "$uncovered_inventory"
+
+mutate_policy "$missing_operator_policy" remove-operator-policy
+mutate_policy "$wrong_operator_component" wrong-operator-component
+mutate_policy "$legacy_only" legacy-name-only
+mutate_policy "$wide_operator_selector" operator-selector-all-pods
+mutate_policy "$missing_destination" remove-api-destination
+mutate_policy "$unrestricted_destination" unrestricted-api-egress
+mutate_inventory "$uncovered_inventory" add-uncovered-client
+
+pass_case "correct repository policy and inventory" "$SOURCE_INVENTORY" "$correct_policy"
+fail_case "missing operator component policy rejected" \
+  "missing source policy allow-prometheus-operator-apiserver-egress" \
+  "$SOURCE_INVENTORY" "$missing_operator_policy"
+fail_case "wrong operator component rejected" \
+  "Prometheus Operator source policy must select app.kubernetes.io/component=prometheus-operator" \
+  "$SOURCE_INVENTORY" "$wrong_operator_component"
+fail_case "legacy name-only operator selector rejected" \
+  "ineffective legacy selector app.kubernetes.io/name=prometheus-operator matches no rendered API-dependent workload" \
+  "$SOURCE_INVENTORY" "$legacy_only"
+fail_case "operator namespace-wide selector rejected" \
+  "overbroad source selector selects all observability Pods" \
+  "$SOURCE_INVENTORY" "$wide_operator_selector"
+fail_case "missing pinned API destination rejected" \
+  "expected exactly one canonical API egress rule" \
+  "$SOURCE_INVENTORY" "$missing_destination"
+fail_case "unrestricted API egress rejected" \
+  "unrestricted egress is forbidden" \
+  "$SOURCE_INVENTORY" "$unrestricted_destination"
+pass_case "declared API-dependent workloads selected by bounded policy" \
+  "$SOURCE_INVENTORY" "$correct_policy"
+fail_case "new API-dependent workload without policy rejected" \
+  "missing source policy selecting API-dependent workload uncovered-api-client" \
+  "$uncovered_inventory" "$correct_policy"
+
+printf 'security config check regression tests passed\n'
