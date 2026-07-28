@@ -4,9 +4,14 @@
     aria-labelledby="runtime-operations-title"
   >
     <div class="section-heading">
-      <h2 id="runtime-operations-title">
-        Runtime operations
-      </h2>
+      <div>
+        <h2 id="runtime-operations-title">
+          Runtime operations
+        </h2>
+        <p class="meta">
+          Track control-plane operations issued to telephony runtimes.
+        </p>
+      </div>
       <UiStatusBadge
         class="live-updates-badge"
         :label="runtimeNodeRealtimeStatusText()"
@@ -33,7 +38,7 @@
       >
         <UiFormField
           id="runtime-operation-node-filter"
-          label="RuntimeNode ID"
+          label="Runtime node ID"
         >
           <template #default="{ id, describedBy, invalid }">
             <UiTextInput
@@ -42,7 +47,7 @@
               :aria-describedby="describedBy"
               :invalid="invalid"
               autocomplete="off"
-              placeholder="RuntimeNode identifier"
+              placeholder="Runtime node identifier"
             />
           </template>
         </UiFormField>
@@ -137,21 +142,21 @@
       :status="runtimeOperationsResource.state.status"
       :error="runtimeOperationsResource.state.error"
       :has-data="runtimeOperations.length > 0"
-      title="Runtime Operation list"
+      title="Runtime operation list"
       label="Operations"
-      loading-label="Loading Runtime Operations."
-      refreshing-label="Refreshing Runtime Operations."
-      empty-title="No Runtime Operations"
-      empty-message="No Runtime Operations matched the current filters."
-      error-title="Runtime Operations unavailable"
-      forbidden-title="Runtime Operations forbidden"
+      loading-label="Loading runtime operations."
+      refreshing-label="Refreshing runtime operations."
+      empty-title="No runtime operations"
+      empty-message="No runtime operations matched the current filters."
+      error-title="Runtime operations unavailable"
+      forbidden-title="Runtime operations forbidden"
     >
       <template #actions>
         <UiListSummary
           :page="runtimeOperationPagination.page"
           :total="runtimeOperationPagination.total"
           :count="runtimeOperations.length"
-          item-label="Runtime Operations"
+          item-label="runtime operations"
         />
       </template>
       <div class="data-table">
@@ -203,19 +208,19 @@
           >
             <UiLoadingState
               v-if="selectedRuntimeOperationResource.state.status === 'loading'"
-              label="Loading Runtime Operation detail."
+              label="Loading runtime operation detail."
             />
             <UiAlert
               v-if="selectedRuntimeOperationResource.state.status === 'error' || selectedRuntimeOperationResource.state.status === 'forbidden'"
               variant="error"
-              title="Runtime Operation detail unavailable"
+              title="Runtime operation detail unavailable"
             >
               {{ selectedRuntimeOperationResource.state.error }}
             </UiAlert>
             <section
               v-if="selectedRuntimeOperation"
               class="detail-section"
-              aria-label="Selected Runtime Operation detail"
+              aria-label="Selected runtime operation detail"
             >
               <h3>{{ shortId(selectedRuntimeOperation.id) }}</h3>
               <dl class="definition-grid">
@@ -228,7 +233,7 @@
                   <dd>{{ statusLabel(selectedRuntimeOperation.status) }}</dd>
                 </div>
                 <div>
-                  <dt>RuntimeNode</dt>
+                  <dt>Runtime node</dt>
                   <dd>{{ runtimeNodeLabel(selectedRuntimeOperation) }}</dd>
                 </div>
                 <div>

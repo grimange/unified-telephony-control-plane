@@ -4,9 +4,14 @@
     aria-labelledby="audit-records-title"
   >
     <div class="section-heading">
-      <h2 id="audit-records-title">
-        Audit records
-      </h2>
+      <div>
+        <h2 id="audit-records-title">
+          Audit records
+        </h2>
+        <p class="meta">
+          Review recorded administrative and runtime control-plane activity.
+        </p>
+      </div>
       <UiButton
         type="button"
         variant="secondary"
@@ -170,10 +175,10 @@
       :has-data="auditRecords.length > 0"
       title="Audit record list"
       label="Audit records"
-      loading-label="Loading Audit records."
-      refreshing-label="Refreshing Audit records."
-      empty-title="No Audit records"
-      empty-message="No Audit records matched the current filters."
+      loading-label="Loading audit records."
+      refreshing-label="Refreshing audit records."
+      empty-title="No audit records"
+      empty-message="No audit records matched the current filters."
       error-title="Audit records unavailable"
       forbidden-title="Audit records forbidden"
     >
@@ -182,7 +187,7 @@
           :page="auditRecordPagination.page"
           :total="auditRecordPagination.total"
           :count="auditRecords.length"
-          item-label="Audit records"
+          item-label="audit records"
         />
       </template>
       <div class="data-table">
@@ -224,7 +229,7 @@
           >
             <UiLoadingState
               v-if="selectedAuditRecordResource.state.status === 'loading'"
-              label="Loading Audit record detail."
+              label="Loading audit record detail."
             />
             <UiAlert
               v-if="selectedAuditRecordResource.state.status === 'error' || selectedAuditRecordResource.state.status === 'forbidden'"
@@ -236,7 +241,7 @@
             <section
               v-if="selectedAuditRecord"
               class="detail-section"
-              aria-label="Selected Audit record detail"
+              aria-label="Selected audit record detail"
             >
               <div class="section-heading">
                 <h3>{{ shortId(selectedAuditRecord.id) }}</h3>
@@ -288,7 +293,7 @@
               </dl>
               <section
                 class="detail-block nested"
-                aria-label="Safe Audit metadata"
+                aria-label="Safe audit metadata"
               >
                 <h3>Safe metadata</h3>
                 <p

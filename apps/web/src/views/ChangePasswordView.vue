@@ -5,8 +5,13 @@
       class="auth-panel"
       label="Account security"
       title="Change password"
-      description="Use the password requirements returned by the server response if validation fails."
     >
+      <div>
+        <h1>Secure your UTCP account</h1>
+        <p class="meta">
+          Set a new password before entering the UTCP control plane.
+        </p>
+      </div>
       <form
         class="form-stack"
         @submit.prevent="changePassword"

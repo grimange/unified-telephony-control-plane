@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { createMemoryHistory } from 'vue-router'
 import App from './App.vue'
-import type { RuntimeManagementCatalog } from './api/platform'
+import type { IdentitySession, RuntimeManagementCatalog } from './api/platform'
 import {
   buildRuntimeNodeEchoOptions,
   disconnectRuntimeNodeRealtime,
@@ -880,7 +880,7 @@ function mockUserAdminFetch(calls: Array<{ url: string; body?: unknown }>): void
   })
 }
 
-function mockPrimaryRouteFetch(calls: Array<{ url: string; body?: unknown }>, activeSession = session): void {
+function mockPrimaryRouteFetch(calls: Array<{ url: string; body?: unknown }>, activeSession: IdentitySession = session): void {
   vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString()
     calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
@@ -1096,8 +1096,11 @@ describe('C1 App shell', () => {
 
     const wrapper = await mountApp('/login')
 
+    expect(wrapper.findAll('h1').map((heading) => heading.text())).toEqual(['Unified Telephony Control Plane'])
+    expect(wrapper.text()).toContain('Operate tenant access, telephony runtime nodes, lifecycle operations, reconciliation, and audit evidence from one control-plane workspace.')
     expect(wrapper.text()).toContain('Sign in')
     expect(wrapper.find('input[type="email"]').exists()).toBe(true)
+    expect(wrapper.find('input[type="password"]').exists()).toBe(true)
     expect(wrapper.html()).not.toContain('localStorage')
   })
 
@@ -1106,7 +1109,26 @@ describe('C1 App shell', () => {
 
     const wrapper = await mountApp('/login')
 
+    expect(wrapper.findAll('h1')).toHaveLength(1)
     expect(wrapper.text()).toContain('Sign in')
+    await assertNoSeriousAxeViolations(wrapper.element)
+  })
+
+  it('renders forced password change as a UTCP account-security task', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse({
+      ...session,
+      user: { ...session.user, password_change_required: true },
+    }))
+
+    const wrapper = await mountApp('/change-password')
+
+    expect(wrapper.findAll('h1').map((heading) => heading.text())).toEqual(['Secure your UTCP account'])
+    expect(wrapper.text()).toContain('Set a new password before entering the UTCP control plane.')
+    expect(wrapper.text()).toContain('Change password')
+    expect(wrapper.find('label[for="current-password"]').text()).toContain('Current password')
+    expect(wrapper.find('label[for="new-password"]').text()).toContain('New password')
+    expect(wrapper.find('label[for="confirm-password"]').text()).toContain('Confirm new password')
+    expect(wrapper.findAll('button').some((button) => button.text() === 'Save password')).toBe(true)
     await assertNoSeriousAxeViolations(wrapper.element)
   })
 
@@ -1150,6 +1172,71 @@ describe('C1 App shell', () => {
     expect(wrapper.text()).toContain('Memberships')
     expect(wrapper.text()).toContain('Runtime nodes')
     expect(wrapper.text()).toContain('Local Tenant')
+  })
+
+  it('groups primary navigation conceptually while preserving link order and active state', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockPrimaryRouteFetch(calls)
+
+    const wrapper = await mountApp('/dashboard')
+    const nav = wrapper.find('nav[aria-label="Primary"]')
+    const groups = nav.findAll('.side-nav__group')
+
+    expect(groups.map((group) => group.find('.side-nav__group-label').text())).toEqual([
+      'Overview',
+      'Access and tenancy',
+      'Evidence',
+      'Runtime control',
+    ])
+    expect(groups.map((group) => group.findAll('a').map((link) => link.text()))).toEqual([
+      ['Dashboard'],
+      ['Tenants', 'Users', 'Memberships'],
+      ['Audit records'],
+      ['Runtime nodes', 'Runtime operations', 'Runtime reconciliations', 'Conference operations'],
+    ])
+    expect(nav.findAll('a').map((link) => link.text())).toEqual([
+      'Dashboard',
+      'Tenants',
+      'Users',
+      'Memberships',
+      'Audit records',
+      'Runtime nodes',
+      'Runtime operations',
+      'Runtime reconciliations',
+      'Conference operations',
+    ])
+    expect(nav.find('a[aria-current="page"]').text()).toBe('Dashboard')
+    for (const groupLabel of ['Overview', 'Access and tenancy', 'Runtime control', 'Evidence']) {
+      expect(nav.findAll('a').some((link) => link.text() === groupLabel)).toBe(false)
+      expect(nav.findAll('button').some((button) => button.text() === groupLabel)).toBe(false)
+    }
+
+    await wrapper.find('.compact-nav-toggle').trigger('click')
+    await nextTick()
+    expect(wrapper.find('#primary-navigation').classes()).toContain('open')
+    expect(wrapper.find('nav[aria-label="Primary"]').findAll('.side-nav__group').map((group) => group.find('.side-nav__group-label').text())).toEqual([
+      'Overview',
+      'Access and tenancy',
+      'Evidence',
+      'Runtime control',
+    ])
+    await assertNoSeriousAxeViolations(wrapper.element)
+  })
+
+  it('suppresses capability-empty navigation groups', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockPrimaryRouteFetch(calls, {
+      ...noActiveTenantAuditSession,
+      capabilities: ['telephony.conferences.view'],
+    })
+
+    const wrapper = await mountApp('/dashboard')
+    const nav = wrapper.find('nav[aria-label="Primary"]')
+
+    expect(nav.findAll('.side-nav__group-label').map((label) => label.text())).toEqual(['Overview', 'Runtime control'])
+    expect(nav.findAll('a').map((link) => link.text())).toEqual(['Dashboard', 'Conference operations'])
+    expect(nav.text()).not.toContain('Access and tenancy')
+    expect(nav.text()).not.toContain('Evidence')
   })
 
   it('builds production RuntimeNode Reverb options for the canonical WSS route', () => {
@@ -1363,11 +1450,11 @@ describe('C1 App shell', () => {
     const wrapper = await mountApp('/operations/conferences')
 
     expect(router.currentRoute.value.path).toBe('/operations/conferences')
-    expect(wrapper.text()).toContain('Conferences')
+    expect(wrapper.text()).toContain('Conference operations')
     expect(wrapper.text()).toContain('Daily Ops')
     expect(wrapper.text()).toContain('Support Room')
     expect(wrapper.text()).toContain('Live updates connecting')
-    expect(wrapper.text()).toContain('Conferences')
+    expect(wrapper.text()).toContain('Conference operation list')
     expect(realtime.createdConfigs).toEqual([{
       appKey: 'public-reverb-key',
       wsHost: 'app.utcp.local.test',
@@ -1416,7 +1503,7 @@ describe('C1 App shell', () => {
 
     expect(router.currentRoute.value.path).toBe('/operations/runtime-operations')
     expect(wrapper.text()).toContain('Runtime operations')
-    expect(wrapper.text()).toContain('Runtime Operation list')
+    expect(wrapper.text()).toContain('Runtime operation list')
     expect(wrapper.text()).toContain('runtime.node.inspect')
     expect(wrapper.text()).toContain('Proof Runtime')
     expect(wrapper.text()).toContain('Live updates connecting')
@@ -1602,19 +1689,19 @@ describe('C1 App shell', () => {
     const emptyCalls: Array<{ url: string; body?: unknown }> = []
     mockRuntimeOperationAdminFetch(emptyCalls, { empty: true })
     const emptyWrapper = await mountApp('/operations/runtime-operations')
-    expect(emptyWrapper.text()).toContain('No Runtime Operations')
+    expect(emptyWrapper.text()).toContain('No runtime operations')
     emptyWrapper.unmount()
 
     const forbiddenCalls: Array<{ url: string; body?: unknown }> = []
     mockRuntimeOperationAdminFetch(forbiddenCalls, { listStatus: 403 })
     const forbiddenWrapper = await mountApp('/operations/runtime-operations')
-    expect(forbiddenWrapper.text()).toContain('Runtime Operations forbidden')
+    expect(forbiddenWrapper.text()).toContain('Runtime operations forbidden')
     forbiddenWrapper.unmount()
 
     const validationCalls: Array<{ url: string; body?: unknown }> = []
     mockRuntimeOperationAdminFetch(validationCalls, { listStatus: 422 })
     const validationWrapper = await mountApp('/operations/runtime-operations?operation_type=invalid.operation')
-    expect(validationWrapper.text()).toContain('Runtime Operations unavailable')
+    expect(validationWrapper.text()).toContain('Runtime operations unavailable')
     validationWrapper.unmount()
 
     const notFoundCalls: Array<{ url: string; body?: unknown }> = []
@@ -1622,7 +1709,7 @@ describe('C1 App shell', () => {
     const notFoundWrapper = await mountApp('/operations/runtime-operations')
     await notFoundWrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
     await flushPromises()
-    expect(notFoundWrapper.text()).toContain('Runtime Operation detail unavailable')
+    expect(notFoundWrapper.text()).toContain('Runtime operation detail unavailable')
   })
 
   it('renders Runtime Reconciliations as a read-only capability-gated route with bounded request budgets', async () => {
@@ -1639,7 +1726,7 @@ describe('C1 App shell', () => {
 
     expect(router.currentRoute.value.path).toBe('/operations/runtime-reconciliations')
     expect(wrapper.text()).toContain('Runtime reconciliations')
-    expect(wrapper.text()).toContain('Runtime Reconciliation list')
+    expect(wrapper.text()).toContain('Runtime reconciliation list')
     expect(wrapper.text()).toContain('Proof Runtime')
     expect(wrapper.text()).toContain('operation required')
     expect(wrapper.text()).toContain('Drift detected')
@@ -1763,19 +1850,19 @@ describe('C1 App shell', () => {
     const emptyCalls: Array<{ url: string; body?: unknown }> = []
     mockRuntimeReconciliationAdminFetch(emptyCalls, { empty: true })
     const emptyWrapper = await mountApp('/operations/runtime-reconciliations')
-    expect(emptyWrapper.text()).toContain('No Runtime Reconciliations')
+    expect(emptyWrapper.text()).toContain('No runtime reconciliations')
     emptyWrapper.unmount()
 
     const forbiddenCalls: Array<{ url: string; body?: unknown }> = []
     mockRuntimeReconciliationAdminFetch(forbiddenCalls, { listStatus: 403 })
     const forbiddenWrapper = await mountApp('/operations/runtime-reconciliations')
-    expect(forbiddenWrapper.text()).toContain('Runtime Reconciliations forbidden')
+    expect(forbiddenWrapper.text()).toContain('Runtime reconciliations forbidden')
     forbiddenWrapper.unmount()
 
     const validationCalls: Array<{ url: string; body?: unknown }> = []
     mockRuntimeReconciliationAdminFetch(validationCalls, { listStatus: 422 })
     const validationWrapper = await mountApp('/operations/runtime-reconciliations?status=invalid')
-    expect(validationWrapper.text()).toContain('Runtime Reconciliations unavailable')
+    expect(validationWrapper.text()).toContain('Runtime reconciliations unavailable')
     validationWrapper.unmount()
 
     const notFoundCalls: Array<{ url: string; body?: unknown }> = []
@@ -1783,7 +1870,7 @@ describe('C1 App shell', () => {
     const notFoundWrapper = await mountApp('/operations/runtime-reconciliations')
     await notFoundWrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
     await flushPromises()
-    expect(notFoundWrapper.text()).toContain('Runtime Reconciliation detail unavailable')
+    expect(notFoundWrapper.text()).toContain('Runtime reconciliation detail unavailable')
   })
 
   it('renders Audit records as a read-only capability-gated route with bounded request budgets', async () => {
@@ -2127,7 +2214,7 @@ describe('C1 App shell', () => {
     const emptyCalls: Array<{ url: string; body?: unknown }> = []
     mockAuditRecordAdminFetch(emptyCalls, { empty: true })
     const emptyWrapper = await mountApp('/admin/audit-records')
-    expect(emptyWrapper.text()).toContain('No Audit records')
+    expect(emptyWrapper.text()).toContain('No audit records')
     emptyWrapper.unmount()
 
     const forbiddenCalls: Array<{ url: string; body?: unknown }> = []
@@ -2588,7 +2675,7 @@ describe('C1 App shell', () => {
     const wrapper = await mountApp('/admin/users')
 
     expect(wrapper.text()).toContain('Operator User')
-    expect(wrapper.text()).toContain('TelephonySession: active')
+    expect(wrapper.text()).toContain('Telephony session: active')
     expect(wrapper.text()).toContain('Signaling: eligible / registered')
     expect(wrapper.find('label[for="user-search"]').text()).toContain('Search')
     expect(wrapper.find('.ui-status-badge--success').text()).toBe('active')
@@ -2599,7 +2686,7 @@ describe('C1 App shell', () => {
 
     expect(wrapper.text()).toContain('User detail')
     expect(wrapper.text()).toContain('Tenant memberships')
-    expect(wrapper.text()).toContain('Active TelephonySession')
+    expect(wrapper.text()).toContain('Active telephony session')
     expect(wrapper.text()).toContain('Signaling registration')
     expect(wrapper.text()).toContain('Desired registration state')
     expect(wrapper.text()).toContain('Observed runtime state')
@@ -2907,7 +2994,7 @@ describe('C1 App shell', () => {
     const wrapper = await mountApp('/admin/users/user-2')
 
     expect(wrapper.text()).toContain('Registration removed. Contact pending expiration. New registrations and refreshes are blocked.')
-    expect(wrapper.findAll('button').find((button) => button.text() === 'End TelephonySession')).toBeUndefined()
+    expect(wrapper.findAll('button').find((button) => button.text() === 'End telephony session')).toBeUndefined()
     expect(wrapper.findAll('button').find((button) => /issue|reissue/i.test(button.text()))).toBeUndefined()
   })
 
@@ -3070,7 +3157,7 @@ describe('C1 App shell', () => {
     const wrapper = await mountApp('/dashboard')
 
     expect(wrapper.text()).toContain('Runtime summary unavailable.')
-    expect(wrapper.text()).toContain('Users and TelephonySessions')
+    expect(wrapper.text()).toContain('Users and telephony sessions')
     expect(wrapper.text()).toContain('Operator User')
     expect(wrapper.text()).toContain('No memberships were returned.')
     expect(wrapper.text()).not.toContain('Runtime nodes 0')
@@ -3079,6 +3166,60 @@ describe('C1 App shell', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('Runtime summary unavailable.')
+  })
+
+  it('binds Dashboard Refresh to the canonical loading state and blocks duplicate activation', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    const pendingRuntimeRefresh = deferredResponse()
+    let runtimeSummaryCalls = 0
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
+      const url = input.toString()
+      calls.push({ url })
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.endsWith('/api/v1/admin/runtime-nodes')) {
+        runtimeSummaryCalls += 1
+        if (runtimeSummaryCalls === 2) return pendingRuntimeRefresh.promise
+
+        return Promise.resolve(jsonResponse({ runtime_nodes: [runtimeNode] }))
+      }
+      if (url.includes('/api/v1/admin/users')) {
+        return Promise.resolve(jsonResponse({
+          users: [adminUser],
+          pagination: { page: 1, per_page: 5, total: 1, has_more: false },
+        }))
+      }
+      if (url.endsWith('/api/v1/admin/memberships')) return Promise.resolve(jsonResponse({ memberships: [] }))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/dashboard')
+    attachWrapperToDocument(wrapper)
+    const refreshButton = wrapper.findAll('button').find((button) => button.text() === 'Refresh')
+    if (!refreshButton) throw new Error('Dashboard Refresh button not found')
+    const requestCountBeforeRefresh = calls.length
+
+    refreshButton.element.focus()
+    await refreshButton.trigger('click')
+    await nextTick()
+
+    expect(refreshButton.classes()).toContain('ui-button--secondary')
+    expect(document.activeElement).toBe(refreshButton.element)
+    expect(refreshButton.attributes('disabled')).toBeUndefined()
+    expect(refreshButton.attributes('aria-disabled')).toBe('true')
+    expect(refreshButton.attributes('aria-busy')).toBe('true')
+    expect(calls).toHaveLength(requestCountBeforeRefresh + 3)
+
+    await refreshButton.trigger('click')
+    await refreshButton.trigger('keydown.enter')
+    await nextTick()
+
+    expect(calls).toHaveLength(requestCountBeforeRefresh + 3)
+    pendingRuntimeRefresh.resolve(jsonResponse({ runtime_nodes: [runtimeNode] }))
+    await flushPromises()
+
+    expect(refreshButton.attributes('aria-disabled')).toBeUndefined()
+    expect(refreshButton.attributes('aria-busy')).toBeUndefined()
   })
 
   it('preserves router-level browser history across current direct URLs', async () => {
@@ -3341,7 +3482,94 @@ describe('C1 App shell', () => {
 
     expect(usersViewSource).toContain('class="subgrid"')
     expect(usersViewSource).toContain('Memberships:')
-    expect(usersViewSource).toContain('TelephonySession:')
+    expect(usersViewSource).toContain('Telephony session:')
+  })
+
+  it('codifies UI-E12 route-purpose descriptions without replacing the section-heading hook', () => {
+    const primaryRouteSources = [
+      {
+        routeName: 'Dashboard',
+        source: dashboardViewSource,
+        h2: 'Dashboard',
+        description: 'Review current control-plane state and move into management, runtime, reconciliation, and audit workflows.',
+      },
+      {
+        routeName: 'Users',
+        source: usersViewSource,
+        h2: 'Users',
+        description: 'Manage operator identities that can access UTCP.',
+      },
+      {
+        routeName: 'Tenants',
+        source: tenantsViewSource,
+        h2: 'Tenants',
+        description: 'Manage tenant workspaces represented in the control plane.',
+      },
+      {
+        routeName: 'Memberships',
+        source: membershipsViewSource,
+        h2: 'Memberships',
+        description: 'Assign users to tenants and manage tenant-scoped access.',
+      },
+      {
+        routeName: 'Runtime nodes',
+        source: runtimeNodesViewSource,
+        h2: 'Runtime nodes',
+        description: 'Register and inspect telephony runtime nodes managed by the control plane.',
+      },
+      {
+        routeName: 'Conference operations',
+        source: conferenceOperationsViewSource,
+        h2: 'Conference operations',
+        description: 'Inspect conference lifecycle operations and their execution state.',
+      },
+      {
+        routeName: 'Runtime operations',
+        source: runtimeOperationsViewSource,
+        h2: 'Runtime operations',
+        description: 'Track control-plane operations issued to telephony runtimes.',
+      },
+      {
+        routeName: 'Runtime reconciliations',
+        source: runtimeReconciliationsViewSource,
+        h2: 'Runtime reconciliations',
+        description: 'Compare desired state with observed state and review reconciliation outcomes.',
+      },
+      {
+        routeName: 'Audit records',
+        source: auditRecordsViewSource,
+        h2: 'Audit records',
+        description: 'Review recorded administrative and runtime control-plane activity.',
+      },
+    ]
+
+    for (const { routeName, source, h2, description } of primaryRouteSources) {
+      expect(source, `${routeName} must preserve the literal page-header hook`).toContain('class="section-heading"')
+      expect(source, `${routeName} must preserve its H2`).toContain(`<h2 id=`)
+      expect(source, `${routeName} must include ${h2}`).toContain(h2)
+      expect(source, `${routeName} must include route-purpose copy`).toContain(description)
+    }
+  })
+
+  it('rejects known visible PascalCase terminology leaks in scoped view templates', () => {
+    const viewSources = {
+      AuditRecordsView: auditRecordsViewSource,
+      ConferenceOperationsView: conferenceOperationsViewSource,
+      DashboardView: dashboardViewSource,
+      RuntimeNodesView: runtimeNodesViewSource,
+      RuntimeOperationsView: runtimeOperationsViewSource,
+      RuntimeReconciliationsView: runtimeReconciliationsViewSource,
+      UserDetailView: userDetailViewSource,
+      UsersView: usersViewSource,
+    }
+
+    for (const [viewName, source] of Object.entries(viewSources)) {
+      const templateSource = source.match(/<template>([\s\S]*?)<\/template>/)?.[1] ?? ''
+      expect(templateSource, `${viewName} must not render RuntimeNodes`).not.toContain('RuntimeNodes')
+      expect(templateSource, `${viewName} must not render TelephonySessions`).not.toContain('TelephonySessions')
+      expect(templateSource, `${viewName} must not render Runtime Operations in sentence copy`).not.toContain('Runtime Operations')
+      expect(templateSource, `${viewName} must not render Runtime Reconciliations in sentence copy`).not.toContain('Runtime Reconciliations')
+    }
   })
 
   it('codifies the shared responsive layout contract for stable UI routes', () => {

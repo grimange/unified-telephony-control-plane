@@ -90,17 +90,26 @@
           class="side-nav"
           aria-label="Primary"
         >
-          <RouterLink
-            v-for="entry in navigation"
-            :key="entry.route"
-            :to="entry.route"
-            :class="{ active: isActive(entry.route, entry.exact) }"
-            :aria-current="isActive(entry.route, entry.exact) ? 'page' : undefined"
-            @click="navigationOpen = false"
-            @keydown.esc="navigationOpen = false"
+          <div
+            v-for="group in navigationGroups"
+            :key="group.key"
+            class="side-nav__group"
           >
-            {{ entry.label }}
-          </RouterLink>
+            <p class="panel-label side-nav__group-label">
+              {{ group.label }}
+            </p>
+            <RouterLink
+              v-for="entry in group.entries"
+              :key="entry.route"
+              :to="entry.route"
+              :class="{ active: isActive(entry.route, entry.exact) }"
+              :aria-current="isActive(entry.route, entry.exact) ? 'page' : undefined"
+              @click="navigationOpen = false"
+              @keydown.esc="navigationOpen = false"
+            >
+              {{ entry.label }}
+            </RouterLink>
+          </div>
         </nav>
         <div class="tenant-context">
           <strong>Tenant context</strong>
@@ -130,7 +139,7 @@ import {
   activeMemberships,
   clearOneTimeSignalingCredential,
   endSession,
-  navigation,
+  navigationGroups,
   session,
   switchTenant,
 } from '../state/appState'

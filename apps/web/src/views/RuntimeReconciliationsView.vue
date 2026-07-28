@@ -4,9 +4,14 @@
     aria-labelledby="runtime-reconciliations-title"
   >
     <div class="section-heading">
-      <h2 id="runtime-reconciliations-title">
-        Runtime reconciliations
-      </h2>
+      <div>
+        <h2 id="runtime-reconciliations-title">
+          Runtime reconciliations
+        </h2>
+        <p class="meta">
+          Compare desired state with observed state and review reconciliation outcomes.
+        </p>
+      </div>
       <UiStatusBadge
         class="live-updates-badge"
         :label="runtimeNodeRealtimeStatusText()"
@@ -33,7 +38,7 @@
       >
         <UiFormField
           id="runtime-reconciliation-node-filter"
-          label="RuntimeNode ID"
+          label="Runtime node ID"
         >
           <template #default="{ id, describedBy, invalid }">
             <UiTextInput
@@ -42,7 +47,7 @@
               :aria-describedby="describedBy"
               :invalid="invalid"
               autocomplete="off"
-              placeholder="RuntimeNode identifier"
+              placeholder="Runtime node identifier"
             />
           </template>
         </UiFormField>
@@ -96,7 +101,7 @@
         </UiFormField>
         <UiFormField
           id="runtime-reconciliation-operation-filter"
-          label="Runtime Operation ID"
+          label="Runtime operation ID"
         >
           <template #default="{ id, describedBy, invalid }">
             <UiTextInput
@@ -105,7 +110,7 @@
               :aria-describedby="describedBy"
               :invalid="invalid"
               autocomplete="off"
-              placeholder="Runtime Operation identifier"
+              placeholder="Runtime operation identifier"
             />
           </template>
         </UiFormField>
@@ -146,21 +151,21 @@
       :status="runtimeReconciliationsResource.state.status"
       :error="runtimeReconciliationsResource.state.error"
       :has-data="runtimeReconciliations.length > 0"
-      title="Runtime Reconciliation list"
+      title="Runtime reconciliation list"
       label="Reconciliations"
-      loading-label="Loading Runtime Reconciliations."
-      refreshing-label="Refreshing Runtime Reconciliations."
-      empty-title="No Runtime Reconciliations"
-      empty-message="No Runtime Reconciliations matched the current filters."
-      error-title="Runtime Reconciliations unavailable"
-      forbidden-title="Runtime Reconciliations forbidden"
+      loading-label="Loading runtime reconciliations."
+      refreshing-label="Refreshing runtime reconciliations."
+      empty-title="No runtime reconciliations"
+      empty-message="No runtime reconciliations matched the current filters."
+      error-title="Runtime reconciliations unavailable"
+      forbidden-title="Runtime reconciliations forbidden"
     >
       <template #actions>
         <UiListSummary
           :page="runtimeReconciliationPagination.page"
           :total="runtimeReconciliationPagination.total"
           :count="runtimeReconciliations.length"
-          item-label="Runtime Reconciliations"
+          item-label="runtime reconciliations"
         />
       </template>
       <div class="data-table">
@@ -213,19 +218,19 @@
           >
             <UiLoadingState
               v-if="selectedRuntimeReconciliationResource.state.status === 'loading'"
-              label="Loading Runtime Reconciliation detail."
+              label="Loading runtime reconciliation detail."
             />
             <UiAlert
               v-if="selectedRuntimeReconciliationResource.state.status === 'error' || selectedRuntimeReconciliationResource.state.status === 'forbidden'"
               variant="error"
-              title="Runtime Reconciliation detail unavailable"
+              title="Runtime reconciliation detail unavailable"
             >
               {{ selectedRuntimeReconciliationResource.state.error }}
             </UiAlert>
             <section
               v-if="selectedRuntimeReconciliation"
               class="detail-section"
-              aria-label="Selected Runtime Reconciliation detail"
+              aria-label="Selected runtime reconciliation detail"
             >
               <h3>{{ shortId(selectedRuntimeReconciliation.id) }}</h3>
               <dl class="definition-grid">
@@ -242,7 +247,7 @@
                   <dd>{{ driftLabel(selectedRuntimeReconciliation.has_drift) }}</dd>
                 </div>
                 <div>
-                  <dt>RuntimeNode</dt>
+                  <dt>Runtime node</dt>
                   <dd>{{ runtimeNodeLabel(selectedRuntimeReconciliation) }}</dd>
                 </div>
                 <div>

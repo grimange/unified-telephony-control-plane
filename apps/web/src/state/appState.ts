@@ -17,7 +17,7 @@ import {
   type SignalingMetadata,
 } from '../api/platform'
 import type { AsyncResourceStatus } from '../composables/asyncState'
-import { hasCapability, visibleNavigationEntries } from '../navigation'
+import { hasCapability, visibleNavigationEntries, visibleNavigationGroups } from '../navigation'
 import { disconnectRuntimeNodeRealtime, leaveRuntimeNodeRealtimeTenant } from '../realtime/runtimeNodeRealtime'
 import { clearNotifications, notify } from './notifications'
 
@@ -65,6 +65,7 @@ export const activeMemberships = computed(() =>
 
 export const canViewUsers = computed(() => can('platform.users.view') || can('tenant.memberships.view'))
 export const navigation = computed(() => visibleNavigationEntries(session.value))
+export const navigationGroups = computed(() => visibleNavigationGroups(session.value))
 
 export const runtimeFamilyOptions = computed(() =>
   Object.entries(runtimeCatalog.value?.runtime_families ?? {}).map(([key, family]) => ({

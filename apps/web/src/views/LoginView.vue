@@ -3,9 +3,15 @@
     <UiPanel
       id="login-title"
       class="auth-panel"
-      label="Unified Telephony Control Plane"
+      label="Access"
       title="Sign in"
     >
+      <div>
+        <h1>Unified Telephony Control Plane</h1>
+        <p class="meta">
+          Operate tenant access, telephony runtime nodes, lifecycle operations, reconciliation, and audit evidence from one control-plane workspace.
+        </p>
+      </div>
       <form
         class="form-stack"
         @submit.prevent="login"

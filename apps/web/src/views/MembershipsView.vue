@@ -4,9 +4,14 @@
     aria-labelledby="memberships-title"
   >
     <div class="section-heading">
-      <h2 id="memberships-title">
-        Memberships
-      </h2>
+      <div>
+        <h2 id="memberships-title">
+          Memberships
+        </h2>
+        <p class="meta">
+          Assign users to tenants and manage tenant-scoped access.
+        </p>
+      </div>
       <UiButton
         type="button"
         variant="secondary"

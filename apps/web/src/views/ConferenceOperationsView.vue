@@ -1,12 +1,17 @@
 <template>
   <section
     class="workspace conference-operations"
-    aria-labelledby="conferences-title"
+    aria-labelledby="conference-operations-title"
   >
     <div class="section-heading">
-      <h2 id="conferences-title">
-        Conferences
-      </h2>
+      <div>
+        <h2 id="conference-operations-title">
+          Conference operations
+        </h2>
+        <p class="meta">
+          Inspect conference lifecycle operations and their execution state.
+        </p>
+      </div>
       <UiStatusBadge
         class="live-updates-badge"
         :label="runtimeNodeRealtimeStatusText()"
@@ -27,19 +32,19 @@
       :status="conferenceListResource.state.status"
       :error="conferenceListResource.state.error"
       :has-data="conferences.length > 0"
-      title="Conference list"
+      title="Conference operation list"
       label="Operations"
-      loading-label="Loading conferences."
-      refreshing-label="Refreshing conferences."
-      empty-title="No conferences"
-      empty-message="No Conferences were returned."
-      error-title="Conferences unavailable"
-      forbidden-title="Conferences forbidden"
+      loading-label="Loading conference operations."
+      refreshing-label="Refreshing conference operations."
+      empty-title="No conference operations"
+      empty-message="No conference operations were returned."
+      error-title="Conference operations unavailable"
+      forbidden-title="Conference operations forbidden"
     >
       <template #actions>
         <UiListSummary
           :count="conferences.length"
-          item-label="Conferences"
+          item-label="conference operations"
         />
       </template>
       <div class="data-table">
@@ -84,19 +89,19 @@
           >
             <UiLoadingState
               v-if="selectedConferenceResource.state.status === 'loading'"
-              label="Loading conference detail."
+              label="Loading conference operation detail."
             />
             <UiAlert
               v-if="selectedConferenceResource.state.status === 'error' || selectedConferenceResource.state.status === 'forbidden'"
               variant="error"
-              title="Conference detail unavailable"
+              title="Conference operation detail unavailable"
             >
               {{ selectedConferenceResource.state.error }}
             </UiAlert>
             <section
               v-if="selectedConference"
               class="detail-section"
-              aria-label="Selected conference detail"
+              aria-label="Selected conference operation detail"
             >
               <h3>{{ selectedConference.display_name }}</h3>
               <dl class="definition-grid">
@@ -126,7 +131,7 @@
                 <h3>Participants</h3>
                 <UiListSummary
                   :count="participants.length"
-                  item-label="Participants"
+                  item-label="participants"
                 />
               </div>
               <UiLoadingState
@@ -143,7 +148,7 @@
               <UiEmptyState
                 v-if="participantsResource.state.status === 'empty'"
                 title="No participants"
-                message="No participants were returned for this Conference."
+                message="No participants were returned for this conference operation."
               />
               <div
                 v-if="participants.length > 0"

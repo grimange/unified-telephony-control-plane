@@ -4,9 +4,14 @@
     aria-labelledby="tenants-title"
   >
     <div class="section-heading">
-      <h2 id="tenants-title">
-        Tenants
-      </h2>
+      <div>
+        <h2 id="tenants-title">
+          Tenants
+        </h2>
+        <p class="meta">
+          Manage tenant workspaces represented in the control plane.
+        </p>
+      </div>
       <UiButton
         type="button"
         variant="secondary"

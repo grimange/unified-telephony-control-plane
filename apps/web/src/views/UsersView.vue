@@ -4,9 +4,14 @@
     aria-labelledby="users-title"
   >
     <div class="section-heading">
-      <h2 id="users-title">
-        Users
-      </h2>
+      <div>
+        <h2 id="users-title">
+          Users
+        </h2>
+        <p class="meta">
+          Manage operator identities that can access UTCP.
+        </p>
+      </div>
       <UiButton
         type="button"
         variant="secondary"
@@ -193,7 +198,7 @@
               Roles: {{ [...(user.role_summary?.platform ?? []), ...(user.role_summary?.tenant ?? [])].join(', ') || 'None' }}
             </p>
             <p class="meta">
-              TelephonySession: {{ user.active_telephony_session ? user.active_telephony_session.status : 'none' }}
+              Telephony session: {{ user.active_telephony_session ? user.active_telephony_session.status : 'none' }}
             </p>
             <p class="meta">
               Signaling: {{ registrationSummary(user) }}

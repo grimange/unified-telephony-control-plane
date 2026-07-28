@@ -52,7 +52,7 @@ export const routes = [
       { path: 'admin/runtime-nodes', name: 'admin-runtime-nodes', component: RuntimeNodesView, meta: { requiresAuth: true, title: 'Runtime nodes', capability: 'runtime.nodes.view' } },
       { path: 'operations/runtime-operations', name: 'operations-runtime-operations', component: RuntimeOperationsView, meta: { requiresAuth: true, title: 'Runtime operations', capability: 'runtime.nodes.view' } },
       { path: 'operations/runtime-reconciliations', name: 'operations-runtime-reconciliations', component: RuntimeReconciliationsView, meta: { requiresAuth: true, title: 'Runtime reconciliations', capability: 'runtime.nodes.view' } },
-      { path: 'operations/conferences', name: 'operations-conferences', component: ConferenceOperationsView, meta: { requiresAuth: true, title: 'Conferences', capability: 'telephony.conferences.view' } },
+      { path: 'operations/conferences', name: 'operations-conferences', component: ConferenceOperationsView, meta: { requiresAuth: true, title: 'Conference operations', capability: 'telephony.conferences.view' } },
       { path: 'forbidden', name: 'forbidden', component: ForbiddenView, meta: { requiresAuth: true, title: 'Forbidden' } },
       { path: ':pathMatch(.*)*', name: 'not-found', component: NotFoundView, meta: { requiresAuth: true, title: 'Not found' } },
     ],

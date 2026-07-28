@@ -418,6 +418,20 @@ h3 {
   gap: var(--space-2);
 }
 
+.side-nav__group {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.side-nav__group + .side-nav__group {
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.side-nav__group-label {
+  margin-bottom: 0;
+}
+
 .side-nav a,
 .quick-links a,
 .row-actions a {

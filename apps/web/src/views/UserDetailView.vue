@@ -100,12 +100,12 @@
 
       <UiPanel
         id="telephony-session-title"
-        title="Active TelephonySession"
+        title="Active telephony session"
         label="Telephony"
       >
         <UiEmptyState
           v-if="!selectedUserDetail.active_telephony_session"
-          title="No active TelephonySession"
+          title="No active telephony session"
           message="Signaling registration is unavailable."
         />
         <div v-else>
@@ -132,9 +132,9 @@
             variant="danger"
             :disabled="detailActionSubmitting(endTelephonySessionActionKey)"
             :loading="detailActionSubmitting(endTelephonySessionActionKey)"
-            @click="runDetailAction(endTelephonySessionActionKey, endSelectedTelephonySession, 'TelephonySession ended.')"
+            @click="runDetailAction(endTelephonySessionActionKey, endSelectedTelephonySession, 'Telephony session ended.')"
           >
-            End TelephonySession
+            End telephony session
           </UiButton>
 
           <section

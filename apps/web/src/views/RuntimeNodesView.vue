@@ -4,9 +4,14 @@
     aria-labelledby="runtime-nodes-title"
   >
     <div class="section-heading">
-      <h2 id="runtime-nodes-title">
-        Runtime nodes
-      </h2>
+      <div>
+        <h2 id="runtime-nodes-title">
+          Runtime nodes
+        </h2>
+        <p class="meta">
+          Register and inspect telephony runtime nodes managed by the control plane.
+        </p>
+      </div>
       <UiStatusBadge
         class="live-updates-badge"
         :label="runtimeNodeRealtimeStatusText()"
@@ -30,7 +35,7 @@
     >
       <form
         class="inline-form"
-        @submit.prevent="runRuntimeAction(runtimeCreateActionKey, createRuntimeNode, 'RuntimeNode created.')"
+        @submit.prevent="runRuntimeAction(runtimeCreateActionKey, createRuntimeNode, 'Runtime node created.')"
       >
         <UiFormField
           id="runtime-name"
@@ -121,7 +126,7 @@
     <UiAlert
       v-if="runtimeActionError(runtimeCreateActionKey)"
       variant="error"
-      title="RuntimeNode action failed"
+      title="Runtime node action failed"
     >
       {{ runtimeActionError(runtimeCreateActionKey) }}
     </UiAlert>
@@ -129,19 +134,19 @@
       :status="runtimeNodesResource.state.status"
       :error="runtimeNodesResource.state.error"
       :has-data="runtimeNodes.length > 0"
-      title="RuntimeNode list"
+      title="Runtime node list"
       label="Runtime registry"
       loading-label="Loading runtime nodes."
       refreshing-label="Refreshing runtime nodes."
-      empty-title="No RuntimeNodes"
-      empty-message="No RuntimeNodes were returned."
+      empty-title="No runtime nodes"
+      empty-message="No runtime nodes were returned."
       error-title="Runtime nodes unavailable"
       forbidden-title="Runtime nodes forbidden"
     >
       <template #actions>
         <UiListSummary
           :count="runtimeNodes.length"
-          item-label="RuntimeNodes"
+          item-label="runtime nodes"
         />
       </template>
       <div class="data-table">
@@ -180,7 +185,7 @@
               variant="secondary"
               :disabled="runtimeActionSubmitting(runtimeDesiredStateActionKey(node, node.desired_state === 'active' ? 'draining' : 'active'))"
               :loading="runtimeActionSubmitting(runtimeDesiredStateActionKey(node, node.desired_state === 'active' ? 'draining' : 'active'))"
-              @click="runRuntimeAction(runtimeDesiredStateActionKey(node, node.desired_state === 'active' ? 'draining' : 'active'), () => setRuntimeDesiredState(node.id, node.desired_state === 'active' ? 'draining' : 'active'), 'RuntimeNode desired state updated.')"
+              @click="runRuntimeAction(runtimeDesiredStateActionKey(node, node.desired_state === 'active' ? 'draining' : 'active'), () => setRuntimeDesiredState(node.id, node.desired_state === 'active' ? 'draining' : 'active'), 'Runtime node desired state updated.')"
             >
               {{ node.desired_state === 'active' ? 'Drain' : 'Activate' }}
             </UiButton>
@@ -190,7 +195,7 @@
               variant="danger"
               :disabled="runtimeActionSubmitting(runtimeDesiredStateActionKey(node, 'disabled'))"
               :loading="runtimeActionSubmitting(runtimeDesiredStateActionKey(node, 'disabled'))"
-              @click="runRuntimeAction(runtimeDesiredStateActionKey(node, 'disabled'), () => setRuntimeDesiredState(node.id, 'disabled'), 'RuntimeNode disabled.')"
+              @click="runRuntimeAction(runtimeDesiredStateActionKey(node, 'disabled'), () => setRuntimeDesiredState(node.id, 'disabled'), 'Runtime node disabled.')"
             >
               Disable
             </UiButton>
@@ -206,14 +211,14 @@
             <UiAlert
               v-if="nodeDetailStatus(node.id) === 'error' || nodeDetailStatus(node.id) === 'forbidden'"
               variant="error"
-              title="RuntimeNode details unavailable"
+              title="Runtime node details unavailable"
             >
               {{ runtimeNodeDetailStates[node.id]?.error }}
             </UiAlert>
             <form
               v-if="can('runtime.nodes.manage')"
               class="inline-form"
-              @submit.prevent="runRuntimeAction(runtimeEndpointAddActionKey(node), () => addRuntimeEndpoint(node.id), 'RuntimeNode endpoint added.')"
+              @submit.prevent="runRuntimeAction(runtimeEndpointAddActionKey(node), () => addRuntimeEndpoint(node.id), 'Runtime node endpoint added.')"
             >
               <UiFormField
                 :id="runtimeFieldId(node.id, 'endpoint-purpose')"
@@ -333,7 +338,7 @@
                   variant="ghost"
                   :disabled="runtimeActionSubmitting(runtimeEndpointRemoveActionKey(node, endpoint.id))"
                   :loading="runtimeActionSubmitting(runtimeEndpointRemoveActionKey(node, endpoint.id))"
-                  @click="runRuntimeAction(runtimeEndpointRemoveActionKey(node, endpoint.id), () => removeRuntimeEndpoint(node.id, endpoint.id), 'RuntimeNode endpoint removed.')"
+                  @click="runRuntimeAction(runtimeEndpointRemoveActionKey(node, endpoint.id), () => removeRuntimeEndpoint(node.id, endpoint.id), 'Runtime node endpoint removed.')"
                 >
                   Remove
                 </UiButton>
@@ -342,7 +347,7 @@
             <form
               v-if="can('runtime.nodes.manage')"
               class="inline-form"
-              @submit.prevent="runRuntimeAction(runtimeCapabilitiesActionKey(node), () => setRuntimeCapabilities(node.id), 'RuntimeNode capabilities updated.')"
+              @submit.prevent="runRuntimeAction(runtimeCapabilitiesActionKey(node), () => setRuntimeCapabilities(node.id), 'Runtime node capabilities updated.')"
             >
               <label
                 v-for="capability in capabilityOptionsFor(node)"
@@ -375,7 +380,7 @@
             <form
               v-if="can('runtime.credentials.rotate')"
               class="inline-form"
-              @submit.prevent="runRuntimeAction(runtimeCredentialCreateActionKey(node), () => createRuntimeCredential(node.id), 'RuntimeNode credential saved.')"
+              @submit.prevent="runRuntimeAction(runtimeCredentialCreateActionKey(node), () => createRuntimeCredential(node.id), 'Runtime node credential saved.')"
             >
               <UiFormField
                 :id="runtimeFieldId(node.id, 'credential-type')"
@@ -450,7 +455,7 @@
                   variant="ghost"
                   :disabled="runtimeActionSubmitting(runtimeCredentialRotateActionKey(node, credential.id))"
                   :loading="runtimeActionSubmitting(runtimeCredentialRotateActionKey(node, credential.id))"
-                  @click="runRuntimeAction(runtimeCredentialRotateActionKey(node, credential.id), () => rotateRuntimeCredential(node.id, credential.id), 'RuntimeNode credential rotated.')"
+                  @click="runRuntimeAction(runtimeCredentialRotateActionKey(node, credential.id), () => rotateRuntimeCredential(node.id, credential.id), 'Runtime node credential rotated.')"
                 >
                   Rotate
                 </UiButton>
@@ -460,7 +465,7 @@
                   variant="danger"
                   :disabled="runtimeActionSubmitting(runtimeCredentialRetireActionKey(node, credential.id))"
                   :loading="runtimeActionSubmitting(runtimeCredentialRetireActionKey(node, credential.id))"
-                  @click="runRuntimeAction(runtimeCredentialRetireActionKey(node, credential.id), () => retireRuntimeCredential(node.id, credential.id), 'RuntimeNode credential retired.')"
+                  @click="runRuntimeAction(runtimeCredentialRetireActionKey(node, credential.id), () => retireRuntimeCredential(node.id, credential.id), 'Runtime node credential retired.')"
                 >
                   Retire
                 </UiButton>
@@ -475,7 +480,7 @@
             <form
               v-if="can('runtime.nodes.manage') && adapterConfigurationSupported(node) && adapterConfigurationDescriptorsFor(node).length > 0"
               class="inline-form"
-              @submit.prevent="runRuntimeAction(runtimeAdapterConfigurationActionKey(node), () => saveRuntimeAdapterConfiguration(node), 'RuntimeNode adapter configuration saved.')"
+              @submit.prevent="runRuntimeAction(runtimeAdapterConfigurationActionKey(node), () => saveRuntimeAdapterConfiguration(node), 'Runtime node adapter configuration saved.')"
             >
               <RuntimeNodeCatalogField
                 v-for="field in adapterConfigurationDescriptorsFor(node)"
@@ -742,7 +747,7 @@ async function toggleNodeDetails(node: RuntimeNode): Promise<void> {
   if (detailAction.state.status === 'failed') {
     notify({
       variant: 'error',
-      title: 'RuntimeNode details unavailable',
+      title: 'Runtime node details unavailable',
       message: detailAction.state.error,
     })
   }
@@ -753,7 +758,7 @@ async function runRuntimeAction(key: string, action: () => Promise<void>, succes
   if (runtimeActions.stateFor(key).status === 'succeeded') {
     notify({
       variant: 'success',
-      title: 'RuntimeNode updated',
+      title: 'Runtime node updated',
       message: successMessage,
     })
 
@@ -763,7 +768,7 @@ async function runRuntimeAction(key: string, action: () => Promise<void>, succes
   if (runtimeActions.stateFor(key).status === 'failed') {
     notify({
       variant: 'error',
-      title: 'RuntimeNode action failed',
+      title: 'Runtime node action failed',
       message: runtimeActions.stateFor(key).error,
     })
   }

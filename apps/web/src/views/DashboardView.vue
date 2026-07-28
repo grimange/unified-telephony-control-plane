@@ -9,11 +9,14 @@
           Dashboard
         </h2>
         <p class="meta">
-          Current operator and tenant context from the authenticated session.
+          Review current control-plane state and move into management, runtime, reconciliation, and audit workflows.
         </p>
       </div>
       <UiButton
         type="button"
+        variant="secondary"
+        :loading="attentionLoading"
+        loading-label="Refreshing"
         @click="loadDashboard"
       >
         Refresh
@@ -49,7 +52,7 @@
 
       <DashboardSummaryCard
         v-if="canViewUsers"
-        title="Users and TelephonySessions"
+        title="Users and telephony sessions"
         label="Management"
         :state="usersCard"
       />
@@ -147,7 +150,7 @@ function runtimeAttentionFor(node: RuntimeNode): string[] {
 function userAttentionFor(user: AdminUser): string[] {
   const items: string[] = []
   if (user.active_telephony_session && user.active_telephony_session.status !== 'active') {
-    items.push(`${user.display_name}: TelephonySession ${user.active_telephony_session.status}`)
+    items.push(`${user.display_name}: telephony session ${user.active_telephony_session.status}`)
   }
   const registration = user.signaling_registration_summary
   if (registration?.pending_removal || ['failed', 'unavailable', 'expired'].includes(registration?.observed_state ?? '')) {
@@ -170,13 +173,13 @@ async function loadRuntimeSummary(): Promise<void> {
   try {
     const response = await identityApi.runtimeNodes()
     if (response.runtime_nodes.length === 0) {
-      runtimeCard.value = { status: 'empty', emptyText: 'No RuntimeNodes were returned.' }
+      runtimeCard.value = { status: 'empty', emptyText: 'No runtime nodes were returned.' }
     } else {
       runtimeAttention.value = response.runtime_nodes.flatMap(runtimeAttentionFor)
       runtimeCard.value = {
         status: 'success',
         countLabel: String(response.runtime_nodes.length),
-        emptyText: 'No RuntimeNodes were returned.',
+        emptyText: 'No runtime nodes were returned.',
         items: response.runtime_nodes.slice(0, 4).map((node) => `${node.name}: desired ${node.desired_state}, observed ${node.observed_state}`),
       }
     }
@@ -213,7 +216,7 @@ async function loadUserSummary(): Promise<void> {
         countLabel: response.pagination ? String(response.pagination.total) : String(response.users.length),
         emptyText: 'No users were returned.',
         items: [
-          `${activeSessions} active TelephonySession record${activeSessions === 1 ? '' : 's'} in the returned page`,
+          `${activeSessions} active telephony session record${activeSessions === 1 ? '' : 's'} in the returned page`,
           ...response.users.slice(0, 3).map((user) => `${user.display_name}: ${user.status}`),
         ],
       }
