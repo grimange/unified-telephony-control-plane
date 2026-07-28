@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+VERSIONS_FILE="$ROOT/versions.env"
+
+# shellcheck disable=SC1090
+. "$VERSIONS_FILE"
+
+fail() {
+  printf 'media config check failed: %s\n' "$1" >&2
+  exit 1
+}
+
+command -v kubectl >/dev/null 2>&1 || fail "kubectl is required"
+command -v python3 >/dev/null 2>&1 || fail "python3 is required"
+
+[ "${RTPENGINE_VERSION:-}" = "mr26.0.1.19" ] || fail "RTPENGINE_VERSION must be mr26.0.1.19"
+[ "${RTPENGINE_SOURCE_COMMIT:-}" = "3552ac76cceb24e3ec176b77ec9c25554ae5923b" ] || fail "RTPENGINE_SOURCE_COMMIT must match the selected upstream tag"
+[ -n "${RTPENGINE_BASE_IMAGE:-}" ] || fail "RTPENGINE_BASE_IMAGE must be set"
+case "$RTPENGINE_BASE_IMAGE" in
+  *@sha256:*) ;;
+  *) fail "RTPENGINE_BASE_IMAGE must include an immutable sha256 digest" ;;
+esac
+case "$RTPENGINE_BASE_IMAGE" in
+  *:latest*) fail "RTPENGINE_BASE_IMAGE must not use latest" ;;
+esac
+[ "${RTPENGINE_NG_PORT:-}" = "2223" ] || fail "RTPENGINE_NG_PORT must be 2223"
+[ "${RTPENGINE_MEDIA_PORT_MIN:-}" = "40000" ] || fail "RTPENGINE_MEDIA_PORT_MIN must be 40000"
+[ "${RTPENGINE_MEDIA_PORT_MAX:-}" = "40099" ] || fail "RTPENGINE_MEDIA_PORT_MAX must be 40099"
+
+dockerfile="$ROOT/infrastructure/docker/rtpengine/Dockerfile"
+entrypoint="$ROOT/infrastructure/docker/rtpengine/entrypoint"
+readiness="$ROOT/infrastructure/docker/rtpengine/readiness"
+[ -f "$dockerfile" ] || fail "rtpengine Dockerfile is missing"
+[ -x "$entrypoint" ] || fail "rtpengine entrypoint must be executable"
+[ -x "$readiness" ] || fail "rtpengine ng ping helper must be executable"
+
+grep -Fq "ARG RTPENGINE_VERSION=$RTPENGINE_VERSION" "$dockerfile" || fail "Dockerfile must pin the selected rtpengine version"
+grep -Fq "ARG RTPENGINE_SOURCE_COMMIT=$RTPENGINE_SOURCE_COMMIT" "$dockerfile" || fail "Dockerfile must record the selected upstream commit"
+grep -Fq "ARG RTPENGINE_BASE_IMAGE=$RTPENGINE_BASE_IMAGE" "$dockerfile" || fail "Dockerfile must use the pinned base image"
+grep -Fq "sha256sum --check" "$dockerfile" || fail "Dockerfile must checksum official upstream package assets"
+grep -Fq "USER 1000:1000" "$dockerfile" || fail "Dockerfile must run as UID/GID 1000"
+grep -Fq -- "--table=-1" "$entrypoint" || fail "rtpengine entrypoint must select userspace forwarding with --table=-1"
+grep -Fq 'fieldPath: status.podIP' "$ROOT/infrastructure/kubernetes/base/platform/rtpengine-deployment.yaml" || fail "POD_IP must come from status.podIP"
+grep -Fq '6:result4:pong' "$readiness" || fail "ng ping helper must validate result=pong"
+
+tmp_platform="$(mktemp)"
+tmp_security="$(mktemp)"
+tmp_gateway="$(mktemp)"
+trap 'rm -f "$tmp_platform" "$tmp_security" "$tmp_gateway"' EXIT
+
+kubectl kustomize "$ROOT/infrastructure/kubernetes/base/platform" >"$tmp_platform"
+kubectl kustomize "$ROOT/infrastructure/kubernetes/security" >"$tmp_security"
+kubectl kustomize "$ROOT/infrastructure/kubernetes/gateway-api" >"$tmp_gateway"
+
+python3 - "$tmp_platform" "$tmp_security" "$ROOT" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+platform_path = Path(sys.argv[1])
+security_path = Path(sys.argv[2])
+root = Path(sys.argv[3])
+
+
+def fail(message: str) -> None:
+    print(f"media config check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def docs(path: Path) -> list[dict[str, Any]]:
+    return [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(doc, dict)]
+
+
+def key(doc: dict[str, Any]) -> str:
+    metadata = doc.get("metadata") or {}
+    return f"{doc.get('kind')}/{metadata.get('namespace')}/{metadata.get('name')}"
+
+
+platform = {key(doc): doc for doc in docs(platform_path)}
+security = {key(doc): doc for doc in docs(security_path)}
+
+deployment = platform.get("Deployment/utcp-platform/rtpengine")
+service = platform.get("Service/utcp-platform/rtpengine")
+config = platform.get("ConfigMap/utcp-platform/rtpengine-config")
+if not deployment:
+    fail("rtpengine Deployment is missing")
+if not service:
+    fail("rtpengine control Service is missing")
+if not config:
+    fail("rtpengine ConfigMap is missing")
+
+if (deployment.get("metadata") or {}).get("labels", {}).get("app.kubernetes.io/component") != "rtpengine":
+    fail("Deployment must carry app.kubernetes.io/component=rtpengine")
+if (deployment.get("spec") or {}).get("replicas") != 1:
+    fail("Deployment replica count must be one")
+
+template = ((deployment.get("spec") or {}).get("template") or {})
+pod_spec = template.get("spec") or {}
+pod_labels = (template.get("metadata") or {}).get("labels") or {}
+if pod_labels.get("utcp.io/network-role") != "rtpengine-media":
+    fail("Pod must carry utcp.io/network-role=rtpengine-media")
+if pod_spec.get("automountServiceAccountToken") is not False:
+    fail("Pod must not automount a Kubernetes API credential")
+for field in ("hostNetwork", "hostPID", "hostIPC"):
+    if pod_spec.get(field) is True:
+        fail(f"Pod must not enable {field}")
+for volume in pod_spec.get("volumes") or []:
+    if "hostPath" in volume:
+        fail("Pod must not use hostPath volumes")
+
+pod_security = pod_spec.get("securityContext") or {}
+if pod_security.get("runAsNonRoot") is not True:
+    fail("Pod must set runAsNonRoot=true")
+if pod_security.get("runAsUser") != 1000 or pod_security.get("runAsGroup") != 1000:
+    fail("Pod must run as UID/GID 1000")
+if (pod_security.get("seccompProfile") or {}).get("type") != "RuntimeDefault":
+    fail("Pod must use RuntimeDefault seccomp")
+
+containers = pod_spec.get("containers") or []
+if len(containers) != 1:
+    fail("Deployment must define exactly one container")
+container = containers[0]
+if container.get("image") != "utcp-rtpengine":
+    fail("Deployment must use the repository-built utcp-rtpengine image authority")
+security_context = container.get("securityContext") or {}
+if security_context.get("allowPrivilegeEscalation") is not False:
+    fail("Container must set allowPrivilegeEscalation=false")
+if security_context.get("readOnlyRootFilesystem") is not True:
+    fail("Container must set readOnlyRootFilesystem=true")
+if (security_context.get("capabilities") or {}).get("drop") != ["ALL"]:
+    fail("Container must drop all Linux capabilities")
+if (security_context.get("capabilities") or {}).get("add"):
+    fail("Container must not add Linux capabilities")
+
+resources = container.get("resources") or {}
+if not all(resources.get(part, {}).get(name) for part in ("requests", "limits") for name in ("cpu", "memory")):
+    fail("Container must define CPU and memory requests and limits")
+
+ports = {(port.get("name"), port.get("protocol")): port.get("containerPort") for port in container.get("ports") or []}
+if ports.get(("ng", "UDP")) != 2223:
+    fail("Container must expose UDP ng port 2223")
+if ports.get(("media", "UDP")) != 40000:
+    fail("Container must expose media anchor port 40000 for the bounded range")
+if ports.get(("metrics", "TCP")) != 2224:
+    fail("Container must expose internal metrics port 2224")
+
+env = container.get("env") or []
+pod_ip = [entry for entry in env if entry.get("name") == "POD_IP"]
+if not pod_ip or (((pod_ip[0].get("valueFrom") or {}).get("fieldRef") or {}).get("fieldPath") != "status.podIP"):
+    fail("POD_IP must be supplied by downward API status.podIP")
+if not any((entry.get("configMapRef") or {}).get("name") == "rtpengine-config" for entry in container.get("envFrom") or []):
+    fail("Container must load the rtpengine ConfigMap")
+
+data = config.get("data") or {}
+if data != {
+    "RTPENGINE_NG_PORT": "2223",
+    "RTPENGINE_MEDIA_PORT_MIN": "40000",
+    "RTPENGINE_MEDIA_PORT_MAX": "40099",
+    "RTPENGINE_METRICS_PORT": "2224",
+}:
+    fail("rtpengine ConfigMap values must be the canonical T3-S1 ports")
+
+for probe_name in ("readinessProbe", "livenessProbe"):
+    command = (((container.get(probe_name) or {}).get("exec") or {}).get("command") or [])
+    if command != ["/usr/local/bin/utcp-rtpengine-ng-ping"]:
+        fail(f"{probe_name} must use real ng ping helper")
+
+service_spec = service.get("spec") or {}
+if service_spec.get("type") != "ClusterIP":
+    fail("control Service must be ClusterIP")
+if service_spec.get("ports") != [{"name": "ng", "protocol": "UDP", "port": 2223, "targetPort": "ng"}]:
+    fail("control Service must expose only UDP 2223")
+
+policy = security.get("NetworkPolicy/utcp-platform/allow-rtpengine-media")
+if not policy:
+    fail("allow-rtpengine-media NetworkPolicy is missing")
+policy_text = yaml.safe_dump(policy, sort_keys=True)
+for forbidden in ("utcp-data", "postgres", "redis", "kube-system", "0.0.0.0/0", "::/0"):
+    if forbidden in policy_text:
+        fail(f"NetworkPolicy must not allow {forbidden}")
+for required in (
+    "utcp.io/network-role: rtpengine-media",
+    "utcp.io/network-role: kamailio-signaling",
+    "utcp.io/network-role: asterisk-ari",
+    "app.kubernetes.io/name",
+    "prometheus",
+    "port: 2223",
+    "port: 40000",
+    "endPort: 40099",
+    "port: 2224",
+):
+    if required not in policy_text:
+        fail(f"NetworkPolicy missing required selector or port: {required}")
+
+cluster_config = (root / "infrastructure/k3d/cluster.yaml").read_text(encoding="utf-8")
+for forbidden in ("2223", "40000", "40099", "rtpengine"):
+    if forbidden in cluster_config:
+        fail("k3d cluster config must not publish rtpengine host UDP ports")
+
+kamailio_config = (root / "infrastructure/kubernetes/base/platform/kamailio-configmap.yaml").read_text(encoding="utf-8")
+for forbidden in ("rtpengine_offer", "rtpengine_answer", "rtpengine_manage", "rtpengine_delete"):
+    if forbidden in kamailio_config:
+        fail("T3-S1 must not add production Kamailio media routing")
+PY
+
+if grep -Eiq 'kind:[[:space:]]*(UDPRoute|TCPRoute|TLSRoute)|rtpengine|40000|40099|2223' "$tmp_gateway"; then
+  fail "Gateway API render must not expose RTP or rtpengine control"
+fi
+
+if rg -n "rtpengine|media_session|media_sessions|rtp_media|create_.*media" "$ROOT/apps/api/database" "$ROOT/apps/api/app" >/dev/null; then
+  fail "T3-S1 must not introduce durable media authority in the application"
+fi
+
+printf 'T3-S1 media config check passed\n'

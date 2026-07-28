@@ -411,6 +411,7 @@ for required in \
   allow-asterisk-ari-events-required-egress \
   allow-command-worker-to-asterisk-ari \
   allow-kamailio-signaling-required-traffic \
+  allow-rtpengine-media \
   allow-scheduler-required-egress \
   allow-migration-required-egress \
   allow-postgres-from-backend-roles \
@@ -423,10 +424,70 @@ for required in \
   }
 done
 
-if grep -Eiq '18080|18443|5060|5061|10000|20000|sips|rtp|rtpengine|freeswitch' "$tmp"; then
+if grep -Eiq '18080|18443|5060|5061|10000|20000|sips|freeswitch|NodePort|LoadBalancer|hostPort:|hostNetwork:[[:space:]]*true|privileged:[[:space:]]*true' "$tmp"; then
   printf 'security manifests include custom edge or prohibited media material\n' >&2
   exit 1
 fi
+
+python3 - "$tmp" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+docs = [doc for doc in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8")) if isinstance(doc, dict)]
+
+
+def fail(message: str) -> None:
+    print(f"security config check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def key(doc: dict[str, Any]) -> str:
+    meta = doc.get("metadata") or {}
+    return f"{doc.get('kind')}/{meta.get('namespace')}/{meta.get('name')}"
+
+
+objects = {key(doc): doc for doc in docs}
+policy = objects.get("NetworkPolicy/utcp-platform/allow-rtpengine-media")
+if not policy:
+    fail("security render must include allow-rtpengine-media")
+
+spec = policy.get("spec") or {}
+if (spec.get("podSelector") or {}).get("matchLabels") != {"utcp.io/network-role": "rtpengine-media"}:
+    fail("allow-rtpengine-media must target only rtpengine-media Pods")
+if spec.get("policyTypes") != ["Ingress", "Egress"]:
+    fail("allow-rtpengine-media must enforce both ingress and egress")
+
+ingress = spec.get("ingress") or []
+egress = spec.get("egress") or []
+if len(ingress) != 3:
+    fail("allow-rtpengine-media must define exactly ng, media, and metrics ingress")
+if len(egress) != 1:
+    fail("allow-rtpengine-media must define exactly bounded media egress")
+
+rendered = yaml.safe_dump(policy, sort_keys=True)
+for forbidden in ("utcp-data", "postgres", "redis", "kube-system", "0.0.0.0/0", "::/0"):
+    if forbidden in rendered:
+        fail(f"allow-rtpengine-media must not allow {forbidden}")
+
+if "port: 2223" not in rendered or "protocol: UDP" not in rendered:
+    fail("allow-rtpengine-media must allow UDP 2223 ng control")
+if "port: 40000" not in rendered or "endPort: 40099" not in rendered:
+    fail("allow-rtpengine-media must bound media to UDP 40000-40099")
+if "port: 2224" not in rendered or "protocol: TCP" not in rendered:
+    fail("allow-rtpengine-media must keep metrics internal on TCP 2224")
+if "utcp.io/network-role: kamailio-signaling" not in rendered:
+    fail("allow-rtpengine-media must bound ng control to Kamailio signaling")
+if "utcp.io/network-role: asterisk-ari" not in rendered:
+    fail("allow-rtpengine-media must bound in-cluster media to the selected runtime role")
+if "app.kubernetes.io/name" not in rendered or "prometheus" not in rendered:
+    fail("allow-rtpengine-media must bound metrics ingress to Prometheus")
+PY
 
 if grep -Fq 'kamailio-signaling' "$tmp"; then
   grep -Fq 'name: allow-kamailio-signaling-required-traffic' "$tmp" || {

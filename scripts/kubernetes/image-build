@@ -52,4 +52,16 @@ docker build \
   --build-arg "ASTERISK_BASE_IMAGE=${ASTERISK_BASE_IMAGE:-debian:12.11-slim}" \
   "$ROOT"
 
-printf 'K1/T0 images built: %s %s %s %s\n' "$API_LOCAL_IMAGE" "$WEB_LOCAL_IMAGE" "$GATEWAY_LOCAL_IMAGE" "$ASTERISK_LOCAL_IMAGE"
+docker build \
+  --file "$ROOT/infrastructure/docker/rtpengine/Dockerfile" \
+  --tag "$RTPENGINE_LOCAL_IMAGE" \
+  --build-arg "BUILD_VERSION=${UTCP_CONTRACT_VERSION:-0.1.0-dev}" \
+  --build-arg "BUILD_COMMIT=unknown" \
+  --build-arg "BUILD_CREATED=unknown" \
+  --build-arg "IMAGE_SOURCE=local" \
+  --build-arg "RTPENGINE_VERSION=${RTPENGINE_VERSION:-mr26.0.1.19}" \
+  --build-arg "RTPENGINE_SOURCE_COMMIT=${RTPENGINE_SOURCE_COMMIT:-3552ac76cceb24e3ec176b77ec9c25554ae5923b}" \
+  --build-arg "RTPENGINE_BASE_IMAGE=${RTPENGINE_BASE_IMAGE:-debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd}" \
+  "$ROOT"
+
+printf 'K1/T0/T3-S1 images built: %s %s %s %s %s\n' "$API_LOCAL_IMAGE" "$WEB_LOCAL_IMAGE" "$GATEWAY_LOCAL_IMAGE" "$ASTERISK_LOCAL_IMAGE" "$RTPENGINE_LOCAL_IMAGE"

@@ -70,9 +70,24 @@ if kube -A get pods,deployments,statefulsets,daemonsets,jobs,cronjobs --ignore-n
   exit 1
 fi
 
-if kube -A get pods,deployments,statefulsets,daemonsets,jobs,cronjobs --ignore-not-found 2>/dev/null | grep -Eiq 'freeswitch|kamailio|rtpengine|confbridge|(^|[^a-z])(sip|sips|rtp|srtp|pbx|pjsip)([^a-z]|$)'; then
+telephony_workloads="$(mktemp)"
+trap 'rm -f "$telephony_workloads"' EXIT
+kube -A get pods,deployments,statefulsets,daemonsets,jobs,cronjobs --ignore-not-found 2>/dev/null >"$telephony_workloads"
+if grep -Eiq 'freeswitch|confbridge|(^|[^a-z])(sip|sips|srtp|pbx|pjsip)([^a-z]|$)' "$telephony_workloads"; then
   printf 'telephony-specific workload unexpectedly exists\n' >&2
   exit 1
+fi
+if grep -Eiq 'kamailio' "$telephony_workloads"; then
+  if grep -Ei 'kamailio' "$telephony_workloads" | grep -Ev '^utcp-platform[[:space:]]+(pod/|deployment\.apps/)?kamailio' >/dev/null; then
+    printf 'Kamailio workload exists outside the bounded platform signaling role\n' >&2
+    exit 1
+  fi
+fi
+if grep -Eiq 'rtpengine|(^|[^a-z])rtp([^a-z]|$)' "$telephony_workloads"; then
+  if ! kube -n utcp-platform get deployment rtpengine -o jsonpath='{.metadata.labels.app\.kubernetes\.io/component}{" "}{.spec.replicas}' 2>/dev/null | grep -Fxq 'rtpengine 1'; then
+    printf 'rtpengine workload exists outside the bounded T3-S1 platform Deployment\n' >&2
+    exit 1
+  fi
 fi
 
 if ! registry_exists; then
@@ -88,6 +103,10 @@ if ! docker ps --filter "name=k3d-${K3D_CLUSTER_NAME}-serverlb" --format '{{.Por
 fi
 
 serverlb_ports="$(docker ps --filter "name=k3d-${K3D_CLUSTER_NAME}-serverlb" --format '{{.Ports}}')"
+if printf '%s\n' "$serverlb_ports" | grep -Eiq '/udp|:2223->|:400[0-9][0-9]->|:40100->|NodePort|rtpengine'; then
+  printf 'rtpengine host UDP publication or control exposure found on k3d server load balancer\n' >&2
+  exit 1
+fi
 if ! printf '%s\n' "$serverlb_ports" | grep -Fq "${UTCP_EDGE_HTTP_HOST}:${UTCP_EDGE_HTTP_HOST_PORT}->80"; then
   printf 'UTCP HTTP edge loopback binding not found\n' >&2
   exit 1

@@ -32,6 +32,9 @@ images:
   - name: utcp-gateway
     newName: utcp-local-registry:5000/utcp/gateway
     newTag: 0.1.0-k1-dev
+  - name: utcp-rtpengine
+    newName: utcp-local-registry:5000/utcp/rtpengine
+    newTag: 0.1.0-k1-dev
   - name: utcp-kamailio
     newName: ghcr.io/kamailio/kamailio
     newTag: 5.8.6-bookworm

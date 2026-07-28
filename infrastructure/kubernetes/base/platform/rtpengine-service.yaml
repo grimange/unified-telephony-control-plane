@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: rtpengine
+  namespace: utcp-platform
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: rtpengine
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: rtpengine
+  ports:
+    - name: ng
+      protocol: UDP
+      port: 2223
+      targetPort: ng

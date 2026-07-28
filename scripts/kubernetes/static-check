@@ -23,12 +23,12 @@ if grep -Eq '^kind:[[:space:]]*(Ingress|Gateway|HTTPRoute|GRPCRoute|TCPRoute|TLS
   exit 1
 fi
 
-if grep -Eiq 'freeswitch|rtpengine|confbridge|(^|[^a-z])(sips|rtp|srtp|pbx|pjsip)([^a-z]|$)|hostNetwork:[[:space:]]*true|hostPID:[[:space:]]*true|hostPort:|privileged:[[:space:]]*true|hostPath:' "$manifest"; then
+if grep -Eiq 'freeswitch|confbridge|(^|[^a-z])(sips|srtp|pbx|pjsip)([^a-z]|$)|hostNetwork:[[:space:]]*true|hostPID:[[:space:]]*true|hostPort:|privileged:[[:space:]]*true|hostPath:' "$manifest"; then
   printf 'Kubernetes manifest includes prohibited ingress, telephony, host, or privileged configuration\n' >&2
   exit 1
 fi
 
-if grep -Eq 'port:[[:space:]]*(5060|5061|10000|20000)|containerPort:[[:space:]]*(5060|5061|10000|20000)|name:[[:space:]]*(sip|sips|rtp)' "$manifest"; then
+if grep -Eq 'port:[[:space:]]*(5060|5061|10000|20000)|containerPort:[[:space:]]*(5060|5061|10000|20000)|name:[[:space:]]*(sip|sips|rtp)([^[:alpha:]-]|$)' "$manifest"; then
   printf 'Kubernetes manifest includes public SIP or RTP port vocabulary\n' >&2
   exit 1
 fi
@@ -43,6 +43,115 @@ if grep -Fq 'kamailio' "$manifest"; then
     exit 1
   }
 fi
+
+python3 - "$manifest" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+manifest = Path(sys.argv[1])
+docs = [doc for doc in yaml.safe_load_all(manifest.read_text(encoding="utf-8")) if isinstance(doc, dict)]
+
+
+def fail(message: str) -> None:
+    print(f"Kubernetes rtpengine static check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def key(doc: dict[str, Any]) -> str:
+    meta = doc.get("metadata") or {}
+    return f"{doc.get('kind')}/{meta.get('namespace')}/{meta.get('name')}"
+
+
+objects = {key(doc): doc for doc in docs}
+rtp_docs = [doc for doc in docs if "rtpengine" in key(doc) or (doc.get("metadata") or {}).get("labels", {}).get("app.kubernetes.io/component") == "rtpengine"]
+if not rtp_docs:
+    raise SystemExit(0)
+
+deployment = objects.get("Deployment/utcp-platform/rtpengine")
+service = objects.get("Service/utcp-platform/rtpengine")
+config = objects.get("ConfigMap/utcp-platform/rtpengine-config")
+if not deployment or not service or not config:
+    fail("rtpengine must render exactly as Deployment, ClusterIP Service, and ConfigMap in utcp-platform")
+
+if (deployment.get("spec") or {}).get("replicas") != 1:
+    fail("rtpengine Deployment must use exactly one replica")
+
+template = (((deployment.get("spec") or {}).get("template") or {}).get("spec") or {})
+labels = (((deployment.get("spec") or {}).get("template") or {}).get("metadata") or {}).get("labels") or {}
+if labels.get("app.kubernetes.io/component") != "rtpengine":
+    fail("rtpengine Pod must keep the canonical component label")
+if labels.get("utcp.io/network-role") != "rtpengine-media":
+    fail("rtpengine Pod must keep the rtpengine-media network role")
+for field in ("hostNetwork", "hostPID", "hostIPC"):
+    if template.get(field) is True:
+        fail(f"rtpengine must not enable {field}")
+if template.get("automountServiceAccountToken") is not False:
+    fail("rtpengine must not automount a Kubernetes API token")
+
+containers = template.get("containers") or []
+if len(containers) != 1:
+    fail("rtpengine must have exactly one container")
+container = containers[0]
+image = container.get("image", "")
+if not image or image.endswith(":latest"):
+    fail("rtpengine image must be explicit and must not use latest")
+if "rtpengine" not in image:
+    fail("rtpengine image authority must be the repository-built rtpengine image")
+
+security = container.get("securityContext") or {}
+if security.get("allowPrivilegeEscalation") is not False:
+    fail("rtpengine must disable privilege escalation")
+if security.get("readOnlyRootFilesystem") is not True:
+    fail("rtpengine must use a read-only root filesystem")
+if (security.get("capabilities") or {}).get("add"):
+    fail("rtpengine must not add Linux capabilities")
+if (security.get("capabilities") or {}).get("drop") != ["ALL"]:
+    fail("rtpengine must drop all Linux capabilities")
+
+pod_security = template.get("securityContext") or {}
+if pod_security.get("runAsNonRoot") is not True or pod_security.get("runAsUser") != 1000 or pod_security.get("runAsGroup") != 1000:
+    fail("rtpengine Pod security context must run as non-root UID/GID 1000")
+if (pod_security.get("seccompProfile") or {}).get("type") != "RuntimeDefault":
+    fail("rtpengine must use RuntimeDefault seccomp")
+
+resources = container.get("resources") or {}
+if not (resources.get("requests") and resources.get("limits")):
+    fail("rtpengine must define CPU and memory requests and limits")
+
+ports = {(p.get("name"), p.get("protocol")): p.get("containerPort") for p in container.get("ports") or []}
+if ports.get(("ng", "UDP")) != 2223:
+    fail("rtpengine must expose named UDP ng container port 2223")
+if ports.get(("media", "UDP")) != 40000:
+    fail("rtpengine must expose named UDP media anchor port 40000 for the 40000-40099 range")
+if ports.get(("metrics", "TCP")) != 2224:
+    fail("rtpengine metrics must be internal TCP 2224")
+
+env = container.get("env") or []
+pod_ip = [entry for entry in env if entry.get("name") == "POD_IP"]
+if not pod_ip or (((pod_ip[0].get("valueFrom") or {}).get("fieldRef") or {}).get("fieldPath") != "status.podIP"):
+    fail("rtpengine POD_IP must come from downward API status.podIP")
+env_from = container.get("envFrom") or []
+if not any((entry.get("configMapRef") or {}).get("name") == "rtpengine-config" for entry in env_from):
+    fail("rtpengine must derive runtime ports from rtpengine-config")
+
+for probe_name in ("readinessProbe", "livenessProbe"):
+    command = (((container.get(probe_name) or {}).get("exec") or {}).get("command") or [])
+    if command != ["/usr/local/bin/utcp-rtpengine-ng-ping"]:
+        fail(f"rtpengine {probe_name} must use the ng ping helper")
+
+service_spec = service.get("spec") or {}
+if service_spec.get("type") != "ClusterIP":
+    fail("rtpengine Service must be ClusterIP")
+svc_ports = service_spec.get("ports") or []
+if svc_ports != [{"name": "ng", "protocol": "UDP", "port": 2223, "targetPort": "ng"}]:
+    fail("rtpengine Service must expose only UDP 2223 ng control")
+PY
 
 awk '
   /^---$/ {check(); reset(); next}

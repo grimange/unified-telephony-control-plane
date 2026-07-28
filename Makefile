@@ -9,13 +9,17 @@ UTCP_BUILD_COMMIT ?= unknown
 UTCP_BUILD_CREATED ?= unknown
 UTCP_IMAGE_SOURCE ?= local
 UTCP_GATEWAY_IMAGE ?= utcp-gateway:dev
+UTCP_RTPENGINE_IMAGE ?= utcp-rtpengine:dev
+RTPENGINE_VERSION ?= mr26.0.1.19
+RTPENGINE_SOURCE_COMMIT ?= 3552ac76cceb24e3ec176b77ec9c25554ae5923b
+RTPENGINE_BASE_IMAGE ?= debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
 UTCP_COMPOSE_PROJECT_NAME ?= utcp-debug
 UTCP_GATEWAY_PORT ?= 18088
 COMPOSE_FILE ?= infrastructure/compose/compose.yaml
 COMPOSE_ENV_FILES ?= --env-file versions.env --env-file infrastructure/compose/env.example
 COMPOSE ?= docker compose $(COMPOSE_ENV_FILES) -f $(COMPOSE_FILE) -p $(UTCP_COMPOSE_PROJECT_NAME)
 
-.PHONY: help doctor repository-hygiene workflow-check security-audit secret-scan api-install api-test api-check web-install web-test web-lint web-typecheck web-build install test check build image-build-api image-build-web image-test-api image-test-web image-smoke-api image-smoke-web image-smoke image-inspect container-check local-config-check local-up local-status local-proof local-down compose-config compose-build compose-debug-up compose-up compose-status compose-logs compose-test compose-proof compose-ci compose-down compose-reset k3d-config-check k3d-registry-check-test k3d-create k3d-status k3d-verify k3d-registry-proof k3d-recreate-proof k3d-delete k8s-config-check k8s-image-build k8s-image-push k8s-apply k8s-status k8s-proof k8s-persistence-proof k8s-restart-proof k8s-delete gateway-config-check gateway-crds-install traefik-install gateway-tls gateway-tls-apply gateway-apply gateway-status gateway-proof gateway-delete security-config-check security-apply security-status security-proof security-delete observability-config-check observability-install observability-apply observability-status observability-proof observability-persistence-proof observability-delete control-plane-config-check control-plane-test control-plane-migrate-proof control-plane-proof control-plane-status identity-config-check identity-test identity-bootstrap-local identity-api-proof identity-browser-proof identity-status user-access-reset-password runtime-registry-config-check runtime-registry-test runtime-registry-api-proof runtime-registry-browser-proof runtime-registry-status runtime-engine-config-check runtime-engine-test runtime-engine-proof runtime-engine-status simulator-config-check simulator-test simulator-api-proof simulator-runtime-proof simulator-status telephony-domain-config-check telephony-domain-test telephony-domain-api-proof telephony-domain-runtime-proof telephony-domain-status asterisk-ari-config-check asterisk-ari-test asterisk-ari-api-proof asterisk-ari-runtime-proof asterisk-ari-status asterisk-conference-config-check asterisk-conference-test asterisk-conference-api-proof asterisk-conference-runtime-proof asterisk-conference-status asterisk-conference-recovery-test asterisk-conference-recovery-runtime-proof asterisk-conference-recovery-status ci ci-check ci-k3d k3d-ci
+.PHONY: help doctor repository-hygiene workflow-check security-audit secret-scan api-install api-test api-check web-install web-test web-lint web-typecheck web-build install test check build image-build-api image-build-web image-build-rtpengine image-test-api image-test-web image-smoke-api image-smoke-web image-smoke image-inspect container-check local-config-check local-up local-status local-proof local-down compose-config compose-build compose-debug-up compose-up compose-status compose-logs compose-test compose-proof compose-ci compose-down compose-reset k3d-config-check k3d-registry-check-test k3d-create k3d-status k3d-verify k3d-registry-proof k3d-recreate-proof k3d-delete k8s-config-check k8s-image-build k8s-image-push k8s-apply k8s-status k8s-proof k8s-persistence-proof k8s-restart-proof k8s-delete gateway-config-check gateway-crds-install traefik-install gateway-tls gateway-tls-apply gateway-apply gateway-status gateway-proof gateway-delete security-config-check security-apply security-status security-proof security-delete media-config-check observability-config-check observability-install observability-apply observability-status observability-proof observability-persistence-proof observability-delete control-plane-config-check control-plane-test control-plane-migrate-proof control-plane-proof control-plane-status identity-config-check identity-test identity-bootstrap-local identity-api-proof identity-browser-proof identity-status user-access-reset-password runtime-registry-config-check runtime-registry-test runtime-registry-api-proof runtime-registry-browser-proof runtime-registry-status runtime-engine-config-check runtime-engine-test runtime-engine-proof runtime-engine-status simulator-config-check simulator-test simulator-api-proof simulator-runtime-proof simulator-status telephony-domain-config-check telephony-domain-test telephony-domain-api-proof telephony-domain-runtime-proof telephony-domain-status asterisk-ari-config-check asterisk-ari-test asterisk-ari-api-proof asterisk-ari-runtime-proof asterisk-ari-status asterisk-conference-config-check asterisk-conference-test asterisk-conference-api-proof asterisk-conference-runtime-proof asterisk-conference-status asterisk-conference-recovery-test asterisk-conference-recovery-runtime-proof asterisk-conference-recovery-status ci ci-check ci-k3d k3d-ci
 
 help: ## Show available commands.
 	@awk 'BEGIN {FS = ":.*##"; printf "UTCP commands:\n"} /^[a-zA-Z0-9_.-]+:.*##/ {printf "  %-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -67,7 +71,7 @@ install: api-install web-install ## Install all application dependencies.
 
 test: api-test web-test ## Run backend and frontend tests.
 
-check: repository-hygiene api-check web-lint web-typecheck ## Run repository, backend, and frontend checks.
+check: repository-hygiene media-config-check api-check web-lint web-typecheck ## Run repository, backend, frontend, and media static checks.
 
 build: web-build ## Build deployable application artifacts introduced so far.
 
@@ -93,7 +97,20 @@ image-build-web: ## Build the production Vue web image.
 		--build-arg IMAGE_SOURCE=$(UTCP_IMAGE_SOURCE) \
 		.
 
-image-build: image-build-api image-build-web ## Build all production images.
+image-build-rtpengine: ## Build the pinned T3-S1 rtpengine image.
+	docker build \
+		--file infrastructure/docker/rtpengine/Dockerfile \
+		--tag $(UTCP_RTPENGINE_IMAGE) \
+		--build-arg BUILD_VERSION=$(UTCP_BUILD_VERSION) \
+		--build-arg BUILD_COMMIT=$(UTCP_BUILD_COMMIT) \
+		--build-arg BUILD_CREATED=$(UTCP_BUILD_CREATED) \
+		--build-arg IMAGE_SOURCE=$(UTCP_IMAGE_SOURCE) \
+		--build-arg RTPENGINE_VERSION=$(RTPENGINE_VERSION) \
+		--build-arg RTPENGINE_SOURCE_COMMIT=$(RTPENGINE_SOURCE_COMMIT) \
+		--build-arg RTPENGINE_BASE_IMAGE=$(RTPENGINE_BASE_IMAGE) \
+		.
+
+image-build: image-build-api image-build-web image-build-rtpengine ## Build all production images.
 
 image-test-api: ## Run Laravel tests in the backend container test stage.
 	docker build \
@@ -273,6 +290,9 @@ security-proof: ## Prove K3 positive and negative connectivity, Pod Security rej
 
 security-delete: ## Remove only K3-owned policies and generated files; this reopens namespace networking.
 	@./scripts/security/delete
+
+media-config-check: ## Validate the pinned T3-S1 rtpengine media-plane foundation without cluster mutation.
+	@./scripts/media/config-check
 
 observability-config-check: ## Validate K4 observability charts, manifests, dashboards, policies, and RBAC without mutating the cluster.
 	@./scripts/observability/config-check

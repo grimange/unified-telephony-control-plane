@@ -13,6 +13,7 @@ resources:
   - platform/allow-asterisk-ari-egress.yaml
   - platform/allow-kamailio-signaling.yaml
   - platform/allow-kamailio-registration-observer-egress.yaml
+  - platform/allow-rtpengine-media.yaml
   - platform/allow-scheduler.yaml
   - platform/allow-migration.yaml
   - data/default-deny.yaml

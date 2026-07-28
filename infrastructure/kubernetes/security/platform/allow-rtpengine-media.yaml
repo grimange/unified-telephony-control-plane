@@ -1,0 +1,74 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-rtpengine-media
+  namespace: utcp-platform
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/managed-by: utcp-k3-security
+spec:
+  podSelector:
+    matchLabels:
+      utcp.io/network-role: rtpengine-media
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: kamailio-signaling
+      ports:
+        - protocol: UDP
+          port: 2223
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: kamailio-signaling
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-runtime
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: asterisk-ari
+      ports:
+        - protocol: UDP
+          port: 40000
+          endPort: 40099
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-observability
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - prometheus
+      ports:
+        - protocol: TCP
+          port: 2224
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: kamailio-signaling
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-runtime
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: asterisk-ari
+      ports:
+        - protocol: UDP
+          port: 40000
+          endPort: 40099

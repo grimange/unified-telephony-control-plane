@@ -18,6 +18,9 @@ resources:
   - kamailio-configmap.yaml
   - kamailio-deployment.yaml
   - kamailio-service.yaml
+  - rtpengine-configmap.yaml
+  - rtpengine-deployment.yaml
+  - rtpengine-service.yaml
   - web-deployment.yaml
   - web-service.yaml
   - gateway-deployment.yaml
