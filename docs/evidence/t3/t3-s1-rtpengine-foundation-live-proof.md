@@ -25,6 +25,13 @@ reciprocal source-side egress rule, so both authorized corridors that
 `allow-rtpengine-media` declares are unusable end-to-end under default-deny.**
 Per the proof contract, no production file was modified to work around it.
 
+**`PRODUCT_DEFECT-3` is now corrected in `b21c117` and both network corridors are
+confirmed open live** — see [Authorized Corridor Reproof
+(`b21c117`)](#authorized-corridor-reproof-b21c117) at the end of this document.
+The reproof closed authorized Kamailio `ng` control and authorized Prometheus
+metrics access, and isolated one further exact defect, **`PRODUCT_DEFECT-4`**,
+which blocks scrape discovery only.
+
 **T3-S1 remains incomplete. T3 remains In Progress. `UTCP_PHASE=T1` is unchanged.**
 
 ## Source Commit
@@ -710,6 +717,446 @@ Then resume this live proof at the authorized-corridor steps only: authorized
 `ng` control from the Kamailio identity, authorized metrics from the Prometheus
 identity, and the authorized view of relay-unavailable failure. Every other step
 in this document is already proven at `812c6ec` and does not need to be repeated.
+
+Do not broaden the correction into Kamailio media routing, browser SIP,
+conference admission, V0, T4, external trunks, or PSTN.
+
+---
+
+# Authorized Corridor Reproof (`b21c117`)
+
+Verdict: `T3_S1_AUTHORIZED_CORRIDOR_REPROOF_INCOMPLETE`
+
+Focused reproof of only the two corridors that `PRODUCT_DEFECT-3` blocked. No
+completed T3-S1 corridor above was repeated, no image was rebuilt or pushed, and
+no workload was restarted.
+
+**`PRODUCT_DEFECT-3` is closed.** Both NetworkPolicy corridors are open and
+proven live: the authorized Kamailio identity now receives `result=pong` through
+the ClusterIP Service, and the authorized Prometheus identity now receives valid
+Prometheus text from rtpengine `2224/TCP`. Unauthorized control and unauthorized
+metrics both remain denied.
+
+**One further exact defect blocks closure: `PRODUCT_DEFECT-4`.** The
+`PodMonitor` shipped by `b21c117` is correct in every selector, port, and path,
+but it is never rendered into Prometheus scrape configuration because the
+Prometheus Operator — the controller that performs that rendering — has been in
+`CrashLoopBackOff` for 7d17h. Its root cause is now isolated exactly: the
+observability apiserver-egress policy's pod allow-list does not contain the label
+value the operator Pod actually carries, so the operator is not selected by any
+policy granting Kubernetes API egress and cannot start.
+
+## Source Commit
+
+- Reproof executed at `b21c117` (`fix(t3): complete rtpengine policy corridors`).
+- Branch `main`, working tree clean at start, `UTCP_PHASE=T1`, nothing pushed.
+- Authority: [`ADR-020`](../../decisions/ADR-020-t3-rtp-media-plane.md),
+  this document, and
+  [`t3-s1-rtpengine-reciprocal-egress-correction.md`](t3-s1-rtpengine-reciprocal-egress-correction.md).
+
+## Resources Applied
+
+Exactly three resources were applied, each extracted from the canonical render
+(`kubectl kustomize infrastructure/kubernetes/security` and
+`infrastructure/kubernetes/observability`). No broad overlay, namespace, or
+cluster apply was performed, and the rtpengine Deployment, Service, ConfigMap,
+`allow-rtpengine-media`, Kamailio, Prometheus, and every application workload
+were left untouched.
+
+| Resource | Before | After |
+|---|---|---|
+| `NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic` | generation `2`, rv `83992` | generation `3`, rv `423576` |
+| `NetworkPolicy/utcp-observability/allow-prometheus-egress-to-application-metrics` | generation `2`, rv `260852` | generation `3`, rv `423577` |
+| `PodMonitor/utcp-observability/rtpengine` | **absent** | generation `1`, rv `423578`, uid `ee233b37-…` |
+
+A pre-apply `kubectl diff` of both full renders confirmed the only **material**
+spec changes were these three; every other resource differed by a
+`metadata.generation` line alone with no spec content change.
+
+```text
+Pod restarts caused by apply: zero
+image changes:                zero
+Deployment rollouts:          zero
+```
+
+## Workload Preservation
+
+| Workload | Baseline UID / restarts | After reproof |
+|---|---|---|
+| rtpengine `…-hvcrn` | `fea2c8fc-…` / `0` | **identical** (image `sha256:33cf7e2e…`) |
+| kamailio `…-zn6f4` | `843bf4db-…` / `40` | **identical** |
+| prometheus `…-prometheus-0` | `3b978b25-…` / `21 21` | **identical** |
+
+A full-cluster Pod snapshot diff (name, UID, restart count) showed only two
+restart-count increments, both self-driven, both with unchanged Pod UIDs:
+
+- `worker-55fdb7d5f6-jg2x5` `34` → `35`: `exitCode 0`, `reason: Completed`, ran exactly `3600s` (`21:05:09Z` → `22:05:09Z`), the designed `--max-time=3600` self-exit in `infrastructure/docker/api/entrypoint:58`. It occurred **61 seconds before** the apply at `22:06:10Z`.
+- `utcp-monitoring-operator-…-5872t` `376` → `377`: its own pre-existing 5-minute crash-loop backoff cadence (see `PRODUCT_DEFECT-4`).
+
+Neither was caused by this reproof.
+
+## Effective Control Policy Pair
+
+Both corridors are now complete and symmetric, with explicit ports and pod-level
+destinations on every rule.
+
+```text
+control corridor
+  Kamailio source egress   : UDP 2223 -> ns utcp-platform / app.kubernetes.io/component=rtpengine
+  rtpengine dest ingress   : UDP 2223 <- ns utcp-platform / utcp.io/network-role=kamailio-signaling
+
+metrics corridor
+  Prometheus source egress : TCP 2224 -> ns utcp-platform / app.kubernetes.io/component=rtpengine
+  rtpengine dest ingress   : TCP 2224 <- ns utcp-observability / app.kubernetes.io/name In [prometheus]
+```
+
+| Requirement | Result |
+|---|---|
+| default-deny present | `utcp-platform` and `utcp-observability` both retain `podSelector: {}` with `Ingress`+`Egress` |
+| existing DNS / PostgreSQL rules intact | Kamailio `egress[0]` DNS `53`, `egress[1]` PostgreSQL `5432` unchanged |
+| existing gateway rule intact | Prometheus `egress[0]` `gateway:8081` unchanged |
+| wildcard port | **none** — every rule declares explicit ports |
+| namespace-only destination | **none** — every rtpengine rule carries a `podSelector` |
+| `ipBlock` substitute | **none** — all rtpengine peers are selector-based |
+| public exposure | none |
+
+## Authorized Kamailio Control
+
+**PASS.** Sent from the real Kamailio Pod using its own `python3`; the Kamailio
+Deployment and configuration were not modified.
+
+```text
+source pod    : kamailio-679bd6bf59-zn6f4
+source labels : utcp.io/network-role=kamailio-signaling, app.kubernetes.io/component=kamailio
+source policy : allow-kamailio-signaling-required-traffic (egress[2] UDP/2223)
+service DNS   : rtpengine.utcp-platform -> 10.43.50.16      (ClusterIP, not a Pod IP)
+destination   : Service rtpengine, UDP 2223, targetPort ng
+endpoint      : 10.42.1.216, ready=true
+
+request  : utcp-reproof-s6-kamailio d7:command4:pinge
+response : utcp-reproof-s6-kamailio d6:result4:ponge
+peer     : ('10.43.50.16', 2223)      <- reply arrived from the ClusterIP
+elapsed  : 0.000s
+RESULT   : pong
+```
+
+The request **traversed the ClusterIP Service**, not the Pod IP: the destination
+was the Service DNS name resolving to `10.43.50.16`, and the reply's source
+address is that same ClusterIP (reverse DNAT). The unique cookie
+`utcp-reproof-s6-kamailio` is echoed back, proving a freshly computed reply
+rather than rtpengine's duplicate-suppression cache.
+
+Independently confirmed at the daemon, which logged the Kamailio **Pod** IP
+(`10.42.2.112`) as the control source:
+
+```text
+INFO: [control] Replying to 'ping' from 10.42.2.112:43366 (elapsed time 0.000001 sec)
+```
+
+## Unauthorized Control Denial
+
+**PASS.** A short-lived Pod in the `default` namespace (zero NetworkPolicies, so
+unrestricted egress) isolates rtpengine's ingress as the only possible cause.
+
+```text
+source          : default/utcp-t3s1-reproof-unauthorized (10.42.1.217)
+labels          : utcp.io/proof=t3-s1-reproof-unauthorized  (no kamailio-signaling identity)
+egress validity : DNS resolved rtpengine.utcp-platform -> 10.43.50.16 in 0.003s
+ng ping         : rtpengine.utcp-platform:2223/UDP -> TimeoutError after 8.01s (bounded)
+```
+
+| Source | Source egress | Destination ingress | Result |
+|---|---:|---:|---|
+| Real Kamailio identity | allowed | allowed | **pong** |
+| Unauthorized identity | valid | denied | **failure** (bounded timeout) |
+
+No proof-only NetworkPolicy was added or patched.
+
+## PodMonitor Discovery
+
+**FAILED — `PRODUCT_DEFECT-4`.** The PodMonitor object itself is correct in every
+respect; it is simply never translated into scrape configuration.
+
+Live `PodMonitor/utcp-observability/rtpengine`:
+
+| Field | Value | Required | Match |
+|---|---|---|---|
+| `namespaceSelector.matchNames` | `[utcp-platform]` | `utcp-platform` | yes |
+| `selector.matchLabels` | `app.kubernetes.io/part-of: utcp`, `app.kubernetes.io/component: rtpengine` | same | yes |
+| endpoint `port` | `metrics` | named port → TCP `2224` | yes — the rtpengine container declares `name=metrics port=2224 proto=TCP` |
+| endpoint `path` | `/metrics` | `/metrics` | yes |
+| interval / timeout | `30s` / `10s` | — | — |
+
+The live rtpengine Pod carries `app.kubernetes.io/part-of: utcp` and
+`app.kubernetes.io/component: rtpengine`, so the selector matches.
+
+Discovery authority — `Prometheus/utcp-observability/utcp-monitoring-prometheus`:
+
+```text
+podMonitorSelector          : {}    (matches all PodMonitors)
+podMonitorNamespaceSelector : kubernetes.io/metadata.name In [utcp-observability, traefik-system]
+```
+
+The PodMonitor lives in `utcp-observability`, so **both selectors match**. The
+configuration is correct on every axis.
+
+Nevertheless the generated Prometheus configuration contains **no** PodMonitor
+job at all:
+
+```text
+generated jobs   : 10, all serviceMonitor/* (traefik, grafana, loki, utcp-application,
+                   kube-state-metrics, alertmanager, operator, prometheus)
+podMonitor jobs  : 0
+config secret rv : 260855   (unchanged; the reproof's applies produced rv 423576-423578)
+```
+
+### `PRODUCT_DEFECT-4` — the Prometheus Operator is excluded from apiserver egress by a label-value mismatch
+
+| Field | Value |
+|---|---|
+| Seam | [`infrastructure/kubernetes/observability/network-policies/allow-apiserver-egress.template.yaml`](../../../infrastructure/kubernetes/observability/network-policies/allow-apiserver-egress.template.yaml) — `spec.podSelector.matchExpressions[0].values` lists `prometheus-operator` |
+| Expected | The Prometheus Operator reaches the Kubernetes API, reconciles `PodMonitor`/`ServiceMonitor` objects into the Prometheus configuration secret, and the rtpengine target appears |
+| Actual | The operator Pod carries `app.kubernetes.io/name: kube-prometheus-stack-prometheus-operator`, which is **not** in the allow-list, so no policy grants it apiserver egress. It exits `1` on startup and has been `CrashLoopBackOff` for 7d17h (377 restarts), leaving the scrape configuration frozen ~7 days stale |
+| Operator log | `level=error msg="failed to request Kubernetes server version" err="Get \"https://10.43.0.1:443/version\": dial tcp 10.43.0.1:443: connect: connection refused"` |
+| Blast radius | All `PodMonitor`/`ServiceMonitor` changes cluster-wide, including the ADR-020 §10 rtpengine scrape target |
+
+**Selector evidence.** Every other observability Pod carries a name label that
+*is* in the allow-list, and every one of them is Ready. The operator alone does
+not:
+
+| Pod | `app.kubernetes.io/name` | In allow-list | Ready |
+|---|---|---|---|
+| `prometheus-utcp-monitoring-prometheus-0` | `prometheus` | yes | true |
+| `kube-prometheus-stack-grafana-…` | `grafana` | yes | true |
+| `alloy-…` | `alloy` | yes | true |
+| `utcp-kube-state-metrics-…` | `kube-state-metrics` | yes | true |
+| `utcp-monitoring-operator-…` | **`kube-prometheus-stack-prometheus-operator`** | **no** | **false** |
+
+Allow-list = `[prometheus, prometheus-operator, grafana, alloy, kube-state-metrics]`.
+
+Evaluating every `utcp-observability` policy against the operator Pod's actual
+labels confirms it receives no apiserver egress from any of them:
+
+```text
+allow-observability-kubernetes-api-egress        NOT selected
+allow-prometheus-egress-to-application-metrics   NOT selected
+allow-observability-required-traffic             selected -> DNS 53, intra-ns 3000/3100/9090/9093/8080/8081/12345, traefik 9100
+default-deny                                     selected -> (no egress)
+```
+
+No rule permits TCP `443` or `6443` to the API server, so the connection is
+refused.
+
+**The ipBlock pattern itself is sound — the defect is only the selector.** A
+control test from a Pod that *is* selected by the same policy (Prometheus)
+reached the API server on both the ClusterIP and the endpoint address:
+
+```text
+apiserver ClusterIP  10.43.0.1:443    -> reachable (0.000s)
+apiserver endpoint   172.24.0.2:6443  -> reachable (0.000s)
+```
+
+This proves kube-proxy DNAT is applied before the NetworkPolicy egress filter, so
+the pinned `ipBlock: 172.24.0.2/32` + TCP `6443` rule already covers
+ClusterIP-addressed API traffic. **This supersedes the earlier hypothesis in this
+document that the operator failed because it dials the ClusterIP while the policy
+pins an endpoint address — that explanation is incorrect.** The sole cause is the
+label-value mismatch.
+
+**Smallest bounded correction.** In
+`allow-apiserver-egress.template.yaml`, select the operator by a label it
+actually carries. Preferred, because it is independent of the Helm release name:
+
+```yaml
+# replace the app.kubernetes.io/name allow-list entry "prometheus-operator" with
+# a component-based match, which the operator Pod does carry:
+#   app.kubernetes.io/component: prometheus-operator
+```
+
+The minimal alternative is to add `kube-prometheus-stack-prometheus-operator` to
+the existing `values` list. Either way, add a static assertion that every
+observability workload requiring API access is actually selected by the rendered
+policy, so a chart-driven label change cannot silently re-open this gap.
+
+The three dropped targets whose labels mention rtpengine belong to the
+pre-existing `serviceMonitor/utcp-observability/utcp-application/0` job's Pod
+discovery (`2223`, `40000`, `2224`), which relabels them away. They are not
+produced by the new PodMonitor.
+
+## Authorized Prometheus Metrics Access
+
+**PASS.** Requested with the real Prometheus workload identity, through an
+ephemeral debug container sharing the Prometheus Pod's network namespace
+(Prometheus itself is distroless). The source Pod is selected by
+`allow-prometheus-egress-to-application-metrics` via
+`app.kubernetes.io/name: prometheus`.
+
+```text
+source  : prometheus-utcp-monitoring-prometheus-0 (10.42.2.115)
+target  : http://10.42.1.216:2224/metrics
+status  : HTTP/1.0 200 OK
+elapsed : 0.001s
+bytes   : 26633
+samples : 287
+
+rtpengine_ports{name="internal",address="10.42.1.216"}       100
+rtpengine_ports{name="default",address="10.42.1.216"}        100
+rtpengine_ports_free{name="internal",address="10.42.1.216"}  100
+rtpengine_ports_free{name="default",address="10.42.1.216"}   100
+rtpengine_ports_used{name="internal",address="10.42.1.216"}    0
+rtpengine_ports_used{name="default",address="10.42.1.216"}     0
+rtpengine_sessions{type="own"}                                 0
+rtpengine_sessions{type="foreign"}                             0
+rtpengine_uptime_seconds                                    3732
+```
+
+`rtpengine_ports = 100` and `rtpengine_ports_free = 100` correspond exactly to
+the bounded `40000–40099` range, labelled with the current Pod IP. This closes
+`PRODUCT_DEFECT-3` seam B at the network layer.
+
+## Prometheus Target Health
+
+**FAILED — blocked by `PRODUCT_DEFECT-4`.** Queried through Prometheus's own
+target API at `127.0.0.1:9090`:
+
+```text
+active_targets          : 10
+jobs                    : gateway, kube-prometheus-stack-grafana, kube-state-metrics,
+                          traefik-metrics, utcp-monitoring-alertmanager,
+                          utcp-monitoring-operator, utcp-monitoring-prometheus,
+                          utcp-observability/loki
+rtpengine active targets: 0
+```
+
+No rtpengine target exists, so target health, scrape URL, last-scrape timestamp,
+and last-error cannot be recorded. Prometheus was not exposed publicly for this
+proof.
+
+## Prometheus Metric Ingestion
+
+**FAILED — blocked by `PRODUCT_DEFECT-4`.** Queried through Prometheus itself
+rather than by curling the endpoint:
+
+```text
+GET /api/v1/query?query=rtpengine_ports  ->  status=success, result_count=0
+```
+
+The metric is served correctly by rtpengine and is reachable by Prometheus at the
+network layer, but it is never scraped because no scrape job exists.
+
+## Unauthorized Metrics Denial
+
+**PASS.**
+
+```text
+unauthorized -> 10.42.1.216:2224/TCP  ->  ConnectionRefused after 0.00s (bounded)
+```
+
+| Source | Expected | Actual |
+|---|---|---|
+| Real Prometheus identity | allow | **metrics returned** (`HTTP/1.0 200 OK`, 287 samples) |
+| Unauthorized identity | deny | **connection failure** (bounded `ConnectionRefused`) |
+
+The committed policy was not altered for proof convenience.
+
+## Default-Deny Preservation
+
+`utcp-platform/default-deny` and `utcp-observability/default-deny` both retain
+`podSelector: {}` with `policyTypes: [Ingress, Egress]`.
+
+## Public-Exposure Check
+
+| Surface | Result |
+|---|---|
+| rtpengine Services | one only: `utcp-platform/rtpengine`, `ClusterIP`, UDP `2223` |
+| NodePort / LoadBalancer | only `traefik-system/traefik` (TCP `80`/`443`) |
+| Gateway / HTTPRoute / TLSRoute / TCPRoute / UDPRoute / Ingress | **zero resources cluster-wide** |
+| public metrics route or Service for `2224` | **absent** |
+| HostPort | only `svclb-traefik` `80`/`443` TCP |
+| k3d host publications | `127.0.0.1:80`, `127.0.0.1:443`, `127.0.0.1:6550`, registry `5001` |
+| developer-host sockets on `2223`/`2224`/`40000–40099` | **none** |
+
+The public application edge remains TCP `80/443`.
+
+## State-Authority Preservation
+
+| Value | Before | After |
+|---|---|---|
+| database public tables | 41 | **41** |
+| tables containing `rtp`/`media` | (none) | **(none)** |
+| tenants | 27 | **27** |
+| RuntimeNodes | 110 | **110** |
+| rtpengine RuntimeNode records | 0 | **0** |
+| pending outbox | 0 | **0** |
+| Redis keys containing `rtp` | 0 | **0** |
+| Redis keys containing `media` | 0 | **0** |
+| running Kamailio config | `sha256 6e85abaf1300…`, 0 rtpengine refs | **identical** |
+
+Redis `db0` moved `1 → 0` (the scheduler's TTL-bearing cache key). No canonical
+data mutation, no new durable media authority, and no Kamailio runtime
+configuration change.
+
+## Findings
+
+| Classification | Finding |
+|---|---|
+| PASS | `PRODUCT_DEFECT-3` is **closed**. Both reciprocal egress rules are applied and both authorized corridors are proven open live |
+| PASS | Authorized Kamailio `ng` control returns `pong` through the ClusterIP Service with a unique cookie and a matching daemon-side log entry |
+| PASS | Unauthorized control remains denied with a bounded timeout, isolated through a `default`-namespace source with unrestricted egress |
+| PASS | Authorized Prometheus metrics access returns `HTTP/1.0 200 OK` with 287 samples and `rtpengine_ports = 100` |
+| PASS | Unauthorized metrics access remains denied with a bounded `ConnectionRefused` |
+| PASS | Only the two NetworkPolicies and the PodMonitor were applied; zero Pod restarts, zero image changes, zero Deployment rollouts were caused |
+| PASS | Default-deny intact; no wildcard port, namespace-only destination, or `ipBlock` substitute in either corridor |
+| PASS | No public control, metrics, or media exposure; edge unchanged at TCP `80/443` |
+| PASS | No canonical state change and no Kamailio runtime configuration change |
+| PASS | All nine repository checks pass before and after |
+| **PRODUCT_DEFECT-4** | The Prometheus Operator is not selected by `allow-observability-kubernetes-api-egress` because the chart labels it `app.kubernetes.io/name: kube-prometheus-stack-prometheus-operator` while the policy allow-list contains `prometheus-operator`. With no apiserver egress it crash-loops, so no `PodMonitor` is ever rendered into scrape configuration. The rtpengine PodMonitor, its selectors, its named port, and the Prometheus CR selectors are all verified correct |
+| EXPECTED_BEHAVIOR | `worker` restart `34` → `35`: `exitCode 0` after exactly `3600s`, the designed `--max-time=3600` self-exit, 61 seconds **before** the apply. Same Pod UID |
+| EXPECTED_BEHAVIOR | `utcp-monitoring-operator` restart `376` → `377` on its own pre-existing 5-minute backoff cadence. Same Pod UID; it is the subject of `PRODUCT_DEFECT-4`, not a consequence of this reproof |
+| EXPECTED_BEHAVIOR | Three Prometheus "dropped targets" mention rtpengine; they come from the pre-existing `utcp-application` ServiceMonitor's Pod discovery and are relabelled away, not from the new PodMonitor |
+| EXPECTED_BEHAVIOR | Helm absent; provisioned from the repository pin `HELM_VERSION=v4.0.3` with checksum verification and removed at cleanup |
+| Correction to earlier evidence | This document previously attributed the operator crash-loop to it dialling the API ClusterIP while the policy pins an endpoint address. A control test from a policy-selected Pod reaching `10.43.0.1:443` successfully disproves that. The cause is the label-value mismatch alone |
+| PROOF_LIMITATION | Prometheus target health, scrape URL, last-scrape timestamp, and metric ingestion cannot be proven until `PRODUCT_DEFECT-4` is corrected. Endpoint reachability and metric content are proven independently |
+| PROOF_LIMITATION | The ephemeral debug container attached to the Prometheus Pod exited `0` at `22:24:51Z`, but its spec entry remains on the Pod object; Kubernetes cannot remove an ephemeral container without restarting the Pod, which was not permitted. The Prometheus Pod was **not** restarted (UID and both restart counts unchanged) |
+
+## Cleanup
+
+- `default/utcp-t3s1-reproof-unauthorized` deleted; no proof Pod remains in any namespace.
+- The ephemeral debug container self-terminated (`exitCode 0`) on its own `sleep` bound without restarting Prometheus.
+- Provisioned Helm binary, archive, checksum file, and extracted artefacts removed; `helm` is no longer on `PATH`.
+- No port-forward was started. `.playwright-mcp/` is absent. No credentials were introduced or recorded.
+- The three corrected resources are left applied; rtpengine remains at one Ready replica.
+- Working tree contains only this evidence document and the roadmap updates.
+
+## Reproof Final Status
+
+```text
+PRODUCT_DEFECT-3 = closed
+PRODUCT_DEFECT-4 = open (blocks scrape discovery only)
+T3-S1 live foundation proof = INCOMPLETE
+T3 = In Progress
+UTCP_PHASE = T1 (unchanged)
+```
+
+Every rtpengine-owned criterion in T3-S1 is now proven. The single remaining gap
+is the observability platform's own apiserver-egress selector, which is not an
+rtpengine defect and is corrected in one file.
+
+## Next Exact T3 Target
+
+One bounded Codex correction for `PRODUCT_DEFECT-4` in
+`infrastructure/kubernetes/observability/network-policies/allow-apiserver-egress.template.yaml`:
+select the Prometheus Operator by `app.kubernetes.io/component: prometheus-operator`
+(the label it actually carries), or add
+`kube-prometheus-stack-prometheus-operator` to the existing `values` list. Add a
+static assertion that every observability workload requiring API access is
+selected by the rendered policy.
+
+Then re-run only these steps: apply the corrected policy, confirm the operator
+reaches Ready, confirm a `podMonitor/utcp-observability/rtpengine/0` job appears
+in the generated configuration, and confirm the rtpengine target is `up` with a
+recent scrape and at least one ingested `rtpengine_*` sample. Every other
+criterion in this document is already proven.
 
 Do not broaden the correction into Kamailio media routing, browser SIP,
 conference admission, V0, T4, external trunks, or PSTN.
