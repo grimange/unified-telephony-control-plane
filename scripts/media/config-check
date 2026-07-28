@@ -30,10 +30,12 @@ esac
 [ "${RTPENGINE_MEDIA_PORT_MAX:-}" = "40099" ] || fail "RTPENGINE_MEDIA_PORT_MAX must be 40099"
 
 dockerfile="${UTCP_RTPENGINE_DOCKERFILE:-$ROOT/infrastructure/docker/rtpengine/Dockerfile}"
-entrypoint="$ROOT/infrastructure/docker/rtpengine/entrypoint"
+entrypoint="${UTCP_RTPENGINE_ENTRYPOINT:-$ROOT/infrastructure/docker/rtpengine/entrypoint}"
+deployment_source="${UTCP_RTPENGINE_DEPLOYMENT:-$ROOT/infrastructure/kubernetes/base/platform/rtpengine-deployment.yaml}"
 readiness="$ROOT/infrastructure/docker/rtpengine/readiness"
 [ -f "$dockerfile" ] || fail "rtpengine Dockerfile is missing"
 [ -x "$entrypoint" ] || fail "rtpengine entrypoint must be executable"
+[ -f "$deployment_source" ] || fail "rtpengine Deployment source is missing"
 [ -x "$readiness" ] || fail "rtpengine ng ping helper must be executable"
 
 grep -Fq "ARG RTPENGINE_VERSION=$RTPENGINE_VERSION" "$dockerfile" || fail "Dockerfile must pin the selected rtpengine version"
@@ -109,7 +111,7 @@ for arch, package in packages.items():
         fail(f"Dockerfile package assignment for {arch} is {package}; expected {expected}")
 PY
 grep -Fq -- "--table=-1" "$entrypoint" || fail "rtpengine entrypoint must select userspace forwarding with --table=-1"
-grep -Fq 'fieldPath: status.podIP' "$ROOT/infrastructure/kubernetes/base/platform/rtpengine-deployment.yaml" || fail "POD_IP must come from status.podIP"
+grep -Fq 'fieldPath: status.podIP' "$deployment_source" || fail "POD_IP must come from status.podIP"
 grep -Fq '6:result4:pong' "$readiness" || fail "ng ping helper must validate result=pong"
 
 tmp_platform="$(mktemp)"
@@ -121,9 +123,10 @@ kubectl kustomize "$ROOT/infrastructure/kubernetes/base/platform" >"$tmp_platfor
 kubectl kustomize "$ROOT/infrastructure/kubernetes/security" >"$tmp_security"
 kubectl kustomize "$ROOT/infrastructure/kubernetes/gateway-api" >"$tmp_gateway"
 
-python3 - "$tmp_platform" "$tmp_security" "$ROOT" <<'PY'
+python3 - "$tmp_platform" "$tmp_security" "$ROOT" "$entrypoint" "$deployment_source" <<'PY'
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -134,6 +137,11 @@ import yaml
 platform_path = Path(sys.argv[1])
 security_path = Path(sys.argv[2])
 root = Path(sys.argv[3])
+entrypoint_path = Path(sys.argv[4])
+deployment_source_path = Path(sys.argv[5])
+EXPECTED_PIDFILE = "/run/rtpengine/rtpengine.pid"
+EXPECTED_WRITABLE_MOUNT = "/run/rtpengine"
+TMP_MOUNT = "/tmp"
 
 
 def fail(message: str) -> None:
@@ -152,6 +160,11 @@ def key(doc: dict[str, Any]) -> str:
 
 platform = {key(doc): doc for doc in docs(platform_path)}
 security = {key(doc): doc for doc in docs(security_path)}
+source_deployments = [
+    doc
+    for doc in docs(deployment_source_path)
+    if doc.get("kind") == "Deployment" and (doc.get("metadata") or {}).get("name") == "rtpengine"
+]
 
 deployment = platform.get("Deployment/utcp-platform/rtpengine")
 service = platform.get("Service/utcp-platform/rtpengine")
@@ -162,6 +175,9 @@ if not service:
     fail("rtpengine control Service is missing")
 if not config:
     fail("rtpengine ConfigMap is missing")
+if len(source_deployments) != 1:
+    fail("rtpengine Deployment source must define exactly one rtpengine Deployment")
+deployment_source = source_deployments[0]
 
 if (deployment.get("metadata") or {}).get("labels", {}).get("app.kubernetes.io/component") != "rtpengine":
     fail("Deployment must carry app.kubernetes.io/component=rtpengine")
@@ -238,6 +254,64 @@ for probe_name in ("readinessProbe", "livenessProbe"):
     command = (((container.get(probe_name) or {}).get("exec") or {}).get("command") or [])
     if command != ["/usr/local/bin/utcp-rtpengine-ng-ping"]:
         fail(f"{probe_name} must use real ng ping helper")
+
+source_template = ((deployment_source.get("spec") or {}).get("template") or {})
+source_pod_spec = source_template.get("spec") or {}
+source_containers = source_pod_spec.get("containers") or []
+if len(source_containers) != 1:
+    fail("rtpengine Deployment source must define exactly one container")
+source_container = source_containers[0]
+source_volumes = {volume.get("name"): volume for volume in source_pod_spec.get("volumes") or []}
+source_mounts = {
+    mount.get("mountPath"): mount
+    for mount in source_container.get("volumeMounts") or []
+    if mount.get("mountPath")
+}
+entrypoint_text = entrypoint_path.read_text(encoding="utf-8")
+pidfiles = re.findall(r"--pidfile=([^\\\s]+)", entrypoint_text)
+if len(pidfiles) != 1:
+    fail(
+        f"entrypoint must define exactly one --pidfile argument; found {len(pidfiles)}; "
+        f"entrypoint PID path must be {EXPECTED_PIDFILE}; expected writable mount {EXPECTED_WRITABLE_MOUNT}"
+    )
+pidfile = pidfiles[0].strip("'\"")
+tmp_mount = source_mounts.get(TMP_MOUNT)
+if pidfile.startswith(f"{TMP_MOUNT}/") or pidfile == TMP_MOUNT:
+    conflict = TMP_MOUNT if tmp_mount else "missing /tmp mount"
+    fail(
+        f"entrypoint PID path {pidfile} is below the conflicting parent mount {conflict}; "
+        f"expected writable mount {EXPECTED_WRITABLE_MOUNT}"
+    )
+if pidfile != EXPECTED_PIDFILE:
+    fail(
+        f"entrypoint PID path {pidfile} must be {EXPECTED_PIDFILE}; "
+        f"expected writable mount {EXPECTED_WRITABLE_MOUNT}; conflicting parent mount {TMP_MOUNT}"
+    )
+run_mount = source_mounts.get(EXPECTED_WRITABLE_MOUNT)
+if not run_mount:
+    fail(
+        f"entrypoint PID path {pidfile} requires expected writable mount "
+        f"{EXPECTED_WRITABLE_MOUNT}; conflicting parent mount {TMP_MOUNT}"
+    )
+if run_mount.get("readOnly") is True:
+    fail(
+        f"entrypoint PID path {pidfile} requires writable mount {EXPECTED_WRITABLE_MOUNT}; "
+        f"readOnly=true; conflicting parent mount {TMP_MOUNT}"
+    )
+run_volume = source_volumes.get(run_mount.get("name"))
+if not run_volume or "emptyDir" not in run_volume:
+    volume_name = run_mount.get("name", "unknown")
+    fail(
+        f"entrypoint PID path {pidfile} requires expected writable mount "
+        f"{EXPECTED_WRITABLE_MOUNT} backed by emptyDir; volume {volume_name} is not emptyDir; "
+        f"conflicting parent mount {TMP_MOUNT}"
+    )
+pid_parent = str(Path(pidfile).parent)
+if not (pid_parent == EXPECTED_WRITABLE_MOUNT or pid_parent.startswith(f"{EXPECTED_WRITABLE_MOUNT}/")):
+    fail(
+        f"entrypoint PID path {pidfile} is outside expected writable mount "
+        f"{EXPECTED_WRITABLE_MOUNT}; conflicting parent mount {TMP_MOUNT}"
+    )
 
 service_spec = service.get("spec") or {}
 if service_spec.get("type") != "ClusterIP":

@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHECK="$ROOT/scripts/media/config-check"
 SOURCE_DOCKERFILE="$ROOT/infrastructure/docker/rtpengine/Dockerfile"
+SOURCE_ENTRYPOINT="$ROOT/infrastructure/docker/rtpengine/entrypoint"
+SOURCE_DEPLOYMENT="$ROOT/infrastructure/kubernetes/base/platform/rtpengine-deployment.yaml"
 TMP_DIR="$(mktemp -d)"
 
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -11,8 +13,13 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 pass_case() {
   local name="$1"
   local dockerfile="$2"
+  local entrypoint="${3:-$SOURCE_ENTRYPOINT}"
+  local deployment="${4:-$SOURCE_DEPLOYMENT}"
 
-  if ! UTCP_RTPENGINE_DOCKERFILE="$dockerfile" "$CHECK" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
+  if ! UTCP_RTPENGINE_DOCKERFILE="$dockerfile" \
+    UTCP_RTPENGINE_ENTRYPOINT="$entrypoint" \
+    UTCP_RTPENGINE_DEPLOYMENT="$deployment" \
+    "$CHECK" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
     printf 'expected media config check to pass: %s\n' "$name" >&2
     cat "$TMP_DIR/err" >&2
     exit 1
@@ -23,8 +30,13 @@ fail_case() {
   local name="$1"
   local dockerfile="$2"
   local expected="$3"
+  local entrypoint="${4:-$SOURCE_ENTRYPOINT}"
+  local deployment="${5:-$SOURCE_DEPLOYMENT}"
 
-  if UTCP_RTPENGINE_DOCKERFILE="$dockerfile" "$CHECK" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
+  if UTCP_RTPENGINE_DOCKERFILE="$dockerfile" \
+    UTCP_RTPENGINE_ENTRYPOINT="$entrypoint" \
+    UTCP_RTPENGINE_DEPLOYMENT="$deployment" \
+    "$CHECK" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
     printf 'expected media config check to fail: %s\n' "$name" >&2
     cat "$TMP_DIR/out" >&2
     exit 1
@@ -40,15 +52,33 @@ corrected="$TMP_DIR/Dockerfile.corrected"
 tilde="$TMP_DIR/Dockerfile.tilde"
 mismatch="$TMP_DIR/Dockerfile.mismatch"
 missing_arm64="$TMP_DIR/Dockerfile.missing-arm64"
+tmp_pidfile="$TMP_DIR/entrypoint.tmp-pidfile"
+other_pidfile="$TMP_DIR/entrypoint.other-pidfile"
+duplicate_pidfile="$TMP_DIR/entrypoint.duplicate-pidfile"
+missing_run_mount="$TMP_DIR/rtpengine-deployment.missing-run.yaml"
+readonly_run_mount="$TMP_DIR/rtpengine-deployment.readonly-run.yaml"
 
 cp "$SOURCE_DOCKERFILE" "$corrected"
 sed 's/+0\./+0~/g' "$SOURCE_DOCKERFILE" >"$tilde"
 sed '0,/26\.0\.1\.19+0\.mr26\.0\.1\.19/s//26.0.1.18+0.mr26.0.1.19/' "$SOURCE_DOCKERFILE" >"$mismatch"
 sed '/trixie_arm64\.deb/d' "$SOURCE_DOCKERFILE" >"$missing_arm64"
+sed 's|--pidfile=/run/rtpengine/rtpengine.pid|--pidfile=/tmp/rtpengine/rtpengine.pid|' "$SOURCE_ENTRYPOINT" >"$tmp_pidfile"
+chmod 0755 "$tmp_pidfile"
+sed 's|--pidfile=/run/rtpengine/rtpengine.pid|--pidfile=/var/run/rtpengine.pid|' "$SOURCE_ENTRYPOINT" >"$other_pidfile"
+chmod 0755 "$other_pidfile"
+sed 's|--pidfile=/run/rtpengine/rtpengine.pid|--pidfile=/run/rtpengine/rtpengine.pid \\\n  --pidfile=/run/rtpengine/other.pid|' "$SOURCE_ENTRYPOINT" >"$duplicate_pidfile"
+chmod 0755 "$duplicate_pidfile"
+sed '/mountPath: \/run\/rtpengine/,+1d; /name: run$/,+1d' "$SOURCE_DEPLOYMENT" >"$missing_run_mount"
+sed '/mountPath: \/run\/rtpengine/a\              readOnly: true' "$SOURCE_DEPLOYMENT" >"$readonly_run_mount"
 
 pass_case "corrected Dockerfile" "$corrected"
 fail_case "tilde package separator" "$tilde" "uses '+0~'; expected convention is +0.mr26.0.1.19"
 fail_case "mismatched package version" "$mismatch" "uses package version 26.0.1.18; expected 26.0.1.19"
 fail_case "both architecture assignments required" "$missing_arm64" "must define package assignments for amd64 and arm64"
+fail_case "tmp pidfile path rejected" "$corrected" "entrypoint PID path /tmp/rtpengine/rtpengine.pid is below the conflicting parent mount /tmp" "$tmp_pidfile"
+fail_case "missing runtime mount rejected" "$corrected" "requires expected writable mount /run/rtpengine" "$SOURCE_ENTRYPOINT" "$missing_run_mount"
+fail_case "read-only runtime mount rejected" "$corrected" "requires writable mount /run/rtpengine; readOnly=true" "$SOURCE_ENTRYPOINT" "$readonly_run_mount"
+fail_case "unapproved pidfile path rejected" "$corrected" "entrypoint PID path /var/run/rtpengine.pid must be /run/rtpengine/rtpengine.pid" "$other_pidfile"
+fail_case "duplicate pidfile arguments rejected" "$corrected" "entrypoint must define exactly one --pidfile argument; found 2" "$duplicate_pidfile"
 
 printf 'media config check regression tests passed\n'

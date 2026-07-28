@@ -41,7 +41,7 @@ fi
 
 exec /usr/bin/rtpengine \
   --foreground \
-  --pidfile=/tmp/rtpengine/rtpengine.pid \
+  --pidfile=/run/rtpengine/rtpengine.pid \
   --table=-1 \
   --listen-ng="${POD_IP}:${RTPENGINE_NG_PORT}" \
   --interface="internal/${POD_IP}!${POD_IP}" \
