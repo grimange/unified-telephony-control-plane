@@ -2,30 +2,40 @@
 
 Verdict: `T3_S1_RTPENGINE_FOUNDATION_LIVE_PROOF_INCOMPLETE`
 
-This document supersedes the earlier proof attempt at `b8cd960`, which was blocked
-at image build by `PRODUCT_DEFECT-1` (pinned release asset filename separator).
-That defect is corrected in `87f0b9f` and is **confirmed resolved**: the pinned
-image now builds, both package checksums verify, the image pushes to the local
-registry, and the Kubernetes resources apply and are admitted under restricted
-Pod Security Admission.
+This document supersedes the proof attempt recorded at `bc15667`, which was
+blocked at container startup by `PRODUCT_DEFECT-2` (the `/tmp` `emptyDir`
+shadowed the image-created `/tmp/rtpengine` pidfile directory). That defect is
+corrected in `812c6ec` and is **confirmed resolved live**.
 
-The proof advanced from image build all the way to a live, admitted Pod and then
-stopped at one new, exact, reproducible defect: **`PRODUCT_DEFECT-2` — the
-`/tmp` `emptyDir` mount shadows the image-created `/tmp/rtpengine` directory, so
-the pidfile path passed by the committed entrypoint does not exist and rtpengine
-aborts during startup.** Per the proof contract, no production file was modified
-to work around it.
+The resumed proof executed the entire remaining corridor. `PRODUCT_DEFECT-1`
+and `PRODUCT_DEFECT-2` are both confirmed corrected, and the relay itself is now
+**healthy, admitted, Ready, and self-recovering in `utcp-local`**: the corrected
+image builds and pushes, only rtpengine is restarted, startup succeeds on
+`/run/rtpengine/rtpengine.pid`, restricted PSA admits the Pod, the effective
+security context matches ADR-020 §8 exactly, the Pod IP owns bind and
+advertisement, readiness validates a real `ng` `pong`, a liveness failure causes
+automatic container recovery, the media boundary stays inside the cluster,
+relay unavailability fails visibly with no fallback, restoration is fully
+automatic, the Kamailio boundary is byte-identical to git, and no durable media
+authority appears anywhere.
+
+The proof stopped at one new, exact, reproducible defect:
+**`PRODUCT_DEFECT-3` — the two authorized rtpengine consumers have no
+reciprocal source-side egress rule, so both authorized corridors that
+`allow-rtpengine-media` declares are unusable end-to-end under default-deny.**
+Per the proof contract, no production file was modified to work around it.
 
 **T3-S1 remains incomplete. T3 remains In Progress. `UTCP_PHASE=T1` is unchanged.**
 
 ## Source Commit
 
-- Proof executed at `87f0b9f` (`fix(t3): correct pinned rtpengine package asset`).
+- Proof executed at `812c6ec` (`fix(t3): use writable rtpengine pidfile path`).
 - Branch `main`, working tree clean at start and at finish, `UTCP_PHASE=T1`, nothing pushed.
 - Authority: [`ADR-020`](../../decisions/ADR-020-t3-rtp-media-plane.md),
   [`t3-rtp-media-preparation-audit.md`](t3-rtp-media-preparation-audit.md),
   [`t3-s1-rtpengine-foundation-implementation.md`](t3-s1-rtpengine-foundation-implementation.md),
-  [`t3-s1-rtpengine-package-asset-correction.md`](t3-s1-rtpengine-package-asset-correction.md).
+  [`t3-s1-rtpengine-package-asset-correction.md`](t3-s1-rtpengine-package-asset-correction.md),
+  [`t3-s1-rtpengine-pidfile-correction.md`](t3-s1-rtpengine-pidfile-correction.md).
 
 Confirmed pins in `versions.env`, all unchanged by this proof:
 
@@ -39,53 +49,214 @@ RTPENGINE_METRICS_PORT=2224
 RTPENGINE_BASE_IMAGE=debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
 ```
 
-## PRODUCT_DEFECT-2 — `/tmp` emptyDir shadows the pidfile directory, aborting startup
+The committed entrypoint carries exactly one PID argument,
+`--pidfile=/run/rtpengine/rtpengine.pid`, and no PID path remains under `/tmp`.
+
+## PRODUCT_DEFECT-3 — authorized rtpengine corridors have no reciprocal source egress
+
+`allow-rtpengine-media` correctly permits **ingress** from both authorized
+identities. Neither identity has a matching **egress** rule, and `default-deny`
+selects every Pod in both source namespaces, so both authorized corridors that
+ADR-020 declares are denied at the source before they ever reach rtpengine.
 
 | Field | Value |
 |---|---|
-| Seam | [`infrastructure/docker/rtpengine/entrypoint`](../../../infrastructure/docker/rtpengine/entrypoint) line 44 (`--pidfile=/tmp/rtpengine/rtpengine.pid`) against [`infrastructure/kubernetes/base/platform/rtpengine-deployment.yaml`](../../../infrastructure/kubernetes/base/platform/rtpengine-deployment.yaml) lines 78–79 (`emptyDir` mounted at `/tmp`) |
-| Expected | The container starts rtpengine in the foreground, binds ng on the Pod IP, and the readiness `ng` ping returns `pong` |
-| Actual | rtpengine logs `CRIT: [core] Failed to create PID file (No such file or directory), aborting startup`, exits `255` immediately after start, and the Pod enters `CrashLoopBackOff` |
-| Static checks | **All passed** — `make media-config-check`, `make media-config-check-test`, `make k8s-config-check`, `make security-config-check`, `make check` validate ports, pins, and security fields but none asserts that the pidfile path survives the volume mounts |
-| Pod events | `Scheduled` → `Pulled` → `Created` → `Started` → `Unhealthy` (readiness) → `BackOff restarting failed container`. **No PSA violation, no image-pull error** |
-| Restart count | 7 at the time of this record, still climbing under the standard backoff |
+| Seam A | [`infrastructure/kubernetes/security/platform/allow-kamailio-signaling.yaml`](../../../infrastructure/kubernetes/security/platform/allow-kamailio-signaling.yaml) — `egress` permits only DNS (`kube-system`) and PostgreSQL `5432`; no rule for rtpengine `2223/UDP` |
+| Seam B | [`infrastructure/kubernetes/observability/network-policies/allow-application-metrics.yaml`](../../../infrastructure/kubernetes/observability/network-policies/allow-application-metrics.yaml) — `allow-prometheus-egress-to-application-metrics` permits only `gateway:8081/TCP`; no rule for rtpengine `2224/TCP` |
+| Expected | The Kamailio identity reaches `rtpengine.utcp-platform:2223/UDP` and receives `result=pong`; the Prometheus identity reaches rtpengine `2224/TCP` and receives Prometheus text |
+| Actual | Kamailio → `2223/UDP` times out (`6.01s`); Prometheus → `2224/TCP` returns `ConnectionRefused` (`0.00s`) |
+| Static checks | **All passed** — `scripts/media/config-check` and `scripts/security/config-check` assert `allow-rtpengine-media` alone (its selectors, ports, and forbidden destinations). Neither asserts that a declared ingress source actually holds reciprocal egress, so the unusable corridor is invisible to static coverage |
+| Blast radius | Both T3-S1 authorized corridors: ng control and internal metrics |
 
-### Root cause
+### Attribution — the denial is source egress, not rtpengine ingress
 
-The Dockerfile creates and owns the pidfile directory inside the image:
+Each source was first shown to have a **working** egress path to a destination
+its own policy permits, then shown to fail only for rtpengine:
+
+| Source | Destination its policy allows | Result | rtpengine destination | Result |
+|---|---|---|---|---|
+| `kamailio-679bd6bf59-zn6f4` (`utcp.io/network-role: kamailio-signaling`) | `postgres.utcp-data:5432` | reachable, `0.00s` | `rtpengine.utcp-platform:2223/UDP` | **blocked**, `TimeoutError` at `6.01s` |
+| `prometheus-utcp-monitoring-prometheus-0` (`app.kubernetes.io/name: prometheus`) | `gateway.utcp-platform:8081` | reachable, `0.01s` | rtpengine Pod IP `:2224/TCP` | **blocked**, `ConnectionRefused` at `0.00s` |
+
+The metrics listener itself is proven healthy from inside the workload (below),
+so seam B is a policy denial and not a listener defect. Additionally, **no
+`ServiceMonitor` or `PodMonitor` for rtpengine exists** among the eight live
+monitors, so rtpengine is not yet a scrape target at all — the same gap against
+ADR-020 §10, one layer higher.
+
+### Smallest bounded correction
+
+1. Add one egress rule to `allow-kamailio-signaling.yaml` permitting `2223/UDP`
+   (and `40000–40099/UDP` for return media) to the `utcp.io/network-role:
+   rtpengine-media` pod selector in `utcp-platform`.
+2. Add one egress rule to `allow-application-metrics.yaml` permitting
+   `2224/TCP` to the same selector.
+3. Extend `scripts/media/config-check` so a declared `allow-rtpengine-media`
+   ingress source without a reciprocal egress rule fails statically, and add the
+   matching mutation cases to `scripts/media/config-check-test`.
+4. Add the rtpengine scrape target required by ADR-020 §10.
+
+This is a NetworkPolicy and static-check correction only. It must not broaden
+into Kamailio media routing, browser SIP, conference admission, V0, T4, external
+trunks, or PSTN.
+
+## Repository Checks
+
+Run before the rollout and again at the end; every check passed both times.
 
 ```text
-infrastructure/docker/rtpengine/Dockerfile:49-50
-  mkdir -p /tmp/rtpengine /run/rtpengine
-  chown -R 1000:1000 /tmp/rtpengine /run/rtpengine
+make repository-hygiene        passed
+make workflow-check            passed
+make secret-scan               passed
+make k8s-config-check          passed
+make security-config-check     passed
+make media-config-check        passed
+make media-config-check-test   passed
+make check                     passed (exit 0)
+make gateway-config-check      passed
+git diff --check               clean
+git diff --cached --check      clean
 ```
 
-The Deployment then mounts an empty `emptyDir` **over `/tmp`**, which shadows the
-image content beneath it. `/tmp/rtpengine` therefore does not exist at runtime,
-so rtpengine cannot create `/tmp/rtpengine/rtpengine.pid` and aborts before it
-binds any socket.
+Helm was absent from this environment and was provisioned temporarily from the
+repository pin `HELM_VERSION=v4.0.3` through the established checksum-verified
+process (`helm-v4.0.3-linux-amd64.tar.gz: OK`), then removed during cleanup.
 
-Verified directly in-cluster with a short-lived probe Pod using the **same image,
-same securityContext, and same two `emptyDir` mounts**:
+## Live Baseline
 
 ```text
-/tmp            drwxrwxrwx root root      (emptyDir, writable by UID 1000)
-/run/rtpengine  drwxrwxrwx root root      (emptyDir, writable by UID 1000)
-/tmp/rtpengine  does not exist            <-- shadowed away
-mkdir -p /tmp/rtpengine                   succeeds
+kubeconfig: .runtime/kubeconfig/utcp-local.yaml
+context:    k3d-utcp-local
+namespace:  utcp-platform
+nodes:      k3d-utcp-local-server-0 / agent-0 / agent-1, all Ready, all amd64, v1.35.3+k3s1
+PSA:        enforce=restricted v1.35, audit=restricted v1.35, warn=restricted v1.35
 ```
 
-The second `emptyDir` at `/run/rtpengine` is mounted exactly at its mount point,
-so that directory **does** exist and **is** writable by UID `1000` — but nothing
-currently uses it.
+The pre-rollout rtpengine Pod confirmed the defect state still corresponded to
+the **old** image and the **old** PID path:
 
-### The rest of the runtime contract is otherwise correct
+| Field | Value |
+|---|---|
+| Pod | `rtpengine-557b9cbdd7-pqnqp`, UID `3e6176c2-559c-4e8c-848e-65a502ef587a` |
+| imageID | `utcp-local-registry:5000/utcp/rtpengine@sha256:bd021530…` (pre-correction) |
+| restart count | 91, `started=false`, `Ready=false` |
+| last state | `terminated`, `exitCode 255`, `reason Error` |
+| logs | `CRIT: [core] Failed to create PID file (No such file or directory), aborting startup` |
+| Deployment | `replicas 1`, `readyReplicas <none>` |
+| EndpointSlice | `rtpengine-6p96v`, one endpoint `10.42.1.211`, `ready=false`, `serving=false` |
 
-To establish whether the pidfile path is the only barrier — without modifying any
-production file — the committed image was run in a disposable local container
-with the identical mount shape and the **committed entrypoint invoked unchanged**,
-with only `mkdir -p /tmp/rtpengine` executed first. rtpengine then started
-cleanly and satisfied every remaining runtime requirement:
+Baseline state authority and platform facts:
+
+```text
+database public tables:          41
+tables matching rtp/media:       (none)
+tenants:                         27
+runtime_nodes:                   110  (asterisk/asterisk-ari 27, simulator/simulator-deterministic 83)
+rtpengine RuntimeNode records:   0
+pending outbox:                  0
+redis db0 keys:                  1 (scheduler cache key, TTL-bearing); db1: 0
+redis keys matching rtp:         0
+failed Jobs:                     0  (utcp-migrate succeeded)
+Services with NodePort/LB:       1  (traefik LoadBalancer, TCP 80/443 only)
+k3d host publications:           127.0.0.1:80, 127.0.0.1:443, 127.0.0.1:6550, registry 127.0.0.1:5001
+NetworkPolicies (utcp-platform): 18, including default-deny and allow-rtpengine-media
+```
+
+**Kubernetes API policy-pin drift: none.**
+`scripts/security/check-apiserver-policy-drift` passed with
+`endpoint=172.24.0.2/32:6443`, matching the live `kubernetes` endpoint, so no
+generated policy needed re-rendering during this proof.
+
+## Final Image Provenance
+
+```bash
+make image-build-rtpengine UTCP_BUILD_COMMIT=812c6ec
+```
+
+| Field | Value |
+|---|---|
+| local tag | `utcp-rtpengine:dev` |
+| image ID / index digest | `sha256:33cf7e2e5d1987b26893bd4a78c68050cfbc8fc6824723818bfd14a0c60c2f58` |
+| `linux/amd64` manifest digest | `sha256:ad8c7e02aa50a73ab79a1b06338f11a874876ff956cf3289171716d655f72778` |
+| config digest | `sha256:91713bc143219422e1d003a43dba7d2e78b4bdc5a54997524b3c285a7e2d48b4` |
+| `org.opencontainers.image.revision` | **`812c6ec`** |
+| `org.opencontainers.image.version` | `0.1.0-dev` |
+| architecture / os | `amd64` / `linux` |
+| configured user | **`1000:1000`** |
+| entrypoint | `/usr/local/bin/utcp-rtpengine-entrypoint` |
+| rtpengine version | `26.0.1.19+0~mr26.0.1.19` (`dpkg`: `rtpengine-daemon 26.0.1.19+0~mr26.0.1.19+gh+trixie amd64`) |
+| upstream commit | `3552ac76cceb24e3ec176b77ec9c25554ae5923b` (recorded in image history) |
+| pidfile in image | `--pidfile=/run/rtpengine/rtpengine.pid` (line 44, single occurrence) |
+| `/run/rtpengine` in image | `drwxr-xr-x 2 1000 1000` |
+
+Package checksum layer provenance — the build layer records both the pinned
+asset checksum and the verification step:
+
+```text
+c60c7a1463e454dbcff81bf0fbd07c65dbeac742e5997d0c611f40f09161f950
+sha256sum --check
+mr26.0.1.19
+3552ac76cceb24e3ec176b77ec9c25554ae5923b
+```
+
+Embedded-credential scan: `Config.Env` is `["PATH=…"]` only; a filesystem sweep
+for `*.pem`, `*.key`, `id_rsa*`, `.netrc`, and `*.p12` outside the CA trust store
+returned only `/usr/lib/ssl/cert.pem` (the Debian CA bundle). **No credential is
+embedded.**
+
+The revision is not `unknown` and does not identify an earlier commit.
+
+## Registry Push Result
+
+Pushed rtpengine **only**, using the canonical library's own references
+(`scripts/kubernetes/lib` — `required_tools`, `ensure_registry`, `check_k1_tag`,
+`RTPENGINE_LOCAL_IMAGE`, `RTPENGINE_HOST_IMAGE`), because
+`scripts/kubernetes/image-push` pushes all five images and this proof must not
+republish `api`, `web`, `gateway`, or `asterisk-ari`.
+
+| Field | Value |
+|---|---|
+| registry reference | `127.0.0.1:5001/utcp/rtpengine:0.1.0-k1-dev` |
+| in-cluster reference | `utcp-local-registry:5000/utcp/rtpengine:0.1.0-k1-dev` |
+| tag | `0.1.0-k1-dev` (`K1_IMAGE_TAG`) — **no `latest`** |
+| pushed index digest | `sha256:33cf7e2e5d1987b26893bd4a78c68050cfbc8fc6824723818bfd14a0c60c2f58` |
+| `Docker-Content-Digest` header | identical (`sha256:33cf7e2e…`) |
+| `linux/amd64` platform digest | `sha256:ad8c7e02aa50a73ab79a1b06338f11a874876ff956cf3289171716d655f72778` |
+| local image digest | identical (`sha256:33cf7e2e…`) |
+| registry reachability | `GET /v2/_catalog` → `200`; `utcp/rtpengine` present; tags `["0.1.0-k1-dev"]` |
+| pull-back verification | `docker pull` returned the same digest |
+
+## rtpengine-Only Rollout
+
+The committed `imagePullPolicy` is **`Always`**
+(`rtpengine-deployment.yaml:33`), so the node pulled the corrected digest on the
+new Pod without any cache intervention. No manifest changed in `812c6ec`, so
+**nothing was re-applied** — only `rollout restart deployment/rtpengine`.
+
+```text
+restart issued:  2026-07-28T20:57:08Z
+rollout settled: 2026-07-28T20:57:11Z   (successfully rolled out, exit 0)
+```
+
+| | Old Pod | New Pod |
+|---|---|---|
+| name | `rtpengine-557b9cbdd7-pqnqp` | `rtpengine-74cd786966-x2lqm` |
+| UID | `3e6176c2-559c-4e8c-848e-65a502ef587a` | `d611728c-7714-46ec-a0a1-dfabf028e907` |
+| imageID | `…@sha256:bd021530…` | **`…@sha256:33cf7e2e…`** |
+| Pod IP | `10.42.1.211` | `10.42.1.214` |
+| ready / restarts | `false` / 92 | `true` / 0 |
+
+**The running `imageID` matches the pushed registry digest exactly** — this is
+content-digest equality, not tag equality.
+
+## Preserved Workloads
+
+A full-cluster Pod snapshot (name, UID, restart count) was taken before and
+after the rollout. The diff contains **exactly one line pair** — the rtpengine
+Pod replacement. All **34** other Pods retained their original UIDs and restart
+counts. No unrelated workload was rebuilt, re-applied, or restarted.
+
+## Startup and PID-File Result
 
 ```text
 INFO: [core] Version 26.0.1.19+0~mr26.0.1.19 initialising
@@ -93,377 +264,387 @@ INFO: [http] Websocket listener thread running
 INFO: [core] Startup complete, version 26.0.1.19+0~mr26.0.1.19
 ```
 
-Process command line (PID 1, UID `1000`):
+**No PID-file error appears.** Process arguments (`/proc/1/cmdline`):
 
 ```text
-/usr/bin/rtpengine --foreground --pidfile=/tmp/rtpengine/rtpengine.pid --table=-1
-  --listen-ng=<IP>:2223 --interface=internal/<IP>!<IP>
-  --port-min=40000 --port-max=40099 --listen-http=<IP>:2224 --log-stderr
+/usr/bin/rtpengine --foreground --pidfile=/run/rtpengine/rtpengine.pid \
+  --table=-1 --listen-ng=10.42.1.214:2223 \
+  --interface=internal/10.42.1.214!10.42.1.214 \
+  --port-min=40000 --port-max=40099 \
+  --listen-http=10.42.1.214:2224 --log-stderr
 ```
 
 | Requirement | Result |
 |---|---|
-| `--table=-1` userspace forwarding | active |
-| ng control port | UDP `2223` on the injected IP |
-| media range | exactly `40000–40099` (`rtpengine_ports 100`, `rtpengine_ports_free 100`) |
-| metrics bind | TCP `2224` on the injected IP |
-| bind/advertise identity | `--interface=internal/<IP>!<IP>`, no node IP, Service IP, loopback, or hard-coded host IP |
-| privileged/kernel initialisation | none attempted; no `xt_RTPENGINE`, no forwarding setup |
-| committed readiness helper | `/usr/local/bin/utcp-rtpengine-ng-ping` returned a validated `result=pong` (exit `0`) |
+| `/run/rtpengine/rtpengine.pid` exists | `-rw-r--r-- 1 1000 1000 2` |
+| PID file writable and correctly owned | directory writable; owner `1000:1000`; content `1` (rtpengine is PID 1) |
+| `/tmp/rtpengine` required | **no** — `/tmp` is an empty `emptyDir` at runtime and startup succeeds regardless |
+| `--table=-1` (userspace forwarding) | active |
+| `--listen-ng=<Pod IP>:2223` | active |
+| `--interface=internal/<Pod IP>!<Pod IP>` | active |
+| `--port-min=40000` / `--port-max=40099` | active |
+| `--listen-http=<Pod IP>:2224` | active |
+| kernel-module or privileged init | **none attempted** — no kernel-table message in the logs |
 
-So `PRODUCT_DEFECT-2` is the **only** barrier between the current commit and a
-Ready rtpengine Pod. No further defect is hidden behind it at the process level.
+## Pod Security Admission Result
 
-### Smallest bounded Codex correction
+Admitted under the existing restricted labels with **zero violation, warning, or
+audit events**. Event sequence: `Scheduled` → `Pulling` → `Pulled` (1.075s) →
+`Created` → `Started`. The ReplicaSet recorded only `SuccessfulCreate`.
 
-Point the pidfile at the already-mounted, already-writable `/run/rtpengine`
-`emptyDir` — a one-line change in `infrastructure/docker/rtpengine/entrypoint`:
+## Effective Security Context
 
-```text
-line 44:  --pidfile=/run/rtpengine/rtpengine.pid \
-```
+Captured from `/proc/1/status` and the mount table **of the real running
+workload** — no substitute probe Pod was used.
 
-`/run/rtpengine` is mounted exactly at its mount point, so it always exists and
-is writable by UID `1000`; it exists in the committed manifest for runtime
-scratch and is currently unused. Equally small alternatives, in order of
-preference:
-
-1. the change above (uses the volume already provisioned for this purpose);
-2. drop `--pidfile` entirely — a PID file carries no meaning for a single
-   foreground process under Kubernetes supervision;
-3. `mkdir -p /tmp/rtpengine` in the entrypoint before `exec`.
-
-Recommended hardening, so a mount-shadowed runtime path fails statically rather
-than at rollout: extend `scripts/media/config-check` to assert that every
-filesystem path the entrypoint writes to (currently the pidfile directory) is
-either a rendered `volumeMounts.mountPath` itself or nested under one that the
-image does not have to pre-create.
-
-## Proven Live
-
-### Repository checks — all passed, before and after
-
-| Check | Before apply | After apply |
+| Control | Required | Observed |
 |---|---|---|
-| `make repository-hygiene` | passed | passed |
-| `make workflow-check` | passed | passed |
-| `make secret-scan` | passed | passed |
-| `make k8s-config-check` | passed | passed |
-| `make security-config-check` | passed (`namespace_psa_authority=ok`, `restricted_workload_compatibility=ok`) | passed |
-| `make media-config-check` | passed (`T3-S1 media config check passed`) | passed |
-| `make media-config-check-test` | passed | passed |
-| `make gateway-config-check` | passed (Gateway API `v1.5.1` CRD checksum verified; Traefik chart `41.0.2` renders `docker.io/traefik:v3.7.7`) | passed |
-| `make check` | passed (hygiene, media, Pint, ESLint, vue-tsc) | passed |
-| `git diff --check` / `git diff --cached --check` | clean | clean |
+| UID | `1000` | `Uid: 1000 1000 1000 1000` |
+| GID | `1000` | `Gid: 1000 1000 1000 1000` |
+| capabilities | none | `CapInh/CapPrm/CapEff/CapBnd/CapAmb` all `0000000000000000` |
+| `NoNewPrivs` | enabled | `NoNewPrivs: 1` |
+| seccomp | `RuntimeDefault` | `Seccomp: 2` (filter mode), `Seccomp_filters: 1` |
+| root filesystem | read-only | `overlay / overlay ro,relatime` |
+| writable paths | declared volumes only | `/tmp` and `/run/rtpengine` (both `emptyDir`), plus the kubelet-managed `/etc/hosts` |
+| service-account token | absent | `/var/run/secrets/kubernetes.io/serviceaccount`: **No such file or directory** |
+| namespace sharing | none | `hostNetwork`, `hostPID`, `hostIPC`, `shareProcessNamespace` all unset |
+| HostPort | absent | no container port declares `hostPort` |
+| HostPath | absent | volumes are `tmp` and `run`, both `emptyDir` |
 
-Helm was absent from this environment and was provisioned to a scratch directory
-from the repository's own pin (`HELM_VERSION=v4.0.3`) using the same
-checksum-verified procedure as `scripts/ci/install-kubernetes-tools`
-(`helm-v4.0.3-linux-amd64.tar.gz: OK`, `v4.0.3+g9db13ee`). No repository
-dependency or lockfile changed; the binary was removed during cleanup.
-
-### Cluster baseline
-
-- Context `k3d-utcp-local`, namespace `utcp-platform`, kubeconfig `.runtime/kubeconfig/utcp-local.yaml`.
-- Nodes all `Ready`, all `amd64`, all `v1.35.3+k3s1`: `server-0` (172.24.0.2), `agent-1` (172.24.0.3), `agent-0` (172.24.0.4).
-- PSA on `utcp-platform`, `utcp-runtime`, `utcp-observability`: `enforce`/`audit`/`warn` = `restricted`, all pinned `v1.35`.
-- 16 pre-existing `utcp-platform` Pods, all Ready; 15 Deployments; 5 ClusterIP Services (`api`, `gateway`, `kamailio`, `reverb`, `web`); 31 NetworkPolicies cluster-wide; `utcp-migrate` 1 succeeded / 0 failed.
-- Pending outbox `0`; Redis `queues:default` `0`, `queues:default:failed` `0`.
-- Host publication: `127.0.0.1:80->80/tcp`, `127.0.0.1:443->443/tcp`, plus the established k3d API `127.0.0.1:6550->6443/tcp` and registry `127.0.0.1:5001->5000/tcp`. **No UDP published.**
-- rtpengine resources in the cluster: **absent**, as expected before this slice.
-
-**Kubernetes API policy-pin drift found and repaired.** The node IPs had shuffled
-since the previous proof (`server-0` moved `172.24.0.5` → `172.24.0.2`) while the
-applied policies still pinned `172.24.0.5/32`. Symptoms: `utcp-kube-state-metrics`
-(240 restarts) and the Grafana dashboard sidecar not Ready. Repaired **only**
-through the canonical renderer and **only** for the three affected generated
-policy resources:
-
-```text
-scripts/security/render-apiserver-policy
-kubectl apply -f .runtime/kubernetes/security/traefik-apiserver-egress.yaml
-             -f .runtime/kubernetes/security/runtime-fencer-apiserver-egress.yaml
-             -f .runtime/observability/allow-apiserver-egress.yaml
-→ allow-traefik-kubernetes-api               172.24.0.2/32
-→ allow-runtime-fencer-kubernetes-api        172.24.0.2/32
-→ allow-observability-kubernetes-api-egress  172.24.0.2/32
-scripts/security/check-apiserver-policy-drift
-→ Kubernetes API egress drift check passed endpoint=172.24.0.2/32:6443
-```
-
-`utcp-kube-state-metrics` and the Grafana sidecar returned to Ready after the
-repair. No hand-written policy was applied and no other resource was touched.
-
-### Final image provenance
-
-Built with the canonical repository metadata mechanism, rtpengine only:
-
-```text
-make image-build-rtpengine UTCP_BUILD_COMMIT=87f0b9f
-```
+## Pod-IP Bind and Advertisement
 
 | Field | Value |
 |---|---|
-| local image | `utcp-rtpengine:dev` |
-| image ID / index digest | `sha256:bd021530b37fa8d76e256fb5bf5c48a52446ef323cd12527eb5f738f8ecf15dd` |
-| `linux/amd64` manifest digest | `sha256:13c1a769277dfecf35744d0b1a00d4abe8de9ab56a549469bff5073aba4e609b` |
-| config digest | `sha256:2e74fc237dc754e47915a64bbea4a3105645b3b794dc76c7d445b4d794814a06` |
-| `org.opencontainers.image.revision` | **`87f0b9f`** (was `unknown` in the pre-correction build) |
-| `org.opencontainers.image.version` | `0.1.0-dev` |
-| `org.opencontainers.image.licenses` | `GPL-3.0-or-later` |
-| architecture / os | `amd64` / `linux` |
-| configured user | `1000:1000` |
-| entrypoint | `/usr/local/bin/utcp-rtpengine-entrypoint` |
-| rtpengine version in image | `26.0.1.19+0~mr26.0.1.19` (from tag `mr26.0.1.19`) |
-| upstream source commit | `3552ac76cceb24e3ec176b77ec9c25554ae5923b` (recorded in build history) |
-| package asset installed | `rtpengine-daemon_26.0.1.19+0.mr26.0.1.19+gh+trixie_amd64.deb` |
-| package checksum | verified in-layer by `sha256sum --check` against the pinned `c60c7a14…f950` |
-| embedded credentials | none — no credential material in `/usr/local/bin` or `/etc/rtpengine` |
+| actual Pod IP | `10.42.1.214` |
+| downward API `POD_IP` | `10.42.1.214` |
+| `listen-ng` | `10.42.1.214:2223` |
+| internal/advertised media interface | `internal/10.42.1.214!10.42.1.214` |
+| metrics `listen-http` | `10.42.1.214:2224` |
+| observed UDP sockets | `('10.42.1.214', 2223)` — **only** |
+| observed TCP listeners | `('10.42.1.214', 2224)` and `('127.0.0.1', 2224)` |
 
-The image build history records `BUILD_COMMIT=87f0b9f`,
-`RTPENGINE_VERSION=mr26.0.1.19`,
-`RTPENGINE_SOURCE_COMMIT=3552ac76cceb24e3ec176b77ec9c25554ae5923b`, and
-`TARGETARCH=amd64`, so every required identity is verifiable from the image
-itself. `org.opencontainers.image.created` remains `unknown`, which is the
-repository-wide canonical default (`Makefile:9`) and matches
-`docs/runbooks/container-images.md`.
+No node IP, Service IP, `0.0.0.0` advertisement, or hard-coded developer-host IP
+appears anywhere in the bind or advertisement set. The additional
+`127.0.0.1:2224` socket is rtpengine's own loopback control listener (it answers
+`Unknown command: GET`, not the metrics exposition); it lives inside the Pod
+network namespace, is not an advertised address, and is unreachable from outside
+the Pod. Classified `EXPECTED_BEHAVIOR`.
 
-### Registry push result
+Media ports `40000–40099` are not bound at rest — rtpengine allocates them per
+session, and T3-S1 establishes no media session.
 
-Pushed rtpengine **only**, using the canonical library's own references
-(`scripts/kubernetes/lib`), because `scripts/kubernetes/image-push` pushes all
-five images and this proof must not republish `api`, `web`, `gateway`, or
-`asterisk-ari`.
+## Readiness Result
 
 | Field | Value |
 |---|---|
-| registry reference | `127.0.0.1:5001/utcp/rtpengine:0.1.0-k1-dev` |
-| in-cluster reference | `utcp-local-registry:5000/utcp/rtpengine:0.1.0-k1-dev` |
-| tag | `0.1.0-k1-dev` (`K1_IMAGE_TAG`) — **no `latest`** |
-| pushed manifest-index digest | `sha256:bd021530b37fa8d76e256fb5bf5c48a52446ef323cd12527eb5f738f8ecf15dd` |
-| `linux/amd64` platform digest | `sha256:13c1a769277dfecf35744d0b1a00d4abe8de9ab56a549469bff5073aba4e609b` |
-| local image digest | identical (`sha256:bd021530…`) |
-| registry reachability | `GET /v2/_catalog` → `200`; `utcp/rtpengine` present; tags `["0.1.0-k1-dev"]` |
-| pull-back verification | `docker pull` returned the same digest |
+| Deployment | `replicas 1`, `readyReplicas 1`, `availableReplicas 1` |
+| Pod `Ready` | `True` at `2026-07-28T20:57:11Z` |
+| container started | `2026-07-28T20:57:10Z` |
+| **time from container start to Ready** | **≈1 second** |
+| EndpointSlice | `10.42.1.214`, `ready=true`, `serving=true` |
+| probe command | `/usr/local/bin/utcp-rtpengine-ng-ping` (committed readiness helper) |
+| probe result | exit `0` |
 
-**The running Pod's `imageID` is `utcp-local-registry:5000/utcp/rtpengine@sha256:bd021530…`, so the local, registry, and running image content match exactly.**
-
-### Rendered resources conform to the T3-S1 contract
-
-`kubectl kustomize infrastructure/kubernetes/overlays/local` and
-`kubectl kustomize infrastructure/kubernetes/security` render cleanly.
-
-| Requirement | Rendered value |
-|---|---|
-| Deployment namespace / replicas | `utcp-platform` / `1` |
-| Deployment image | `utcp-local-registry:5000/utcp/rtpengine:0.1.0-k1-dev`, `imagePullPolicy: Always` |
-| Service type / protocol / port | `ClusterIP` / `UDP` / `2223` (named `ng`) |
-| Container ports | `ng 2223/UDP`, `media 40000/UDP`, `metrics 2224/TCP` |
-| `runAsNonRoot` / UID / GID | `true` / `1000` / `1000` |
-| `allowPrivilegeEscalation` | `false` |
-| `capabilities` | `drop: [ALL]` |
-| `readOnlyRootFilesystem` | `true` (with `emptyDir` at `/tmp` and `/run/rtpengine`) |
-| `seccompProfile` | `RuntimeDefault` |
-| `automountServiceAccountToken` | `false` |
-| hostNetwork / hostPID / hostIPC / hostPort / hostPath / NodePort / LoadBalancer / Gateway route | **all absent** (asserted programmatically across both renders) |
-| Probes | readiness and liveness both `exec /usr/local/bin/utcp-rtpengine-ng-ping` (`5 s` / `15 s`, timeout `3 s`) |
-| `POD_IP` | `valueFrom.fieldRef.fieldPath: status.podIP` |
-
-`kubectl diff` against the live cluster confirms rendering introduces **no
-unrelated material change**: apart from the four new rtpengine resources, every
-other differing NetworkPolicy differs **only** in its `metadata.generation`
-field (a server-side merge artefact, zero spec change). One genuinely divergent
-pre-existing resource, `utcp-application-config` (live `APP_URL`/
-`BROADCAST_CONNECTION` differ from the local overlay), was **deliberately not
-applied** — it is unrelated to T3-S1 and outside this proof's scope.
-
-### Resources applied — only T3-S1
+A raw `ng` request with a **unique cookie** (bypassing rtpengine's duplicate
+suppression) returned a freshly computed reply:
 
 ```text
-configmap/rtpengine-config                        created
-service/rtpengine                                 created
-deployment.apps/rtpengine                         created
-networkpolicy.networking.k8s.io/allow-rtpengine-media  created
+request:  utcp-proof-s10 d7:command4:pinge
+response: utcp-proof-s10 d6:result4:ponge   => result=pong
 ```
 
-No broad cluster or namespace apply was performed. No existing workload was
-rebuilt or restarted. There is no separately defined internal metrics resource —
-metrics is a container port only, with no metrics Service, consistent with the
-"public metrics Service absent" requirement.
+Process existence alone was not accepted as evidence.
 
-### Pod Security Admission — PASS
+## Liveness and Automatic Recovery
 
-The Pod is **admitted and started** under the current `restricted:v1.35` labels:
+Classified `INTENTIONALLY_INDUCED_CONDITION`.
+
+Pre-condition: Pod `rtpengine-74cd786966-x2lqm`, UID
+`d611728c-7714-46ec-a0a1-dfabf028e907`, container `containerd://8236339d…`,
+restart count `0`, `Ready=true`. `/proc/1/exe` resolves to `/usr/bin/rtpengine`
+and is owned by UID `1000`, confirming rtpengine is PID 1.
+
+`SIGSTOP` was sent to that single process (host PID `205051`) **from the node's
+PID namespace**. A PID-namespace init ignores `SIGSTOP` sent from inside its own
+namespace, so an ancestor-namespace sender is required to induce the condition at
+PID 1 as specified. No probe was patched and the Pod was not deleted.
 
 ```text
-Scheduled → Pulled → Created → Started
-PSA violation / denial / forbidden events: 0
+node view before: State: S (sleeping)
+kill -STOP 205051   @ 2026-07-28T20:59:37Z
+node view after:  State: T (stopped)
 ```
 
-Admission is therefore proven; the subsequent crash loop is an application
-startup failure, not an admission failure.
+| Step | Required | Observed |
+|---|---|---|
+| 1 | real `ng` liveness probe fails | `Liveness probe failed: … TimeoutError: timed out` at `21:00:11Z` |
+| 2 | Kubernetes records the failure | `Warning Unhealthy`, then `Normal Killing — Container rtpengine failed liveness probe, will be restarted` |
+| 3 | kubelet restarts the container | container terminated `exitCode 137`; new container `containerd://5b23f5e5…` started `21:00:41Z` |
+| 4 | restart count increases | `0` → **`1`** |
+| 5 | readiness returns automatically | `Ready=true` again by `21:00:46Z`, no intervention |
+| 6 | PID file recreated | `-rw-r--r-- 1 1000 1000 2 … /run/rtpengine/rtpengine.pid` |
+| 7 | `ng` ping returns `pong` | `utcp-proof-s11 d6:result4:ponge` |
+| 8 | Deployment stays at one replica | `replicas 1`, `readyReplicas 1` |
 
-### Effective security context — PASS
+Readiness had already flipped to `false` at `20:59:56Z`, so the endpoint was
+withdrawn before the liveness threshold was reached. The **Pod UID is unchanged**
+— the container was restarted in place rather than the Pod being replaced. The
+stopped host process is gone.
 
-Captured from a short-lived probe Pod running the **same image with the same
-securityContext and volumes** under restricted PSA in `utcp-platform` (the
-rtpengine container itself exits too quickly to exec into):
+## Control Service Result
+
+| Requirement | Observed |
+|---|---|
+| type | `ClusterIP` (`10.43.50.16`) |
+| protocol | `UDP` |
+| port | `2223` |
+| targetPort | `ng` |
+| ready endpoint count | `1` |
+| endpoint IP | current rtpengine Pod IP |
+| external IP / NodePort / LoadBalancer / Gateway | **none** |
+
+The Service declares exactly one port and no `externalIPs`, `nodePort`, or
+`loadBalancer` field.
+
+## Authorized Control Result
+
+**FAILED — `PRODUCT_DEFECT-3`.**
+
+Using the existing Kamailio Pod (which carries `python3`, so no debug container
+was needed):
 
 ```text
-uid=1000 gid=1000 groups=1000
-CapInh/CapPrm/CapEff/CapBnd/CapAmb: 0000000000000000  (no capabilities)
-NoNewPrivs: 1
-Seccomp: 2 (SECCOMP_MODE_FILTER), Seccomp_filters: 1   → RuntimeDefault active
-overlay / mounted ro; touch / → "Read-only file system"
-writable paths: /tmp and /run/rtpengine only (both emptyDir)
-/var/run/secrets/kubernetes.io/serviceaccount → does not exist
-own cgroup/ipc/mnt/net/pid/uts namespaces (no host namespace sharing)
+source:       kamailio-679bd6bf59-zn6f4
+source label: utcp.io/network-role: kamailio-signaling   (exactly the permitted ingress identity)
+DNS:          rtpengine.utcp-platform -> 10.43.50.16     (resolves)
+ng ping:      rtpengine.utcp-platform:2223/UDP -> TimeoutError after 6.01s
 ```
 
-Confirmed on the live rtpengine Pod spec:
+NetworkPolicies selecting the destination: `allow-rtpengine-media` (**allows**
+`2223/UDP` from this exact selector) and `default-deny`.
+NetworkPolicies selecting the source: `allow-kamailio-signaling-required-traffic`
+(egress = DNS + PostgreSQL `5432` only) and `default-deny`.
+
+The same Pod reached `postgres.utcp-data:5432` in `0.00s`, proving its egress
+path is functional and that the denial is specific to the missing rtpengine
+egress rule. No proof-only allow policy was added and `allow-rtpengine-media` was
+neither weakened nor patched. Production Kamailio configuration was not modified.
+
+## Unauthorized Control Denial
+
+A short-lived unauthorized Pod was created in the `default` namespace, which has
+**zero NetworkPolicies**, so its egress is unrestricted and the destination's
+ingress policy is isolated as the only possible cause of denial.
 
 ```text
-pod securityContext:       {runAsUser:1000, runAsGroup:1000, runAsNonRoot:true, seccompProfile:RuntimeDefault}
-container securityContext: {allowPrivilegeEscalation:false, capabilities.drop:[ALL], readOnlyRootFilesystem:true}
-automountServiceAccountToken: false
-hostNetwork / hostPID / hostIPC: unset
-hostPort entries: 0    hostPath volumes: 0
-volumes: tmp (emptyDir), run (emptyDir)
+source:          utcp-t3s1-unauthorized-proof (default namespace, 10.42.1.215)
+labels:          utcp.io/proof: t3-s1-unauthorized   (no kamailio-signaling identity)
+egress validity: DNS resolved rtpengine.utcp-platform -> 10.43.50.16 in 0.01s
+ng ping:         rtpengine.utcp-platform:2223/UDP -> TimeoutError after 8.01s  (bounded)
 ```
 
-| Requirement | Result |
+| Source | Source egress valid | Destination ingress expected | Actual |
+|---|---:|---:|---|
+| Authorized Kamailio identity | **no** — `allow-kamailio-signaling-required-traffic` omits rtpengine | allow | **denied at source egress** (`PRODUCT_DEFECT-3`) |
+| Unauthorized identity | yes (`default` ns, unrestricted) | deny | **denied**, bounded `TimeoutError` |
+
+The unauthorized row is a clean, isolated proof of rtpengine's ingress policy.
+The authorized row could not be isolated with existing policy authority, so the
+exact policy interaction is documented above rather than worked around.
+
+## Media-Boundary Containment
+
+| Surface | Result |
 |---|---|
-| UID = 1000 | PASS |
-| GID = 1000 | PASS |
-| capabilities = none | PASS |
-| seccomp = RuntimeDefault | PASS |
-| read-only root filesystem = true | PASS |
-| service-account token = absent | PASS |
-| HostNetwork = false | PASS |
-| HostPort absent | PASS |
-| HostPath absent | PASS |
+| NodePort | none anywhere for `2223` or `40000–40099` |
+| LoadBalancer | only `traefik-system/traefik`, TCP `80`/`443` |
+| Gateway / HTTPRoute / TLSRoute / TCPRoute / UDPRoute / Ingress | **zero resources exist cluster-wide** |
+| HostPort | only `svclb-traefik` `80`/`443` TCP |
+| HostPath | none on rtpengine |
+| k3d host publication | `127.0.0.1:80`, `127.0.0.1:443` (+ registry `5001`, apiserver `6550`); `infrastructure/k3d/cluster.yaml` publishes nothing else |
+| node sockets | all four k3d containers scanned across `/proc/net/{udp,udp6,tcp,tcp6}` — **no socket on `2223`, `2224`, or `40000–40099`** |
+| developer-host sockets | `ss -lunp` / `ss -ltnp` — none on `2223`, `2224`, or `40000–40099`; `127.0.0.1:2223` unreachable from the host |
 
-### Media-boundary containment — PASS
+The established public application edge remains TCP `80/443`. No external or
+browser RTP reachability is claimed, and no RTP offer/answer media session was
+established — that remains outside T3-S1.
 
-| Requirement | Result |
-|---|---|
-| Services exposing `40000–40099` | **none** (only UDP service ports cluster-wide: `kube-dns 53`, `alertmanager-operated 9094`, `rtpengine 2223` — all ClusterIP) |
-| NodePort for media | none — no NodePort Service exists anywhere in the cluster |
-| LoadBalancer for media | none — the only LoadBalancer is `traefik-system/traefik` on TCP `80`/`443` |
-| Gateway / HTTPRoute / Ingress route to media | none — all 6 route objects (`utcp-local` Gateway, 5 HTTPRoutes) reference neither `rtpengine` nor any port in `40000–40099`; `TLSRoute` objects: none; `UDPRoute`/`TCPRoute` CRDs not installed |
-| HostPort | none in the Pod spec |
-| k3d host publication | `infrastructure/k3d/cluster.yaml` maps only `127.0.0.1:80:80` and `127.0.0.1:443:443` to the loadbalancer filter; unchanged |
-| host-namespace UDP socket in `40000–40099` | **none** on any of the three node containers, and **none** on the host |
-| application edge | remains TCP `80/443` |
+## Internal Metrics Result
 
-No claim of browser or external RTP reachability is made. An actual RTP
-packet-relay session is outside T3-S1.
+**FAILED — `PRODUCT_DEFECT-3`.**
 
-### Internal metrics protocol — determined
-
-The committed metrics listener (`--listen-http=<POD_IP>:2224`) serves **Prometheus
-text exposition over HTTP on `GET /metrics`** (`HTTP/1.0 200 OK`, 218 metric
-samples). Other paths return `404 Not Found`. Representative non-sensitive
-counters actually exposed:
+Using the real observability identity — an ephemeral debug container attached to
+the running Prometheus Pod, sharing its network namespace and therefore its exact
+policy identity (`app.kubernetes.io/name: prometheus`, Pod IP `10.42.2.115`):
 
 ```text
-rtpengine_sessions{type="own"} 0
-rtpengine_sessions{type="foreign"} 0
-rtpengine_sessions_total 0
-rtpengine_uptime_seconds <n>
-rtpengine_closed_sessions_total{reason="rejected"|"timeout"|"final_timeout"|"terminated"|…} 0
-rtpengine_packets_total{type="userspace"} 0
-rtpengine_packet_errors_total{type="userspace"} 0
-rtpengine_errors_total{proxy="<IP>"} 0
-rtpengine_ports{name="internal",address="<IP>"} 100
-rtpengine_ports_free{name="internal",address="<IP>"} 100
-rtpengine_ports_used{name="internal",address="<IP>"} 0
+prometheus -> rtpengine Pod IP :2224/TCP  ->  ConnectionRefused after 0.00s
+prometheus -> gateway.utcp-platform:8081  ->  reachable in 0.01s   (egress path is functional)
 ```
 
-`rtpengine_ports 100` / `rtpengine_ports_free 100` independently confirm the
-`40000–40099` allocation. This was determined on the disposable diagnostic
-container; the in-cluster allow/deny corridor is **not** proven (see below).
+`allow-rtpengine-media` **allows** `2224/TCP` from this exact selector.
+`allow-prometheus-egress-to-application-metrics` permits only `gateway:8081`, and
+`allow-observability-required-traffic` permits only DNS, intra-namespace ports,
+and `traefik:9100`. No rule covers rtpengine.
 
-### Kamailio boundary preservation — PASS
-
-The live Kamailio configuration, the live `kamailio-config` ConfigMap, and the
-committed ConfigMap in git are **byte-identical**:
+**The listener itself is healthy.** Queried from inside the workload (which
+bypasses NetworkPolicy), rtpengine returns valid Prometheus text exposition:
 
 ```text
-sha256 6e85abaf130018144606e0a235e941e27263181834212c8763bb22f0a489e2e4  (all three, 3983 bytes)
+HTTP/1.0 200 OK
+content-type: text/plain
+content-length: 21139
+total metric samples: 218
+
+rtpengine_ports{name="internal",address="10.42.1.216"}       100
+rtpengine_ports_free{name="internal",address="10.42.1.216"}  100
+rtpengine_ports_used{name="internal",address="10.42.1.216"}    0
+rtpengine_sessions{type="own"}                                 0
+rtpengine_sessions{type="foreign"}                             0
+rtpengine_sessions_total                                       0
+rtpengine_uptime_seconds                                      17
 ```
 
-| Requirement | Result |
+**The port counters correspond exactly to the bounded `40000–40099` range** —
+`rtpengine_ports = 100` and `rtpengine_ports_free = 100` for the `internal`
+interface, labelled with the Pod IP. Session, port, and uptime counters are all
+present among the 218 samples.
+
+No public metrics Service, route, or dashboard was added.
+
+## Unauthorized Metrics Denial
+
+From the same unauthorized `default`-namespace Pod with a valid egress path:
+
+```text
+unauthorized -> rtpengine Pod IP :2224/TCP -> ConnectionRefused after 0.00s (bounded)
+```
+
+| Source | Expected | Actual |
+|---|---|---|
+| Authorized observability identity | allow | **denied at source egress** (`PRODUCT_DEFECT-3`) |
+| Unauthorized identity | deny | **denied**, bounded `ConnectionRefused` |
+
+TCP denials surface as an immediate `ConnectionRefused` and UDP denials as a
+bounded timeout; both are the CNI's enforcement of the same default-deny posture.
+No NetworkPolicy was altered for proof convenience.
+
+## Relay-Unavailable Failure
+
+Classified `INTENTIONALLY_INDUCED_CONDITION`. Only `deployment/rtpengine` was
+scaled to zero, at `2026-07-28T21:07:02Z`.
+
+| Requirement | Observed |
 |---|---|
-| `rtpengine_offer` / `rtpengine_answer` / `rtpengine_manage` / `rtpengine_delete` | **0 occurrences** in the live config and in every ConfigMap in `utcp-platform` |
-| `rtpproxy_*` / `loadmodule … rtpengine.so` | **0 occurrences** |
-| SDP rewriting | none |
-| dialog-media route | none |
-| browser-media route | none |
-| conference admission | none |
-| silent Asterisk fallback | none — nothing consumes the rtpengine Service |
-| `REGISTER` behaviour | unchanged (`save("location", "0x04")` intact at line 95) |
-| `Record-Route` / in-dialog handling | absent |
+| no ready rtpengine endpoint remains | EndpointSlice `endpoints=null`; Deployment `0/0/0`; no rtpengine Pod exists |
+| Service survives | `rtpengine` ClusterIP `10.43.50.16` retained; DNS still resolves |
+| control ping fails visibly within a bounded period | `TimeoutError` after `8.01s` |
+| no fallback to Asterisk | `asterisk-ari` (13) and `asterisk-ari-b` (12) restart counts and UIDs identical to baseline; `asterisk-ari-events` unchanged at 3 |
+| database table count unchanged | `41` → `41` |
+| no media table appears | tables matching `rtp`/`media`: `(none)` |
+| RuntimeNode count and capabilities unchanged | `110`; families still `asterisk/asterisk-ari` + `simulator/simulator-deterministic`; rtpengine records `0` |
+| outbox and Redis domain state unchanged | pending outbox `0`; Redis keys matching `rtp` = `0` |
+| no other Pod restarts | full-cluster diff showed only the removal of the rtpengine Pod |
 
-### State-authority preservation — PASS
+No production SIP or RTP traffic was initiated.
 
-| Concern | Result |
+## Restoration Result
+
+`deployment/rtpengine` scaled back to one at `2026-07-28T21:08:03Z`; rollout
+completed at `21:08:05Z`.
+
+| Requirement | Observed |
 |---|---|
-| Public tables in PostgreSQL | 41 (unchanged) |
-| Tables matching `%rtp%` / `%media%` / `%relay%` | **none** — no durable media authority introduced |
-| RuntimeNode families / adapters | `asterisk`/`asterisk-ari` (27), `simulator`/`simulator-deterministic` (83) — unchanged |
-| RuntimeNodes with an rtpengine family or adapter key | **0** — rtpengine is shared platform infrastructure, not a managed runtime |
-| Tenants / users / audit records | 27 / 207 / 4176 |
-| Pending outbox | `0` before, `0` after |
-| Redis `queues:default` / `:failed` | `0` / `0` before and after |
-| Redis keys matching `*rtp*` | none |
-| Web-admin configuration / Artisan command surface | unchanged — no code modified |
+| new Pod admission succeeds | `rtpengine-74cd786966-hvcrn`, UID `fea2c8fc-1f4d-4e5c-ae96-56528349a633`, no PSA violation |
+| restricted security remains effective | `uid=1000 gid=1000`, `CapEff 0000000000000000`, `NoNewPrivs 1`, `Seccomp 2` |
+| startup succeeds using `/run/rtpengine/rtpengine.pid` | `-rw-r--r-- 1 1000 1000 2`, created `21:08` |
+| Pod-IP authority re-derived | new Pod IP `10.42.1.216`; every argument (`listen-ng`, `interface`, `listen-http`) rebound to it |
+| readiness returns automatically | `ready=true`, `restarts=0`, started `21:08:04Z` |
+| EndpointSlice becomes Ready | `10.42.1.216`, `ready=true` |
+| authorized `ng` ping | `utcp-proof-s19 d6:result4:ponge` from the workload |
+| authorized control corridor | still **denied** — `PRODUCT_DEFECT-3` unchanged |
+| unauthorized control | still denied (`TimeoutError`, `6.01s`) |
+| authorized metrics | still **denied** — `PRODUCT_DEFECT-3` unchanged |
+| unauthorized metrics | still denied (`ConnectionRefused`) |
+| manual reconciliation / projection / repair | **none required** |
+| unrelated workload restarts | none caused by restoration |
+| running image digest | `sha256:33cf7e2e…`, unchanged |
 
-## Not Proven — blocked by PRODUCT_DEFECT-2
+rtpengine is left at one Ready replica.
 
-Everything that requires a Ready rtpengine Pod. No claim is made for any of these:
+## Kamailio Boundary Preservation
 
-| Criterion | Status |
+| Comparison | Result |
 |---|---|
-| Readiness (`available`/`ready` replicas = 1, validated in-cluster `pong`) | **not proven** — `ready=<none>`, `available=<none>`, Pod `0/1 CrashLoopBackOff` |
-| Liveness-triggered recovery (`SIGSTOP` → probe failure → kubelet restart → automatic re-readiness) | **not proven** — no running process to suspend; the observed restarts are startup-abort restarts, not liveness-triggered recovery |
-| ClusterIP UDP `2223` with one **ready** endpoint | **not proven** — EndpointSlice `rtpengine-6p96v` carries `10.42.1.211` with `ready=false` |
-| Authorized control (`ng` ping via `rtpengine.utcp-platform` from the Kamailio identity) | **not proven** — no listener |
-| Unauthorized control denial | **not proven** — with no listener, authorized and unauthorized clients are indistinguishable, so a deny result would prove nothing |
-| Internal metrics allow from the observability identity, and deny from an unauthorized Pod | **not proven** in-cluster for the same reason (the protocol itself is determined above) |
-| Relay-unavailable failure corridor | **not proven** — no healthy baseline exists to induce failure from |
-| Automatic restoration | **not proven** — depends on the above |
+| Git `kamailio-configmap.yaml` `data` vs live ConfigMap | **byte-identical**, `sha256 6e85abaf13001814…` on both sides |
+| Running `/etc/kamailio/kamailio.cfg` inside the Pod | `sha256 6e85abaf130018144606e0a235e941e27263181834212c8763bb22f0a489e2e4` — identical to git |
+| `rtpengine_offer` / `rtpengine_answer` / `rtpengine_manage` / `rtpengine_delete` | **0 occurrences each** |
+| `rtpproxy` / `set_rtp_proxy` / any `rtpengine_` prefix | **0 occurrences** |
+| `REGISTER` handling | present and unchanged |
+| SDP rewriting (`sdp` / `SDP`) | **0 occurrences** |
+| dialog-media route (`dialog`) | **0 occurrences** |
+| browser-media / conference admission (`conference`) | **0 occurrences** |
+| Asterisk fallback (`fallback`) | **0 occurrences** |
+| Kamailio Pod | UID `843bf4db-…` and restart count `40` unchanged from baseline |
 
-Structural targeting **is** confirmed: `allow-rtpengine-media` selects the
-rtpengine Pod (`utcp.io/network-role: rtpengine-media`) and the live Kamailio Pod
-carries the authorized `utcp.io/network-role: kamailio-signaling` label, so the
-policy's subject and source identities resolve correctly against real Pods.
+The relay carried only probe and proof traffic.
+
+## State-Authority Preservation
+
+| Value | Before | After |
+|---|---|---|
+| database public tables | 41 | **41** |
+| tables containing `rtp` or `media` | (none) | **(none)** |
+| tenants | 27 | **27** |
+| RuntimeNodes | 110 | **110** |
+| rtpengine RuntimeNode records | 0 | **0** |
+| registry families / adapter keys | `asterisk/asterisk-ari`, `simulator/simulator-deterministic` | **unchanged** |
+| pending outbox | 0 | **0** |
+| Redis keys containing `rtp` | 0 | **0** |
+| Redis keys containing `media` | — | **0** |
+| web-admin settings referencing rtpengine | none | **none** |
+| Artisan command surface for media | none | **none** |
+| durable media authority in `apps/api` | none | **none** |
+
+Redis `db0` moved `1 → 2 → 0` across the proof. The only key present is the
+Laravel scheduler's TTL-bearing cache entry; this is expiry churn, not domain
+state. No new durable media authority and no alternate management path appeared.
 
 ## Findings
 
 | Classification | Finding |
 |---|---|
-| **PRODUCT_DEFECT-2** | The `/tmp` `emptyDir` shadows the image-created `/tmp/rtpengine`, so `--pidfile=/tmp/rtpengine/rtpengine.pid` cannot be created and rtpengine aborts startup (`CRIT: Failed to create PID file`, exit `255`, `CrashLoopBackOff`). All static checks pass because none asserts that entrypoint write paths survive the volume mounts. One-line correction identified and verified |
-| PASS | `PRODUCT_DEFECT-1` is confirmed corrected — the pinned asset resolves, both checksums verify, and the pinned image builds |
-| PASS | Final image identifies repository revision `87f0b9f`, version `mr26.0.1.19`, upstream commit `3552ac76…`, `amd64`, user `1000:1000`, no embedded credentials |
-| PASS | Registry, local, and **running** image digests all match `sha256:bd021530…`; tag `0.1.0-k1-dev`, no `latest` |
-| PASS | Only the four T3-S1 resources were applied; no existing workload rebuilt or restarted |
-| PASS | Restricted `v1.35` PSA **admits** the Pod with zero violation events |
-| PASS | Effective security context matches the ADR-020 §8 contract exactly (UID/GID 1000, no capabilities, RuntimeDefault seccomp, read-only root, no SA token, no host namespaces) |
-| PASS | Userspace forwarding, Pod-IP bind/advertisement, exact port range, and a validated `ng` `pong` from the committed readiness helper are all confirmed on the committed image once the shadowed directory exists |
-| PASS | Media boundary contained: no NodePort, LoadBalancer, Gateway/Ingress route, HostPort, k3d publication, or host socket for `40000–40099`; edge remains TCP `80/443` |
-| PASS | Metrics protocol determined as Prometheus text on `GET /metrics` over TCP `2224`, with session, port, packet, and error counters present |
-| PASS | Kamailio config byte-identical to git with zero media-routing directives; `REGISTER` intact; no silent Asterisk fallback |
-| PASS | No durable media authority, RuntimeNode, registry capability, tenant, Redis, or outbox change |
+| **PRODUCT_DEFECT-3** | Neither authorized rtpengine consumer has a reciprocal source egress rule, so both corridors `allow-rtpengine-media` declares are unusable under default-deny. Kamailio → `2223/UDP` times out; Prometheus → `2224/TCP` is refused. Each source was independently shown to reach a destination its own policy permits, isolating the cause to the missing egress rules. Static checks pass because they assert only the rtpengine-side policy. No rtpengine `ServiceMonitor`/`PodMonitor` exists either |
+| PASS | `PRODUCT_DEFECT-1` and `PRODUCT_DEFECT-2` are both confirmed corrected live — the pinned image builds, both checksums verify, and rtpengine starts cleanly on `/run/rtpengine/rtpengine.pid` |
+| PASS | Final image identifies repository revision `812c6ec`, rtpengine `mr26.0.1.19`, upstream commit `3552ac76…`, `amd64`, user `1000:1000`, no embedded credentials |
+| PASS | Registry, local, and **running** image digests all match `sha256:33cf7e2e…`; `linux/amd64` platform digest `sha256:ad8c7e02…`; tag `0.1.0-k1-dev`, no `latest` |
+| PASS | Only rtpengine was restarted; all 34 other Pods retained UID and restart count; no manifest re-applied |
+| PASS | Startup succeeds with no PID-file error; `/tmp/rtpengine` is not required; `--table=-1` userspace forwarding active; no kernel-module or privileged initialization attempted |
+| PASS | Restricted `v1.35` PSA admits the Pod with zero violation events |
+| PASS | Effective security context, captured from the **real running workload**, matches ADR-020 §8 exactly |
+| PASS | Pod IP owns bind and advertisement; no node IP, Service IP, `0.0.0.0`, or developer-host IP |
+| PASS | Readiness validates a real `ng` `pong` (unique-cookie request, freshly computed reply) ≈1s after container start; EndpointSlice Ready |
+| PASS | A liveness failure induced by `SIGSTOP` on PID 1 causes kubelet to restart the container automatically; readiness, PID file, and `ng` `pong` all return with the Deployment still at one replica |
+| PASS | ClusterIP UDP `2223` carries exactly one Ready endpoint equal to the current Pod IP; no external exposure |
+| PASS | Unauthorized control and unauthorized metrics are both denied with bounded failures, isolated through a `default`-namespace source with unrestricted egress |
+| PASS | Media boundary contained: no NodePort, LoadBalancer, Gateway/Ingress route, HostPort, k3d publication, node socket, or host socket for `40000–40099`; edge remains TCP `80/443` |
+| PASS | The metrics listener serves valid Prometheus text with port counters matching the bounded `40000–40099` range exactly (`rtpengine_ports = 100`) |
+| PASS | Relay unavailability produces a visible bounded failure with no Asterisk fallback and no canonical state change |
+| PASS | Restoration is fully automatic; no manual reconciliation, projection, or repair command was required |
+| PASS | Kamailio config byte-identical to git with zero media-routing directives; `REGISTER` intact |
+| PASS | No durable media authority, RuntimeNode, registry capability, tenant, Redis, outbox, web-admin, or Artisan surface changed |
 | PASS | All nine repository checks pass before and after; working tree clean |
-| EXPECTED_BEHAVIOR | Helm absent from this environment; provisioned from the repository's pinned `HELM_VERSION=v4.0.3` with checksum verification and removed at cleanup |
-| EXPECTED_BEHAVIOR | Kubernetes API policy-pin drift after a node-IP shuffle; repaired through the canonical renderer for only the three affected generated policies, restoring `utcp-kube-state-metrics` and the Grafana sidecar to Ready |
-| PROOF_LIMITATION | Effective security context was captured from a probe Pod using the same image, securityContext, and volumes, because the rtpengine container exits before it can be exec'd into. Admission, spec-level security, and effective identity are all independently confirmed on the real Pod's spec and events |
-| PROOF_LIMITATION | Startup, bind, port range, userspace forwarding, `ng` `pong`, and the metrics protocol were verified on a disposable local container running the committed image with the committed entrypoint (only `mkdir -p /tmp/rtpengine` added). This establishes that no second defect is hidden behind `PRODUCT_DEFECT-2`, but it is not in-cluster proof of readiness, liveness recovery, or the NetworkPolicy corridor |
-| INTENTIONALLY_INDUCED_CONDITION | None. No failure condition was induced; the crash loop is the defect itself, not an induced condition |
-| Unrelated pre-existing condition | `utcp-monitoring-operator` remains `CrashLoopBackOff` (`connection refused` to the Kubernetes Service ClusterIP `10.43.0.1:443`, not a policy timeout). It dials the ClusterIP while `check-apiserver-policy-drift` explicitly forbids pinning a ClusterIP destination — a pre-existing observability integration gap, unrelated to T3-S1 and out of scope |
-| Divergence from ADR-020 §9 | The rendered `allow-rtpengine-media` grants **no** cluster-DNS egress, although §9 lists "plus cluster DNS". This is stricter than the ADR and functionally harmless in T3-S1: the entrypoint resolves no hostname and binds only the injected `POD_IP`. It does not invalidate any claim |
-| Deferred | No `rtpengine`/media alert rules exist among the 42 live Prometheus rules. ADR-020 §10 requires relay-unavailable, control-failure, and port-exhaustion alerts — deferred observability, not a T3-S1 foundation blocker |
+| EXPECTED_BEHAVIOR | rtpengine additionally binds `127.0.0.1:2224` as its own loopback control listener. It is inside the Pod network namespace, is not an advertised address, and answers `Unknown command: GET` rather than the metrics exposition. Not an exposure |
+| EXPECTED_BEHAVIOR | The readiness/liveness helper uses a fixed `ng` cookie, so rtpengine logs `Detected command … as a duplicate` between probes and replies from its duplicate cache. A stopped process still produces no reply, which the liveness proof confirms empirically |
+| EXPECTED_BEHAVIOR | Helm absent from this environment; provisioned from the repository pin `HELM_VERSION=v4.0.3` with checksum verification and removed at cleanup |
+| EXPECTED_BEHAVIOR | `worker-55fdb7d5f6-jg2x5` restart count advanced 33 → 34 during the proof. The container exited `0` (`reason: Completed`) after exactly `3600s`, which is the designed `--max-time=3600` self-exit in `infrastructure/docker/api/entrypoint:58`. Same Pod UID; unrelated to rtpengine |
+| INTENTIONALLY_INDUCED_CONDITION | `SIGSTOP` to the rtpengine process (PID 1, host PID `205051`) to trigger the real liveness probe. The process was reaped by the kubelet restart; no residue |
+| INTENTIONALLY_INDUCED_CONDITION | `deployment/rtpengine` scaled to zero to prove relay-unavailable failure, then restored to one replica |
+| PROOF_LIMITATION | The **authorized** halves of the control and metrics corridors could not be exercised at all, because `PRODUCT_DEFECT-3` denies them at the source and the proof contract forbids adding a proof-only allow policy. The destination-side ingress policy is proven only in its deny direction |
+| PROOF_LIMITATION | The relay-unavailable failure was observed from a source with valid egress rather than from the authorized Kamailio identity, for the same reason |
+| PROOF_LIMITATION | The ephemeral debug container attached to the Prometheus Pod terminated cleanly (`exitCode 0`) but its spec entry remains on the Pod object. Kubernetes provides no way to remove an ephemeral container without restarting the Pod, and restarting an unrelated workload was not permitted |
+| Unrelated pre-existing condition | `utcp-monitoring-operator` remains `CrashLoopBackOff` (`exitCode 1`), advancing 363 → 367 on its own pre-existing cadence throughout the proof. Same Pod UID; it was already crash-looping for 7d16h before this proof began and is out of T3-S1 scope |
+| Deferred | No `rtpengine`/media alert rules exist among the live Prometheus rules, and no rtpengine scrape target is configured. ADR-020 §10 requires relay-unavailable, control-failure, and port-exhaustion alerts — deferred observability, tracked with `PRODUCT_DEFECT-3` seam B |
 
 ## Environment Preservation
 
@@ -473,52 +654,62 @@ Kubernetes manifests changed:  no
 dependencies changed:          no
 versions.env changed:          no
 runtime configuration changed: no
-resources applied:             4 (rtpengine ConfigMap, Service, Deployment, allow-rtpengine-media)
-generated policies re-applied: 3 (canonical apiserver-egress re-render after node-IP drift)
+resources applied:             0 (no manifest changed in 812c6ec)
+generated policies re-applied: 0 (no apiserver policy-pin drift existed)
 existing workloads restarted:  no
 existing workloads rebuilt:    no
+workloads rolled:              1 (rtpengine only)
 images built:                  1 (rtpengine only)
 images pushed:                 1 (rtpengine only)
 live media proof run:          no
 canonical records mutated:     no
 ```
 
-All 16 pre-existing `utcp-platform` Pods retain their original creation
-timestamps and restart counts (`kamailio` 40, `gateway` 12, `worker` 26,
-`web` 0, and so on). `postgres-0` and `redis-0` are unchanged. The only new
-workload is `rtpengine`. Observability restart counters advanced on their own
-pre-existing crash-loop cadence, and two of the three affected containers
-recovered as a result of the canonical policy repair.
+All 34 non-rtpengine Pods retain their original UIDs. Restart-count movement is
+limited to the two self-driven cases classified above (`worker` `--max-time`
+self-exit; `utcp-monitoring-operator` pre-existing crash-loop). `postgres-0` and
+`redis-0` are unchanged.
 
 ## Cleanup
 
-- Both short-lived proof Pods (`t3s1-volume-probe`, `t3s1-security-probe`) deleted; no proof Pod remains in any namespace.
-- Disposable local diagnostic container (`t3s1-diag`) removed.
-- Provisioned Helm binary, downloaded archive, checksum file, rendered manifests, and extracted artefacts removed from the scratch directory.
+- The short-lived unauthorized proof Pod (`default/utcp-t3s1-unauthorized-proof`) was deleted; no proof Pod remains in any namespace.
+- The ephemeral debug container on the Prometheus Pod exited `0` at `21:14:01Z` on its own `sleep` bound. The Prometheus workload was **not** restarted.
+- Provisioned Helm binary, downloaded archive, checksum file, and extracted artefacts removed from the scratch directory; `helm` is no longer on `PATH`.
 - No port-forward was started. `.playwright-mcp/` is absent. No credentials were introduced or recorded.
 - APNTalk rtpengine images present in the local Docker cache were **not** used, inspected as a source, or referenced; the clean-room requirement is preserved.
-- **T3-S1 resources are intentionally left applied** at `replicas: 1`. They are correct as rendered, and the single remaining defect is a one-line entrypoint change: after the bounded correction, an image rebuild plus `kubectl rollout restart deploy/rtpengine` reaches Ready with no re-apply. Removing them would discard the reproducible failure state this proof establishes. The Pod is **not** healthy and cannot be until the defect is corrected.
+- rtpengine is left deployed and **healthy** at one Ready replica on the corrected `812c6ec` image, with its ConfigMap, Service, Deployment, and NetworkPolicy unchanged and matching git.
 - Working tree contains only this evidence document and the roadmap updates.
 
 ## T3-S1 Final Status
 
 ```text
-T3-S1 live foundation proof = INCOMPLETE (blocked by PRODUCT_DEFECT-2)
+T3-S1 live foundation proof = INCOMPLETE (blocked by PRODUCT_DEFECT-3)
 T3 = In Progress
 UTCP_PHASE = T1 (unchanged)
 ```
 
+The relay foundation itself is proven end to end. What remains unproven is the
+**authorized reachability** of the two corridors ADR-020 declares, which is a
+NetworkPolicy completeness defect on the source side, not an rtpengine defect.
+
 ## Next Exact T3 Target
 
-One bounded Codex correction for `PRODUCT_DEFECT-2`: change
-`infrastructure/docker/rtpengine/entrypoint` line 44 to
-`--pidfile=/run/rtpengine/rtpengine.pid` (the already-mounted, already-writable
-`emptyDir`), and extend `scripts/media/config-check` so an entrypoint write path
-that the volume mounts shadow fails statically. Then resume this live proof from
-step 4 (rebuild the image at the new commit, push, `rollout restart`) and execute
-the still-unproven corridor: readiness, liveness-triggered recovery, ClusterIP
-endpoint readiness, authorized control, unauthorized denial, metrics allow/deny,
-relay-unavailable failure, and automatic restoration.
+One bounded Codex correction for `PRODUCT_DEFECT-3`:
+
+1. `infrastructure/kubernetes/security/platform/allow-kamailio-signaling.yaml` —
+   add egress to the `utcp.io/network-role: rtpengine-media` selector in
+   `utcp-platform` for `2223/UDP` and `40000–40099/UDP`.
+2. `infrastructure/kubernetes/observability/network-policies/allow-application-metrics.yaml` —
+   add egress to the same selector for `2224/TCP`, and add the rtpengine scrape
+   target required by ADR-020 §10.
+3. `scripts/media/config-check` — fail statically when a source identity named in
+   an `allow-rtpengine-media` ingress rule has no reciprocal egress rule, with
+   matching mutation cases in `scripts/media/config-check-test`.
+
+Then resume this live proof at the authorized-corridor steps only: authorized
+`ng` control from the Kamailio identity, authorized metrics from the Prometheus
+identity, and the authorized view of relay-unavailable failure. Every other step
+in this document is already proven at `812c6ec` and does not need to be repeated.
 
 Do not broaden the correction into Kamailio media routing, browser SIP,
 conference admission, V0, T4, external trunks, or PSTN.
