@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CHECK="$ROOT/scripts/media/config-check"
+SOURCE_DOCKERFILE="$ROOT/infrastructure/docker/rtpengine/Dockerfile"
+TMP_DIR="$(mktemp -d)"
+
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+pass_case() {
+  local name="$1"
+  local dockerfile="$2"
+
+  if ! UTCP_RTPENGINE_DOCKERFILE="$dockerfile" "$CHECK" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
+    printf 'expected media config check to pass: %s\n' "$name" >&2
+    cat "$TMP_DIR/err" >&2
+    exit 1
+  fi
+}
+
+fail_case() {
+  local name="$1"
+  local dockerfile="$2"
+  local expected="$3"
+
+  if UTCP_RTPENGINE_DOCKERFILE="$dockerfile" "$CHECK" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
+    printf 'expected media config check to fail: %s\n' "$name" >&2
+    cat "$TMP_DIR/out" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$expected" "$TMP_DIR/err"; then
+    printf 'expected failure for %s to include: %s\n' "$name" "$expected" >&2
+    cat "$TMP_DIR/err" >&2
+    exit 1
+  fi
+}
+
+corrected="$TMP_DIR/Dockerfile.corrected"
+tilde="$TMP_DIR/Dockerfile.tilde"
+mismatch="$TMP_DIR/Dockerfile.mismatch"
+missing_arm64="$TMP_DIR/Dockerfile.missing-arm64"
+
+cp "$SOURCE_DOCKERFILE" "$corrected"
+sed 's/+0\./+0~/g' "$SOURCE_DOCKERFILE" >"$tilde"
+sed '0,/26\.0\.1\.19+0\.mr26\.0\.1\.19/s//26.0.1.18+0.mr26.0.1.19/' "$SOURCE_DOCKERFILE" >"$mismatch"
+sed '/trixie_arm64\.deb/d' "$SOURCE_DOCKERFILE" >"$missing_arm64"
+
+pass_case "corrected Dockerfile" "$corrected"
+fail_case "tilde package separator" "$tilde" "uses '+0~'; expected convention is +0.mr26.0.1.19"
+fail_case "mismatched package version" "$mismatch" "uses package version 26.0.1.18; expected 26.0.1.19"
+fail_case "both architecture assignments required" "$missing_arm64" "must define package assignments for amd64 and arm64"
+
+printf 'media config check regression tests passed\n'

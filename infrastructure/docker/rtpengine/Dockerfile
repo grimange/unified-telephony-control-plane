@@ -21,11 +21,11 @@ LABEL org.opencontainers.image.title="UTCP rtpengine media relay" \
 RUN set -eux; \
     case "${TARGETARCH:-amd64}" in \
       amd64) \
-        package="rtpengine-daemon_26.0.1.19+0~mr26.0.1.19+gh+trixie_amd64.deb"; \
+        package="rtpengine-daemon_26.0.1.19+0.mr26.0.1.19+gh+trixie_amd64.deb"; \
         sha256="c60c7a1463e454dbcff81bf0fbd07c65dbeac742e5997d0c611f40f09161f950"; \
         ;; \
       arm64) \
-        package="rtpengine-daemon_26.0.1.19+0~mr26.0.1.19+gh+trixie_arm64.deb"; \
+        package="rtpengine-daemon_26.0.1.19+0.mr26.0.1.19+gh+trixie_arm64.deb"; \
         sha256="f279457f2356b6d4dc7fc483bb2631f79303a3393dbbeae0db9abd58c8c36906"; \
         ;; \
       *) \

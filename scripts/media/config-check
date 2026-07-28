@@ -29,7 +29,7 @@ esac
 [ "${RTPENGINE_MEDIA_PORT_MIN:-}" = "40000" ] || fail "RTPENGINE_MEDIA_PORT_MIN must be 40000"
 [ "${RTPENGINE_MEDIA_PORT_MAX:-}" = "40099" ] || fail "RTPENGINE_MEDIA_PORT_MAX must be 40099"
 
-dockerfile="$ROOT/infrastructure/docker/rtpengine/Dockerfile"
+dockerfile="${UTCP_RTPENGINE_DOCKERFILE:-$ROOT/infrastructure/docker/rtpengine/Dockerfile}"
 entrypoint="$ROOT/infrastructure/docker/rtpengine/entrypoint"
 readiness="$ROOT/infrastructure/docker/rtpengine/readiness"
 [ -f "$dockerfile" ] || fail "rtpengine Dockerfile is missing"
@@ -41,6 +41,73 @@ grep -Fq "ARG RTPENGINE_SOURCE_COMMIT=$RTPENGINE_SOURCE_COMMIT" "$dockerfile" ||
 grep -Fq "ARG RTPENGINE_BASE_IMAGE=$RTPENGINE_BASE_IMAGE" "$dockerfile" || fail "Dockerfile must use the pinned base image"
 grep -Fq "sha256sum --check" "$dockerfile" || fail "Dockerfile must checksum official upstream package assets"
 grep -Fq "USER 1000:1000" "$dockerfile" || fail "Dockerfile must run as UID/GID 1000"
+python3 - "$dockerfile" "$RTPENGINE_VERSION" <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+
+dockerfile = Path(sys.argv[1])
+rtpengine_version = sys.argv[2]
+source = dockerfile.read_text(encoding="utf-8")
+expected_package_version = rtpengine_version[2:] if rtpengine_version.startswith("mr") else rtpengine_version
+expected_segment = f"+0.{rtpengine_version}"
+assignment_pattern = re.compile(r'package="(?P<package>[^"]+)"')
+package_pattern = re.compile(
+    r"^rtpengine-daemon_"
+    r"(?P<package_version>\d+\.\d+\.\d+\.\d+)"
+    r"\+0\.(?P<release_version>mr\d+\.\d+\.\d+\.\d+)"
+    r"\+gh\+trixie_(?P<arch>amd64|arm64)\.deb$"
+)
+packages: dict[str, str] = {}
+
+
+def fail(message: str) -> None:
+    print(f"media config check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+for line_number, line in enumerate(source.splitlines(), start=1):
+    match = assignment_pattern.search(line)
+    if not match:
+        continue
+
+    package = match.group("package")
+    arch_match = re.search(r"_(amd64|arm64)\.deb$", package)
+    arch = arch_match.group(1) if arch_match else "unknown"
+
+    if ":latest" in package or package == "latest":
+        fail(f"Dockerfile package assignment for {arch} uses latest; expected convention is {expected_segment}")
+    if f"+0~{rtpengine_version}" in package:
+        fail(f"Dockerfile package assignment for {arch} uses '+0~'; expected convention is {expected_segment}: {package}")
+    parsed = package_pattern.match(package)
+    if not parsed:
+        fail(
+            f"Dockerfile package assignment for {arch} must match "
+            f"rtpengine-daemon_{expected_package_version}{expected_segment}+gh+trixie_<arch>.deb: {package}"
+        )
+    if parsed.group("package_version") != expected_package_version:
+        fail(
+            f"Dockerfile package assignment for {arch} uses package version "
+            f"{parsed.group('package_version')}; expected {expected_package_version}: {package}"
+        )
+    if parsed.group("release_version") != rtpengine_version:
+        fail(
+            f"Dockerfile package assignment for {arch} uses release version "
+            f"{parsed.group('release_version')}; expected {rtpengine_version}: {package}"
+        )
+    packages[parsed.group("arch")] = package
+
+expected_arches = {"amd64", "arm64"}
+if set(packages) != expected_arches:
+    fail(f"Dockerfile must define package assignments for amd64 and arm64; found {sorted(packages)}")
+for arch, package in packages.items():
+    expected = f"rtpengine-daemon_{expected_package_version}{expected_segment}+gh+trixie_{arch}.deb"
+    if package != expected:
+        fail(f"Dockerfile package assignment for {arch} is {package}; expected {expected}")
+PY
 grep -Fq -- "--table=-1" "$entrypoint" || fail "rtpengine entrypoint must select userspace forwarding with --table=-1"
 grep -Fq 'fieldPath: status.podIP' "$ROOT/infrastructure/kubernetes/base/platform/rtpengine-deployment.yaml" || fail "POD_IP must come from status.podIP"
 grep -Fq '6:result4:pong' "$readiness" || fail "ng ping helper must validate result=pong"
