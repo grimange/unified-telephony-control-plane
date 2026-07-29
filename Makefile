@@ -71,7 +71,7 @@ install: api-install web-install ## Install all application dependencies.
 
 test: api-test web-test ## Run backend and frontend tests.
 
-check: repository-hygiene media-config-check media-config-check-test security-config-check-test api-check web-lint web-typecheck ## Run repository, backend, frontend, media, and security static checks.
+check: repository-hygiene media-config-check media-config-check-test security-config-check-test kamailio-signaling-config-check api-check web-lint web-typecheck ## Run repository, backend, frontend, media, security, and Kamailio signaling static checks.
 
 build: web-build ## Build deployable application artifacts introduced so far.
 

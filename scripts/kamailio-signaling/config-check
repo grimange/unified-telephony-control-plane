@@ -17,9 +17,10 @@ php -l apps/api/tests/Feature/TelephonyDomain/KamailioRegistrationObserverTest.p
 grep -Fq 'KAMAILIO_IMAGE=ghcr.io/kamailio/kamailio:5.8.6-bookworm' versions.env
 grep -Eq '^UTCP_PHASE=T[01]$' versions.env
 
-tmp_manifest="$(mktemp)"
-tmp_gateway="$(mktemp)"
-trap 'rm -f "$tmp_manifest" "$tmp_gateway"' EXIT
+tmp_dir="$(mktemp -d)"
+tmp_manifest="$tmp_dir/local.yaml"
+tmp_gateway="$tmp_dir/gateway.yaml"
+trap 'rm -rf "$tmp_dir"' EXIT
 
 source scripts/kubernetes/lib
 ensure_local_kamailio_credentials
@@ -40,6 +41,82 @@ grep -Fq 'automountServiceAccountToken: false' infrastructure/kubernetes/base/pl
 grep -Fq 'sip.utcp.local.test' "$tmp_gateway"
 grep -Fq 'value: /ws' "$tmp_gateway"
 grep -Fq 'kind: HTTPRoute' "$tmp_gateway"
+
+kamailio_image="$(grep -E '^KAMAILIO_IMAGE=' versions.env | cut -d= -f2-)"
+if [ "$kamailio_image" != "ghcr.io/kamailio/kamailio:5.8.6-bookworm" ]; then
+    printf 'Unexpected pinned Kamailio image: %s\n' "$kamailio_image" >&2
+    exit 1
+fi
+
+render_and_parse_kamailio() {
+    variant="$1"
+    kustomize_path="$2"
+    render="$tmp_dir/kamailio-${variant}.yaml"
+    cfg="$tmp_dir/kamailio-${variant}.cfg"
+
+    kubectl kustomize "$kustomize_path" >"$render"
+    python3 - "$render" "$cfg" "$variant" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+def fail(message: str) -> None:
+    print(f"Kamailio rendered parser setup failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+render = Path(sys.argv[1])
+cfg_path = Path(sys.argv[2])
+variant = sys.argv[3]
+docs = [doc for doc in yaml.safe_load_all(render.read_text(encoding="utf-8")) if isinstance(doc, dict)]
+
+
+def key(doc: dict[str, Any]) -> str:
+    metadata = doc.get("metadata") or {}
+    return f"{doc.get('kind')}/{metadata.get('namespace')}/{metadata.get('name')}"
+
+
+objects = {key(doc): doc for doc in docs}
+config = objects.get("ConfigMap/utcp-platform/kamailio-config")
+deployment = objects.get("Deployment/utcp-platform/kamailio")
+if not config or not deployment:
+    fail(f"{variant} must render Kamailio ConfigMap and Deployment")
+
+kamailio_cfg = (config.get("data") or {}).get("kamailio.cfg", "")
+if not kamailio_cfg:
+    fail(f"{variant} must render kamailio.cfg")
+
+annotation = (
+    (((deployment.get("spec") or {}).get("template") or {}).get("metadata") or {})
+    .get("annotations") or {}
+).get("utcp.io/kamailio-config-sha256")
+actual = hashlib.sha256(kamailio_cfg.encode("utf-8")).hexdigest()
+if annotation != actual:
+    fail(f"{variant} Deployment checksum annotation {annotation!r} must equal rendered kamailio.cfg sha256 {actual}")
+if "kubectl.kubernetes.io/restartedAt" in yaml.safe_dump(deployment):
+    fail(f"{variant} must not use a mutable rollout restart timestamp")
+
+cfg_path.write_text(kamailio_cfg, encoding="utf-8")
+PY
+
+    parser_log="$tmp_dir/kamailio-${variant}.parser.log"
+    if ! docker run --rm --entrypoint /usr/sbin/kamailio -v "$cfg:/tmp/kamailio.cfg:ro" "$kamailio_image" -c -f /tmp/kamailio.cfg >"$parser_log" 2>&1; then
+        cat "$parser_log" >&2
+        printf 'Kamailio rendered parser check failed for %s (%s).\n' "$variant" "$kustomize_path" >&2
+        exit 1
+    fi
+}
+
+render_and_parse_kamailio "base-platform" "infrastructure/kubernetes/base/platform"
+render_and_parse_kamailio "base" "infrastructure/kubernetes/base"
+render_and_parse_kamailio "local-platform" "infrastructure/kubernetes/overlays/local/platform"
+render_and_parse_kamailio "local" "infrastructure/kubernetes/overlays/local"
 
 if grep -Eq 'type:[[:space:]]*(NodePort|LoadBalancer)|hostNetwork:[[:space:]]*true|hostPort:|privileged:[[:space:]]*true|containerPort:[[:space:]]*(5061|10000|20000)|port:[[:space:]]*(5061|10000|20000)' "$tmp_manifest" "$tmp_gateway"; then
     printf 'Kamailio signaling manifests expose prohibited host, public SIP, or RTP scope.\n' >&2
@@ -95,6 +172,7 @@ for forbidden in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rt
 
 required_route_tokens = [
     'loadmodule "rr.so"',
+    'loadmodule "siputils.so"',
     'modparam("rr", "enable_full_lr", 1)',
     'route(APPLICATION_DIALOG)',
     'route[APPLICATION_DIALOG]',
@@ -103,6 +181,7 @@ required_route_tokens = [
     'is_method("INVITE|ACK|CANCEL|BYE|UPDATE")',
     'if ($rm != "INVITE")',
     'record_route()',
+    'has_totag()',
     'loose_route()',
     'if ($rm == "ACK")',
     'if ($rm == "CANCEL")',

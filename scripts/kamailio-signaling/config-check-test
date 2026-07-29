@@ -15,8 +15,11 @@ python3 - "$ROOT" "$local_render" "$security_render" <<'PY'
 from __future__ import annotations
 
 import copy
+import hashlib
 import re
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
@@ -25,6 +28,11 @@ import yaml
 root = Path(sys.argv[1])
 local_docs = [doc for doc in yaml.safe_load_all(Path(sys.argv[2]).read_text(encoding="utf-8")) if isinstance(doc, dict)]
 security_docs = [doc for doc in yaml.safe_load_all(Path(sys.argv[3]).read_text(encoding="utf-8")) if isinstance(doc, dict)]
+kamailio_image = ""
+for line in (root / "versions.env").read_text(encoding="utf-8").splitlines():
+    if line.startswith("KAMAILIO_IMAGE="):
+        kamailio_image = line.split("=", 1)[1]
+        break
 
 
 class ValidationError(Exception):
@@ -41,7 +49,7 @@ def load_state() -> dict[str, Any]:
         "modules": (root / "infrastructure/docker/asterisk/config/modules.conf").read_text(encoding="utf-8"),
         "pjsip": (root / "infrastructure/docker/asterisk/config/pjsip.conf").read_text(encoding="utf-8"),
         "extensions": (root / "infrastructure/docker/asterisk/config/extensions.conf").read_text(encoding="utf-8"),
-        "kamailio": (root / "infrastructure/kubernetes/base/platform/kamailio-configmap.yaml").read_text(encoding="utf-8"),
+        "kamailio": rendered_kamailio_config(local_docs),
         "local_docs": copy.deepcopy(local_docs),
         "security_docs": copy.deepcopy(security_docs),
     }
@@ -49,6 +57,15 @@ def load_state() -> dict[str, Any]:
 
 def objects(docs: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {key(doc): doc for doc in docs}
+
+
+def rendered_kamailio_config(docs: list[dict[str, Any]]) -> str:
+    rendered_objects = objects(docs)
+    return (
+        rendered_objects.get("ConfigMap/utcp-platform/kamailio-config", {})
+        .get("data", {})
+        .get("kamailio.cfg", "")
+    )
 
 
 def require(condition: bool, message: str) -> None:
@@ -60,7 +77,7 @@ def validate(state: dict[str, Any]) -> None:
     modules = state["modules"]
     pjsip = state["pjsip"]
     extensions = state["extensions"]
-    kamailio_yaml = state["kamailio"]
+    kamailio = state["kamailio"]
     local_objects = objects(state["local_docs"])
     security_objects = objects(state["security_docs"])
 
@@ -112,19 +129,35 @@ def validate(state: dict[str, Any]) -> None:
     fixture_text = (fixture.get("data") or {}).get("extensions.local.conf", "")
     require(fixture_text.count("exten => 9900,1") == 1 and all(token in fixture_text for token in ("Answer()", "Echo()", "Hangup()")), "local proof fixture must be 9900 Answer/Echo/Hangup")
 
-    kamailio = (yaml.safe_load(kamailio_yaml).get("data") or {}).get("kamailio.cfg", "")
+    kamailio_deployment = local_objects.get("Deployment/utcp-platform/kamailio")
+    require(kamailio_deployment is not None, "Kamailio Deployment missing")
+    annotations = (
+        (((kamailio_deployment.get("spec") or {}).get("template") or {}).get("metadata") or {})
+        .get("annotations") or {}
+    )
+    expected_checksum = hashlib.sha256(kamailio.encode("utf-8")).hexdigest()
+    require(
+        annotations.get("utcp.io/kamailio-config-sha256") == expected_checksum,
+        "Kamailio Deployment checksum must match rendered kamailio.cfg",
+    )
+    require(
+        "kubectl.kubernetes.io/restartedAt" not in yaml.safe_dump(kamailio_deployment),
+        "manual rollout restart timestamp forbidden",
+    )
     for forbidden in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage"):
         require(forbidden not in kamailio, f"rtpengine operation forbidden in T3-S2A: {forbidden}")
     for token in (
         'if ($rm == "REGISTER")',
         'save("location", "0x04")',
         'loadmodule "rr.so"',
+        'loadmodule "siputils.so"',
         'route[APPLICATION_DIALOG]',
         'route[WITHINDLG]',
         'route[ASTERISK_RELAY]',
         'is_method("INVITE|ACK|CANCEL|BYE|UPDATE")',
         'www_authorize("$fd", "kamailio_signaling_auth_view")',
         'record_route()',
+        'has_totag()',
         'loose_route()',
         'if ($rm == "ACK")',
         'if ($rm == "CANCEL")',
@@ -172,6 +205,64 @@ def mutate_doc(state: dict[str, Any], doc_key: str, mutation: Callable[[dict[str
     raise RuntimeError(f"test setup could not find {doc_key}")
 
 
+def set_kamailio_config(state: dict[str, Any], config: str, update_checksum: bool = False) -> None:
+    state["kamailio"] = config
+    mutate_doc(
+        state,
+        "ConfigMap/utcp-platform/kamailio-config",
+        lambda d: d.setdefault("data", {}).update({"kamailio.cfg": config}),
+    )
+    if update_checksum:
+        checksum = hashlib.sha256(config.encode("utf-8")).hexdigest()
+        mutate_doc(
+            state,
+            "Deployment/utcp-platform/kamailio",
+            lambda d: (
+                d.setdefault("spec", {})
+                .setdefault("template", {})
+                .setdefault("metadata", {})
+                .setdefault("annotations", {})
+                .update({"utcp.io/kamailio-config-sha256": checksum})
+            ),
+        )
+
+
+def kamailio_template_hash(state: dict[str, Any]) -> str:
+    deployment = objects(state["local_docs"]).get("Deployment/utcp-platform/kamailio")
+    if deployment is None:
+        raise ValidationError("Kamailio Deployment missing")
+    template = (deployment.get("spec") or {}).get("template") or {}
+    return hashlib.sha256(yaml.safe_dump(template, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def parse_kamailio_config(config: str) -> tuple[bool, str]:
+    if not kamailio_image:
+        return False, "KAMAILIO_IMAGE missing from versions.env"
+    with tempfile.TemporaryDirectory() as tmp:
+        cfg = Path(tmp) / "kamailio.cfg"
+        cfg.write_text(config, encoding="utf-8")
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--entrypoint",
+                "/usr/sbin/kamailio",
+                "-v",
+                f"{cfg}:/tmp/kamailio.cfg:ro",
+                kamailio_image,
+                "-c",
+                "-f",
+                "/tmp/kamailio.cfg",
+            ],
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+    return result.returncode == 0, result.stdout
+
+
 def remove_kamailio_sip_egress(policy: dict[str, Any]) -> None:
     policy["spec"]["egress"] = [
         rule
@@ -212,7 +303,49 @@ def fail_case(name: str, mutate: Callable[[dict[str, Any]], None]) -> None:
     raise SystemExit(1)
 
 
+def parser_pass_case(name: str, config: str) -> None:
+    passed, output = parse_kamailio_config(config)
+    if not passed:
+        print(f"expected parser pass failed: {name}", file=sys.stderr)
+        print(output, file=sys.stderr)
+        raise SystemExit(1)
+
+
+def parser_fail_case(name: str, config: str) -> None:
+    passed, _output = parse_kamailio_config(config)
+    if passed:
+        print(f"expected parser failure did not occur: {name}", file=sys.stderr)
+        raise SystemExit(1)
+
+
 pass_case("correct repository configuration", load_state())
+parser_pass_case("correct rendered Kamailio configuration parses", load_state()["kamailio"])
+
+reference_state = load_state()
+require(
+    kamailio_template_hash(reference_state) == kamailio_template_hash(load_state()),
+    "unchanged Kamailio configuration must produce unchanged Pod template",
+)
+changed_state = load_state()
+set_kamailio_config(changed_state, changed_state["kamailio"] + "\n# deterministic checksum test\n", update_checksum=True)
+require(
+    kamailio_template_hash(changed_state) != kamailio_template_hash(reference_state),
+    "changing kamailio.cfg must change the Deployment Pod template",
+)
+unrelated_state = load_state()
+unrelated_state["unrelated_documentation"] = "changed"
+require(
+    kamailio_template_hash(unrelated_state) == kamailio_template_hash(reference_state),
+    "unrelated documentation changes must not change the Kamailio Pod template",
+)
+require(
+    "kamailio-config" in yaml.safe_dump(objects(reference_state["local_docs"])["Deployment/utcp-platform/kamailio"]),
+    "Deployment must reference the canonical Kamailio ConfigMap",
+)
+require(
+    "kubectl.kubernetes.io/restartedAt" not in yaml.safe_dump(objects(reference_state["local_docs"])["Deployment/utcp-platform/kamailio"]),
+    "manual rollout timestamp must be absent",
+)
 
 fail_case("removing required PJSIP module fails", lambda s: s.update(modules=s["modules"].replace("load = res_pjsip_session.so\n", "")))
 fail_case("autoload=yes fails", lambda s: s.update(modules=s["modules"].replace("autoload = no", "autoload = yes")))
@@ -228,17 +361,38 @@ fail_case("removing Kamailio egress fails", lambda s: mutate_doc(s, "NetworkPoli
 fail_case("removing Asterisk ingress fails", lambda s: s.update(security_docs=[doc for doc in s["security_docs"] if key(doc) != "NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio"]))
 fail_case("widening Kamailio policy fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic", widen_kamailio_sip_egress, "security_docs"))
 fail_case("widening Asterisk policy fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio", lambda d: d["spec"]["ingress"][0]["from"][0].pop("podSelector", None), "security_docs"))
-fail_case("Asterisk IP literal fails", lambda s: s.update(kamailio=s["kamailio"].replace("asterisk-sip.utcp-runtime.svc.cluster.local", "10.43.1.27")))
-fail_case("removing initial INVITE authentication fails", lambda s: s.update(kamailio=s["kamailio"].replace('www_authorize("$fd", "kamailio_signaling_auth_view")', 'allow_without_authorize()', 1).replace('www_authorize("$fd", "kamailio_signaling_auth_view")', 'allow_without_authorize()')))
-fail_case("removing Record-Route fails", lambda s: s.update(kamailio=s["kamailio"].replace("record_route();", "")))
-fail_case("removing loose routing fails", lambda s: s.update(kamailio=s["kamailio"].replace("loose_route()", "route_not_found()")))
-fail_case("removing CANCEL handling fails", lambda s: s.update(kamailio=s["kamailio"].replace('if ($rm == "CANCEL")', 'if ($rm == "NO_CANCEL")')))
-fail_case("removing ACK handling fails", lambda s: s.update(kamailio=s["kamailio"].replace('if ($rm == "ACK")', 'if ($rm == "NO_ACK")')))
-fail_case("removing BYE handling fails", lambda s: s.update(kamailio=s["kamailio"].replace("INVITE|ACK|CANCEL|BYE|UPDATE", "INVITE|ACK|CANCEL|UPDATE")))
-fail_case("removing 503 failure contract fails", lambda s: s.update(kamailio=s["kamailio"].replace('sl_send_reply("503", "Application Runtime Unavailable")', 'sl_reply_error()')))
-fail_case("adding second Asterisk target fails", lambda s: s.update(kamailio=s["kamailio"].replace("route[ASTERISK_RELAY]", '$du = "sip:asterisk-alt.utcp-runtime.svc.cluster.local:5060;transport=udp";\n\n    route[ASTERISK_RELAY]')))
-fail_case("adding rtpengine operation fails", lambda s: s.update(kamailio=s["kamailio"].replace("record_route();", "record_route();\n        rtpengine_offer();")))
+fail_case("removing siputils module fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('loadmodule "siputils.so"\n', "")))
+fail_case("Asterisk IP literal fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("asterisk-sip.utcp-runtime.svc.cluster.local", "10.43.1.27")))
+fail_case("removing initial INVITE authentication fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('www_authorize("$fd", "kamailio_signaling_auth_view")', 'allow_without_authorize()', 1).replace('www_authorize("$fd", "kamailio_signaling_auth_view")', 'allow_without_authorize()')))
+fail_case("removing Record-Route fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("record_route();", "")))
+fail_case("removing loose routing fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("loose_route()", "route_not_found()")))
+fail_case("removing CANCEL handling fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('if ($rm == "CANCEL")', 'if ($rm == "NO_CANCEL")')))
+fail_case("removing ACK handling fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('if ($rm == "ACK")', 'if ($rm == "NO_ACK")')))
+fail_case("removing BYE handling fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("INVITE|ACK|CANCEL|BYE|UPDATE", "INVITE|ACK|CANCEL|UPDATE")))
+fail_case("removing 503 failure contract fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('sl_send_reply("503", "Application Runtime Unavailable")', 'sl_reply_error()')))
+fail_case("adding second Asterisk target fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("route[ASTERISK_RELAY]", '$du = "sip:asterisk-alt.utcp-runtime.svc.cluster.local:5060;transport=udp";\n\n    route[ASTERISK_RELAY]')))
+fail_case("adding rtpengine operation fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("record_route();", "record_route();\n        rtpengine_offer();")))
 fail_case("base proof extension fails", lambda s: s.update(extensions=s["extensions"] + "\nexten => 9900,1,Answer()\n"))
+
+rendered_invalid = load_state()
+set_kamailio_config(
+    rendered_invalid,
+    rendered_invalid["kamailio"].replace("has_totag()", "rendered_invalid_command()"),
+    update_checksum=True,
+)
+
+parser_fail_case("has_totag without siputils fails", load_state()["kamailio"].replace('loadmodule "siputils.so"\n', ""))
+parser_fail_case("unknown Kamailio command fails", load_state()["kamailio"].replace("has_totag()", "unknown_t3_s2a_command()"))
+parser_fail_case("removing rr module fails through parser", load_state()["kamailio"].replace('loadmodule "rr.so"\n', ""))
+parser_fail_case(
+    "invalid module parameter fails",
+    load_state()["kamailio"].replace('modparam("rr", "enable_full_lr", 1)', 'modparam("rr", "not_a_real_parameter", 1)'),
+)
+parser_fail_case(
+    "rendered route syntax error fails",
+    load_state()["kamailio"].replace("route[APPLICATION_DIALOG] {", "route[APPLICATION_DIALOG] {\n        if ("),
+)
+parser_fail_case("invalid rendered ConfigMap fails even when source file is valid", rendered_invalid["kamailio"])
 
 print("kamailio_signaling_config_check_regression_tests=pass")
 PY
