@@ -420,14 +420,15 @@ for required in \
   allow-postgres-from-backend-roles \
   allow-redis-from-backend-roles \
   allow-traefik-required-traffic \
-  allow-asterisk-ari-from-utcp-workers; do
+  allow-asterisk-ari-from-utcp-workers \
+  allow-asterisk-sip-from-kamailio; do
   grep -Fq "name: $required" "$tmp" || {
     printf 'missing required K3 NetworkPolicy: %s\n' "$required" >&2
     exit 1
   }
 done
 
-if grep -Eiq '18080|18443|5060|5061|10000|20000|sips|freeswitch|NodePort|LoadBalancer|hostPort:|hostNetwork:[[:space:]]*true|privileged:[[:space:]]*true' "$tmp"; then
+if grep -Eiq '18080|18443|5061|10000|20000|sips|freeswitch|NodePort|LoadBalancer|hostPort:|hostNetwork:[[:space:]]*true|privileged:[[:space:]]*true' "$tmp"; then
   printf 'security manifests include custom edge or prohibited media material\n' >&2
   exit 1
 fi
@@ -462,6 +463,9 @@ if not policy:
 kamailio_policy = objects.get("NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic")
 if not kamailio_policy:
     fail("security render must include allow-kamailio-signaling-required-traffic")
+asterisk_sip_policy = objects.get("NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio")
+if not asterisk_sip_policy:
+    fail("security render must include allow-asterisk-sip-from-kamailio")
 
 spec = policy.get("spec") or {}
 if (spec.get("podSelector") or {}).get("matchLabels") != {"utcp.io/network-role": "rtpengine-media"}:
@@ -512,6 +516,57 @@ if rtpengine_peers != [
     }
 ]:
     fail("Kamailio rtpengine egress must use the exact utcp-platform rtpengine destination selector")
+
+kamailio_asterisk_egress = [
+    rule
+    for rule in kamailio_spec.get("egress") or []
+    if rule.get("ports") == [{"protocol": "UDP", "port": 5060}]
+]
+if len(kamailio_asterisk_egress) != 1:
+    fail("allow-kamailio-signaling-required-traffic must include exactly one Asterisk UDP 5060 egress rule")
+asterisk_egress_peers = kamailio_asterisk_egress[0].get("to") or []
+if asterisk_egress_peers != [
+    {
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+        "podSelector": {"matchLabels": {"app.kubernetes.io/component": "asterisk-ari"}},
+    }
+]:
+    fail("Kamailio Asterisk SIP egress must use the exact utcp-runtime Asterisk component selector")
+
+asterisk_sip_spec = asterisk_sip_policy.get("spec") or {}
+if (asterisk_sip_spec.get("podSelector") or {}).get("matchLabels") != {
+    "app.kubernetes.io/component": "asterisk-ari",
+    "utcp.io/network-role": "asterisk-ari",
+}:
+    fail("allow-asterisk-sip-from-kamailio must target only Asterisk runtime Pods")
+if asterisk_sip_spec.get("policyTypes") != ["Ingress"]:
+    fail("allow-asterisk-sip-from-kamailio must be ingress-only")
+asterisk_ingress = asterisk_sip_spec.get("ingress") or []
+if asterisk_ingress != [
+    {
+        "from": [
+            {
+                "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
+                "podSelector": {"matchLabels": {"utcp.io/network-role": "kamailio-signaling"}},
+            }
+        ],
+        "ports": [{"protocol": "UDP", "port": 5060}],
+    }
+]:
+    fail("Asterisk SIP ingress must be exact Kamailio UDP 5060 only")
+
+for policy_name, policy_doc in {
+    "allow-kamailio-signaling-required-traffic": kamailio_policy,
+    "allow-asterisk-sip-from-kamailio": asterisk_sip_policy,
+}.items():
+    rendered_policy = yaml.safe_dump(policy_doc, sort_keys=True)
+    if "ipBlock" in rendered_policy:
+        fail(f"{policy_name} must not use ipBlock for internal SIP authority")
+    for rule_key in ("from", "to"):
+        for rule in (policy_doc.get("spec") or {}).get("ingress", []) + (policy_doc.get("spec") or {}).get("egress", []):
+            for peer in rule.get(rule_key) or []:
+                if peer.get("podSelector") == {}:
+                    fail(f"{policy_name} must not use a namespace-wide SIP peer")
 PY
 
 if grep -Fq 'kamailio-signaling' "$tmp"; then

@@ -54,3 +54,13 @@ spec:
       ports:
         - protocol: UDP
           port: 2223
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-runtime
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: asterisk-ari
+      ports:
+        - protocol: UDP
+          port: 5060

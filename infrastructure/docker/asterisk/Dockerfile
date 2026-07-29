@@ -12,4 +12,5 @@ RUN chmod 0755 /usr/local/bin/utcp-asterisk-entrypoint /usr/local/bin/utcp-aster
 
 USER 1000:1000
 EXPOSE 8088
+EXPOSE 5060/udp
 ENTRYPOINT ["/usr/local/bin/utcp-asterisk-entrypoint"]

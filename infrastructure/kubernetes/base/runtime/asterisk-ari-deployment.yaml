@@ -37,6 +37,9 @@ spec:
             - name: ari
               containerPort: 8088
               protocol: TCP
+            - name: sip
+              containerPort: 5060
+              protocol: UDP
           envFrom:
             - secretRef:
                 name: utcp-local-asterisk-ari-credentials
@@ -61,9 +64,9 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 12
           readinessProbe:
-            exec: null
-            tcpSocket:
-              port: ari
+            exec:
+              command:
+                - /usr/local/bin/utcp-asterisk-readiness
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 3
@@ -80,3 +83,12 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 3
+          volumeMounts:
+            - name: asterisk-local-config
+              mountPath: /opt/utcp-asterisk-local-config
+              readOnly: true
+      volumes:
+        - name: asterisk-local-config
+          configMap:
+            name: asterisk-local-sip-fixtures
+            optional: true

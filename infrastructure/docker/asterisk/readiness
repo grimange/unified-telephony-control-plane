@@ -65,4 +65,8 @@ if ! cli "core show channeltypes" | awk '$1 == "Local" { found=1 } END { exit fo
   fail local_channel channel_type_absent
 fi
 
+if ! cli "pjsip show transports" | grep -Eq '^Transport:[[:space:]]+transport-udp-internal[[:space:]]+udp[[:space:]].*0\.0\.0\.0:5060$'; then
+  fail pjsip_transport "transport_missing_or_not_udp_5060"
+fi
+
 printf 'asterisk_readiness=ok\n'

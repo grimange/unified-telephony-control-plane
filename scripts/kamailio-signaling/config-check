@@ -41,10 +41,166 @@ grep -Fq 'sip.utcp.local.test' "$tmp_gateway"
 grep -Fq 'value: /ws' "$tmp_gateway"
 grep -Fq 'kind: HTTPRoute' "$tmp_gateway"
 
-if grep -Eq 'type:[[:space:]]*(NodePort|LoadBalancer)|hostNetwork:[[:space:]]*true|hostPort:|privileged:[[:space:]]*true|containerPort:[[:space:]]*(5060|5061|10000|20000)|port:[[:space:]]*(5060|5061|10000|20000)' "$tmp_manifest" "$tmp_gateway"; then
+if grep -Eq 'type:[[:space:]]*(NodePort|LoadBalancer)|hostNetwork:[[:space:]]*true|hostPort:|privileged:[[:space:]]*true|containerPort:[[:space:]]*(5061|10000|20000)|port:[[:space:]]*(5061|10000|20000)' "$tmp_manifest" "$tmp_gateway"; then
     printf 'Kamailio signaling manifests expose prohibited host, public SIP, or RTP scope.\n' >&2
     exit 1
 fi
+
+python3 - "$tmp_manifest" <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+manifest = Path(sys.argv[1])
+root = Path.cwd()
+docs = [doc for doc in yaml.safe_load_all(manifest.read_text(encoding="utf-8")) if isinstance(doc, dict)]
+
+
+def fail(message: str) -> None:
+    print(f"Kamailio signaling config check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def key(doc: dict[str, Any]) -> str:
+    metadata = doc.get("metadata") or {}
+    return f"{doc.get('kind')}/{metadata.get('namespace')}/{metadata.get('name')}"
+
+
+objects = {key(doc): doc for doc in docs}
+kamailio_config = (objects.get("ConfigMap/utcp-platform/kamailio-config") or {}).get("data", {}).get("kamailio.cfg", "")
+if not kamailio_config:
+    fail("Kamailio ConfigMap must render kamailio.cfg")
+
+register_block_required = [
+    'if ($rm == "REGISTER")',
+    'www_authorize("$fd", "kamailio_signaling_auth_view")',
+    'www_challenge("$fd", "0")',
+    'if ($au != $fU)',
+    'save("location", "0x04")',
+    'kamailio_registration_accepted result=ok',
+]
+for expected in register_block_required:
+    if expected not in kamailio_config:
+        fail(f"REGISTER authority drifted; missing {expected}")
+
+for forbidden in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage"):
+    if forbidden in kamailio_config:
+        fail(f"T3-S2A must not include rtpengine operation {forbidden}")
+
+required_route_tokens = [
+    'loadmodule "rr.so"',
+    'modparam("rr", "enable_full_lr", 1)',
+    'route(APPLICATION_DIALOG)',
+    'route[APPLICATION_DIALOG]',
+    'route[WITHINDLG]',
+    'route[ASTERISK_RELAY]',
+    'is_method("INVITE|ACK|CANCEL|BYE|UPDATE")',
+    'if ($rm != "INVITE")',
+    'record_route()',
+    'loose_route()',
+    'if ($rm == "ACK")',
+    'if ($rm == "CANCEL")',
+    't_check_trans()',
+    't_relay()',
+    'asterisk-sip.utcp-runtime.svc.cluster.local:5060;transport=udp',
+    'sl_send_reply("503", "Application Runtime Unavailable")',
+    'sl_send_reply("405", "Method Not Allowed")',
+]
+for expected in required_route_tokens:
+    if expected not in kamailio_config:
+        fail(f"application-dialog route missing {expected}")
+
+asterisk_targets = re.findall(r"\bsip:([^\";\s]+:5060)(?:;transport=udp)?", kamailio_config)
+if any(re.match(r"(?:\d{1,3}\.){3}\d{1,3}:5060$", target) for target in asterisk_targets):
+    fail("Asterisk destination must use Service DNS, not an IP literal")
+if asterisk_targets != ["asterisk-sip.utcp-runtime.svc.cluster.local:5060"]:
+    fail("Kamailio must configure exactly one canonical Asterisk SIP destination")
+
+asterisk_deployment = objects.get("Deployment/utcp-runtime/asterisk-ari")
+if not asterisk_deployment:
+    fail("Asterisk Deployment must render in utcp-runtime")
+pod_spec = (((asterisk_deployment.get("spec") or {}).get("template") or {}).get("spec") or {})
+containers = pod_spec.get("containers") or []
+if len(containers) != 1:
+    fail("Asterisk Deployment must have exactly one container")
+container = containers[0]
+ports = {(port.get("name"), port.get("protocol")): port for port in container.get("ports") or []}
+if (ports.get(("sip", "UDP")) or {}).get("containerPort") != 5060:
+    fail("Asterisk Deployment must expose one internal UDP sip container port 5060")
+if any("hostPort" in port for port in container.get("ports") or []):
+    fail("Asterisk SIP must not use hostPort")
+readiness_command = (((container.get("readinessProbe") or {}).get("exec") or {}).get("command") or [])
+if readiness_command != ["/usr/local/bin/utcp-asterisk-readiness"]:
+    fail("Asterisk readiness must use the repository readiness script")
+
+ari_service = objects.get("Service/utcp-runtime/asterisk-ari")
+sip_service = objects.get("Service/utcp-runtime/asterisk-sip")
+if not ari_service or not sip_service:
+    fail("Asterisk ARI and SIP Services must both render")
+if [port.get("name") for port in (ari_service.get("spec") or {}).get("ports") or []] != ["ari"]:
+    fail("ARI Service must remain ARI-only")
+sip_spec = sip_service.get("spec") or {}
+if sip_spec.get("type") != "ClusterIP":
+    fail("Asterisk SIP Service must be ClusterIP")
+if sip_spec.get("ports") != [{"name": "sip", "protocol": "UDP", "port": 5060, "targetPort": "sip"}]:
+    fail("Asterisk SIP Service must expose only named UDP 5060")
+if sip_spec.get("selector") != {
+    "app.kubernetes.io/component": "asterisk-ari",
+    "utcp.dev/runtime-node": "local-asterisk-ari",
+}:
+    fail("Asterisk SIP Service selector must target the canonical local Asterisk runtime")
+
+fixture = objects.get("ConfigMap/utcp-runtime/asterisk-local-sip-fixtures")
+if not fixture:
+    fail("local overlay must include the Asterisk SIP proof fixture ConfigMap")
+fixture_data = (fixture.get("data") or {}).get("extensions.local.conf", "")
+if fixture_data.count("exten => 9900,1") != 1 or "Answer()" not in fixture_data or "Echo()" not in fixture_data or "Hangup()" not in fixture_data:
+    fail("local overlay must contain exactly one reserved 9900 Answer/Echo/Hangup fixture")
+
+base_extensions = (root / "infrastructure/docker/asterisk/config/extensions.conf").read_text(encoding="utf-8")
+if "exten => 9900" in base_extensions:
+    fail("base Asterisk dialplan must not contain the local proof extension")
+if "[from-kamailio]" not in base_extensions or "Hangup(21)" not in base_extensions:
+    fail("base Asterisk dialplan must include bounded from-kamailio rejection context")
+
+pjsip = (root / "infrastructure/docker/asterisk/config/pjsip.conf").read_text(encoding="utf-8")
+if pjsip.count("type=transport") != 1 or "protocol=udp" not in pjsip or "bind=0.0.0.0:5060" not in pjsip:
+    fail("Asterisk PJSIP must define exactly one internal UDP 5060 transport")
+for forbidden_transport in ("protocol=tcp", "protocol=tls", "protocol=ws", "protocol=wss"):
+    if forbidden_transport in pjsip.lower():
+        fail(f"Asterisk PJSIP must not define {forbidden_transport}")
+for expected in ("[anonymous]", "context=from-kamailio", "direct_media=no", "disallow=all", "allow=ulaw"):
+    if expected not in pjsip:
+        fail(f"Asterisk Kamailio-facing endpoint missing {expected}")
+
+modules = (root / "infrastructure/docker/asterisk/config/modules.conf").read_text(encoding="utf-8")
+if not re.search(r"^\s*autoload\s*=\s*no\s*$", modules, re.M):
+    fail("Asterisk modules.conf must preserve autoload=no")
+for required in (
+    "res_sorcery_memory.so",
+    "res_pjproject.so",
+    "res_sorcery_astdb.so",
+    "res_pjsip.so",
+    "res_pjsip_endpoint_identifier_anonymous.so",
+    "res_pjsip_pubsub.so",
+    "res_pjsip_session.so",
+    "res_rtp_asterisk.so",
+    "res_pjsip_sdp_rtp.so",
+    "chan_pjsip.so",
+    "app_echo.so",
+):
+    if f"load = {required}" not in modules:
+        fail(f"Asterisk required PJSIP/media fixture module missing: {required}")
+for forbidden in ("autoload = yes", "res_pjsip_outbound_registration", "res_pjsip_transport_websocket", "res_pjsip_realtime", "app_record"):
+    if forbidden in modules:
+        fail(f"Asterisk modules.conf contains prohibited module or autoload setting: {forbidden}")
+PY
 
 if rg -n 'KAMAILIO_.*PASSWORD=[A-Za-z0-9_./+-]+' infrastructure/kubernetes apps scripts docs \
     --glob '!infrastructure/kubernetes/overlays/local/platform/local-kamailio-db-credentials.properties' \
@@ -54,7 +210,7 @@ if rg -n 'KAMAILIO_.*PASSWORD=[A-Za-z0-9_./+-]+' infrastructure/kubernetes apps 
 fi
 
 if rg -n "sip_secret|ha1" apps/api/app/Http docs/evidence >/tmp/utcp-kamailio-signaling-secret-scan.txt 2>/dev/null; then
-    if rg -n "assertJsonMissingPath\\('credential\\.ha1'|assertJsonMissingPath\\('credential\\.sip_secret'|username.*domain.*ha1|HA1 is persisted" /tmp/utcp-kamailio-signaling-secret-scan.txt >/dev/null 2>&1; then
+    if rg -n "assertJsonMissingPath\\('credential\\.ha1'|assertJsonMissingPath\\('credential\\.sip_secret'|username.*domain.*ha1|HA1 is persisted|signalingSecretVisible.*sip_secret.*hidden" /tmp/utcp-kamailio-signaling-secret-scan.txt >/dev/null 2>&1; then
         :
     else
         cat /tmp/utcp-kamailio-signaling-secret-scan.txt >&2
@@ -69,7 +225,7 @@ if rg -n "ha1" apps/web/src --glob '!*.test.ts' >/tmp/utcp-kamailio-signaling-we
     exit 1
 fi
 
-if rg -n "localStorage|sessionStorage" apps/web/src --glob '!*.test.ts' >/tmp/utcp-kamailio-signaling-web-storage-scan.txt 2>/dev/null; then
+if rg -n "(sip|signaling|credential|ha1).*(localStorage|sessionStorage)|(localStorage|sessionStorage).*(sip|signaling|credential|ha1)" apps/web/src --glob '!*.test.ts' >/tmp/utcp-kamailio-signaling-web-storage-scan.txt 2>/dev/null; then
     cat /tmp/utcp-kamailio-signaling-web-storage-scan.txt >&2
     printf 'Frontend signaling credential state must not use browser storage.\n' >&2
     exit 1

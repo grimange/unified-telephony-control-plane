@@ -28,7 +28,7 @@ if grep -Eiq 'freeswitch|confbridge|(^|[^a-z])(sips|srtp|pbx|pjsip)([^a-z]|$)|ho
   exit 1
 fi
 
-if grep -Eq 'port:[[:space:]]*(5060|5061|10000|20000)|containerPort:[[:space:]]*(5060|5061|10000|20000)|name:[[:space:]]*(sip|sips|rtp)([^[:alpha:]-]|$)' "$manifest"; then
+if grep -Eq 'port:[[:space:]]*(5061|10000|20000)|containerPort:[[:space:]]*(5061|10000|20000)|name:[[:space:]]*(sips|rtp)([^[:alpha:]-]|$)' "$manifest"; then
   printf 'Kubernetes manifest includes public SIP or RTP port vocabulary\n' >&2
   exit 1
 fi

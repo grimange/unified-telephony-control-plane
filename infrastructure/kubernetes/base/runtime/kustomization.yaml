@@ -4,3 +4,4 @@ resources:
   - service-account.yaml
   - asterisk-ari-deployment.yaml
   - asterisk-ari-service.yaml
+  - asterisk-sip-service.yaml

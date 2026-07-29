@@ -1,0 +1,244 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+local_render="$TMP_DIR/local.yaml"
+security_render="$TMP_DIR/security.yaml"
+
+kubectl kustomize "$ROOT/infrastructure/kubernetes/overlays/local" >"$local_render"
+kubectl kustomize "$ROOT/infrastructure/kubernetes/security" >"$security_render"
+
+python3 - "$ROOT" "$local_render" "$security_render" <<'PY'
+from __future__ import annotations
+
+import copy
+import re
+import sys
+from pathlib import Path
+from typing import Any, Callable
+
+import yaml
+
+root = Path(sys.argv[1])
+local_docs = [doc for doc in yaml.safe_load_all(Path(sys.argv[2]).read_text(encoding="utf-8")) if isinstance(doc, dict)]
+security_docs = [doc for doc in yaml.safe_load_all(Path(sys.argv[3]).read_text(encoding="utf-8")) if isinstance(doc, dict)]
+
+
+class ValidationError(Exception):
+    pass
+
+
+def key(doc: dict[str, Any]) -> str:
+    metadata = doc.get("metadata") or {}
+    return f"{doc.get('kind')}/{metadata.get('namespace')}/{metadata.get('name')}"
+
+
+def load_state() -> dict[str, Any]:
+    return {
+        "modules": (root / "infrastructure/docker/asterisk/config/modules.conf").read_text(encoding="utf-8"),
+        "pjsip": (root / "infrastructure/docker/asterisk/config/pjsip.conf").read_text(encoding="utf-8"),
+        "extensions": (root / "infrastructure/docker/asterisk/config/extensions.conf").read_text(encoding="utf-8"),
+        "kamailio": (root / "infrastructure/kubernetes/base/platform/kamailio-configmap.yaml").read_text(encoding="utf-8"),
+        "local_docs": copy.deepcopy(local_docs),
+        "security_docs": copy.deepcopy(security_docs),
+    }
+
+
+def objects(docs: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {key(doc): doc for doc in docs}
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise ValidationError(message)
+
+
+def validate(state: dict[str, Any]) -> None:
+    modules = state["modules"]
+    pjsip = state["pjsip"]
+    extensions = state["extensions"]
+    kamailio_yaml = state["kamailio"]
+    local_objects = objects(state["local_docs"])
+    security_objects = objects(state["security_docs"])
+
+    require(re.search(r"^\s*autoload\s*=\s*no\s*$", modules, re.M) is not None, "autoload=no required")
+    require("autoload = yes" not in modules, "autoload=yes forbidden")
+    for module in (
+        "res_sorcery_memory.so",
+        "res_pjproject.so",
+        "res_sorcery_astdb.so",
+        "res_pjsip.so",
+        "res_pjsip_endpoint_identifier_anonymous.so",
+        "res_pjsip_pubsub.so",
+        "res_pjsip_session.so",
+        "res_rtp_asterisk.so",
+        "res_pjsip_sdp_rtp.so",
+        "chan_pjsip.so",
+        "app_echo.so",
+    ):
+        require(f"load = {module}" in modules, f"required module missing: {module}")
+
+    require(pjsip.count("type=transport") == 1, "exactly one transport required")
+    require("protocol=udp" in pjsip and "bind=0.0.0.0:5060" in pjsip, "UDP 5060 transport required")
+    for forbidden in ("protocol=tcp", "protocol=tls", "protocol=ws", "protocol=wss"):
+        require(forbidden not in pjsip.lower(), f"forbidden transport: {forbidden}")
+    for token in ("[anonymous]", "context=from-kamailio", "direct_media=no", "disallow=all", "allow=ulaw"):
+        require(token in pjsip, f"endpoint token missing: {token}")
+    require("direct_media=yes" not in pjsip, "direct media forbidden")
+
+    require("[from-kamailio]" in extensions and "Hangup(21)" in extensions, "base from-kamailio rejection context required")
+    require("exten => 9900" not in extensions, "base config must not contain local proof extension")
+
+    deployment = local_objects.get("Deployment/utcp-runtime/asterisk-ari")
+    sip_service = local_objects.get("Service/utcp-runtime/asterisk-sip")
+    ari_service = local_objects.get("Service/utcp-runtime/asterisk-ari")
+    require(deployment is not None, "Asterisk Deployment missing")
+    require(sip_service is not None, "Asterisk SIP Service missing")
+    require(ari_service is not None, "Asterisk ARI Service missing")
+    container = (((deployment.get("spec") or {}).get("template") or {}).get("spec") or {}).get("containers", [{}])[0]
+    ports = container.get("ports") or []
+    require(any(port.get("name") == "sip" and port.get("protocol") == "UDP" and port.get("containerPort") == 5060 for port in ports), "SIP UDP container port missing")
+    require(not any("hostPort" in port for port in ports), "hostPort forbidden")
+    readiness = (((container.get("readinessProbe") or {}).get("exec") or {}).get("command") or [])
+    require(readiness == ["/usr/local/bin/utcp-asterisk-readiness"], "readiness script required")
+    require((sip_service.get("spec") or {}).get("type") == "ClusterIP", "SIP Service must be ClusterIP")
+    require((sip_service.get("spec") or {}).get("ports") == [{"name": "sip", "protocol": "UDP", "port": 5060, "targetPort": "sip"}], "SIP Service port contract drifted")
+    require([port.get("name") for port in (ari_service.get("spec") or {}).get("ports") or []] == ["ari"], "ARI Service must remain ARI-only")
+    fixture = local_objects.get("ConfigMap/utcp-runtime/asterisk-local-sip-fixtures")
+    require(fixture is not None, "local proof fixture missing")
+    fixture_text = (fixture.get("data") or {}).get("extensions.local.conf", "")
+    require(fixture_text.count("exten => 9900,1") == 1 and all(token in fixture_text for token in ("Answer()", "Echo()", "Hangup()")), "local proof fixture must be 9900 Answer/Echo/Hangup")
+
+    kamailio = (yaml.safe_load(kamailio_yaml).get("data") or {}).get("kamailio.cfg", "")
+    for forbidden in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage"):
+        require(forbidden not in kamailio, f"rtpengine operation forbidden in T3-S2A: {forbidden}")
+    for token in (
+        'if ($rm == "REGISTER")',
+        'save("location", "0x04")',
+        'loadmodule "rr.so"',
+        'route[APPLICATION_DIALOG]',
+        'route[WITHINDLG]',
+        'route[ASTERISK_RELAY]',
+        'is_method("INVITE|ACK|CANCEL|BYE|UPDATE")',
+        'www_authorize("$fd", "kamailio_signaling_auth_view")',
+        'record_route()',
+        'loose_route()',
+        'if ($rm == "ACK")',
+        'if ($rm == "CANCEL")',
+        't_relay()',
+        'sl_send_reply("503", "Application Runtime Unavailable")',
+        'sl_send_reply("405", "Method Not Allowed")',
+    ):
+        require(token in kamailio, f"Kamailio route token missing: {token}")
+    asterisk_targets = re.findall(r"\bsip:([^\";\s]+:5060)(?:;transport=udp)?", kamailio)
+    require(not any(re.match(r"(?:\d{1,3}\.){3}\d{1,3}:5060$", target) for target in asterisk_targets), "IP literal Asterisk target forbidden")
+    require(asterisk_targets == ["asterisk-sip.utcp-runtime.svc.cluster.local:5060"], "exactly one Asterisk Service DNS target required")
+
+    kamailio_policy = security_objects.get("NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic")
+    asterisk_policy = security_objects.get("NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio")
+    require(kamailio_policy is not None, "Kamailio NetworkPolicy missing")
+    require(asterisk_policy is not None, "Asterisk SIP NetworkPolicy missing")
+    kamailio_egress = [
+        rule
+        for rule in (kamailio_policy.get("spec") or {}).get("egress") or []
+        if rule.get("ports") == [{"port": 5060, "protocol": "UDP"}] or rule.get("ports") == [{"protocol": "UDP", "port": 5060}]
+    ]
+    require(len(kamailio_egress) == 1, "exact Kamailio UDP 5060 egress required")
+    require(kamailio_egress[0].get("to") == [{
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+        "podSelector": {"matchLabels": {"app.kubernetes.io/component": "asterisk-ari"}},
+    }], "Kamailio egress destination must be exact Asterisk component")
+    require((asterisk_policy.get("spec") or {}).get("ingress") == [{
+        "from": [{
+            "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
+            "podSelector": {"matchLabels": {"utcp.io/network-role": "kamailio-signaling"}},
+        }],
+        "ports": [{"protocol": "UDP", "port": 5060}],
+    }], "Asterisk ingress must be exact Kamailio UDP 5060")
+    for policy in (kamailio_policy, asterisk_policy):
+        rendered = yaml.safe_dump(policy, sort_keys=True)
+        require("ipBlock" not in rendered, "SIP policy must not use ipBlock")
+        require("podSelector: {}\n" not in rendered, "SIP policy must not use namespace-wide peers")
+
+
+def mutate_doc(state: dict[str, Any], doc_key: str, mutation: Callable[[dict[str, Any]], None], source: str = "local_docs") -> None:
+    for doc in state[source]:
+        if key(doc) == doc_key:
+            mutation(doc)
+            return
+    raise RuntimeError(f"test setup could not find {doc_key}")
+
+
+def remove_kamailio_sip_egress(policy: dict[str, Any]) -> None:
+    policy["spec"]["egress"] = [
+        rule
+        for rule in policy["spec"]["egress"]
+        if rule.get("ports") not in (
+            [{"port": 5060, "protocol": "UDP"}],
+            [{"protocol": "UDP", "port": 5060}],
+        )
+    ]
+
+
+def widen_kamailio_sip_egress(policy: dict[str, Any]) -> None:
+    for rule in policy["spec"]["egress"]:
+        if rule.get("ports") in (
+            [{"port": 5060, "protocol": "UDP"}],
+            [{"protocol": "UDP", "port": 5060}],
+        ):
+            for peer in rule.get("to", []):
+                peer.pop("podSelector", None)
+
+
+def pass_case(name: str, state: dict[str, Any]) -> None:
+    try:
+        validate(state)
+    except ValidationError as exc:
+        print(f"expected pass failed: {name}: {exc}", file=sys.stderr)
+        raise SystemExit(1)
+
+
+def fail_case(name: str, mutate: Callable[[dict[str, Any]], None]) -> None:
+    state = load_state()
+    mutate(state)
+    try:
+        validate(state)
+    except ValidationError:
+        return
+    print(f"expected failure did not occur: {name}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+pass_case("correct repository configuration", load_state())
+
+fail_case("removing required PJSIP module fails", lambda s: s.update(modules=s["modules"].replace("load = res_pjsip_session.so\n", "")))
+fail_case("autoload=yes fails", lambda s: s.update(modules=s["modules"].replace("autoload = no", "autoload = yes")))
+fail_case("removing UDP transport fails", lambda s: s.update(pjsip=s["pjsip"].replace("type=transport", "type=removed")))
+fail_case("adding TCP transport fails", lambda s: s.update(pjsip=s["pjsip"] + "\n[transport-tcp]\ntype=transport\nprotocol=tcp\nbind=0.0.0.0:5060\n"))
+fail_case("changing SIP port fails", lambda s: s.update(pjsip=s["pjsip"].replace("bind=0.0.0.0:5060", "bind=0.0.0.0:5061")))
+fail_case("removing direct_media=no fails", lambda s: s.update(pjsip=s["pjsip"].replace("direct_media=no\n", "")))
+fail_case("adding direct media fails", lambda s: s.update(pjsip=s["pjsip"].replace("direct_media=no", "direct_media=yes")))
+fail_case("removing SIP Service fails", lambda s: s.update(local_docs=[doc for doc in s["local_docs"] if key(doc) != "Service/utcp-runtime/asterisk-sip"]))
+fail_case("SIP Service NodePort fails", lambda s: mutate_doc(s, "Service/utcp-runtime/asterisk-sip", lambda d: d["spec"].update(type="NodePort")))
+fail_case("HostPort fails", lambda s: mutate_doc(s, "Deployment/utcp-runtime/asterisk-ari", lambda d: d["spec"]["template"]["spec"]["containers"][0]["ports"][1].update(hostPort=5060)))
+fail_case("removing Kamailio egress fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic", remove_kamailio_sip_egress, "security_docs"))
+fail_case("removing Asterisk ingress fails", lambda s: s.update(security_docs=[doc for doc in s["security_docs"] if key(doc) != "NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio"]))
+fail_case("widening Kamailio policy fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic", widen_kamailio_sip_egress, "security_docs"))
+fail_case("widening Asterisk policy fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio", lambda d: d["spec"]["ingress"][0]["from"][0].pop("podSelector", None), "security_docs"))
+fail_case("Asterisk IP literal fails", lambda s: s.update(kamailio=s["kamailio"].replace("asterisk-sip.utcp-runtime.svc.cluster.local", "10.43.1.27")))
+fail_case("removing initial INVITE authentication fails", lambda s: s.update(kamailio=s["kamailio"].replace('www_authorize("$fd", "kamailio_signaling_auth_view")', 'allow_without_authorize()', 1).replace('www_authorize("$fd", "kamailio_signaling_auth_view")', 'allow_without_authorize()')))
+fail_case("removing Record-Route fails", lambda s: s.update(kamailio=s["kamailio"].replace("record_route();", "")))
+fail_case("removing loose routing fails", lambda s: s.update(kamailio=s["kamailio"].replace("loose_route()", "route_not_found()")))
+fail_case("removing CANCEL handling fails", lambda s: s.update(kamailio=s["kamailio"].replace('if ($rm == "CANCEL")', 'if ($rm == "NO_CANCEL")')))
+fail_case("removing ACK handling fails", lambda s: s.update(kamailio=s["kamailio"].replace('if ($rm == "ACK")', 'if ($rm == "NO_ACK")')))
+fail_case("removing BYE handling fails", lambda s: s.update(kamailio=s["kamailio"].replace("INVITE|ACK|CANCEL|BYE|UPDATE", "INVITE|ACK|CANCEL|UPDATE")))
+fail_case("removing 503 failure contract fails", lambda s: s.update(kamailio=s["kamailio"].replace('sl_send_reply("503", "Application Runtime Unavailable")', 'sl_reply_error()')))
+fail_case("adding second Asterisk target fails", lambda s: s.update(kamailio=s["kamailio"].replace("route[ASTERISK_RELAY]", '$du = "sip:asterisk-alt.utcp-runtime.svc.cluster.local:5060;transport=udp";\n\n    route[ASTERISK_RELAY]')))
+fail_case("adding rtpengine operation fails", lambda s: s.update(kamailio=s["kamailio"].replace("record_route();", "record_route();\n        rtpengine_offer();")))
+fail_case("base proof extension fails", lambda s: s.update(extensions=s["extensions"] + "\nexten => 9900,1,Answer()\n"))
+
+print("kamailio_signaling_config_check_regression_tests=pass")
+PY

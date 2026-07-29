@@ -23,4 +23,5 @@ resources:
   - traefik/allow-traefik.yaml
   - empty-namespaces/default-deny-runtime.yaml
   - runtime/allow-asterisk-ari-ingress.yaml
+  - runtime/allow-asterisk-sip-from-kamailio.yaml
   - empty-namespaces/default-deny-observability.yaml

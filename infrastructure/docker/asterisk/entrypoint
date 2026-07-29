@@ -6,9 +6,16 @@ set -eu
 
 CONFIG_DIR=/tmp/utcp-asterisk
 RUN_DIR=/tmp/utcp-asterisk-run
+LOCAL_CONFIG_SOURCE_DIR=/opt/utcp-asterisk-local-config
 mkdir -p "$CONFIG_DIR"
 mkdir -p "$RUN_DIR"
 cp /opt/utcp-asterisk-config/*.conf "$CONFIG_DIR"/
+if [ -d "$LOCAL_CONFIG_SOURCE_DIR" ]; then
+  for file in "$LOCAL_CONFIG_SOURCE_DIR"/*.conf; do
+    [ -f "$file" ] || continue
+    cp "$file" "$CONFIG_DIR"/
+  done
+fi
 
 cat >"$CONFIG_DIR/ari.conf" <<EOF
 [general]

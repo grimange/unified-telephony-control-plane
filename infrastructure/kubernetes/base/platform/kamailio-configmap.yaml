@@ -26,6 +26,7 @@ data:
 
     loadmodule "tm.so"
     loadmodule "sl.so"
+    loadmodule "rr.so"
     loadmodule "pv.so"
     loadmodule "xlog.so"
     loadmodule "textops.so"
@@ -61,6 +62,8 @@ data:
     modparam("registrar", "max_contacts", 1)
     modparam("registrar", "method_filtering", 1)
 
+    modparam("rr", "enable_full_lr", 1)
+
     request_route {
         if (!mf_process_maxfwd_header("10")) {
             sl_send_reply("483", "Too Many Hops");
@@ -84,31 +87,110 @@ data:
             exit;
         }
 
-        if ($rm != "REGISTER") {
-            xlog("L_WARN", "kamailio_registration_rejected result=unsupported_method method=$rm\n");
+        if ($rm == "REGISTER") {
+            if (!www_authorize("$fd", "kamailio_signaling_auth_view")) {
+                xlog("L_INFO", "kamailio_registration_challenge result=challenge\n");
+                www_challenge("$fd", "0");
+                exit;
+            }
+
+            if ($au != $fU) {
+                xlog("L_WARN", "kamailio_registration_rejected result=auth_identity_mismatch\n");
+                sl_send_reply("403", "Forbidden");
+                exit;
+            }
+
+            if (!save("location", "0x04")) {
+                xlog("L_WARN", "kamailio_registration_rejected result=save_failed\n");
+                sl_reply_error();
+                exit;
+            }
+
+            xlog("L_INFO", "kamailio_registration_accepted result=ok\n");
+            exit;
+        }
+
+        if (is_method("INVITE|ACK|CANCEL|BYE|UPDATE")) {
+            route(APPLICATION_DIALOG);
+            exit;
+        }
+
+        xlog("L_WARN", "kamailio_registration_rejected result=unsupported_method method=$rm\n");
+        sl_send_reply("405", "Method Not Allowed");
+        exit;
+    }
+
+    route[APPLICATION_DIALOG] {
+        if (has_totag()) {
+            route(WITHINDLG);
+            exit;
+        }
+
+        if ($rm == "CANCEL") {
+            if (t_check_trans()) {
+                t_relay();
+            }
+            exit;
+        }
+
+        if ($rm == "ACK") {
+            if (t_check_trans()) {
+                t_relay();
+            }
+            exit;
+        }
+
+        if ($rm != "INVITE") {
             sl_send_reply("405", "Method Not Allowed");
             exit;
         }
 
         if (!www_authorize("$fd", "kamailio_signaling_auth_view")) {
-            xlog("L_INFO", "kamailio_registration_challenge result=challenge\n");
+            xlog("L_INFO", "kamailio_application_dialog_challenge result=challenge method=$rm call_id=$ci\n");
             www_challenge("$fd", "0");
             exit;
         }
 
         if ($au != $fU) {
-            xlog("L_WARN", "kamailio_registration_rejected result=auth_identity_mismatch\n");
+            xlog("L_WARN", "kamailio_application_dialog_rejected result=auth_identity_mismatch call_id=$ci\n");
             sl_send_reply("403", "Forbidden");
             exit;
         }
 
-        if (!save("location", "0x04")) {
-            xlog("L_WARN", "kamailio_registration_rejected result=save_failed\n");
-            sl_reply_error();
+        record_route();
+        route(ASTERISK_RELAY);
+        exit;
+    }
+
+    route[WITHINDLG] {
+        if (loose_route()) {
+            if (!t_relay()) {
+                xlog("L_WARN", "kamailio_application_dialog_relay_failed route=within_dialog method=$rm call_id=$ci\n");
+                sl_reply_error();
+            }
             exit;
         }
 
-        xlog("L_INFO", "kamailio_registration_accepted result=ok\n");
+        if ($rm == "ACK") {
+            if (t_check_trans()) {
+                t_relay();
+            }
+            exit;
+        }
+
+        sl_send_reply("404", "Not Found");
+        exit;
+    }
+
+    route[ASTERISK_RELAY] {
+        $du = "sip:asterisk-sip.utcp-runtime.svc.cluster.local:5060;transport=udp";
+
+        if (!t_relay()) {
+            xlog("L_WARN", "kamailio_application_dialog_rejected result=asterisk_unavailable method=$rm call_id=$ci\n");
+            sl_send_reply("503", "Application Runtime Unavailable");
+            exit;
+        }
+
         exit;
     }
 
