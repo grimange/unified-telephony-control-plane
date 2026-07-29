@@ -22,6 +22,7 @@ data:
     tcp_max_connections=512
     max_while_loops=100
     listen=tcp:0.0.0.0:8080
+    listen=udp:0.0.0.0:5060
     alias=sip.utcp.local.test
 
     loadmodule "tm.so"
