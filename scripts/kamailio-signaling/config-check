@@ -20,12 +20,14 @@ grep -Eq '^UTCP_PHASE=T[01]$' versions.env
 tmp_dir="$(mktemp -d)"
 tmp_manifest="$tmp_dir/local.yaml"
 tmp_gateway="$tmp_dir/gateway.yaml"
+tmp_security="$tmp_dir/security.yaml"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 source scripts/kubernetes/lib
 ensure_local_kamailio_credentials
 kubectl kustomize infrastructure/kubernetes/overlays/local >"$tmp_manifest"
 kubectl kustomize infrastructure/kubernetes/gateway-api >"$tmp_gateway"
+kubectl kustomize infrastructure/kubernetes/security >"$tmp_security"
 
 grep -Fq 'image: ghcr.io/kamailio/kamailio:5.8.6-bookworm' "$tmp_manifest"
 grep -Fq 'name: utcp-local-kamailio-db-credentials' "$tmp_manifest"
@@ -123,7 +125,7 @@ if grep -Eq 'type:[[:space:]]*(NodePort|LoadBalancer)|hostNetwork:[[:space:]]*tr
     exit 1
 fi
 
-python3 - "$tmp_manifest" <<'PY'
+python3 - "$tmp_manifest" "$tmp_security" <<'PY'
 from __future__ import annotations
 
 import re
@@ -135,8 +137,10 @@ import yaml
 
 
 manifest = Path(sys.argv[1])
+security_manifest = Path(sys.argv[2])
 root = Path.cwd()
 docs = [doc for doc in yaml.safe_load_all(manifest.read_text(encoding="utf-8")) if isinstance(doc, dict)]
+security_docs = [doc for doc in yaml.safe_load_all(security_manifest.read_text(encoding="utf-8")) if isinstance(doc, dict)]
 
 
 def fail(message: str) -> None:
@@ -149,10 +153,45 @@ def key(doc: dict[str, Any]) -> str:
     return f"{doc.get('kind')}/{metadata.get('namespace')}/{metadata.get('name')}"
 
 
+def block_after(config: str, marker: str) -> str:
+    start = config.find(marker)
+    if start < 0:
+        fail(f"Kamailio route block missing {marker}")
+    brace = config.find("{", start)
+    if brace < 0:
+        fail(f"Kamailio route block {marker} has no opening brace")
+    depth = 0
+    for index in range(brace, len(config)):
+        char = config[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return config[brace + 1:index]
+    fail(f"Kamailio route block {marker} has no closing brace")
+
+
+def require_in_order(block: str, tokens: list[str], context: str) -> None:
+    cursor = -1
+    for token in tokens:
+        index = block.find(token, cursor + 1)
+        if index < 0:
+            fail(f"{context} missing ordered token {token}")
+        cursor = index
+
+
 objects = {key(doc): doc for doc in docs}
+security_objects = {key(doc): doc for doc in security_docs}
 kamailio_config = (objects.get("ConfigMap/utcp-platform/kamailio-config") or {}).get("data", {}).get("kamailio.cfg", "")
 if not kamailio_config:
     fail("Kamailio ConfigMap must render kamailio.cfg")
+
+request_block = block_after(kamailio_config, "request_route")
+application_block = block_after(kamailio_config, "route[APPLICATION_DIALOG]")
+within_block = block_after(kamailio_config, "route[WITHINDLG]")
+asterisk_block = block_after(kamailio_config, "route[ASTERISK_RELAY]")
+failure_block = block_after(kamailio_config, "failure_route[ASTERISK_UNAVAILABLE]")
 
 register_block_required = [
     'if ($rm == "REGISTER")',
@@ -187,13 +226,54 @@ required_route_tokens = [
     'if ($rm == "CANCEL")',
     't_check_trans()',
     't_relay()',
+    't_on_failure("ASTERISK_UNAVAILABLE")',
+    'failure_route[ASTERISK_UNAVAILABLE]',
+    't_is_canceled()',
+    't_check_status("408")',
     'asterisk-sip.utcp-runtime.svc.cluster.local:5060;transport=udp',
-    'sl_send_reply("503", "Application Runtime Unavailable")',
+    't_reply("503", "Application Runtime Unavailable")',
+    'result=asterisk_unavailable',
     'sl_send_reply("405", "Method Not Allowed")',
 ]
 for expected in required_route_tokens:
     if expected not in kamailio_config:
         fail(f"application-dialog route missing {expected}")
+
+require_in_order(
+    request_block,
+    [
+        'mf_process_maxfwd_header("10")',
+        'sanity_check("17895", "7")',
+        'if ($rm == "CANCEL")',
+        "has_totag()",
+        "route(WITHINDLG)",
+        'if ($rd != "sip.utcp.local.test")',
+        'if ($rm == "REGISTER")',
+        'is_method("INVITE|ACK|CANCEL|BYE|UPDATE")',
+        "route(APPLICATION_DIALOG)",
+    ],
+    "request_route",
+)
+if "has_totag()" in application_block or 'if ($rd != "sip.utcp.local.test")' in application_block:
+    fail("established-dialog and initial domain routing must be owned by request_route")
+if 'result=foreign_domain' in kamailio_config or 'result=initial_foreign_domain' not in kamailio_config:
+    fail("initial foreign-domain rejection must use the accurate initial_foreign_domain label")
+if any(token in within_block for token in ('www_authorize("$fd", "kamailio_signaling_auth_view")', 'record_route()', 'route(ASTERISK_RELAY)', "$du =")):
+    fail("WITHINDLG must not repeat initial authentication, Record-Route, or destination selection")
+if "loose_route()" not in within_block:
+    fail("WITHINDLG must process Route headers with loose_route()")
+if 'sl_send_reply("404", "Not Found")' not in within_block:
+    fail("malformed sequential requests must fail explicitly")
+require_in_order(application_block, ['if ($rm == "ACK")', 'if ($rm != "INVITE")', 'www_authorize("$fd", "kamailio_signaling_auth_view")', "record_route()", "route(ASTERISK_RELAY)"], "route[APPLICATION_DIALOG]")
+require_in_order(asterisk_block, ['$du = "sip:asterisk-sip.utcp-runtime.svc.cluster.local:5060;transport=udp"', 't_on_failure("ASTERISK_UNAVAILABLE")', "t_relay()"], "route[ASTERISK_RELAY]")
+if any(token in failure_block for token in ("append_branch", "t_relay()", "$du =", "rtpengine_", "record_route()", "www_authorize")):
+    fail("ASTERISK_UNAVAILABLE failure route must not add branches, change destination, relay, rtpengine, or authenticate")
+if 't_is_canceled()' not in failure_block or failure_block.find('t_is_canceled()') > failure_block.find('t_check_status("408")'):
+    fail("ASTERISK_UNAVAILABLE must not convert client cancellation to 503")
+if 't_check_status("408")' not in failure_block or 't_reply("503", "Application Runtime Unavailable")' not in failure_block:
+    fail("ASTERISK_UNAVAILABLE must map generated 408 timeout to committed 503")
+if re.search(r't_check_status\("(\.\*|[1-6]\[0-9\]\[0-9\]|[45]\[0-9\]\[0-9\]|[0-9]\{3\})"\)', failure_block):
+    fail("ASTERISK_UNAVAILABLE must not map every downstream response to 503")
 
 asterisk_targets = re.findall(r"\bsip:([^\";\s]+:5060)(?:;transport=udp)?", kamailio_config)
 if any(re.match(r"(?:\d{1,3}\.){3}\d{1,3}:5060$", target) for target in asterisk_targets):
@@ -208,25 +288,31 @@ asterisk_destinations = re.findall(
 if asterisk_destinations != [("asterisk-sip.utcp-runtime.svc.cluster.local", "5060", "udp")]:
     fail("Kamailio must configure exactly one Asterisk relay destination over UDP 5060")
 
-listeners = re.findall(r"^\s*listen=(udp|tcp):([^:\s]+):(\d+)\s*$", kamailio_config, re.M | re.I)
-normalized_listeners = [(proto.lower(), host, int(port)) for proto, host, port in listeners]
-if normalized_listeners.count(("tcp", "0.0.0.0", 8080)) != 1:
+listeners = re.findall(r"^\s*listen=(udp|tcp):([^:\s]+):(\d+)\s+advertise\s+([^:\s]+):(\d+)\s*$", kamailio_config, re.M | re.I)
+normalized_listeners = [(proto.lower(), host, int(port), adv_host, int(adv_port)) for proto, host, port, adv_host, adv_port in listeners]
+if normalized_listeners.count(("tcp", "0.0.0.0", 8080, "sip.utcp.local.test", 443)) != 1:
     fail("Kamailio must preserve exactly one TCP 8080 listener")
-if normalized_listeners.count(("udp", "0.0.0.0", 5060)) != 1:
-    fail("Asterisk UDP 5060 destination requires exactly one listen=udp:0.0.0.0:5060 socket")
-if sum(1 for proto, _host, _port in normalized_listeners if proto == "udp") != 1:
+if normalized_listeners.count(("udp", "0.0.0.0", 5060, "kamailio-sip-internal.utcp-platform.svc.cluster.local", 5060)) != 1:
+    fail("Asterisk UDP 5060 destination requires exactly one advertised internal UDP socket")
+if sum(1 for proto, _host, _port, _adv_host, _adv_port in normalized_listeners if proto == "udp") != 1:
     fail("Kamailio must not configure more than one UDP SIP listener")
-for proto, host, port in normalized_listeners:
+for proto, host, port, adv_host, adv_port in normalized_listeners:
     if host != "0.0.0.0":
         fail(f"Kamailio listener must bind to pod-local wildcard authority, not {host}")
+    if adv_host == "0.0.0.0" or re.match(r"(?:10\.|127\.|172\.(?:1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)", adv_host):
+        fail(f"Kamailio listener advertises unstable or unreachable identity {adv_host}")
     if proto == "udp" and port != 5060:
         fail(f"Asterisk UDP relay listener port drifted from 5060 to {port}")
+    if proto == "tcp" and (adv_host, adv_port) != ("sip.utcp.local.test", 443):
+        fail("Client-facing listener must advertise the canonical T1 SIP ingress identity")
+    if proto == "udp" and (adv_host, adv_port) != ("kamailio-sip-internal.utcp-platform.svc.cluster.local", 5060):
+        fail("Asterisk-facing listener must advertise the internal Kamailio SIP Service DNS")
 for _host, port, transport in asterisk_destinations:
     if transport.lower() != "udp":
         fail("Asterisk relay destination must use UDP transport")
     if int(port) != 5060:
         fail(f"Asterisk relay destination port drifted from 5060 to {port}")
-    if ("udp", "0.0.0.0", int(port)) not in normalized_listeners:
+    if not any(proto == "udp" and host == "0.0.0.0" and listen_port == int(port) for proto, host, listen_port, _adv_host, _adv_port in normalized_listeners):
         fail("Asterisk relay destination transport has no matching Kamailio UDP listener")
 
 kamailio_deployment = objects.get("Deployment/utcp-platform/kamailio")
@@ -256,9 +342,24 @@ for doc in docs:
     ports = spec.get("ports") or []
     selects_kamailio = selector.get("app.kubernetes.io/component") == "kamailio"
     if selects_kamailio and any(port.get("protocol") == "UDP" for port in ports):
-        fail("Kamailio UDP SIP listener must not be exposed by a Service")
+        if key(doc) != "Service/utcp-platform/kamailio-sip-internal":
+            fail("Kamailio UDP SIP listener must only be exposed by the internal SIP Service")
+        if spec.get("type") != "ClusterIP":
+            fail("internal Kamailio SIP Service must be ClusterIP")
+        if selector != {
+            "app.kubernetes.io/part-of": "utcp",
+            "app.kubernetes.io/component": "kamailio",
+            "utcp.io/network-role": "kamailio-signaling",
+        }:
+            fail("internal Kamailio SIP Service must select only the Kamailio signaling workload")
+        if ports != [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-udp"}]:
+            fail("internal Kamailio SIP Service must expose only UDP 5060")
+        if any(field in spec for field in ("externalIPs", "loadBalancerIP", "externalName")):
+            fail("internal Kamailio SIP Service must not use external service fields")
     if selects_kamailio and spec.get("type") in {"NodePort", "LoadBalancer"}:
         fail("Kamailio Service must not use public service types")
+if "Service/utcp-platform/kamailio-sip-internal" not in objects:
+    fail("internal Kamailio SIP Service must render")
 
 asterisk_deployment = objects.get("Deployment/utcp-runtime/asterisk-ari")
 if not asterisk_deployment:
@@ -338,6 +439,51 @@ for required in (
 for forbidden in ("autoload = yes", "res_pjsip_outbound_registration", "res_pjsip_transport_websocket", "res_pjsip_realtime", "app_record"):
     if forbidden in modules:
         fail(f"Asterisk modules.conf contains prohibited module or autoload setting: {forbidden}")
+
+kamailio_policy = security_objects.get("NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic")
+asterisk_policy = security_objects.get("NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio")
+if not kamailio_policy or not asterisk_policy:
+    fail("Kamailio and Asterisk SIP NetworkPolicies must render")
+kamailio_ingress = (kamailio_policy.get("spec") or {}).get("ingress") or []
+if not any(rule.get("from") == [{
+    "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+    "podSelector": {"matchLabels": {
+        "app.kubernetes.io/component": "asterisk-ari",
+        "utcp.io/network-role": "asterisk-ari",
+        "utcp.dev/runtime-node": "local-asterisk-ari",
+    }},
+}] and rule.get("ports") == [{"protocol": "UDP", "port": 5060}] for rule in kamailio_ingress):
+    fail("Kamailio ingress must allow only canonical Asterisk UDP 5060 reverse signaling")
+asterisk_egress = (asterisk_policy.get("spec") or {}).get("egress") or []
+if asterisk_egress != [{
+    "to": [{
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
+        "podSelector": {"matchLabels": {
+            "app.kubernetes.io/component": "kamailio",
+            "utcp.io/network-role": "kamailio-signaling",
+        }},
+    }],
+    "ports": [{"protocol": "UDP", "port": 5060}],
+}]:
+    fail("Asterisk egress must allow only exact Kamailio UDP 5060 reverse signaling")
+if (asterisk_policy.get("spec") or {}).get("podSelector", {}).get("matchLabels", {}).get("utcp.dev/runtime-node") != "local-asterisk-ari":
+    fail("Asterisk reverse SIP policy must select only the canonical local Asterisk runtime")
+kamailio_egress = (kamailio_policy.get("spec") or {}).get("egress") or []
+if not any(rule.get("to") == [{
+    "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+    "podSelector": {"matchLabels": {
+        "app.kubernetes.io/component": "asterisk-ari",
+        "utcp.io/network-role": "asterisk-ari",
+        "utcp.dev/runtime-node": "local-asterisk-ari",
+    }},
+}] and rule.get("ports") == [{"protocol": "UDP", "port": 5060}] for rule in kamailio_egress):
+    fail("Kamailio egress must allow only canonical Asterisk UDP 5060 signaling")
+for policy in (kamailio_policy, asterisk_policy):
+    rendered = yaml.safe_dump(policy, sort_keys=True)
+    if "ipBlock" in rendered:
+        fail("SIP NetworkPolicies must not use ipBlock")
+    if "podSelector: {}\n" in rendered:
+        fail("SIP NetworkPolicies must not use namespace-wide pod peers")
 PY
 
 if rg -n 'KAMAILIO_.*PASSWORD=[A-Za-z0-9_./+-]+' infrastructure/kubernetes apps scripts docs \

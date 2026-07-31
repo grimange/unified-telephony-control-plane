@@ -21,8 +21,8 @@ data:
     tcp_connection_lifetime=130
     tcp_max_connections=512
     max_while_loops=100
-    listen=tcp:0.0.0.0:8080
-    listen=udp:0.0.0.0:5060
+    listen=tcp:0.0.0.0:8080 advertise sip.utcp.local.test:443
+    listen=udp:0.0.0.0:5060 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060
     alias=sip.utcp.local.test
 
     loadmodule "tm.so"
@@ -78,14 +78,26 @@ data:
             exit;
         }
 
-        if ($rd != "sip.utcp.local.test") {
-            xlog("L_WARN", "kamailio_registration_rejected result=foreign_domain\n");
-            sl_send_reply("403", "Forbidden");
+        if ($rm == "OPTIONS") {
+            sl_send_reply("200", "Keepalive");
             exit;
         }
 
-        if ($rm == "OPTIONS") {
-            sl_send_reply("200", "Keepalive");
+        if ($rm == "CANCEL") {
+            if (t_check_trans()) {
+                t_relay();
+            }
+            exit;
+        }
+
+        if (has_totag()) {
+            route(WITHINDLG);
+            exit;
+        }
+
+        if ($rd != "sip.utcp.local.test") {
+            xlog("L_WARN", "kamailio_registration_rejected result=initial_foreign_domain\n");
+            sl_send_reply("403", "Forbidden");
             exit;
         }
 
@@ -123,18 +135,6 @@ data:
     }
 
     route[APPLICATION_DIALOG] {
-        if (has_totag()) {
-            route(WITHINDLG);
-            exit;
-        }
-
-        if ($rm == "CANCEL") {
-            if (t_check_trans()) {
-                t_relay();
-            }
-            exit;
-        }
-
         if ($rm == "ACK") {
             if (t_check_trans()) {
                 t_relay();
@@ -186,14 +186,27 @@ data:
 
     route[ASTERISK_RELAY] {
         $du = "sip:asterisk-sip.utcp-runtime.svc.cluster.local:5060;transport=udp";
+        t_on_failure("ASTERISK_UNAVAILABLE");
 
         if (!t_relay()) {
             xlog("L_WARN", "kamailio_application_dialog_rejected result=asterisk_unavailable method=$rm call_id=$ci\n");
-            sl_send_reply("503", "Application Runtime Unavailable");
+            t_reply("503", "Application Runtime Unavailable");
             exit;
         }
 
         exit;
+    }
+
+    failure_route[ASTERISK_UNAVAILABLE] {
+        if (t_is_canceled()) {
+            exit;
+        }
+
+        if (t_check_status("408")) {
+            xlog("L_WARN", "kamailio_application_dialog_rejected result=asterisk_unavailable method=$rm call_id=$ci\n");
+            t_reply("503", "Application Runtime Unavailable");
+            exit;
+        }
     }
 
     event_route[xhttp:request] {

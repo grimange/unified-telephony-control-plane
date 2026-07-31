@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kamailio-sip-internal
+  namespace: utcp-platform
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: kamailio
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: kamailio
+    utcp.io/network-role: kamailio-signaling
+  ports:
+    - name: sip-udp
+      protocol: UDP
+      port: 5060
+      targetPort: sip-udp

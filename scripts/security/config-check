@@ -528,19 +528,24 @@ asterisk_egress_peers = kamailio_asterisk_egress[0].get("to") or []
 if asterisk_egress_peers != [
     {
         "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
-        "podSelector": {"matchLabels": {"app.kubernetes.io/component": "asterisk-ari"}},
+        "podSelector": {"matchLabels": {
+            "app.kubernetes.io/component": "asterisk-ari",
+            "utcp.io/network-role": "asterisk-ari",
+            "utcp.dev/runtime-node": "local-asterisk-ari",
+        }},
     }
 ]:
-    fail("Kamailio Asterisk SIP egress must use the exact utcp-runtime Asterisk component selector")
+    fail("Kamailio Asterisk SIP egress must use the exact utcp-runtime canonical Asterisk selector")
 
 asterisk_sip_spec = asterisk_sip_policy.get("spec") or {}
 if (asterisk_sip_spec.get("podSelector") or {}).get("matchLabels") != {
     "app.kubernetes.io/component": "asterisk-ari",
     "utcp.io/network-role": "asterisk-ari",
+    "utcp.dev/runtime-node": "local-asterisk-ari",
 }:
     fail("allow-asterisk-sip-from-kamailio must target only Asterisk runtime Pods")
-if asterisk_sip_spec.get("policyTypes") != ["Ingress"]:
-    fail("allow-asterisk-sip-from-kamailio must be ingress-only")
+if asterisk_sip_spec.get("policyTypes") != ["Ingress", "Egress"]:
+    fail("allow-asterisk-sip-from-kamailio must enforce ingress and egress")
 asterisk_ingress = asterisk_sip_spec.get("ingress") or []
 if asterisk_ingress != [
     {
@@ -554,6 +559,22 @@ if asterisk_ingress != [
     }
 ]:
     fail("Asterisk SIP ingress must be exact Kamailio UDP 5060 only")
+asterisk_egress = asterisk_sip_spec.get("egress") or []
+if asterisk_egress != [
+    {
+        "to": [
+            {
+                "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
+                "podSelector": {"matchLabels": {
+                    "app.kubernetes.io/component": "kamailio",
+                    "utcp.io/network-role": "kamailio-signaling",
+                }},
+            }
+        ],
+        "ports": [{"protocol": "UDP", "port": 5060}],
+    }
+]:
+    fail("Asterisk SIP egress must be exact Kamailio UDP 5060 only")
 
 for policy_name, policy_doc in {
     "allow-kamailio-signaling-required-traffic": kamailio_policy,

@@ -8,8 +8,10 @@ spec:
     matchLabels:
       app.kubernetes.io/component: asterisk-ari
       utcp.io/network-role: asterisk-ari
+      utcp.dev/runtime-node: local-asterisk-ari
   policyTypes:
     - Ingress
+    - Egress
   ingress:
     - from:
         - namespaceSelector:
@@ -17,6 +19,18 @@ spec:
               kubernetes.io/metadata.name: utcp-platform
           podSelector:
             matchLabels:
+              utcp.io/network-role: kamailio-signaling
+      ports:
+        - protocol: UDP
+          port: 5060
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: kamailio
               utcp.io/network-role: kamailio-signaling
       ports:
         - protocol: UDP
