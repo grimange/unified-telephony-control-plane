@@ -157,7 +157,7 @@ def block_after(config: str, marker: str) -> str:
     start = config.find(marker)
     if start < 0:
         fail(f"Kamailio route block missing {marker}")
-    brace = config.find("{", start)
+    brace = config.find("{", start + len(marker))
     if brace < 0:
         fail(f"Kamailio route block {marker} has no opening brace")
     depth = 0
@@ -326,29 +326,53 @@ require_in_order(
 if re.search(r'\$proto\s*==\s*"udp"', application_block, re.I) or 'if (true)' in application_block:
     fail("Contact alias creation must remain limited to WS/WSS initial application dialogs")
 alias_destination_block = block_after(within_loose_route_block, 'if ($du == "")')
+if alias_destination_block.lstrip().startswith("if (!handle_ruri_alias())"):
+    fail("WITHINDLG must not require alias handling for every empty-$du established request")
+if 'if ($(ru{uri.param,alias}) != "")' not in alias_destination_block:
+    fail("WITHINDLG must inspect Request-URI alias parameter before alias consumption")
+if '$(ru{uri.param,transport}) == "ws"' not in alias_destination_block or '$(ru{uri.param,transport}) == "wss"' not in alias_destination_block:
+    fail("WITHINDLG must identify browser WebSocket targets by R-URI transport")
+if not re.search(r'\$\(ru\{uri\.host\}\)\s*=~\s*"\\\\\.invalid\$"', alias_destination_block):
+    fail("WITHINDLG must identify reserved .invalid browser Contact targets")
+alias_present_block = block_after(alias_destination_block, 'if ($(ru{uri.param,alias}) != "")')
 require_in_order(
-    alias_destination_block,
+    alias_present_block,
     [
         'if (!handle_ruri_alias())',
         'result=invalid_dialog_contact_alias method=$rm call_id=$ci',
         'sl_send_reply("400", "Bad Request")',
         "exit;",
         'if ($du == "")',
+        'result=invalid_dialog_contact_alias method=$rm call_id=$ci',
+        'sl_send_reply("400", "Bad Request")',
+        "exit;",
+    ],
+    "route[WITHINDLG] alias-present destination postcondition",
+)
+missing_browser_alias_block = block_after(alias_destination_block, 'else if ($(ru{uri.param,transport}) == "ws" || $(ru{uri.param,transport}) == "wss" || $(ru{uri.host}) =~ "\\\\.invalid$")')
+require_in_order(
+    missing_browser_alias_block,
+    [
         'result=missing_dialog_contact_alias method=$rm call_id=$ci',
         'sl_send_reply("400", "Bad Request")',
         "exit;",
     ],
-    "route[WITHINDLG] alias destination postcondition",
+    "route[WITHINDLG] missing browser alias failure",
 )
 require_in_order(
     within_loose_route_block,
     [
         'if ($du == "")',
+        'if ($(ru{uri.param,alias}) != "")',
         'if (!handle_ruri_alias())',
         'result=invalid_dialog_contact_alias method=$rm call_id=$ci',
         'sl_send_reply("400", "Bad Request")',
         "exit;",
         'if ($du == "")',
+        'result=invalid_dialog_contact_alias method=$rm call_id=$ci',
+        'sl_send_reply("400", "Bad Request")',
+        "exit;",
+        'else if ($(ru{uri.param,transport}) == "ws" || $(ru{uri.param,transport}) == "wss" || $(ru{uri.host}) =~ "\\\\.invalid$")',
         'result=missing_dialog_contact_alias method=$rm call_id=$ci',
         'sl_send_reply("400", "Bad Request")',
         "exit;",

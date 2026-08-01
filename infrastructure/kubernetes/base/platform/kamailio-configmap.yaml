@@ -175,13 +175,19 @@ data:
     route[WITHINDLG] {
         if (loose_route()) {
             if ($du == "") {
-                if (!handle_ruri_alias()) {
-                    xlog("L_WARN", "kamailio_application_dialog_rejected result=invalid_dialog_contact_alias method=$rm call_id=$ci\n");
-                    sl_send_reply("400", "Bad Request");
-                    exit;
-                }
+                if ($(ru{uri.param,alias}) != "") {
+                    if (!handle_ruri_alias()) {
+                        xlog("L_WARN", "kamailio_application_dialog_rejected result=invalid_dialog_contact_alias method=$rm call_id=$ci\n");
+                        sl_send_reply("400", "Bad Request");
+                        exit;
+                    }
 
-                if ($du == "") {
+                    if ($du == "") {
+                        xlog("L_WARN", "kamailio_application_dialog_rejected result=invalid_dialog_contact_alias method=$rm call_id=$ci\n");
+                        sl_send_reply("400", "Bad Request");
+                        exit;
+                    }
+                } else if ($(ru{uri.param,transport}) == "ws" || $(ru{uri.param,transport}) == "wss" || $(ru{uri.host}) =~ "\\.invalid$") {
                     xlog("L_WARN", "kamailio_application_dialog_rejected result=missing_dialog_contact_alias method=$rm call_id=$ci\n");
                     sl_send_reply("400", "Bad Request");
                     exit;

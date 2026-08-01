@@ -2812,6 +2812,20 @@ observed workload rollouts   none
 | PROOF_LIMITATION | The full inbound BYE header block was not captured at Kamailio. `res_pjsip_logger` is not in the committed `autoload=no` module set and no module was added, and Kamailio's committed `debug=2` does not dump messages. Receipt is nevertheless established by exact Call-ID correlation, the `route=within_dialog` marker, and the resolver error naming the client `Contact` host |
 | PROOF_LIMITATION | CANCEL still has no deterministic pre-answer window — the `9900` fixture answers immediately and was not altered |
 
+## PRODUCT_DEFECT-14 Repository Correction Contract
+
+Repository correction `docs/evidence/t3/t3-s2a-directional-dialog-alias-correction.md` makes the in-dialog alias rule direction-aware. The next live proof uses this matrix as the closure contract:
+
+| Corridor | Request direction | Expected Request-URI form | Alias required | `$du` required | Expected behavior |
+|---|---|---|---|---|---|
+| Initial browser to Asterisk | Browser to Kamailio to Asterisk | Canonical initial application dialog at `sip.utcp.local.test` | Contact alias is added after authentication for WS/WSS | Asterisk relay route sets `$du` | `add_contact_alias()`, `record_route()`, relay to canonical Asterisk Service |
+| Sequential browser to Asterisk | Browser to Kamailio to Asterisk | Normal routable Asterisk SIP Contact | No | No, may remain empty | Relay using the Request-URI after `loose_route()` |
+| Sequential Asterisk to browser | Asterisk to Kamailio to browser | Browser Contact with `.invalid` host and/or WS/WSS transport plus `alias` parameter | Yes | Yes, after `handle_ruri_alias()` | Consume alias and relay over the existing WebSocket connection |
+| Missing browser alias | Asterisk to browser-style target | R-URI has WS/WSS transport or reserved `.invalid` browser Contact form but no `alias` | Yes | Not reached | `400 Bad Request`, `result=missing_dialog_contact_alias`, no DNS, no relay |
+| Malformed browser alias | Asterisk to browser-style target | R-URI contains malformed `alias` parameter | Yes | Yes, but not produced | `400 Bad Request`, `result=invalid_dialog_contact_alias`, no DNS, no relay |
+
+This is a repository correction only. No Kubernetes resource was applied in this correction record; T3-S2A remains pending final consolidated bidirectional live proof.
+
 ## Environment Preservation
 
 ```text
