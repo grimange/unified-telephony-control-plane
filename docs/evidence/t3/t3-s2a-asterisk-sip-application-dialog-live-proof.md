@@ -1825,3 +1825,609 @@ must not be repeated.
 Do not add rtpengine mediation, fallback destinations, public SIP exposure,
 feature gates, manual activation, browser media, conference admission, V0, T4,
 external trunks, or PSTN.
+
+---
+
+# Final In-Dialog and Unavailable-Runtime Reproof (`081267a`)
+
+Verdict: `T3_S2A_FINAL_IN_DIALOG_REPROOF_INCOMPLETE`
+
+Focused reproof of only the corridors that `PRODUCT_DEFECT-7`, `PRODUCT_DEFECT-8`,
+and `PRODUCT_DEFECT-9` blocked. No completed authentication, relay, Asterisk
+foundation, checksum-mechanism, or public-surface proof was broadly repeated, and
+no production file was modified.
+
+**All three targeted defects are closed:**
+
+* **`PRODUCT_DEFECT-7` closed** — established-dialog routing now precedes
+  initial-domain validation. In-dialog ACK and BYE are loose-routed instead of
+  rejected. Post-ACK `200 OK` retransmissions dropped from **3 to 0**, and the
+  client-originated BYE now returns **`200 OK`** and terminates the channel.
+* **`PRODUCT_DEFECT-8` closed at its seam** — `record_route()` now advertises
+  `sip:kamailio-sip-internal.utcp-platform.svc.cluster.local:5060` and
+  `sip:sip.utcp.local.test:443;transport=ws`. No `0.0.0.0`, Pod IP, or node IP
+  appears in any route identity.
+* **`PRODUCT_DEFECT-9` closed** — zero Ready Asterisk endpoints now produce an
+  explicit **`503 Application Runtime Unavailable`** through
+  `failure_route[ASTERISK_UNAVAILABLE]`, with the correlated
+  `result=asterisk_unavailable` log. The previous bare `408` is gone.
+
+**One new defect blocks completion:**
+
+* **`PRODUCT_DEFECT-10`** — the reverse corridor grants the canonical Asterisk
+  workload UDP `5060` egress to Kamailio but **no DNS egress**. Because the
+  route set now advertises a DNS name by design, Asterisk cannot resolve it, so
+  Asterisk-originated in-dialog requests never leave the Pod.
+
+**T3-S2A remains incomplete. T3 remains In Progress. `UTCP_PHASE=T1` is unchanged.**
+
+## Source Commit
+
+* Reproof executed at `081267a` (`fix(t3): complete kamailio dialog routing`).
+* Branch `main`, working tree clean at start, `UTCP_PHASE=T1`, nothing pushed.
+
+Pre-apply static authorities all passed:
+
+```text
+make kamailio-signaling-config-check        exit 0  (kamailio_signaling_config_check=pass, live_kamailio_runtime=configured)
+make kamailio-signaling-config-check-test   exit 0
+make security-config-check                  exit 0  (K3 security config check passed)
+make security-config-check-test             exit 0
+```
+
+Render assertions over the canonical local overlay:
+
+```text
+listen=tcp:0.0.0.0:8080 advertise sip.utcp.local.test:443                                        present
+listen=udp:0.0.0.0:5060 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060     present
+t_on_failure("ASTERISK_UNAVAILABLE")                                                            present
+failure_route[ASTERISK_UNAVAILABLE]                                                             present
+has_totag() -> route(WITHINDLG) at line 82, initial-domain guard at line 87  -> ordering correct
+t_on_failure at line 178 before t_relay at line 180                         -> ordering correct
+rtpengine offer/answer/delete/manage/rtpproxy                                                   0
+sha256(rendered kamailio.cfg)                58e5c733e4df9b223a7f206760494d0784523cbd28d8fbed25a0629549174386
+Deployment utcp.io/kamailio-config-sha256    58e5c733e4df9b223a7f206760494d0784523cbd28d8fbed25a0629549174386
+pod-template annotations                     exactly one (the checksum); no rollout timestamp
+image / securityContext / hostNetwork        unchanged / unchanged / absent
+```
+
+## Runtime Baseline
+
+```text
+kamailio Pod            kamailio-ddc74bb7b-wrj7w  uid 7b9f5f4a-…  ready=true  restarts=1  ip 10.42.2.136
+kamailio checksum       749fc1ca…   (the PRODUCT_DEFECT-6 correction)
+kamailio Deployment     generation 13, rv 438556
+live ConfigMap          rv 438503, sha256 749fc1ca…
+kamailio Services       utcp-platform/kamailio ClusterIP 8080/TCP only
+                        kamailio-sip-internal            NOT FOUND
+NP allow-kamailio-signaling-required-traffic  rv 431718, ingress 8080/TCP only (no UDP 5060)
+NP allow-asterisk-sip-from-kamailio           rv 431717, policyTypes [Ingress] only,
+                                              selector lacks utcp.dev/runtime-node
+asterisk Pod            asterisk-ari-74d8c4b5f8-mjkj2  uid 5497e140-…  ready=true  restarts=0  ip 10.42.1.223
+asterisk-ari            replicas 1, ready 1
+asterisk-sip endpoints  10.42.1.223 ready=true  (exactly one)
+asterisk-ari-b          uid 8a904cdd-…  restarts 13  (secondary node, untouched)
+rtpengine Pod           uid 245b78c5-…  ready=true  restarts=0
+rtpengine counters      sessions{own}=0 {foreign}=0  ports_used{internal}=0 {default}=0
+database                tables 41, dialog/rtp/media tables (none), tenants 27, RuntimeNodes 110,
+                        families asterisk/asterisk-ari + simulator/simulator-deterministic, pending outbox 0
+redis                   dbsize 2, keys sip/dialog/rtp/media = 0/0/0/0
+```
+
+Confirmed the live resources contained **none** of the `081267a` changes before
+this proof.
+
+Pre-apply bounded dialog reproducing all three defects:
+
+```text
+invite_final_status           200 OK
+invite_record_route           <sip:0.0.0.0;lr;r2=on;ftag=…>, <sip:0.0.0.0:8080;transport=ws;lr;r2=on;ftag=…>
+post_ack_200_retransmissions  3        <- ACK never landed (PRODUCT_DEFECT-7)
+bye_final_status              403 Forbidden
+dialog_terminated             false
+```
+
+## Resources Applied
+
+Five, in dependency order. `kubectl diff` restricted to them showed only the
+correction: no Asterisk Deployment change, no rtpengine change, no Prometheus
+change, no public-edge change, no unrelated application ConfigMap change, no
+image change, no security-context change, and no rollout timestamp.
+
+| Resource | Before | After | Material change |
+|---|---|---|---|
+| `ConfigMap/utcp-platform/kamailio-config` | rv `438503`, sha256 `749fc1ca…` | rv `445431`, sha256 **`58e5c733…`** | both `advertise` clauses; `OPTIONS`/`CANCEL`/`has_totag()` moved ahead of the initial-domain guard; guard log relabelled `result=initial_foreign_domain`; `t_on_failure` + `failure_route[ASTERISK_UNAVAILABLE]`; `sl_send_reply` → `t_reply` on the relay failure |
+| `Service/utcp-platform/kamailio-sip-internal` | absent | rv `445433`, clusterIP `10.43.3.212` | **created** — ClusterIP, UDP `5060`, `targetPort: sip-udp` |
+| `NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic` | generation `4`, rv `431718` | generation **`5`**, rv `445436` | added ingress UDP `5060` from the canonical Asterisk Pod identity; tightened the existing Asterisk egress podSelector with `utcp.io/network-role` + `utcp.dev/runtime-node` |
+| `NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio` | generation `1`, rv `431717`, `[Ingress]` | generation **`2`**, rv `445437`, **`[Ingress, Egress]`** | added egress UDP `5060` to the canonical Kamailio signaling Pod; tightened podSelector with `utcp.dev/runtime-node` |
+| `Deployment/utcp-platform/kamailio` | generation `13`, rv `438556` | generation **`14`**, rv `445494` | checksum annotation only (`749fc1ca…` → `58e5c733…`) |
+
+Before the Deployment apply, the Deployment remained at generation `13` with the
+old checksum and the Pod was untouched (`uid 7b9f5f4a-…`, `restarts=1`),
+confirming ConfigMap, Service, and policy applies do not by themselves roll the
+workload.
+
+## Kamailio Rollout Result
+
+```text
+deployment applied   : 2026-08-01T00:01:16Z
+rollout complete     : 2026-08-01T00:01:20Z  (~4 seconds)
+new ReplicaSet       : kamailio-6b85f9db8c  revision 14  desired 1  ready 1
+new Pod              : kamailio-6b85f9db8c-c9cvc  uid a5a29649-91a7-4dea-8aec-c8c8e8d9e80c  ip 10.42.2.137
+new Pod checksum     : 58e5c733…
+old Pod retirement   : SuccessfulCreate + Started for the new Pod, then SuccessfulDelete /
+                       Killing kamailio-ddc74bb7b-wrj7w  (old Pod available until replacement readiness)
+old ReplicaSet       : revision 13 scaled to 0
+conditions           : Available=True (MinimumReplicasAvailable), Progressing=True (NewReplicaSetAvailable)
+restart count        : 1
+manual restart       : none  (no rollout restart, no Pod deletion, no timestamp annotation, no reload RPC)
+unrelated workloads rolled : none
+```
+
+**Divergence — one transient restart.** The corrected Pod shows `restarts=1` from
+the known transient `postgres … Connection refused` during `auth_db` fixup — the
+new-Pod-IP versus NetworkPolicy datapath programming race. It self-recovered, and
+the running container has **zero** ERROR lines and no configuration or parser
+error. Classified `EXPECTED_BEHAVIOR`.
+
+## Running Configuration Identity
+
+**PASS.** Byte-identical across all four authorities:
+
+```text
+1 repository render        58e5c733e4df9b223a7f206760494d0784523cbd28d8fbed25a0629549174386
+2 live ConfigMap           58e5c733e4df9b223a7f206760494d0784523cbd28d8fbed25a0629549174386
+3 mounted in the Pod       58e5c733e4df9b223a7f206760494d0784523cbd28d8fbed25a0629549174386
+4 Pod checksum annotation  58e5c733e4df9b223a7f206760494d0784523cbd28d8fbed25a0629549174386
+```
+
+Assertions against the materialised running configuration:
+
+```text
+advertise client-facing    1
+advertise asterisk-facing  1
+t_on_failure               1
+failure_route              1
+has_totag() at line        83
+initial-domain guard line  88      <- established-dialog routing precedes validation
+result=initial_foreign_domain      1
+rtpengine operations       0
+```
+
+Kamailio's own startup banner confirms both advertised identities:
+
+```text
+Listening on
+             udp: 0.0.0.0 [0.0.0.0]:5060 advertise udp:kamailio-sip-internal.utcp-platform.svc.cluster.local:5060
+             tcp: 0.0.0.0 [0.0.0.0]:8080 advertise tcp:sip.utcp.local.test:443
+Aliases:
+             *: sip.utcp.local.test:*
+```
+
+## Internal Kamailio SIP Service
+
+**PASS.**
+
+```text
+type          ClusterIP
+clusterIP     10.43.3.212
+ports         [{name: sip-udp, port: 5060, protocol: UDP, targetPort: sip-udp}]
+selector      app.kubernetes.io/component=kamailio, app.kubernetes.io/part-of=utcp,
+              utcp.io/network-role=kamailio-signaling
+EndpointSlice kamailio-sip-internal-v6pbb, ports 5060/UDP
+Ready endpoints  exactly one — 10.42.2.137 ready=true target=kamailio-6b85f9db8c-c9cvc
+current Pod IP   10.42.2.137   (matches)
+```
+
+The endpoint continued to track the Kamailio Pod through the whole proof,
+including after the Asterisk availability test.
+
+**Cluster-DNS resolution from the Asterisk Pod FAILS** — see
+`PRODUCT_DEFECT-10`. No hard-coded ClusterIP or Pod IP is used as routing
+authority anywhere: the running configuration contains zero `10.42.x.y` literals.
+
+## Reverse NetworkPolicy Result
+
+**PASS for the SIP corridor; incomplete for name resolution.**
+
+Effective live policies:
+
+```text
+Asterisk source egress (utcp-runtime/allow-asterisk-sip-from-kamailio)
+  podSelector  component=asterisk-ari, network-role=asterisk-ari, runtime-node=local-asterisk-ari
+  egress       UDP 5060 -> ns utcp-platform, podSelector component=kamailio + network-role=kamailio-signaling
+
+Kamailio destination ingress (utcp-platform/allow-kamailio-signaling-required-traffic)
+  ingress[0]   TCP 8080 <- traefik-system / app.kubernetes.io/name=traefik   (unchanged)
+  ingress[1]   UDP 5060 <- ns utcp-runtime, podSelector component=asterisk-ari
+                            + network-role=asterisk-ari + runtime-node=local-asterisk-ari
+  egress       UDP 5060 -> the same canonical Asterisk identity   (existing corridor intact)
+```
+
+| Requirement | Result |
+|---|---|
+| destination namespace / identity / UDP 5060 only, both directions | **PASS** |
+| default-deny still active | **PASS** — `utcp-platform/default-deny` and `utcp-runtime/default-deny`, both `[Ingress, Egress]` with empty podSelector |
+| secondary Asterisk workload not admitted | **PASS** — `asterisk-ari-b` carries `utcp.dev/runtime-node: local-asterisk-ari-b`; the only Pod matching the admitted identity is `asterisk-ari-74d8c4b5f8-…` |
+| no namespace-wide UDP rule | **PASS** for the SIP corridor — the only namespace-wide UDP egress is Kamailio's pre-existing DNS rule (UDP/TCP `53` to `kube-system`) |
+| no `ipBlock` substituting for Pod identity | **PASS** — neither policy contains `ipBlock` |
+| no media ports added | **PASS** — no `40000-40099` port in either policy |
+| existing Kamailio-to-Asterisk signaling intact | **PASS** — every dialog in this proof relayed successfully |
+
+Bounded in-namespace probe, using the real Asterisk Pod network namespace and
+policy identity (no proof-only policy was added):
+
+```text
+SIP OPTIONS -> 10.43.3.212:5060 (kamailio-sip-internal ClusterIP)
+  probe_result = REPLY from ('10.43.3.212', 5060)
+  first_line   = SIP/2.0 200 Keepalive
+
+control: same source -> 10.43.50.16:2223 (rtpengine ng, not admitted)
+  control_result = TIMEOUT (correctly not permitted)
+```
+
+This proves the reverse corridor end to end at the transport layer — Asterisk
+egress, kube-proxy DNAT, Kamailio ingress, Kamailio request processing, and the
+reply path — while the control probe confirms the policy is genuinely selective
+rather than open.
+
+## Record-Route Result
+
+**PASS.** Actual headers from the successful `200 OK`:
+
+```text
+Record-Route: <sip:kamailio-sip-internal.utcp-platform.svc.cluster.local:5060;lr;r2=on;ftag=…>,
+              <sip:sip.utcp.local.test:443;transport=ws;lr;r2=on;ftag=…>
+```
+
+UAC route set after reversal per RFC 3261 §12.1.2:
+
+```text
+route_set_1  sip:sip.utcp.local.test:443;transport=ws;lr;r2=on;ftag=…            <- client-facing
+route_set_2  sip:kamailio-sip-internal.utcp-platform.svc.cluster.local:5060;lr;r2=on;ftag=…  <- Asterisk-facing
+remote_target sip:10.42.1.223:5060                                               <- Asterisk Contact (not a Kamailio identity)
+```
+
+| Rejected pattern | Present? |
+|---|---|
+| `0.0.0.0` | **no** |
+| Kamailio Pod IP | **no** |
+| Asterisk Pod IP as a Kamailio route identity | **no** — `10.42.1.223` appears only as the Asterisk `Contact`/remote target, which is correct |
+| node IP / developer-host IP | **no** |
+| unrelated Service | **no** |
+
+The route set is not merely syntactically present: the subsequent ACK and BYE
+were both routed along it and both reached the same Asterisk dialog, and the
+Asterisk-facing identity was independently proven reachable by the bounded
+`200 Keepalive` probe above.
+
+## ACK Continuity
+
+**PASS.**
+
+```text
+post_ack_200_retransmissions  0      (pre-apply baseline: 3)
+kamailio log                  no result=foreign_domain, no result=initial_foreign_domain,
+                              no kamailio_application_dialog_relay_failed
+ack_reused_authorization      false
+call_id / from_tag / to_tag   consistent with the INVITE throughout
+```
+
+The retransmission counter is the objective signal: Asterisk retransmits an
+unacknowledged `200 OK`, and it stopped entirely once the ACK was loose-routed to
+the dialog. Initial subscriber authentication was not repeated, and the ACK was
+not rejected by initial-domain validation.
+
+## Client-Originated BYE
+
+**PASS.**
+
+```text
+bye_final_status    200 OK
+bye_call_id         059356fa6edcdcd3@utcp-s2a-dialog   (matches the INVITE)
+bye_from_tag        a4e2c2c25f78                        (matches)
+bye_to_tag          d48c2198-a13e-43c3-ba71-2e6e6e6f4580 (matches)
+bye_cseq            3 BYE
+dialog_terminated   true
+asterisk channels   0 active channels, 0 active calls   (channel terminated normally)
+manual cleanup      none required
+kamailio log        no rejection of any kind
+```
+
+Reproduced on every dialog run, including after Asterisk restoration.
+
+## Asterisk-Originated BYE
+
+**FAIL — `PRODUCT_DEFECT-10`.**
+
+A second authenticated dialog was established (`post_ack_200_retransmissions=0`,
+so the dialog was confirmed on both sides), then the existing Asterisk CLI was
+used as a bounded proof action to request hangup of that exact proof channel. No
+dialplan or production configuration was modified.
+
+```text
+proof channel                     PJSIP/anonymous-00000003
+bounded action                    Requested Hangup on channel 'PJSIP/anonymous-00000003'
+dialog Call-ID                    02004f27ba66e6bb@utcp-s2a-dialog
+route set advertised to Asterisk  sip:kamailio-sip-internal.utcp-platform.svc.cluster.local:5060
+client observation window         40 s
+asterisk_originated_bye_received  false
+kamailio log during the window    zero lines — no BYE reached Kamailio at all
+asterisk channel afterwards       0 active channels (terminated locally only)
+```
+
+Causal chain, each link proven independently:
+
+```text
+1. dialog confirmed                 post_ack_200_retransmissions = 0
+2. Kamailio route identity correct  sip:kamailio-sip-internal.utcp-platform.svc.cluster.local:5060
+3. UDP 5060 corridor works          SIP OPTIONS from the Asterisk identity -> 200 Keepalive
+4. name resolution fails            gethostbyname("kamailio-sip-internal.utcp-platform.svc.cluster.local") -> gaierror
+                                    gethostbyname("sip.utcp.local.test")                                  -> gaierror
+                                    getent hosts asterisk-sip.utcp-runtime.svc.cluster.local              -> rc=2
+5. DNS transport is blocked         raw DNS query to kube-dns 10.43.0.10:53 -> TIMEOUT
+                                    (a reachable resolver would answer with an rcode, not time out)
+6. no BYE left the Pod              Kamailio logged nothing; the client received nothing
+```
+
+## PRODUCT_DEFECT-10 — the canonical Asterisk workload has no DNS egress, so it cannot resolve the advertised Kamailio identity
+
+| Field | Value |
+|---|---|
+| Seam | [`infrastructure/kubernetes/security/runtime/allow-asterisk-sip-from-kamailio.yaml`](../../../infrastructure/kubernetes/security/runtime/allow-asterisk-sip-from-kamailio.yaml) — the new `egress` block grants only UDP `5060` to the Kamailio signaling Pod. `utcp-runtime/default-deny` denies all other egress, and no other policy in `utcp-runtime` grants the canonical Asterisk Pod any egress |
+| Expected | Asterisk resolves the advertised route identity `kamailio-sip-internal.utcp-platform.svc.cluster.local` through cluster DNS and sends the in-dialog BYE to Kamailio, which loose-routes it to the client |
+| Actual | Every name lookup from the Asterisk Pod fails (`gaierror` / `getent` rc=2), and a raw UDP query to `kube-dns` `10.43.0.10:53` times out, so no in-dialog request is ever transmitted. The channel terminates locally and the client is never notified |
+| Relevant SIP messages / logs | No BYE on the wire at all: zero Kamailio log lines during the 40-second window and `asterisk_originated_bye_received=false`. Asterisk logs no resolver diagnostic, because PJSIP name-resolution failure is not surfaced at WARNING level in this build |
+| Root asymmetry | `allow-kamailio-signaling-required-traffic` already grants **Kamailio** DNS egress (`UDP 53` + `TCP 53` to the `kube-system` namespace), which is why Kamailio resolves `asterisk-sip…` successfully. The Asterisk policy has no mirror of that rule. Before `081267a` the omission was harmless because Asterisk never originated outbound traffic — ARI is ingress and SIP replies ride the established conntrack flow. Closing `PRODUCT_DEFECT-8` by advertising a **DNS name** introduced the outbound resolution requirement without granting the resolution path |
+| Static checks | **All passed** — `make security-config-check`, `security-config-check-test`, `kamailio-signaling-config-check`, and `…-config-check-test` are green. Nothing asserts that a workload required to reach an advertised in-cluster identity also has DNS egress |
+| Severity | **Blocking.** Completion criterion 9 cannot be met. Asterisk-initiated in-dialog signaling — BYE on hangup, session-timer re-INVITE — cannot leave the Pod, so an Asterisk-side hangup never reaches the client |
+
+### Smallest bounded correction
+
+1. Add a DNS egress rule to
+   `infrastructure/kubernetes/security/runtime/allow-asterisk-sip-from-kamailio.yaml`
+   mirroring the existing Kamailio rule exactly — `to` the `kube-system`
+   namespaceSelector with `UDP 53` and `TCP 53`. Do not widen the destination
+   beyond DNS and do not use an `ipBlock`.
+2. Extend `scripts/security/config-check` to assert that every workload selected
+   by an egress policy whose destination is expressed as an in-cluster DNS
+   identity also has DNS egress, with a `config-check-test` mutation removing the
+   Asterisk DNS rule.
+3. Optionally reduce blast radius by adding a `podSelector` for the CoreDNS Pods
+   rather than the whole `kube-system` namespace — but only if the existing
+   Kamailio rule is changed in the same way, so the two stay symmetric.
+
+## Initial Foreign-Domain Preservation
+
+**PASS.** Proven with a fresh out-of-dialog request, not an established-dialog
+request:
+
+```text
+request-URI              sip:9900@not-utcp.invalid
+final status             403 Forbidden
+kamailio log             kamailio_registration_rejected result=initial_foreign_domain
+asterisk calls processed 4 -> 4        (not forwarded)
+rtpengine operations     0             (not forwarded)
+```
+
+## Healthy-Asterisk Baseline
+
+**PASS.**
+
+```text
+asterisk-sip Ready endpoints  10.42.1.223=true  (exactly one)
+authenticated INVITE          200 OK
+extension 9900                executed — calls processed 4 -> 5
+SDP response                  application/sdp, c=IN IP4 10.42.1.223
+post_ack retransmissions      0
+BYE                           200 OK, dialog_terminated=true
+```
+
+## Asterisk-Unavailable Result
+
+**PASS — `PRODUCT_DEFECT-9` is closed.**
+
+Condition classified `INTENTIONALLY_INDUCED_CONDITION`: only the canonical
+`Deployment/utcp-runtime/asterisk-ari` was scaled `1 → 0`. `asterisk-ari-b` was
+not touched.
+
+```text
+scale 1 -> 0                    deployment.apps/asterisk-ari scaled
+asterisk-sip Ready endpoints    0, pods 0   after 2s
+
+00:06:29Z  INVITE sip:9900@sip.utcp.local.test  ->  401 Unauthorized
+           authenticated INVITE                 ->  100 trying -- your call is important to us
+00:06:59Z                                       ->  503 Application Runtime Unavailable
+kamailio log: kamailio_application_dialog_rejected result=asterisk_unavailable
+              method=INVITE call_id=2cdc66b75340b84b@utcp-s2a-dialog
+```
+
+| Requirement | Result |
+|---|---|
+| final response `503 Application Runtime Unavailable` | **PASS** — delivered through `failure_route[ASTERISK_UNAVAILABLE]` |
+| non-sensitive `result=asterisk_unavailable` log with Call-ID correlation | **PASS** |
+| client does **not** receive the previous final `408` | **PASS** — the `408` is now mapped internally and never reaches the client |
+| no alternate Asterisk workload receives a call | **PASS** — `asterisk-ari-b` reports `0 calls processed`, uid and restarts unchanged |
+| no Pod-IP fallback | **PASS** — zero `10.42.x.y` literals in the running configuration |
+| no ARI route, no rtpengine route, no direct-media bypass | **PASS** — rtpengine sessions `0`, no operations |
+| no new branch or second destination | **PASS** — exactly one relay destination in the running configuration |
+| no database or RuntimeNode mutation | **PASS** — RuntimeNodes `110`, tenants `27`, unchanged |
+
+The rejection still takes ~30 s because the failure route is driven by the TM
+`fr_inv_timer`. That is the committed design of this correction — the contract
+and its observability signal now both fire, which is what `PRODUCT_DEFECT-9`
+required. Bounding the latency remains available as optional future tuning and is
+not a defect.
+
+## Restoration Result
+
+**PASS.** Restored to the committed replica count read from the canonical render
+(`replicas: 1`).
+
+```text
+scale 0 -> 1                   deployment.apps/asterisk-ari scaled
+rollout                        successfully rolled out (automatic)
+new Asterisk Pod               asterisk-ari-74d8c4b5f8-k24bc  uid 64078883-…  ready=true  restarts=0  ip 10.42.1.224
+PJSIP transport                transport-udp-internal  udp  0.0.0.0:5060      (active)
+asterisk-sip Ready endpoints   10.42.1.224 ready=true  (exactly one)
+authenticated INVITE           200 OK
+record_route                   both stable identities, unchanged
+SDP                            c=IN IP4 10.42.1.224      <- new Pod IP, no stale pinning
+ACK continuity                 post_ack_200_retransmissions = 0
+BYE continuity                 200 OK, dialog_terminated=true
+kamailio-sip-internal endpoint 10.42.2.137 ready=true    (still tracking the Kamailio Pod)
+manual application reconciliation  none
+unrelated workload restarts    none
+```
+
+## REGISTER and Unsupported-Method Preservation
+
+**PASS**, both against the corrected running configuration.
+
+```text
+REGISTER (canonical scripts/kamailio-signaling/sip-wss-client.php, API-issued subscriber)
+  sip_status=200  sip_result=accepted   active_location_contacts=1
+  kamailio: kamailio_registration_challenge result=challenge
+            kamailio_registration_accepted result=ok      <- existing registrar path
+
+MESSAGE sip:9900@sip.utcp.local.test -> 405 Method Not Allowed
+  kamailio: kamailio_registration_rejected result=unsupported_method method=MESSAGE
+```
+
+## rtpengine Boundary Preservation
+
+**PASS.** Unchanged throughout this signaling-only slice.
+
+```text
+rtpengine_sessions{own}/{foreign}          0 / 0   (baseline 0 / 0)
+rtpengine_ports_used{internal}/{default}   0 / 0   (baseline 0 / 0)
+offer / answer / delete log lines          0 / 0 / 0
+Pod uid 245b78c5-…  restarts 0             unchanged
+running Kamailio config rtpengine ops      0
+```
+
+## Public-Surface Preservation
+
+**PASS.**
+
+```text
+utcp-platform/kamailio                ClusterIP  8080/TCP   nodePort=none  externalIPs=none
+utcp-platform/kamailio-sip-internal   ClusterIP  5060/UDP   nodePort=none  externalIPs=none
+NodePort / LoadBalancer / ExternalIP  absent for every Kamailio Service
+Gateway / Ingress / UDPRoute          none referencing Kamailio
+HostPort / HostNetwork                absent
+node UDP 5060                         none on any of the three k3d nodes
+developer-host UDP 5060               none
+k3d UDP publication                   none
+```
+
+The new internal Service is ClusterIP-only and therefore adds no public surface.
+
+## State-Authority Preservation
+
+| Value | Before | After |
+|---|---|---|
+| database public tables | 41 | **41** |
+| tables containing `dialog`/`rtp`/`media` | (none) | **(none)** |
+| tenants | 27 | **27** |
+| RuntimeNodes | 110 | **110** |
+| RuntimeNode families | `asterisk/asterisk-ari`, `simulator/simulator-deterministic` | **unchanged** |
+| pending outbox | 0 | **0** |
+| Redis keys `sip`/`dialog`/`rtp`/`media` | 0/0/0/0 | **0/0/0/0** |
+| rtpengine sessions / ports used | 0 / 0 | **0 / 0** |
+
+Redis `db0` moved `2 → 3`: ordinary session and cache entries from the authorized
+API calls that issued the proof credentials. No durable SIP-dialog or media
+authority appeared.
+
+Full-cluster Pod snapshot diff contains exactly two changes:
+
+```text
+- utcp-platform kamailio-ddc74bb7b-wrj7w      7b9f5f4a-…  restarts 1
++ utcp-platform kamailio-6b85f9db8c-c9cvc     a5a29649-…  restarts 1   <- corrected rollout
+- utcp-runtime  asterisk-ari-74d8c4b5f8-mjkj2 5497e140-…  restarts 0
++ utcp-runtime  asterisk-ari-74d8c4b5f8-k24bc 64078883-…  restarts 0   <- intentional 1->0->1 test
+```
+
+Every other Pod retained its UID **and** restart count. **No unrelated workload
+restarted.**
+
+## Findings
+
+| Classification | Finding |
+|---|---|
+| PASS | **`PRODUCT_DEFECT-7` is closed** — established-dialog routing precedes initial-domain validation; in-dialog ACK and BYE are loose-routed, post-ACK `200 OK` retransmissions fell `3 → 0`, the client BYE returns `200 OK`, and no `foreign_domain` rejection occurs for established dialogs |
+| PASS | **`PRODUCT_DEFECT-8` is closed at its seam** — both listeners advertise stable identities and the `Record-Route` set contains no `0.0.0.0`, Pod IP, node IP, developer-host IP, or unrelated Service; the Asterisk-facing identity is independently reachable at the transport layer |
+| PASS | **`PRODUCT_DEFECT-9` is closed** — zero Ready Asterisk endpoints produce an explicit `503 Application Runtime Unavailable` through the TM failure route with a Call-ID-correlated `result=asterisk_unavailable` log, and the previous bare `408` no longer reaches the client |
+| PASS | Only the five corrected resources were applied, in dependency order, with no Asterisk Deployment, rtpengine, Prometheus, public-edge, unrelated ConfigMap, image, security-context, or timestamp change |
+| PASS | The checksum-coupled Deployment produced a fully automatic ~4-second rollout to ReplicaSet revision 14, retiring the old Pod only after the replacement started, with no manual restart and no unrelated workload rollout |
+| PASS | Running configuration is byte-identical across repository render, live ConfigMap, in-Pod mount, and Pod checksum annotation (`58e5c733…`), and Kamailio's own banner confirms both advertised identities |
+| PASS | `Service/kamailio-sip-internal` is ClusterIP UDP `5060` on `targetPort: sip-udp` with exactly one Ready endpoint equal to the current Kamailio Pod IP, tracked correctly throughout |
+| PASS | The reverse corridor admits only the canonical workloads on UDP `5060` in both directions, with default-deny intact, no `ipBlock`, no namespace-wide SIP rule, no media ports, and the secondary `asterisk-ari-b` workload correctly excluded; a bounded in-namespace probe returned `200 Keepalive` while a non-admitted destination timed out |
+| PASS | Initial foreign-domain rejection remains active (`403`, `result=initial_foreign_domain`) and reaches neither Asterisk nor rtpengine |
+| PASS | Restoration is automatic: PJSIP UDP `5060` returns, one Ready endpoint, and INVITE/ACK/BYE all succeed against the **new** Asterisk Pod IP with no stale pinning and no manual reconciliation |
+| PASS | REGISTER preserved through the existing registrar path; unsupported `MESSAGE` still `405`; rtpengine entirely uninvolved; no public SIP exposure; no durable dialog authority; no canonical state mutation; no unrelated workload restart |
+| PASS | All required repository checks pass before and after |
+| **PRODUCT_DEFECT-10** | The canonical Asterisk workload has UDP `5060` egress to Kamailio but **no DNS egress**, so it cannot resolve the advertised route identity and Asterisk-originated in-dialog requests never leave the Pod. Kamailio already has the mirror DNS rule; the Asterisk policy does not. Blocking |
+| INTENTIONALLY_INDUCED_CONDITION | `Deployment/utcp-runtime/asterisk-ari` scaled `1 → 0 → 1` to prove the failure-route contract; `asterisk-ari-b` untouched and unused; restored to the committed replica count and left Ready |
+| EXPECTED_BEHAVIOR | The corrected Kamailio Pod restarted once on the known transient `postgres … Connection refused` new-Pod-IP versus NetworkPolicy programming race; it self-recovered with zero ERROR lines and no configuration or parser error |
+| EXPECTED_BEHAVIOR | Signaling credentials carry a bounded ~5-minute TTL, so each corridor used a freshly re-issued credential from the same authorized member endpoint |
+| EXPECTED_BEHAVIOR | Redis `db0` `2 → 3` from authorized API session and cache activity during credential issuance |
+| EXPECTED_BEHAVIOR | The `503` arrives after ~30 s because the failure route is driven by the TM `fr_inv_timer`; the committed contract and its log both fire, so this is the designed behaviour, not a defect |
+| PROOF_LIMITATION | CANCEL still has no deterministic pre-answer window — the `9900` fixture answers immediately and was not altered |
+| PROOF_LIMITATION | `res_pjsip_logger` is not in the committed `autoload=no` module set, so no Asterisk-side SIP wire trace was captured. Asterisk-side evidence is the live channel table, endpoint state, and `calls processed` counters; no module was added to production configuration |
+| PROOF_LIMITATION | The Asterisk-originated BYE could not be observed traversing Kamailio because `PRODUCT_DEFECT-10` blocks it upstream at name resolution. Proving that corridor end to end requires the DNS egress correction; no proof-only NetworkPolicy was added to work around it |
+
+## Environment Preservation
+
+```text
+production code changed:        no
+Kubernetes manifests changed:   no
+images built or pushed:         none
+resources applied:              5 (kamailio ConfigMap, kamailio-sip-internal Service,
+                                   2 NetworkPolicies, kamailio Deployment)
+manual rollout restart:         none
+workloads rolled:               1 (kamailio, automatically via checksum coupling)
+availability tests induced:     1 (asterisk-ari 1 -> 0 -> 1, restored)
+unrelated workloads restarted:  none
+canonical records mutated:      none beyond authorized API proof data
+```
+
+## Cleanup
+
+- Corrected Kamailio left Ready (`kamailio-6b85f9db8c-c9cvc`); all five corrected resources left applied.
+- Asterisk restored to its committed replica count and left Ready; rtpengine left Ready with counters at zero.
+- No synthetic SIP proof Pod was created — the disposable clients ran from the scratch directory through the canonical Traefik/WSS edge; the bounded policy probe ran inside the existing Asterisk container with no added tooling and no proof-only policy.
+- The proof contact was deregistered through the canonical client (`sip_status=200`, `active_location_contacts=0`) and the telephony session was ended through the authorized API (`HTTP 200`), leaving `kamailio_signaling_auth_view` rows for the proof user at `0`.
+- Disposable dialog client, method probe, credential helpers, cookie jar, secret file, traces, and rendered scratch manifests removed; none was added to the repository or the cluster.
+- No packet capture and no port-forward were used. `.playwright-mcp/` is absent.
+- No credential, digest response, or Authorization header content was printed or recorded; traces redact `Authorization`, `Proxy-Authorization`, `WWW-Authenticate`, and `Proxy-Authenticate`.
+
+## T3-S2A Final Status After the Final In-Dialog Reproof
+
+```text
+PRODUCT_DEFECT-5  = closed
+PRODUCT_DEFECT-6  = closed
+PRODUCT_DEFECT-7  = closed
+PRODUCT_DEFECT-8  = closed
+PRODUCT_DEFECT-9  = closed
+PRODUCT_DEFECT-10 = open (Asterisk workload has no DNS egress)
+T3-S2A repository implementation = Complete
+T3-S2A live signaling proof      = INCOMPLETE
+T3-S2A                           = In Progress
+T3-S2 media mediation            = Not Started
+T3                               = In Progress
+UTCP_PHASE                       = T1 (unchanged)
+```
+
+## Recommended Next Step
+
+Bounded Codex correction of `PRODUCT_DEFECT-10`: add the mirrored DNS egress rule
+to `infrastructure/kubernetes/security/runtime/allow-asterisk-sip-from-kamailio.yaml`
+with matching `scripts/security/config-check` and `config-check-test` coverage,
+then a focused reproof of the **Asterisk-originated BYE only**. Everything else in
+this section is proven and must not be repeated.
+
+Do not add rtpengine mediation, fallback destinations, public SIP exposure,
+feature gates, manual activation, browser media, conference admission, V0, T4,
+external trunks, or PSTN.
