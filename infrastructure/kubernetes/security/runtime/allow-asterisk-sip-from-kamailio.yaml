@@ -23,6 +23,18 @@ spec:
       ports:
         - protocol: UDP
           port: 5060
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: rtpengine
+              utcp.io/network-role: rtpengine-media
+      ports:
+        - protocol: UDP
+          port: 10000
+          endPort: 20000
   egress:
     - to:
         - namespaceSelector:
@@ -35,6 +47,18 @@ spec:
       ports:
         - protocol: UDP
           port: 5060
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: rtpengine
+              utcp.io/network-role: rtpengine-media
+      ports:
+        - protocol: UDP
+          port: 40000
+          endPort: 40099
     - to:
         - namespaceSelector:
             matchLabels:

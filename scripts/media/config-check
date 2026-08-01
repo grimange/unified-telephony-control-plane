@@ -259,6 +259,14 @@ if not config:
 if len(source_deployments) != 1:
     fail("rtpengine Deployment source must define exactly one rtpengine Deployment")
 deployment_source = source_deployments[0]
+runtime_rtp_config = root / "infrastructure/docker/asterisk/config/rtp.conf"
+if not runtime_rtp_config.is_file():
+    fail("canonical reference runtime RTP configuration is missing")
+runtime_rtp_text = runtime_rtp_config.read_text(encoding="utf-8")
+runtime_range = re.search(r"^rtpstart\s*=\s*(\d+)\s*$.*^rtpend\s*=\s*(\d+)\s*$", runtime_rtp_text, re.MULTILINE | re.DOTALL)
+if not runtime_range or (runtime_range.group(1), runtime_range.group(2)) != ("10000", "20000"):
+    fail("canonical reference runtime RTP listener range must be 10000-20000")
+runtime_rtp_min, runtime_rtp_max = map(int, runtime_range.groups())
 
 if (deployment.get("metadata") or {}).get("labels", {}).get("app.kubernetes.io/component") != "rtpengine":
     fail("Deployment must carry app.kubernetes.io/component=rtpengine")
@@ -406,9 +414,50 @@ if not policy:
 policy_spec = policy.get("spec") or {}
 ingress = policy_spec.get("ingress") or []
 egress = policy_spec.get("egress") or []
-policy_text = yaml.safe_dump(policy, sort_keys=True)
+runtime_policy = security.get("NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio")
+if not runtime_policy:
+    fail("canonical runtime media NetworkPolicy is missing")
+runtime_policy_spec = runtime_policy.get("spec") or {}
+selected_runtime_labels = {
+    "app.kubernetes.io/component": "asterisk-ari",
+    "utcp.io/network-role": "asterisk-ari",
+    "utcp.dev/runtime-node": "local-asterisk-ari",
+}
+rtpengine_labels = {
+    "app.kubernetes.io/component": "rtpengine",
+    "utcp.io/network-role": "rtpengine-media",
+}
+if (runtime_policy_spec.get("podSelector") or {}).get("matchLabels") != selected_runtime_labels:
+    fail("canonical runtime policy must select exactly the reference Asterisk runtime")
+if not has_exact_policy_rule(
+    egress, "egress", "utcp-runtime", "UDP", runtime_rtp_min,
+    pod_labels=selected_runtime_labels, end_port=runtime_rtp_max
+):
+    fail("rtpengine egress must target the runtime RTP listener range 10000-20000")
+if not has_exact_policy_rule(
+    ingress, "ingress", "utcp-runtime", "UDP", 40000,
+    pod_labels=selected_runtime_labels, end_port=40099
+):
+    fail("rtpengine ingress must accept runtime RTP on the rtpengine media range 40000-40099")
+if not has_exact_policy_rule(
+    runtime_policy_spec.get("egress") or [], "egress", "utcp-platform", "UDP", 40000,
+    pod_labels=rtpengine_labels, end_port=40099
+):
+    fail("runtime egress must target rtpengine media range 40000-40099")
+if not has_exact_policy_rule(
+    runtime_policy_spec.get("ingress") or [], "ingress", "utcp-platform", "UDP", 10000,
+    pod_labels=rtpengine_labels, end_port=20000
+):
+    fail("runtime ingress must accept rtpengine on runtime range 10000-20000")
+for peer in [peer for rule in ingress + egress for peer in (rule.get("from") or rule.get("to") or [])]:
+    if "ipBlock" in peer:
+        fail("media corridor peers must not use ipBlock")
+if any("ipBlock" in peer for rule in (runtime_policy_spec.get("ingress") or []) + (runtime_policy_spec.get("egress") or []) for peer in (rule.get("from") or rule.get("to") or [])):
+    fail("runtime media corridor peers must not use ipBlock")
+policy_text = yaml.safe_dump(policy, sort_keys=True) + yaml.safe_dump(runtime_policy, sort_keys=True)
+rtp_policy_text = yaml.safe_dump(policy, sort_keys=True)
 for forbidden in ("utcp-data", "postgres", "redis", "kube-system", "0.0.0.0/0", "::/0"):
-    if forbidden in policy_text:
+    if forbidden in rtp_policy_text:
         fail(f"NetworkPolicy must not allow {forbidden}")
 for required in (
     "utcp.io/network-role: rtpengine-media",

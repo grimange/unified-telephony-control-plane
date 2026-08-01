@@ -272,22 +272,27 @@ if kamailio_dns[0].get("to") != cluster_dns_peer:
     fail("Kamailio DNS authority must use combined kube-system and CoreDNS selectors")
 
 ingress = asterisk_spec.get("ingress") or []
-if ingress != [
-    {
-        "from": [
-            {
-                "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
-                "podSelector": {"matchLabels": {"utcp.io/network-role": "kamailio-signaling"}},
-            }
-        ],
-        "ports": [{"protocol": "UDP", "port": 5060}],
-    }
-]:
-    fail("Asterisk SIP ingress must remain exact Kamailio UDP 5060")
+if len(ingress) != 2 or {
+    "from": [{
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
+        "podSelector": {"matchLabels": {"utcp.io/network-role": "kamailio-signaling"}},
+    }],
+    "ports": [{"protocol": "UDP", "port": 5060}],
+} not in ingress or {
+    "from": [{
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
+        "podSelector": {"matchLabels": {
+            "app.kubernetes.io/component": "rtpengine",
+            "utcp.io/network-role": "rtpengine-media",
+        }},
+    }],
+    "ports": [{"protocol": "UDP", "port": 10000, "endPort": 20000}],
+} not in ingress:
+    fail("Asterisk ingress must retain exact Kamailio SIP and rtpengine media rules")
 
 egress = asterisk_spec.get("egress") or []
-if len(egress) != 2:
-    fail("Asterisk egress must contain exactly SIP and DNS")
+if len(egress) != 3:
+    fail("Asterisk egress must contain exactly SIP, media, and DNS")
 for rule in egress:
     if not rule.get("to"):
         fail("Asterisk egress must not be unrestricted")
@@ -314,6 +319,19 @@ if sip_rules != [
     }
 ]:
     fail("Asterisk SIP egress must remain exact Kamailio UDP 5060")
+
+media_rules = [rule for rule in egress if rule.get("ports") == [{"protocol": "UDP", "port": 40000, "endPort": 40099}]]
+if media_rules != [{
+    "to": [{
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
+        "podSelector": {"matchLabels": {
+            "app.kubernetes.io/component": "rtpengine",
+            "utcp.io/network-role": "rtpengine-media",
+        }},
+    }],
+    "ports": [{"protocol": "UDP", "port": 40000, "endPort": 40099}],
+}]:
+    fail("Asterisk media egress must remain exact rtpengine UDP 40000-40099")
 
 dns_rules = [rule for rule in egress if rule.get("ports") == dns_ports]
 if len(dns_rules) != 1:
@@ -486,13 +504,13 @@ do
       expected="Asterisk egress must not use ipBlock or broad CIDR"
       ;;
     unrestricted-egress)
-      expected="Asterisk egress must contain exactly SIP and DNS"
+      expected="Asterisk egress must contain exactly SIP, media, and DNS"
       ;;
     allow-secondary-asterisk)
       expected="Asterisk policy must select only canonical Asterisk"
       ;;
     remove-sip-egress)
-      expected="Asterisk egress must contain exactly SIP and DNS"
+      expected="Asterisk egress must contain exactly SIP, media, and DNS"
       ;;
     widen-sip-egress)
       expected="Asterisk SIP egress must remain exact Kamailio UDP 5060"

@@ -143,10 +143,10 @@ do
     fail "missing T0 alert: $alert"
 done
 
-check_kustomize_forbidden infrastructure/kubernetes/base/platform "NodePort|LoadBalancer|hostPort|hostNetwork|hostPID|5060|5061|10000|20000" "T0 platform manifests expose forbidden network surface"
-check_kustomize_forbidden infrastructure/kubernetes/base/runtime "NodePort|LoadBalancer|hostPort|hostNetwork|hostPID|5060|5061|10000|20000" "T0 runtime manifests expose forbidden network surface"
-check_kustomize_forbidden infrastructure/kubernetes/overlays/local-two-asterisk "NodePort|LoadBalancer|hostPort|hostNetwork|hostPID|5060|5061|10000|20000" "T5 staged A/B runtime manifests expose forbidden network surface"
-check_kustomize_forbidden infrastructure/kubernetes/security "0\\.0\\.0\\.0/0|::/0|5060|5061|10000|20000" "T0 NetworkPolicy contains broad egress or SIP/RTP ports"
+check_kustomize_forbidden infrastructure/kubernetes/base/platform "NodePort|LoadBalancer|hostPort|hostNetwork|hostPID|5061" "T0 platform manifests expose forbidden network surface"
+check_kustomize_forbidden infrastructure/kubernetes/base/runtime "NodePort|LoadBalancer|hostPort|hostNetwork|hostPID|5061" "T0 runtime manifests expose forbidden network surface"
+check_kustomize_forbidden infrastructure/kubernetes/overlays/local-two-asterisk "NodePort|LoadBalancer|hostPort|hostNetwork|hostPID|5061" "T5 staged A/B runtime manifests expose forbidden network surface"
+check_kustomize_forbidden infrastructure/kubernetes/security "0\\.0\\.0\\.0/0|::/0|5061" "T0 NetworkPolicy contains broad egress or public SIP ports"
 
 scripts/asterisk-ari/validate-ab-topology >/dev/null
 

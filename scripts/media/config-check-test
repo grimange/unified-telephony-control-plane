@@ -118,7 +118,7 @@ def is_rtpengine_peer(peer: dict) -> bool:
 
 
 def is_rtpengine_rule(rule: dict) -> bool:
-    return any(is_rtpengine_peer(peer) for peer in rule.get("to") or [])
+    return any(is_rtpengine_peer(peer) for peer in (rule.get("to") or rule.get("from") or []))
 
 
 if mutation == "remove-kamailio-rtpengine-egress":
@@ -188,6 +188,20 @@ elif mutation == "use-rtpengine-manage":
         if metadata_name(doc) == "kamailio-config":
             cfg = doc["data"]["kamailio.cfg"]
             doc["data"]["kamailio.cfg"] = cfg.replace("rtpengine_offer(", "rtpengine_manage(", 1)
+elif mutation == "remove-runtime-egress":
+    docs[0]["spec"]["egress"] = []
+elif mutation == "wrong-runtime-egress-range":
+    docs[0]["spec"]["egress"][0]["ports"] = [{"protocol": "UDP", "port": 40000, "endPort": 40099}]
+elif mutation == "remove-runtime-ingress":
+    docs[0]["spec"]["ingress"] = [rule for rule in docs[0]["spec"].get("ingress") or [] if not is_rtpengine_rule(rule)]
+elif mutation == "wrong-runtime-ingress-range":
+    for rule in docs[0]["spec"].get("ingress") or []:
+        if is_rtpengine_rule(rule):
+            rule["ports"] = [{"protocol": "UDP", "port": 40000, "endPort": 40099}]
+elif mutation == "runtime-wide-peer":
+    docs[0]["spec"]["egress"][0]["to"][0].pop("podSelector", None)
+elif mutation == "runtime-ipblock":
+    docs[0]["spec"]["egress"][0]["to"] = [{"ipBlock": {"cidr": "10.42.0.0/16"}}]
 else:
     raise SystemExit(f"unknown mutation: {mutation}")
 
@@ -217,6 +231,12 @@ public_metrics_service="$(copy_observability public-metrics-service)"
 missing_kamailio_rtpengine_module="$(copy_platform missing-kamailio-rtpengine-module)"
 missing_kamailio_media_offer="$(copy_platform missing-kamailio-media-offer)"
 kamailio_rtpengine_manage="$(copy_platform kamailio-rtpengine-manage)"
+corridor_missing_egress="$(copy_security corridor-missing-egress)"
+corridor_wrong_egress="$(copy_security corridor-wrong-egress)"
+corridor_missing_ingress="$(copy_security corridor-missing-ingress)"
+corridor_wrong_ingress="$(copy_security corridor-wrong-ingress)"
+corridor_wide_peer="$(copy_security corridor-wide-peer)"
+corridor_ipblock="$(copy_security corridor-ipblock)"
 
 cp "$SOURCE_DOCKERFILE" "$corrected"
 sed 's/+0\./+0~/g' "$SOURCE_DOCKERFILE" >"$tilde"
@@ -244,6 +264,12 @@ mutate_yaml "$public_metrics_service/network-policies/allow-application-metrics.
 mutate_yaml "$missing_kamailio_rtpengine_module/kamailio-configmap.yaml" remove-kamailio-rtpengine-module
 mutate_yaml "$missing_kamailio_media_offer/kamailio-configmap.yaml" remove-kamailio-media-offer
 mutate_yaml "$kamailio_rtpengine_manage/kamailio-configmap.yaml" use-rtpengine-manage
+mutate_yaml "$corridor_missing_egress/platform/allow-rtpengine-media.yaml" remove-runtime-egress
+mutate_yaml "$corridor_wrong_egress/platform/allow-rtpengine-media.yaml" wrong-runtime-egress-range
+mutate_yaml "$corridor_missing_ingress/runtime/allow-asterisk-sip-from-kamailio.yaml" remove-runtime-ingress
+mutate_yaml "$corridor_wrong_ingress/runtime/allow-asterisk-sip-from-kamailio.yaml" wrong-runtime-ingress-range
+mutate_yaml "$corridor_wide_peer/platform/allow-rtpengine-media.yaml" runtime-wide-peer
+mutate_yaml "$corridor_ipblock/platform/allow-rtpengine-media.yaml" runtime-ipblock
 
 pass_case "corrected Dockerfile" "$corrected"
 fail_case "tilde package separator" "$tilde" "uses '+0~'; expected convention is +0.mr26.0.1.19"
@@ -267,5 +293,11 @@ fail_case "public metrics Service rejected" "$corrected" "public metrics resourc
 fail_case "missing Kamailio rtpengine module rejected" "$corrected" "T3-S2 must wire provider-neutral Kamailio media routing: missing loadmodule \"rtpengine.so\"" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$SOURCE_SECURITY" "$SOURCE_OBSERVABILITY" "$missing_kamailio_rtpengine_module"
 fail_case "missing Kamailio media offer route rejected" "$corrected" "T3-S2 must wire provider-neutral Kamailio media routing: missing route[MEDIA_OFFER]" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$SOURCE_SECURITY" "$SOURCE_OBSERVABILITY" "$missing_kamailio_media_offer"
 fail_case "rtpengine_manage rejected" "$corrected" "T3-S2 must use explicit offer/answer/delete instead of rtpengine_manage" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$SOURCE_SECURITY" "$SOURCE_OBSERVABILITY" "$kamailio_rtpengine_manage"
+fail_case "missing rtpengine-to-runtime corridor rejected" "$corrected" "rtpengine egress must target the runtime RTP listener range" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$corridor_missing_egress"
+fail_case "wrong rtpengine-to-runtime destination range rejected" "$corrected" "rtpengine egress must target the runtime RTP listener range" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$corridor_wrong_egress"
+fail_case "missing runtime-to-rtpengine ingress rejected" "$corrected" "runtime ingress must accept rtpengine on runtime range" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$corridor_missing_ingress"
+fail_case "wrong runtime-to-rtpengine destination range rejected" "$corrected" "runtime ingress must accept rtpengine on runtime range" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$corridor_wrong_ingress"
+fail_case "wide runtime peer rejected" "$corrected" "rtpengine egress must target the runtime RTP listener range" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$corridor_wide_peer"
+fail_case "media ipBlock rejected" "$corrected" "rtpengine egress must target the runtime RTP listener range" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$corridor_ipblock"
 
 printf 'media config check regression tests passed\n'

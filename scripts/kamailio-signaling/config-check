@@ -697,8 +697,30 @@ asterisk_dns_egress = {
     }],
     "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}],
 }
-if len(asterisk_egress) != 2 or asterisk_sip_egress not in asterisk_egress or asterisk_dns_egress not in asterisk_egress:
-    fail("Asterisk egress must allow only exact Kamailio UDP 5060 reverse signaling and cluster-DNS UDP/TCP 53")
+asterisk_media_egress = {
+    "to": [{
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
+        "podSelector": {"matchLabels": {
+            "app.kubernetes.io/component": "rtpengine",
+            "utcp.io/network-role": "rtpengine-media",
+        }},
+    }],
+    "ports": [{"protocol": "UDP", "port": 40000, "endPort": 40099}],
+}
+asterisk_media_ingress = {
+    "from": [{
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
+        "podSelector": {"matchLabels": {
+            "app.kubernetes.io/component": "rtpengine",
+            "utcp.io/network-role": "rtpengine-media",
+        }},
+    }],
+    "ports": [{"protocol": "UDP", "port": 10000, "endPort": 20000}],
+}
+if len((asterisk_policy.get("spec") or {}).get("ingress") or []) != 2 or asterisk_media_ingress not in ((asterisk_policy.get("spec") or {}).get("ingress") or []):
+    fail("Asterisk ingress must retain exact Kamailio SIP and rtpengine media rules")
+if len(asterisk_egress) != 3 or asterisk_sip_egress not in asterisk_egress or asterisk_media_egress not in asterisk_egress or asterisk_dns_egress not in asterisk_egress:
+    fail("Asterisk egress must allow exact Kamailio SIP, rtpengine media, and cluster-DNS rules")
 if (asterisk_policy.get("spec") or {}).get("podSelector", {}).get("matchLabels", {}).get("utcp.dev/runtime-node") != "local-asterisk-ari":
     fail("Asterisk reverse SIP policy must select only the canonical local Asterisk runtime")
 kamailio_egress = (kamailio_policy.get("spec") or {}).get("egress") or []

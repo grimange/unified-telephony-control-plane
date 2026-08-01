@@ -27,16 +27,12 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: utcp-platform
-          podSelector:
-            matchLabels:
-              utcp.io/network-role: kamailio-signaling
-        - namespaceSelector:
-            matchLabels:
               kubernetes.io/metadata.name: utcp-runtime
           podSelector:
             matchLabels:
+              app.kubernetes.io/component: asterisk-ari
               utcp.io/network-role: asterisk-ari
+              utcp.dev/runtime-node: local-asterisk-ari
       ports:
         - protocol: UDP
           port: 40000
@@ -58,17 +54,13 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: utcp-platform
-          podSelector:
-            matchLabels:
-              utcp.io/network-role: kamailio-signaling
-        - namespaceSelector:
-            matchLabels:
               kubernetes.io/metadata.name: utcp-runtime
           podSelector:
             matchLabels:
+              app.kubernetes.io/component: asterisk-ari
               utcp.io/network-role: asterisk-ari
+              utcp.dev/runtime-node: local-asterisk-ari
       ports:
         - protocol: UDP
-          port: 40000
-          endPort: 40099
+          port: 10000
+          endPort: 20000
