@@ -3913,3 +3913,486 @@ elimination — is proven and must not be repeated.
 Do not add fallback routing, registration aliasing, Path, Outbound, GRUU, public
 SIP exposure, feature gates, manual activation, rtpengine mediation, browser
 media, conference admission, V0, T4, external trunks, or PSTN.
+
+---
+
+# Consolidated Bidirectional Dialog Closure Proof (`134a1d1`)
+
+Verdict: `T3_S2A_BIDIRECTIONAL_DIALOG_CLOSURE_COMPLETE`
+
+Final T3-S2A closure proof. All five rows of the committed directional matrix
+pass. No production file was modified and no completed foundation was reopened.
+
+**`PRODUCT_DEFECT-11`, `-12`, `-13` and `-14` are all closed.** In-dialog
+requests toward Asterisk relay on their routable Request-URI with no alias
+handling, in-dialog requests toward the browser consume the alias and reuse the
+existing WebSocket connection, and browser-style targets with a missing or
+malformed alias fail explicitly with no DNS and no relay.
+
+**T3-S2A live signaling proof is Complete. T3-S2A is Complete. T3-S2 media
+mediation is Not Started. T3 remains In Progress. `UTCP_PHASE=T1` is unchanged.**
+
+## Source Commit
+
+* Proof executed at `134a1d1` (`fix(t3): make dialog alias handling directional`).
+* Branch `main`, working tree clean at start, `UTCP_PHASE=T1`, nothing pushed.
+
+All four focused static authorities passed:
+
+```text
+make kamailio-signaling-config-check        exit 0
+make kamailio-signaling-config-check-test   exit 0
+make security-config-check                  exit 0
+make security-config-check-test             exit 0
+```
+
+Render assertions over the canonical local overlay:
+
+```text
+alias-present branch  $(ru{uri.param,alias}) != ""                       present
+handle_ruri_alias() inside the alias branch                              yes
+$du postcondition inside the alias branch (not unconditional)            yes
+browser-style else-if (transport=ws|wss or host =~ \.invalid$)           present
+missing_dialog_contact_alias only inside that else-if                    yes
+ordinary routable target falls through to t_relay() with empty $du       yes
+REGISTER alias operations                                                0
+rtpengine operations                                                     0
+sha256(rendered kamailio.cfg)   e064cd33c35843d894a37f80aee7b9156aa11b8fa466f6aa94822ce3f27fed68
+Deployment checksum annotation  e064cd33c35843d894a37f80aee7b9156aa11b8fa466f6aa94822ce3f27fed68
+pod-template annotations        exactly one (the checksum); no rollout timestamp
+image / securityContext         unchanged / unchanged
+```
+
+## Environmental Interruption Before Apply
+
+`INTENTIONALLY_INDUCED_CONDITION` does not apply; this was an **environmental
+issue**, recorded for completeness because it reset the baseline.
+
+The host restarted between prompts. All four k3d containers came up with shuffled
+Docker IPs (`server-0` `172.24.0.2` → `172.24.0.5`), and k3s refused to start:
+
+```text
+level=error msg="Shutdown request received: \"failed to start networking:
+  unable to initialize network policy controller: error getting node subnet:
+  failed to find interface with specified node ip\""
+```
+
+Diagnosis was narrow and the remedy used the established runtime tooling only —
+`k3d cluster stop utcp-local` then `k3d cluster start utcp-local`, which restored
+the original IP assignment (`server-0 172.24.0.2`, `agent-0 172.24.0.4`,
+`agent-1 172.24.0.3`), brought all three nodes Ready, and settled every Pod. No
+repository file was changed, no alternate kubeconfig was created, and the cluster
+was not deleted or recreated. The runtime baseline below was re-recorded
+afterwards. Classified `EXPECTED_BEHAVIOR` for a k3d node-IP shuffle after a host
+restart.
+
+## Runtime Baseline (post-restart)
+
+```text
+kamailio Pod       kamailio-778d98849b-n4jvg  uid b46444a1-…  ready=true  restarts=2  ip 10.42.2.152
+kamailio checksum  2b92c60b…    live ConfigMap sha256 2b92c60b…    Deployment generation 16
+  live directional guard `uri.param,alias` occurrences: 0  -> 134a1d1 not yet live
+canonical Asterisk asterisk-ari-74d8c4b5f8-tfgxr  uid 6ba30804-…  ready=true  restarts=0  ip 10.42.2.150
+secondary          asterisk-ari-b-8557bd4d76-rcjfn  uid 8a904cdd-…  restarts=14
+kamailio-sip-internal endpoint  10.42.2.152 ready=true
+rtpengine          uid 245b78c5-…  ready=true  restarts=1;  sessions 0/0, ports_used 0/0
+database           tables 41, dialog/rtp/media tables (none), tenants 27, RuntimeNodes 110
+                   (asterisk/asterisk-ari + simulator/simulator-deterministic), pending outbox 0
+redis              dbsize 3, keys sip/dialog/rtp/media = 0/0/0/0
+```
+
+## Resources Applied
+
+Two, in order. `kubectl diff` restricted to them contained only the correction.
+
+| Resource | Before | After | Material change |
+|---|---|---|---|
+| `ConfigMap/utcp-platform/kamailio-config` | rv `462133`, sha256 `2b92c60b…` | rv `462251`, sha256 **`e064cd33…`** | unconditional `$du` postcondition replaced by the directional alias-present / browser-style / routable-target branches |
+| `Deployment/utcp-platform/kamailio` | generation `16`, rv `462133` | generation **`17`**, rv `462264` | checksum annotation only |
+
+Before the Deployment apply, the Deployment remained at generation `16` with the
+old checksum and the Pod was untouched (`uid b46444a1-…`, `restarts=2`).
+
+## Kamailio Rollout Result
+
+```text
+deployment applied : 2026-08-01T08:48:21Z
+rollout complete   : 2026-08-01T08:48:26Z  (~5 seconds)
+new ReplicaSet     : kamailio-c6bc4454d  revision 17  desired 1  ready 1
+new Pod            : kamailio-c6bc4454d-sjvzt  uid aa5accfc-…  ip 10.42.2.157  node k3d-utcp-local-agent-1
+container started  : 2026-08-01T08:48:23Z      Ready: 2026-08-01T08:48:26Z
+old Pod retirement : Created + Started for the new Pod, then SuccessfulDelete /
+                     Killing kamailio-778d98849b-n4jvg
+conditions         : Available=True (MinimumReplicasAvailable), Progressing=True (NewReplicaSetAvailable)
+restart count      : 1     ERROR lines in the running container: 0
+manual restart / Pod deletion / reload RPC / timestamp annotation : none
+unrelated workloads rolled : none
+```
+
+The single restart is the known transient `postgres`/NetworkPolicy startup race;
+it self-recovered with no parser or configuration error. `EXPECTED_BEHAVIOR`.
+
+## Running Configuration Identity
+
+**PASS.** Byte-identical across all four authorities:
+
+```text
+1 repository render        e064cd33c35843d894a37f80aee7b9156aa11b8fa466f6aa94822ce3f27fed68
+2 live ConfigMap           e064cd33c35843d894a37f80aee7b9156aa11b8fa466f6aa94822ce3f27fed68
+3 mounted in the Pod       e064cd33c35843d894a37f80aee7b9156aa11b8fa466f6aa94822ce3f27fed68
+4 Pod checksum annotation  e064cd33c35843d894a37f80aee7b9156aa11b8fa466f6aa94822ce3f27fed68
+```
+
+The running `route[WITHINDLG]`, read back from the Pod, implements the matrix with
+no unconditional alias requirement:
+
+```kamailio
+route[WITHINDLG] {
+    if (loose_route()) {
+        if ($du == "") {
+            if ($(ru{uri.param,alias}) != "") {
+                if (!handle_ruri_alias()) { … invalid_dialog_contact_alias … 400 … }
+                if ($du == "")            { … invalid_dialog_contact_alias … 400 … }
+            } else if ($(ru{uri.param,transport}) == "ws" || $(ru{uri.param,transport}) == "wss"
+                       || $(ru{uri.host}) =~ "\\.invalid$") {
+                … missing_dialog_contact_alias … 400 …
+            }
+        }
+
+        if (!t_relay()) { … application_dialog_relay_failed … }
+        exit;
+    }
+```
+
+## Directional Dialog Matrix
+
+| # | Corridor | Alias | `$du` | Expected | Result |
+|---|---|---|---|---|---|
+| 1 | Browser ACK → Asterisk | absent | may stay empty | relay on routable Request-URI | **PASS** |
+| 2 | Browser BYE → Asterisk | absent | may stay empty | relay on routable Request-URI | **PASS** |
+| 3 | Asterisk BYE → browser | present | must become non-empty | consume alias, reuse WebSocket | **PASS** |
+| 4 | Browser-style target, missing alias | absent | n/a | explicit `400`, no DNS or relay | **PASS** |
+| 5 | Browser-style target, malformed alias | invalid | n/a | explicit `400`, no DNS or relay | **PASS** |
+
+## Browser ACK to Asterisk
+
+**PASS.** Dialog `963e8afed2a27dcf@utcp-s2a-bidi`, from-tag `7defb1849360`,
+to-tag `2eb2f82c-0684-46d5-a0f4-cb7884723097`.
+
+```text
+ack_request_uri                 sip:10.42.2.150:5060      <- routable Asterisk target, no alias
+post_ack_200_retransmissions    0                          <- the decisive signal
+missing_dialog_contact_alias    0
+invalid_dialog_contact_alias    0
+initial_foreign_domain          0
+authentication challenge for the ACK   none
+```
+
+Confirmed on the wire — the ACK reached Asterisk directly:
+
+```text
+10.42.2.157:5060  -> 10.42.2.150:5060   ACK sip:10.42.2.150:5060 SIP/2.0
+10.42.2.157:28975 -> 10.42.2.150:5060   ACK sip:10.42.2.150:5060 SIP/2.0
+```
+
+`post_ack_200_retransmissions=0` is exactly the row that fails if the
+unconditional `$du` postcondition is still active; at `1381bf3` it was `3`.
+
+## Browser BYE to Asterisk
+
+**PASS**, same dialog.
+
+```text
+browser_bye_request_uri    sip:10.42.2.150:5060      <- routable target, alias absent
+browser_bye_final_status   200 OK
+browser_bye_call_id        963e8afed2a27dcf@utcp-s2a-bidi   (matches)
+browser_bye_cseq           3 BYE
+browser_bye_from_tag       7defb1849360                      (matches)
+browser_bye_to_tag         2eb2f82c-0684-46d5-a0f4-cb7884723097  (matches)
+dialog_terminated          true
+alias failure logs         none
+asterisk channels afterwards   0 active channels, 0 active calls
+```
+
+## Clean Asterisk-Originated BYE Stimulus
+
+**PASS** — a fresh dialog `cadb82f8a05b89da@utcp-s2a-bidi` was established and
+remained healthy until the explicit CLI hangup.
+
+```text
+alias-bearing Contact forwarded to Asterisk (exactly one alias, verified on every copy):
+  Contact: <sip:ts-3ea0058b2ae1421da15bb8e268e9c8a7@utcp-s2a-proof.invalid;alias=10.42.0.164~48170~5;transport=ws>
+ACK reached Asterisk           post_ack_200_retransmissions = 0
+channel active at stimulus     PJSIP/anonymous-00000001  from-kamailio  9900  Prio 3  Up  Echo  (00:00:12)
+CLI stimulus issued            08:51:24Z  ->  Requested Hangup on channel 'PJSIP/anonymous-00000001'
+BYE observed at the client     08:51:24Z  (same second — no timer involved)
+inbound_reason                 (absent)   <- NO Reason: cause=408; the hangup, not an ACK timeout, generated the BYE
+```
+
+The generated BYE:
+
+```text
+BYE sip:ts-3ea0058b2ae1421da15bb8e268e9c8a7@utcp-s2a-proof.invalid;transport=ws;alias=10.42.0.164~48170~5 SIP/2.0
+Via: SIP/2.0/UDP 10.42.2.150:5060;rport;branch=z9hG4bKPj3e6a9641-80e3-4308-a6e4-fe4989480237
+From: <sip:9900@sip.utcp.local.test>;tag=0269a8b9-859b-448f-9f5d-bc67da1b314f
+To: <sip:ts-3ea0058b2ae1421da15bb8e268e9c8a7@sip.utcp.local.test>;tag=425287edbb75
+Call-ID: cadb82f8a05b89da@utcp-s2a-bidi          <- matches the dialog
+CSeq: 22506 BYE                                  <- incremented
+Route: <sip:kamailio-sip-internal.utcp-platform.svc.cluster.local:5060;lr;r2=on;ftag=425287edbb75>
+Route: <sip:sip.utcp.local.test:443;transport=ws;lr;r2=on;ftag=425287edbb75>
+Max-Forwards: 70
+User-Agent: Asterisk PBX 20.20.1
+```
+
+Matching Call-ID and tags, incremented CSeq, alias-bearing browser remote target,
+and the internal Kamailio Service first in the route set.
+
+## Asterisk BYE to Browser
+
+**PASS**, all fifteen requirements.
+
+```text
+1  BYE reaches Kamailio                 10.42.2.150:5060 -> 10.43.3.212:5060 (kamailio-sip-internal ClusterIP)
+2  has_totag() -> established handling  yes
+3  loose_route() succeeds               yes
+4  alias parameter detected             yes (alias-present branch taken)
+5  handle_ruri_alias() succeeds         yes — no invalid_dialog_contact_alias
+6  $du becomes non-empty                yes — no missing_dialog_contact_alias, relay proceeded
+7  existing WebSocket connection used   yes — delivered on the client's held socket
+8  no .invalid DNS query                yes — sip_hostport2su occurrences 0
+9  browser receives BYE                 08:51:24Z, inbound_call_id_matches=true
+10 browser returns 200 OK               sent 08:51:24Z
+11 response traverses Kamailio          captured 10.42.2.157:5060 -> 10.42.2.150:47417
+12 Asterisk transaction completes       bye_retransmissions_after_200 = 0
+13 Asterisk channel terminates          0 active channels, 0 active calls
+14 browser dialog terminates            dialog_terminated=true
+15 no retransmission or timeout         none
+```
+
+Kamailio consumed the alias before delivery, so the client's Request-URI was
+clean:
+
+```text
+inbound_request_uri  sip:ts-3ea0058b2ae1421da15bb8e268e9c8a7@utcp-s2a-proof.invalid;transport=ws
+inbound_cseq         22506 BYE
+inbound_from_tag     0269a8b9-859b-448f-9f5d-bc67da1b314f
+inbound_to_tag       425287edbb75
+inbound_authorization_present   false
+```
+
+## Alias Consumption and Destination
+
+**PASS.**
+
+```text
+$du before alias handling   empty  (the `if ($du == "")` branch was entered)
+alias parameter present     yes -> alias-present branch
+handle_ruri_alias()         succeeded
+$du after alias handling    non-empty — neither the invalid nor the missing guard fired
+destination                 the WSS connection identified by 10.42.0.164~48170~5
+                            (ip ~ port ~ proto; proto 5 = WSS; the address is the
+                            Traefik ingress peer of the browser leg)
+```
+
+## Browser Response and Asterisk Completion
+
+**PASS**, captured on the wire:
+
+```text
+10.42.2.157:5060 -> 10.42.2.150:47417   SIP/2.0 200 OK
+Via: SIP/2.0/UDP 10.42.2.150:5060;received=10.42.2.150;rport=47417;branch=z9hG4bKPj3e6a9641-…
+From: <sip:9900@sip.utcp.local.test>;tag=0269a8b9-859b-448f-9f5d-bc67da1b314f
+To: <sip:ts-3ea0058b2ae1421da15bb8e268e9c8a7@sip.utcp.local.test>;tag=425287edbb75
+Call-ID: cadb82f8a05b89da@utcp-s2a-bidi
+CSeq: 22506 BYE
+User-Agent: UTCP-T3S2A-Bidi
+```
+
+Call-ID and BYE CSeq match, the branch equals Asterisk's own, and the
+`User-Agent` proves this is the **browser's** response relayed by Kamailio, not a
+Kamailio-generated reply.
+
+## Missing Browser Alias
+
+**PASS.** One bounded synthetic in-dialog BYE, distinct synthetic Call-ID, Route
+header targeting Kamailio, browser-style Request-URI, no alias:
+
+```text
+synthetic_call_id      synthetic-missing-81e1a0408c02@utcp-s2a-synthetic
+synthetic_request_uri  sip:ts-synthetic@utcp-s2a-synth.invalid;transport=ws
+synthetic_status       400 Bad Request
+kamailio log           kamailio_application_dialog_rejected result=missing_dialog_contact_alias method=BYE
+```
+
+```text
+DNS query for the .invalid host   none
+t_relay()                         not reached
+browser delivery                  none
+Asterisk branch                   none — 0 datagrams captured for the synthetic Call-IDs
+fallback destination              none
+```
+
+## Malformed Browser Alias
+
+**PASS.** One bounded synthetic request using the observed `ip~port~proto` format
+mutated to be structurally invalid, distinct Call-ID:
+
+```text
+synthetic_call_id      synthetic-malformed-ca8742823fa5@utcp-s2a-synthetic
+synthetic_request_uri  sip:ts-synthetic@utcp-s2a-synth.invalid;transport=ws;alias=not-an-address~~
+synthetic_status       400 Bad Request
+kamailio log           ERROR: nathelper [nathelper.c:1244]: ki_handle_ruri_alias_mode(): no proto in alias param
+                       kamailio_application_dialog_rejected result=invalid_dialog_contact_alias method=BYE
+```
+
+```text
+usable $du        never produced
+DNS lookup        none
+relay             none
+fallback          none
+browser or Asterisk transaction   none
+```
+
+No broad fuzzing — exactly one malformed case derived from the real format.
+
+## DNS-Fallback Elimination
+
+**PASS.** Across all five rows there was **no** `sip_hostport2su()` failure, no
+`uri2dst2()` failure, no `t_forward_nonack()` failure and no `478 Unresolvable
+destination`. Counters verified directly against the running Pod log: each `0`.
+
+## REGISTER Preservation
+
+**PASS**, and free of alias side effects:
+
+```text
+sip_status=200  sip_result=accepted
+kamailio: kamailio_registration_challenge result=challenge
+          kamailio_registration_accepted result=ok
+stored contact: sip:ts-3ea0058b2ae1421da15bb8e268e9c8a7@t3s2abidi.wss.invalid;transport=ws
+```
+
+No `;alias=` in registrar storage — the alias lifecycle touches only the
+application-dialog route.
+
+## Asterisk-Unavailable Contract
+
+**Unchanged.** `t_on_failure("ASTERISK_UNAVAILABLE")` and
+`failure_route[ASTERISK_UNAVAILABLE]` are both present in the running
+configuration (2 matches). The condition was not re-induced; it was proven at
+`081267a` and its configuration is untouched by this correction.
+
+## rtpengine Boundary Preservation
+
+**PASS.**
+
+```text
+rtpengine_sessions{own}/{foreign}          0 / 0   (baseline 0 / 0)
+rtpengine_ports_used{internal}/{default}   0 / 0   (baseline 0 / 0)
+running configuration rtpengine operations 0
+```
+
+## Public-Surface Preservation
+
+**PASS.** Both Kamailio Services remain ClusterIP-only (`8080/TCP`, `5060/UDP`),
+with no NodePort, LoadBalancer, ExternalIP, HostPort or HostNetwork.
+
+## State and Workload Preservation
+
+| Value | Before | After |
+|---|---|---|
+| database public tables | 41 | **41** |
+| tables containing `dialog`/`rtp`/`media` | (none) | **(none)** |
+| tenants | 27 | **27** |
+| RuntimeNodes / families | 110 / asterisk + simulator | **110 / unchanged** |
+| pending outbox | 0 | **0** |
+| Redis keys `sip`/`dialog`/`rtp`/`media` | 0/0/0/0 | **0/0/0/0** |
+| rtpengine sessions / ports used | 0 / 0 | **0 / 0** |
+
+Redis `db0` moved `3 → 5` from authorized API session and cache activity.
+
+Full-cluster Pod snapshot diff contains **exactly one** change — the expected
+Kamailio rollout:
+
+```text
+- utcp-platform kamailio-778d98849b-n4jvg  b46444a1-…  restarts 2
++ utcp-platform kamailio-c6bc4454d-sjvzt   aa5accfc-…  restarts 1
+```
+
+Asterisk, rtpengine and every unrelated workload retained their UID **and**
+restart count. No unrelated workload restarted because of this proof.
+
+## Findings
+
+| Classification | Finding |
+|---|---|
+| PASS | **Row 1 — browser ACK → Asterisk.** Request-URI `sip:10.42.2.150:5060`, alias absent, alias handling not invoked, `post_ack_200_retransmissions = 0` (it was `3` at `1381bf3`), no alias failure log, ACK confirmed reaching Asterisk on the wire |
+| PASS | **Row 2 — browser BYE → Asterisk.** Alias absent, empty `$du` accepted, relayed on the routable Request-URI, `200 OK` returned, Call-ID/tags/CSeq all match, dialog terminated with no alias failure |
+| PASS | **Row 3 — Asterisk BYE → browser.** Exactly one alias on the forwarded Contact; a **clean CLI-triggered** hangup produced the BYE in the same second with **no `Reason: cause=408`**; alias detected and consumed, `$du` non-empty, existing WebSocket reused, browser received and answered `200 OK`, that response captured returning through Kamailio to Asterisk with the browser's own `User-Agent`, `0` retransmissions, channel and dialog both terminated |
+| PASS | **Row 4 — missing browser alias.** `400 Bad Request` + `missing_dialog_contact_alias`, no DNS, no relay, no browser delivery, no Asterisk branch, no fallback |
+| PASS | **Row 5 — malformed browser alias.** `400 Bad Request` + `invalid_dialog_contact_alias`, no usable `$du`, no DNS, no relay, no fallback |
+| PASS | **`PRODUCT_DEFECT-14` is closed** — the unconditional `$du` postcondition is gone; the alias requirement now applies only to alias-bearing or browser-style targets |
+| PASS | **`PRODUCT_DEFECT-11`, `-12`, `-13` remain closed** under the directional configuration — alias creation, retention, consumption and both explicit failure paths all re-verified in this round |
+| PASS | Only the two intended resources were applied; automatic ~5-second rollout to ReplicaSet revision 17 with no manual restart; running configuration byte-identical across all four authorities; zero ERROR lines |
+| PASS | REGISTER unchanged with no alias in registrar storage; the `503` failure-route contract intact; rtpengine uninvolved; Services ClusterIP-only; no durable dialog authority; no canonical state mutation; exactly one workload change (the Kamailio rollout) |
+| EXPECTED_BEHAVIOR | A host restart before the apply shuffled the k3d container IPs and k3s refused to start (`failed to find interface with specified node ip`). Resolved with the established `k3d cluster stop`/`start` tooling only — original IPs restored, all nodes Ready, no repository change, no alternate kubeconfig, no cluster deletion. The baseline was re-recorded afterwards |
+| EXPECTED_BEHAVIOR | The corrected Kamailio Pod restarted once on the known transient `postgres … Connection refused` new-Pod-IP versus NetworkPolicy programming race; self-recovered with zero ERROR lines |
+| EXPECTED_BEHAVIOR | Redis `db0` `3 → 5` from authorized API activity; signaling credentials carry a bounded ~5-minute TTL so each corridor used a freshly issued credential |
+| PROOF_LIMITATION | CANCEL still has no deterministic pre-answer window — the `9900` fixture answers immediately and was not altered. This is a fixture property, not a defect, and is out of scope for T3-S2A |
+| PROOF_LIMITATION | `res_pjsip_logger` remains outside the committed `autoload=no` module set and was not loaded; Asterisk-side evidence is the bounded packet capture, live channel table and counters |
+
+## Environment Preservation
+
+```text
+production code changed:        no
+Kubernetes manifests changed:   no
+images built or pushed:         none
+resources applied:              2 (kamailio ConfigMap, kamailio Deployment)
+workloads rolled:               1 (kamailio, automatically via checksum coupling)
+unrelated workloads restarted:  none
+cluster lifecycle:              one k3d stop/start to recover the host-restart node-IP shuffle,
+                                using the established tooling; no delete, no recreate
+packet captures:                2 bounded runs in the Kamailio k3d node network namespace,
+                                each filtered to one proof Call-ID pattern with Authorization
+                                redacted; both stopped and deleted at cleanup
+cluster security posture:       unchanged — captures ran as throwaway Docker containers in the
+                                node namespace, not Kubernetes workloads; no PSA exception,
+                                no privileged Pod, no proof-only NetworkPolicy
+canonical records mutated:      none beyond authorized API proof data
+```
+
+## Cleanup
+
+- Corrected Kamailio left Ready (`kamailio-c6bc4454d-sjvzt`); Asterisk and rtpengine left Ready; both corrected resources left applied.
+- Proof contact deregistered through the canonical client (`sip_status=200`) and the telephony session ended through the authorized API (`HTTP 200`); `kamailio_signaling_auth_view` rows and active contacts both `0`.
+- Both packet captures stopped, their containers removed, and the capture files deleted. No port-forward was used.
+- Disposable dialog client, synthetic alias probe, sniffer, credential helpers, cookie jar, secret file, traces and rendered scratch manifests removed; none was added to the repository or the cluster.
+- No ephemeral Kubernetes diagnostic container was created. `.playwright-mcp/` is absent.
+- No credential, digest response or Authorization header content was printed or recorded; the client traces and both captures redact `Authorization`, `Proxy-Authorization`, `WWW-Authenticate` and `Proxy-Authenticate`.
+
+## T3-S2A Final Status
+
+```text
+PRODUCT_DEFECT-5  = closed        PRODUCT_DEFECT-10 = closed
+PRODUCT_DEFECT-6  = closed        PRODUCT_DEFECT-11 = closed
+PRODUCT_DEFECT-7  = closed        PRODUCT_DEFECT-12 = closed
+PRODUCT_DEFECT-8  = closed        PRODUCT_DEFECT-13 = closed
+PRODUCT_DEFECT-9  = closed        PRODUCT_DEFECT-14 = closed
+
+T3-S2A repository implementation = Complete
+T3-S2A live signaling proof      = Complete
+T3-S2A                           = Complete
+T3-S2 media mediation            = Not Started
+T3                               = In Progress
+UTCP_PHASE                       = T1 (unchanged)
+```
+
+## Recommended Next Step
+
+Codex implements T3-S2 rtpengine offer, answer and delete mediation on the fully
+proven bidirectional application-dialog route. The route now supports both
+directions of in-dialog signaling, which is the precondition rtpengine `delete`
+needs on BYE.
+
+Do not begin browser media, conference admission, V0, T4, external trunks, or
+PSTN.
