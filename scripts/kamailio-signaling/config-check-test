@@ -216,11 +216,12 @@ def validate(state: dict[str, Any]) -> None:
         'is_method("INVITE|ACK|CANCEL|BYE|UPDATE")',
         'www_authorize("$fd", "kamailio_signaling_auth_view")',
         'record_route()',
-        'if ($proto == "WS" || $proto == "WSS")',
+        'if ($proto == "ws" || $proto == "wss")',
         'add_contact_alias()',
         'result=websocket_contact_alias_failed',
         'handle_ruri_alias()',
         'result=invalid_dialog_contact_alias',
+        'result=missing_dialog_contact_alias',
         'has_totag()',
         'loose_route()',
         'if ($rm == "ACK")',
@@ -260,8 +261,13 @@ def validate(state: dict[str, Any]) -> None:
     require("add_contact_alias()" not in request_block and "handle_ruri_alias()" not in request_block, "request_route must not run dialog alias helpers directly")
     require("handle_ruri_alias()" not in application_block, "initial requests must not consume R-URI aliases")
     require("add_contact_alias()" not in within_block, "sequential requests must not append Contact aliases")
+    require(re.search(r'\$proto\s*==\s*"(?:WS|WSS)"', application_block) is None, "WebSocket Contact alias guard must use lowercase live $proto values only")
+    require('$proto == "ws"' in application_block and '$proto == "wss"' in application_block, "WebSocket Contact alias guard must compare lowercase ws and wss")
+    require('if ($proto == "ws" || $proto == "wss")' in application_block, "WebSocket Contact alias guard must be the canonical lowercase ws/wss expression")
+    alias_create_guard_block = block_after(application_block, 'if ($proto == "ws" || $proto == "wss")')
+    require("add_contact_alias()" in alias_create_guard_block, "add_contact_alias() must remain inside the lowercase WS/WSS transport guard")
     require(
-        'if ($proto == "UDP")' not in application_block and 'if (true)' not in application_block,
+        re.search(r'\$proto\s*==\s*"udp"', application_block, re.I) is None and 'if (true)' not in application_block,
         "Contact aliasing must remain guarded by WS/WSS transport",
     )
     require_in_order(
@@ -271,7 +277,7 @@ def validate(state: dict[str, Any]) -> None:
             'if ($rm != "INVITE")',
             'www_authorize("$fd", "kamailio_signaling_auth_view")',
             'if ($au != $fU)',
-            'if ($proto == "WS" || $proto == "WSS")',
+            'if ($proto == "ws" || $proto == "wss")',
             'if (!add_contact_alias())',
             'result=websocket_contact_alias_failed method=$rm call_id=$ci',
             'sl_send_reply("400", "Bad Request")',
@@ -281,12 +287,31 @@ def validate(state: dict[str, Any]) -> None:
         ],
         "route[APPLICATION_DIALOG]",
     )
+    alias_destination_block = block_after(within_loose_route_block, 'if ($du == "")')
+    require_in_order(
+        alias_destination_block,
+        [
+            'if (!handle_ruri_alias())',
+            'result=invalid_dialog_contact_alias method=$rm call_id=$ci',
+            'sl_send_reply("400", "Bad Request")',
+            "exit;",
+            'if ($du == "")',
+            'result=missing_dialog_contact_alias method=$rm call_id=$ci',
+            'sl_send_reply("400", "Bad Request")',
+            "exit;",
+        ],
+        "route[WITHINDLG] alias destination postcondition",
+    )
     require_in_order(
         within_loose_route_block,
         [
             'if ($du == "")',
             'if (!handle_ruri_alias())',
             'result=invalid_dialog_contact_alias method=$rm call_id=$ci',
+            'sl_send_reply("400", "Bad Request")',
+            "exit;",
+            'if ($du == "")',
+            'result=missing_dialog_contact_alias method=$rm call_id=$ci',
             'sl_send_reply("400", "Bad Request")',
             "exit;",
             "t_relay()",
@@ -514,7 +539,7 @@ def move_initial_domain_before_has_totag(state: dict[str, Any]) -> None:
     set_kamailio_config(state, config)
 
 
-ALIAS_CREATE_BLOCK = '''    if ($proto == "WS" || $proto == "WSS") {
+ALIAS_CREATE_BLOCK = '''    if ($proto == "ws" || $proto == "wss") {
         if (!add_contact_alias()) {
             xlog("L_WARN", "kamailio_application_dialog_rejected result=websocket_contact_alias_failed method=$rm call_id=$ci\\n");
             sl_send_reply("400", "Bad Request");
@@ -527,6 +552,12 @@ ALIAS_CREATE_BLOCK = '''    if ($proto == "WS" || $proto == "WSS") {
 ALIAS_CONSUME_BLOCK = '''        if ($du == "") {
             if (!handle_ruri_alias()) {
                 xlog("L_WARN", "kamailio_application_dialog_rejected result=invalid_dialog_contact_alias method=$rm call_id=$ci\\n");
+                sl_send_reply("400", "Bad Request");
+                exit;
+            }
+
+            if ($du == "") {
+                xlog("L_WARN", "kamailio_application_dialog_rejected result=missing_dialog_contact_alias method=$rm call_id=$ci\\n");
                 sl_send_reply("400", "Bad Request");
                 exit;
             }
@@ -593,6 +624,59 @@ def remove_invalid_alias_failure_exit(state: dict[str, Any]) -> None:
     if index < 0:
         raise RuntimeError("test setup could not find invalid alias failure exit")
     config = config[:index] + '                sl_send_reply("400", "Bad Request");\n' + config[index + len(failure_block):]
+    set_kamailio_config(state, config, update_checksum=True)
+
+
+def remove_missing_alias_postcondition(state: dict[str, Any]) -> None:
+    missing_block = '''            if ($du == "") {
+                xlog("L_WARN", "kamailio_application_dialog_rejected result=missing_dialog_contact_alias method=$rm call_id=$ci\\n");
+                sl_send_reply("400", "Bad Request");
+                exit;
+            }
+'''
+    config = state["kamailio"]
+    if missing_block not in config:
+        raise RuntimeError("test setup could not find missing alias postcondition")
+    set_kamailio_config(state, config.replace(missing_block, "", 1), update_checksum=True)
+
+
+def remove_missing_alias_failure_response(state: dict[str, Any]) -> None:
+    failure_line = '                sl_send_reply("400", "Bad Request");\n'
+    marker = "result=missing_dialog_contact_alias"
+    config = state["kamailio"]
+    start = config.find(marker)
+    if start < 0:
+        raise RuntimeError("test setup could not find missing alias marker")
+    response = config.find(failure_line, start)
+    if response < 0:
+        raise RuntimeError("test setup could not find missing alias failure response")
+    config = config[:response] + config[response + len(failure_line):]
+    set_kamailio_config(state, config, update_checksum=True)
+
+
+def remove_missing_alias_failure_exit(state: dict[str, Any]) -> None:
+    failure_line = "                exit;\n"
+    marker = "result=missing_dialog_contact_alias"
+    config = state["kamailio"]
+    start = config.find(marker)
+    if start < 0:
+        raise RuntimeError("test setup could not find missing alias marker")
+    exit_index = config.find(failure_line, start)
+    if exit_index < 0:
+        raise RuntimeError("test setup could not find missing alias failure exit")
+    config = config[:exit_index] + config[exit_index + len(failure_line):]
+    set_kamailio_config(state, config, update_checksum=True)
+
+
+def move_missing_alias_postcondition_after_t_relay(state: dict[str, Any]) -> None:
+    missing_block = '''            if ($du == "") {
+                xlog("L_WARN", "kamailio_application_dialog_rejected result=missing_dialog_contact_alias method=$rm call_id=$ci\\n");
+                sl_send_reply("400", "Bad Request");
+                exit;
+            }
+'''
+    config = state["kamailio"].replace(missing_block, "", 1)
+    config = config.replace("        if (!t_relay()) {\n", "        if (!t_relay()) {\n" + missing_block, 1)
     set_kamailio_config(state, config, update_checksum=True)
 
 
@@ -680,11 +764,16 @@ fail_case("sending established requests through initial authentication fails", l
 fail_case("removing initial foreign-domain rejection fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('    if ($rd != "sip.utcp.local.test") {\n        xlog("L_WARN", "kamailio_registration_rejected result=initial_foreign_domain\\n");\n        sl_send_reply("403", "Forbidden");\n        exit;\n    }\n\n', "")))
 fail_case("removing WebSocket Contact alias creation fails", remove_alias_create_block)
 fail_case("using set_contact_alias instead of add_contact_alias fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("add_contact_alias()", "set_contact_alias()"), update_checksum=True))
+fail_case("restoring uppercase WS/WSS guard fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('if ($proto == "ws" || $proto == "wss")', 'if ($proto == "WS" || $proto == "WSS")', 1), update_checksum=True))
+fail_case("using only lowercase ws guard fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('if ($proto == "ws" || $proto == "wss")', 'if ($proto == "ws")', 1), update_checksum=True))
+fail_case("using only lowercase wss guard fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('if ($proto == "ws" || $proto == "wss")', 'if ($proto == "wss")', 1), update_checksum=True))
+fail_case("adding uppercase compatibility alternatives fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('if ($proto == "ws" || $proto == "wss")', 'if ($proto == "ws" || $proto == "wss" || $proto == "WS" || $proto == "WSS")', 1), update_checksum=True))
 fail_case("moving WebSocket alias creation before authentication fails", move_alias_creation_before_authentication)
 fail_case("moving WebSocket alias creation after Record-Route fails", move_alias_creation_after_record_route)
 fail_case("moving WebSocket alias creation after relay fails", move_alias_creation_after_t_relay)
-fail_case("removing WebSocket transport guard fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('if ($proto == "WS" || $proto == "WSS")', "if (true)", 1), update_checksum=True))
-fail_case("aliasing Asterisk UDP requests fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('if ($proto == "WS" || $proto == "WSS")', 'if ($proto == "UDP")', 1), update_checksum=True))
+fail_case("removing WebSocket transport guard fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('if ($proto == "ws" || $proto == "wss")', "if (true)", 1), update_checksum=True))
+fail_case("aliasing Asterisk UDP requests fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('if ($proto == "ws" || $proto == "wss")', 'if ($proto == "udp")', 1), update_checksum=True))
+fail_case("moving alias creation outside the transport guard fails", lambda s: set_kamailio_config(s, s["kamailio"].replace(ALIAS_CREATE_BLOCK, '    if (!add_contact_alias()) {\n        xlog("L_WARN", "kamailio_application_dialog_rejected result=websocket_contact_alias_failed method=$rm call_id=$ci\\n");\n        sl_send_reply("400", "Bad Request");\n        exit;\n    }\n\n', 1), update_checksum=True))
 fail_case("adding duplicate Contact alias creation fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("record_route();", "add_contact_alias();\n        record_route();", 1), update_checksum=True))
 fail_case("removing Contact alias failure handling fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("if (!add_contact_alias())", "if (add_contact_alias())", 1), update_checksum=True))
 fail_case("allowing Contact alias failure to continue fails", remove_alias_failure_exit)
@@ -694,6 +783,12 @@ fail_case("placing R-URI alias consumption after relay fails", move_alias_consum
 fail_case("removing R-URI alias destination guard fails", remove_alias_consume_du_guard)
 fail_case("removing invalid-alias failure handling fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("if (!handle_ruri_alias())", "if (handle_ruri_alias())", 1), update_checksum=True))
 fail_case("falling back to DNS after invalid alias fails", remove_invalid_alias_failure_exit)
+fail_case("removing post-call alias destination check fails", remove_missing_alias_postcondition)
+fail_case("allowing empty alias destination to reach relay fails", remove_missing_alias_failure_exit)
+fail_case("removing empty-alias failure response fails", remove_missing_alias_failure_response)
+fail_case("moving empty-alias postcondition after relay fails", move_missing_alias_postcondition_after_t_relay)
+fail_case("adding another alias fallback destination fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('result=missing_dialog_contact_alias method=$rm call_id=$ci', '$du = "sip:fallback.utcp-runtime.svc.cluster.local:5060;transport=udp";\n                xlog("L_WARN", "kamailio_application_dialog_rejected result=missing_dialog_contact_alias method=$rm call_id=$ci', 1), update_checksum=True))
+fail_case("overwriting pre-established alias destination fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('        if ($du == "") {\n', '        $du = "sip:fallback.utcp-runtime.svc.cluster.local:5060;transport=udp";\n        if ($du == "") {\n', 1), update_checksum=True))
 fail_case("running alias consumption on initial request fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("record_route();", "handle_ruri_alias();\n        record_route();", 1), update_checksum=True))
 fail_case("running alias consumption in REGISTER fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('        if (!save("location", "0x04")) {', '        handle_ruri_alias();\n\n        if (!save("location", "0x04")) {', 1), update_checksum=True))
 fail_case("adding alias creation to REGISTER fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('        if (!save("location", "0x04")) {', '        add_contact_alias();\n\n        if (!save("location", "0x04")) {', 1), update_checksum=True))

@@ -235,11 +235,12 @@ required_route_tokens = [
     'is_method("INVITE|ACK|CANCEL|BYE|UPDATE")',
     'if ($rm != "INVITE")',
     'record_route()',
-    'if ($proto == "WS" || $proto == "WSS")',
+    'if ($proto == "ws" || $proto == "wss")',
     'add_contact_alias()',
     'result=websocket_contact_alias_failed',
     'handle_ruri_alias()',
     'result=invalid_dialog_contact_alias',
+    'result=missing_dialog_contact_alias',
     'has_totag()',
     'loose_route()',
     'if ($rm == "ACK")',
@@ -296,6 +297,15 @@ if "handle_ruri_alias()" in application_block:
     fail("initial application-dialog requests must not consume arbitrary R-URI aliases")
 if "add_contact_alias()" in within_block:
     fail("established-dialog requests must not append Contact aliases")
+if re.search(r'\$proto\s*==\s*"(?:WS|WSS)"', application_block):
+    fail("WebSocket Contact alias guard must use lowercase live $proto values only")
+if '$proto == "ws"' not in application_block or '$proto == "wss"' not in application_block:
+    fail("WebSocket Contact alias guard must compare lowercase ws and wss")
+if 'if ($proto == "ws" || $proto == "wss")' not in application_block:
+    fail("WebSocket Contact alias guard must be the canonical lowercase ws/wss expression")
+alias_create_guard_block = block_after(application_block, 'if ($proto == "ws" || $proto == "wss")')
+if "add_contact_alias()" not in alias_create_guard_block:
+    fail("add_contact_alias() must remain inside the lowercase WS/WSS transport guard")
 require_in_order(
     application_block,
     [
@@ -303,7 +313,7 @@ require_in_order(
         'if ($rm != "INVITE")',
         'www_authorize("$fd", "kamailio_signaling_auth_view")',
         'if ($au != $fU)',
-        'if ($proto == "WS" || $proto == "WSS")',
+        'if ($proto == "ws" || $proto == "wss")',
         'if (!add_contact_alias())',
         'result=websocket_contact_alias_failed method=$rm call_id=$ci',
         'sl_send_reply("400", "Bad Request")',
@@ -313,14 +323,33 @@ require_in_order(
     ],
     "route[APPLICATION_DIALOG]",
 )
-if 'if ($proto == "UDP")' in application_block or 'if (true)' in application_block:
+if re.search(r'\$proto\s*==\s*"udp"', application_block, re.I) or 'if (true)' in application_block:
     fail("Contact alias creation must remain limited to WS/WSS initial application dialogs")
+alias_destination_block = block_after(within_loose_route_block, 'if ($du == "")')
+require_in_order(
+    alias_destination_block,
+    [
+        'if (!handle_ruri_alias())',
+        'result=invalid_dialog_contact_alias method=$rm call_id=$ci',
+        'sl_send_reply("400", "Bad Request")',
+        "exit;",
+        'if ($du == "")',
+        'result=missing_dialog_contact_alias method=$rm call_id=$ci',
+        'sl_send_reply("400", "Bad Request")',
+        "exit;",
+    ],
+    "route[WITHINDLG] alias destination postcondition",
+)
 require_in_order(
     within_loose_route_block,
     [
         'if ($du == "")',
         'if (!handle_ruri_alias())',
         'result=invalid_dialog_contact_alias method=$rm call_id=$ci',
+        'sl_send_reply("400", "Bad Request")',
+        "exit;",
+        'if ($du == "")',
+        'result=missing_dialog_contact_alias method=$rm call_id=$ci',
         'sl_send_reply("400", "Bad Request")',
         "exit;",
         "t_relay()",

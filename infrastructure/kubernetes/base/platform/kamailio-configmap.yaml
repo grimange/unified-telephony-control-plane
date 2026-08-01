@@ -159,7 +159,7 @@ data:
             exit;
         }
 
-        if ($proto == "WS" || $proto == "WSS") {
+        if ($proto == "ws" || $proto == "wss") {
             if (!add_contact_alias()) {
                 xlog("L_WARN", "kamailio_application_dialog_rejected result=websocket_contact_alias_failed method=$rm call_id=$ci\n");
                 sl_send_reply("400", "Bad Request");
@@ -177,6 +177,12 @@ data:
             if ($du == "") {
                 if (!handle_ruri_alias()) {
                     xlog("L_WARN", "kamailio_application_dialog_rejected result=invalid_dialog_contact_alias method=$rm call_id=$ci\n");
+                    sl_send_reply("400", "Bad Request");
+                    exit;
+                }
+
+                if ($du == "") {
+                    xlog("L_WARN", "kamailio_application_dialog_rejected result=missing_dialog_contact_alias method=$rm call_id=$ci\n");
                     sl_send_reply("400", "Bad Request");
                     exit;
                 }
