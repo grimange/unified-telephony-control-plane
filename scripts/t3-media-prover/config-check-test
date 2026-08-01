@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CHECK="$ROOT/scripts/t3-media-prover/config-check"
+SOURCE_OVERLAY="$ROOT/infrastructure/kubernetes/overlays/local/proof/t3-media"
+SOURCE_TOOL="$ROOT/tools/t3-media-prover"
+SOURCE_VERSIONS="$ROOT/versions.env"
+TMP_DIR="$(mktemp -d)"
+
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+copy_case() {
+  local name="$1"
+  local case_dir="$TMP_DIR/$name"
+  mkdir -p "$case_dir"
+  cp -R "$SOURCE_OVERLAY" "$case_dir/overlay"
+  cp -R "$SOURCE_TOOL" "$case_dir/tool"
+  cp "$SOURCE_VERSIONS" "$case_dir/versions.env"
+  printf '%s\n' "$case_dir"
+}
+
+run_check() {
+  local case_dir="$1"
+  local production_dirs="${2:-}"
+
+  UTCP_T3_MEDIA_PROVER_OVERLAY_DIR="$case_dir/overlay" \
+    UTCP_T3_MEDIA_PROVER_TOOL_DIR="$case_dir/tool" \
+    UTCP_T3_MEDIA_PROVER_VERSIONS_FILE="$case_dir/versions.env" \
+    UTCP_T3_MEDIA_PROVER_PRODUCTION_DIRS="${production_dirs:-$ROOT/infrastructure/kubernetes/base/platform:$ROOT/infrastructure/kubernetes/base:$ROOT/infrastructure/kubernetes/overlays/local/platform:$ROOT/infrastructure/kubernetes/overlays/local}" \
+    "$CHECK"
+}
+
+pass_case() {
+  local name="$1"
+  local case_dir
+  case_dir="$(copy_case "$name")"
+  if ! run_check "$case_dir" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
+    printf 'expected t3 media prover config check to pass: %s\n' "$name" >&2
+    cat "$TMP_DIR/err" >&2
+    exit 1
+  fi
+}
+
+fail_case() {
+  local name="$1"
+  local expected="$2"
+  local mutation="$3"
+  local production_dirs="${4:-}"
+  local case_dir
+  case_dir="$(copy_case "$name")"
+  mutate_case "$case_dir" "$mutation"
+  if run_check "$case_dir" "$production_dirs" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
+    printf 'expected t3 media prover config check to fail: %s\n' "$name" >&2
+    cat "$TMP_DIR/out" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$expected" "$TMP_DIR/err"; then
+    printf 'expected failure for %s to include: %s\n' "$name" "$expected" >&2
+    cat "$TMP_DIR/err" >&2
+    exit 1
+  fi
+}
+
+mutate_case() {
+  local case_dir="$1"
+  local mutation="$2"
+
+  python3 - "$case_dir" "$mutation" <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+import yaml
+
+case_dir = Path(sys.argv[1])
+mutation = sys.argv[2]
+overlay = case_dir / "overlay"
+tool = case_dir / "tool"
+versions = case_dir / "versions.env"
+
+
+def load_yaml(path: Path) -> list[dict]:
+    return [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(doc, dict)]
+
+
+def dump_yaml(path: Path, docs: list[dict]) -> None:
+    path.write_text("---\n".join(yaml.safe_dump(doc, sort_keys=False) for doc in docs), encoding="utf-8")
+
+
+def job_doc() -> dict:
+    return load_yaml(overlay / "job.yaml")[0]
+
+
+def write_job(doc: dict) -> None:
+    dump_yaml(overlay / "job.yaml", [doc])
+
+
+def policies() -> list[dict]:
+    return load_yaml(overlay / "network-policies.yaml")
+
+
+def write_policies(docs: list[dict]) -> None:
+    dump_yaml(overlay / "network-policies.yaml", docs)
+
+
+def add_resource(resource: str) -> None:
+    path = overlay / "kustomization.yaml"
+    doc = load_yaml(path)[0]
+    doc.setdefault("resources", []).append(resource)
+    dump_yaml(path, [doc])
+
+
+def policy(name: str) -> dict:
+    for doc in policies_docs:
+        if (doc.get("metadata") or {}).get("name") == name:
+            return doc
+    raise RuntimeError(name)
+
+
+if mutation == "production-base":
+    prod = case_dir / "production"
+    prod.mkdir()
+    (prod / "kustomization.yaml").write_text("apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - job.yaml\n", encoding="utf-8")
+    (prod / "job.yaml").write_text((overlay / "job.yaml").read_text(encoding="utf-8"), encoding="utf-8")
+elif mutation == "nodeport":
+    service = {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {"name": "t3-media-prover-public", "namespace": "utcp-proof"},
+        "spec": {"type": "NodePort", "selector": {"utcp.io/network-role": "t3-media-prover"}, "ports": [{"port": 443, "targetPort": 443}]},
+    }
+    dump_yaml(overlay / "public-service.yaml", [service])
+    add_resource("public-service.yaml")
+elif mutation == "loadbalancer":
+    service = {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {"name": "t3-media-prover-public", "namespace": "utcp-proof"},
+        "spec": {"type": "LoadBalancer", "selector": {"utcp.io/network-role": "t3-media-prover"}, "ports": [{"port": 443, "targetPort": 443}]},
+    }
+    dump_yaml(overlay / "public-service.yaml", [service])
+    add_resource("public-service.yaml")
+elif mutation == "hostport":
+    doc = job_doc()
+    doc["spec"]["template"]["spec"]["containers"][0]["ports"] = [{"containerPort": 443, "hostPort": 443}]
+    write_job(doc)
+elif mutation == "hostnetwork":
+    doc = job_doc()
+    doc["spec"]["template"]["spec"]["hostNetwork"] = True
+    write_job(doc)
+elif mutation == "privileged":
+    doc = job_doc()
+    doc["spec"]["template"]["spec"]["containers"][0]["securityContext"]["privileged"] = True
+    write_job(doc)
+elif mutation == "ipblock":
+    policies_docs = policies()
+    doc = policy("allow-t3-media-prover-required-egress")
+    doc["spec"]["egress"][2]["to"] = [{"ipBlock": {"cidr": "10.42.0.0/16"}}]
+    write_policies(policies_docs)
+elif mutation == "wide-rtpengine-ingress":
+    policies_docs = policies()
+    doc = policy("allow-rtpengine-media-prover")
+    doc["spec"]["ingress"][0]["from"][0].pop("podSelector", None)
+    write_policies(policies_docs)
+elif mutation == "wide-prover-egress":
+    policies_docs = policies()
+    doc = policy("allow-t3-media-prover-required-egress")
+    doc["spec"]["egress"].append({})
+    write_policies(policies_docs)
+elif mutation == "remove-media-egress":
+    policies_docs = policies()
+    doc = policy("allow-t3-media-prover-required-egress")
+    doc["spec"]["egress"] = doc["spec"]["egress"][:2]
+    write_policies(policies_docs)
+elif mutation == "direct-asterisk-media":
+    policies_docs = policies()
+    doc = policy("allow-t3-media-prover-required-egress")
+    doc["spec"]["egress"].append(
+        {
+            "to": [
+                {
+                    "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+                    "podSelector": {"matchLabels": {"app.kubernetes.io/name": "asterisk-ari"}},
+                }
+            ],
+            "ports": [{"protocol": "UDP", "port": 10000, "endPort": 10100}],
+        }
+    )
+    write_policies(policies_docs)
+elif mutation == "mutable-browser-tag":
+    text = versions.read_text(encoding="utf-8")
+    text = text.replace("T3_MEDIA_PROVER_BROWSER_IMAGE=mcr.microsoft.com/playwright:v1.61.1-noble", "T3_MEDIA_PROVER_BROWSER_IMAGE=mcr.microsoft.com/playwright:latest")
+    versions.write_text(text, encoding="utf-8")
+elif mutation == "embed-credentials":
+    doc = job_doc()
+    doc["spec"]["template"]["spec"]["containers"][0]["env"].append({"name": "UTCP_T3_MEDIA_PROVER_LOGIN_PASSWORD", "value": "committed-secret"})
+    write_job(doc)
+elif mutation == "remove-packet-assertions":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8")
+    source = source.replace("packetsSent", "sentCount").replace("bytesSent", "sentBytes")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "sdp-only-success":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("SDP-only success rejected", "SDP accepted")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "remove-cleanup":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("pc.close();", "")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "remove-timeout":
+    doc = job_doc()
+    doc["spec"].pop("activeDeadlineSeconds", None)
+    write_job(doc)
+elif mutation == "provider-media-authority":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8") + "\n// Asterisk channel media authority\n"
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "public-media-advertisement":
+    route = {
+        "apiVersion": "gateway.networking.k8s.io/v1alpha2",
+        "kind": "UDPRoute",
+        "metadata": {"name": "rtpengine-public-media", "namespace": "utcp-proof"},
+        "spec": {"parentRefs": [{"name": "utcp-local", "namespace": "traefik-system"}], "rules": [{"backendRefs": [{"name": "rtpengine", "port": 40000}]}]},
+    }
+    dump_yaml(overlay / "udp-route.yaml", [route])
+    add_resource("udp-route.yaml")
+else:
+    raise RuntimeError(f"unknown mutation {mutation}")
+PY
+}
+
+pass_case "correct proof overlay"
+
+case_dir="$(copy_case "production-base")"
+mutate_case "$case_dir" "production-base"
+if run_check "$case_dir" "$case_dir/production" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
+  printf 'expected production base inclusion to fail\n' >&2
+  exit 1
+fi
+grep -Fq "proof workload must be absent from production/base renders" "$TMP_DIR/err" || {
+  cat "$TMP_DIR/err" >&2
+  exit 1
+}
+
+fail_case "adding NodePort fails" "proof overlay must not create public routing or services" "nodeport"
+fail_case "adding LoadBalancer fails" "proof overlay must not create public routing or services" "loadbalancer"
+fail_case "adding HostPort fails" "proof overlay contains forbidden setting hostPort:" "hostport"
+fail_case "adding hostNetwork fails" "proof overlay contains forbidden setting hostNetwork: true" "hostnetwork"
+fail_case "adding privileged mode fails" "proof overlay contains forbidden setting privileged: true" "privileged"
+fail_case "adding Pod CIDR ipBlock fails" "proof overlay contains forbidden setting ipBlock:" "ipblock"
+fail_case "widening rtpengine ingress fails" "rtpengine proof ingress must allow only prover UDP 40000-40099" "wide-rtpengine-ingress"
+fail_case "widening prover egress fails" "prover egress must be limited to cluster DNS, Traefik HTTPS and rtpengine UDP 40000-40099" "wide-prover-egress"
+fail_case "removing UDP media access fails" "prover egress must be limited to cluster DNS, Traefik HTTPS and rtpengine UDP 40000-40099" "remove-media-egress"
+fail_case "adding direct Asterisk media access fails" "prover egress must be limited to cluster DNS, Traefik HTTPS and rtpengine UDP 40000-40099" "direct-asterisk-media"
+fail_case "using mutable browser tag fails" "T3_MEDIA_PROVER_BROWSER_IMAGE must pin Playwright v1.61.1 noble" "mutable-browser-tag"
+fail_case "embedding credentials fails" "proof Job must not embed credentials" "embed-credentials"
+fail_case "removing real WebRTC packet assertions fails" "browser prover script is missing required marker packetsSent" "remove-packet-assertions"
+fail_case "treating SDP as success fails" "browser prover script is missing required marker SDP-only success rejected" "sdp-only-success"
+fail_case "removing cleanup fails" "browser prover script is missing required marker pc.close()" "remove-cleanup"
+fail_case "removing execution timeout fails" "proof Job must have a bounded activeDeadlineSeconds" "remove-timeout"
+fail_case "adding provider media authority fails" "browser prover script must not contain provider-specific media authority marker Asterisk channel" "provider-media-authority"
+fail_case "adding public media advertisement fails" "proof overlay must not create public routing or services" "public-media-advertisement"
+
+printf 'T3-S2B media prover config mutation tests passed\n'

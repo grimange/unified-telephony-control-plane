@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "name": "utcp-t3-media-prover",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "prove": "node ./prover.mjs"
+  },
+  "dependencies": {
+    "@playwright/test": "1.61.1"
+  }
+}

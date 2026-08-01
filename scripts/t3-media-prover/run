@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+OVERLAY_DIR="${UTCP_T3_MEDIA_PROVER_OVERLAY_DIR:-$ROOT/infrastructure/kubernetes/overlays/local/proof/t3-media}"
+KUBECONFIG_PATH="${KUBECONFIG:-$ROOT/.runtime/kubeconfig/utcp-local.yaml}"
+KUBE_CONTEXT="${UTCP_KUBE_CONTEXT:-k3d-utcp-local}"
+NAMESPACE="utcp-proof"
+JOB_NAME="t3-media-prover"
+SECRET_NAME="t3-media-prover-credentials"
+RESULT_DIR="${UTCP_T3_MEDIA_PROVER_RESULT_DIR:-$ROOT/.runtime/t3-media-prover}"
+RESULT_FILE="$RESULT_DIR/result.json"
+TIMEOUT="${UTCP_T3_MEDIA_PROVER_WAIT_TIMEOUT:-480s}"
+
+fail() {
+  printf 't3 media prover run failed: %s\n' "$1" >&2
+  exit 1
+}
+
+require_env() {
+  local name="$1"
+  [ -n "${!name:-}" ] || fail "$name is required at execution time"
+}
+
+command -v kubectl >/dev/null 2>&1 || fail "kubectl is required"
+[ -f "$KUBECONFIG_PATH" ] || fail "kubeconfig not found at $KUBECONFIG_PATH"
+[ -d "$OVERLAY_DIR" ] || fail "proof overlay not found at $OVERLAY_DIR"
+
+require_env UTCP_T3_MEDIA_PROVER_LOGIN_EMAIL
+require_env UTCP_T3_MEDIA_PROVER_LOGIN_PASSWORD
+require_env UTCP_T3_MEDIA_PROVER_SIP_USERNAME
+require_env UTCP_T3_MEDIA_PROVER_SIP_PASSWORD
+
+mkdir -p "$RESULT_DIR"
+rm -f "$RESULT_FILE"
+
+kubectl_cmd() {
+  kubectl --kubeconfig "$KUBECONFIG_PATH" --context "$KUBE_CONTEXT" "$@"
+}
+
+cleanup() {
+  set +e
+  kubectl_cmd -n "$NAMESPACE" delete secret "$SECRET_NAME" --ignore-not-found=true >/dev/null 2>&1
+  kubectl_cmd delete -k "$OVERLAY_DIR" --ignore-not-found=true >/dev/null 2>&1
+  kubectl_cmd delete namespace "$NAMESPACE" --ignore-not-found=true --wait=false >/dev/null 2>&1
+}
+trap cleanup EXIT
+
+current_context="$(kubectl --kubeconfig "$KUBECONFIG_PATH" config current-context 2>/dev/null || true)"
+[ "$current_context" = "$KUBE_CONTEXT" ] || fail "expected kubeconfig current context $KUBE_CONTEXT, got ${current_context:-none}"
+
+"$ROOT/scripts/t3-media-prover/config-check"
+
+kubectl_cmd apply -f "$OVERLAY_DIR/namespace.yaml"
+kubectl_cmd -n "$NAMESPACE" create secret generic "$SECRET_NAME" \
+  --from-literal=UTCP_T3_MEDIA_PROVER_LOGIN_EMAIL="$UTCP_T3_MEDIA_PROVER_LOGIN_EMAIL" \
+  --from-literal=UTCP_T3_MEDIA_PROVER_LOGIN_PASSWORD="$UTCP_T3_MEDIA_PROVER_LOGIN_PASSWORD" \
+  --from-literal=UTCP_T3_MEDIA_PROVER_SIP_USERNAME="$UTCP_T3_MEDIA_PROVER_SIP_USERNAME" \
+  --from-literal=UTCP_T3_MEDIA_PROVER_SIP_PASSWORD="$UTCP_T3_MEDIA_PROVER_SIP_PASSWORD" \
+  --dry-run=client -o yaml | kubectl_cmd apply -f -
+
+kubectl_cmd -n "$NAMESPACE" delete job "$JOB_NAME" --ignore-not-found=true
+kubectl_cmd apply -k "$OVERLAY_DIR"
+
+if ! kubectl_cmd -n "$NAMESPACE" wait --for=condition=complete "job/$JOB_NAME" --timeout="$TIMEOUT"; then
+  kubectl_cmd -n "$NAMESPACE" logs "job/$JOB_NAME" --tail=-1 || true
+  fail "proof Job did not complete successfully"
+fi
+
+logs="$(kubectl_cmd -n "$NAMESPACE" logs "job/$JOB_NAME" --tail=-1)"
+printf '%s\n' "$logs"
+result_line="$(printf '%s\n' "$logs" | grep '^T3_MEDIA_PROVER_RESULT_JSON=' | tail -n 1 || true)"
+[ -n "$result_line" ] || fail "structured proof result was not emitted"
+printf '%s\n' "${result_line#T3_MEDIA_PROVER_RESULT_JSON=}" >"$RESULT_FILE"
+
+if ! kubectl_cmd -n "$NAMESPACE" get pod -l job-name="$JOB_NAME" -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' | grep -Eq '^Succeeded$'; then
+  fail "proof Pod did not end in Succeeded state"
+fi
+
+printf 'T3 media prover result written to %s\n' "$RESULT_FILE"

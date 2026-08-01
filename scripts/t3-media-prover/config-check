@@ -1,0 +1,304 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="${UTCP_T3_MEDIA_PROVER_PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+VERSIONS_FILE="${UTCP_T3_MEDIA_PROVER_VERSIONS_FILE:-$ROOT/versions.env}"
+TOOL_DIR="${UTCP_T3_MEDIA_PROVER_TOOL_DIR:-$ROOT/tools/t3-media-prover}"
+OVERLAY_DIR="${UTCP_T3_MEDIA_PROVER_OVERLAY_DIR:-$ROOT/infrastructure/kubernetes/overlays/local/proof/t3-media}"
+PRODUCTION_DIRS="${UTCP_T3_MEDIA_PROVER_PRODUCTION_DIRS:-$ROOT/infrastructure/kubernetes/base/platform:$ROOT/infrastructure/kubernetes/base:$ROOT/infrastructure/kubernetes/overlays/local/platform:$ROOT/infrastructure/kubernetes/overlays/local}"
+
+# shellcheck disable=SC1090
+. "$VERSIONS_FILE"
+
+fail() {
+  printf 't3 media prover config check failed: %s\n' "$1" >&2
+  exit 1
+}
+
+command -v kubectl >/dev/null 2>&1 || fail "kubectl is required"
+command -v python3 >/dev/null 2>&1 || fail "python3 is required"
+
+[ "${UTCP_PHASE:-}" = "T1" ] || fail "UTCP_PHASE must remain T1"
+[ "${RTPENGINE_MEDIA_PORT_MIN:-}" = "40000" ] || fail "RTPENGINE_MEDIA_PORT_MIN must remain 40000"
+[ "${RTPENGINE_MEDIA_PORT_MAX:-}" = "40099" ] || fail "RTPENGINE_MEDIA_PORT_MAX must remain 40099"
+[ "${T3_MEDIA_PROVER_PLAYWRIGHT_VERSION:-}" = "1.61.1" ] || fail "T3_MEDIA_PROVER_PLAYWRIGHT_VERSION must be 1.61.1"
+[ "${T3_MEDIA_PROVER_BROWSER_IMAGE:-}" = "mcr.microsoft.com/playwright:v1.61.1-noble" ] || fail "T3_MEDIA_PROVER_BROWSER_IMAGE must pin Playwright v1.61.1 noble"
+case "$T3_MEDIA_PROVER_BROWSER_IMAGE" in
+  *latest*) fail "T3 media prover browser image must not use latest" ;;
+esac
+
+[ -d "$TOOL_DIR" ] || fail "t3 media prover tool directory is missing"
+[ -d "$OVERLAY_DIR" ] || fail "t3 media prover proof overlay is missing"
+[ -f "$TOOL_DIR/Dockerfile" ] || fail "t3 media prover Dockerfile is missing"
+[ -f "$TOOL_DIR/package.json" ] || fail "t3 media prover package.json is missing"
+[ -f "$TOOL_DIR/prover.mjs" ] || fail "t3 media prover browser script is missing"
+
+grep -Fq "FROM \${T3_MEDIA_PROVER_BROWSER_IMAGE}" "$TOOL_DIR/Dockerfile" || fail "Dockerfile must use the pinned browser image ARG"
+grep -Fq "T3_MEDIA_PROVER_PLAYWRIGHT_VERSION=1.61.1" "$TOOL_DIR/Dockerfile" || fail "Dockerfile must record the Playwright version pin"
+grep -Fq "USER 1000:1000" "$TOOL_DIR/Dockerfile" || fail "Dockerfile must run as non-root UID/GID 1000"
+if grep -Eq 'playwright install|:latest|chromium:latest' "$TOOL_DIR/Dockerfile"; then
+  fail "Dockerfile must not download an unpinned browser or use latest"
+fi
+
+python3 - "$TOOL_DIR/package.json" "$T3_MEDIA_PROVER_PLAYWRIGHT_VERSION" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+package = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+expected = sys.argv[2]
+actual = (package.get("dependencies") or {}).get("@playwright/test")
+if actual != expected:
+    print(f"t3 media prover config check failed: @playwright/test must be pinned to {expected}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+
+tmp_render="$(mktemp)"
+trap 'rm -f "$tmp_render"' EXIT
+kubectl kustomize "$OVERLAY_DIR" >"$tmp_render"
+
+python3 - "$tmp_render" "$TOOL_DIR/prover.mjs" "$PRODUCTION_DIRS" <<'PY'
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+render_path = Path(sys.argv[1])
+prover_path = Path(sys.argv[2])
+production_dirs = [Path(item) for item in sys.argv[3].split(":") if item]
+docs = [doc for doc in yaml.safe_load_all(render_path.read_text(encoding="utf-8")) if isinstance(doc, dict)]
+source = prover_path.read_text(encoding="utf-8")
+
+
+def fail(message: str) -> None:
+    print(f"t3 media prover config check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def meta(doc: dict[str, Any]) -> dict[str, Any]:
+    return doc.get("metadata") or {}
+
+
+def key(doc: dict[str, Any]) -> tuple[str, str, str]:
+    m = meta(doc)
+    return (doc.get("kind", ""), m.get("namespace", ""), m.get("name", ""))
+
+
+def by_key(kind: str, namespace: str, name: str) -> dict[str, Any]:
+    for doc in docs:
+        if key(doc) == (kind, namespace, name):
+            return doc
+    fail(f"missing {kind}/{namespace}/{name}")
+
+
+def labels(obj: dict[str, Any]) -> dict[str, Any]:
+    return obj.get("matchLabels") or {}
+
+
+def exact_peer(peer: dict[str, Any], namespace: str, pod_labels: dict[str, str]) -> bool:
+    return (
+        "ipBlock" not in peer
+        and labels(peer.get("namespaceSelector") or {}) == {"kubernetes.io/metadata.name": namespace}
+        and labels(peer.get("podSelector") or {}) == pod_labels
+        and not ((peer.get("podSelector") or {}).get("matchExpressions") or [])
+    )
+
+
+def exact_ports(ports: list[dict[str, Any]], expected: list[dict[str, Any]]) -> bool:
+    return ports == expected
+
+
+def has_rule(rules: list[dict[str, Any]], direction: str, namespace: str, pod_labels: dict[str, str], ports: list[dict[str, Any]]) -> bool:
+    peer_key = "from" if direction == "ingress" else "to"
+    for rule in rules:
+        peers = rule.get(peer_key) or []
+        if len(peers) == 1 and exact_peer(peers[0], namespace, pod_labels) and exact_ports(rule.get("ports") or [], ports):
+            return True
+    return False
+
+
+def all_peers_and_ports_are_exact(rules: list[dict[str, Any]], direction: str, allowed: set[tuple[str, tuple[tuple[str, str], ...], tuple[tuple[str, int, int | None], ...]]]) -> bool:
+    peer_key = "from" if direction == "ingress" else "to"
+    seen = set()
+    for rule in rules:
+        peers = rule.get(peer_key) or []
+        if len(peers) != 1:
+            return False
+        peer = peers[0]
+        if "ipBlock" in peer:
+            return False
+        namespace = labels(peer.get("namespaceSelector") or {}).get("kubernetes.io/metadata.name")
+        pod = tuple(sorted(labels(peer.get("podSelector") or {}).items()))
+        ports = tuple(sorted((port.get("protocol"), int(port.get("port")), port.get("endPort")) for port in (rule.get("ports") or [])))
+        entry = (namespace, pod, ports)
+        if entry not in allowed:
+            return False
+        seen.add(entry)
+    return seen == allowed
+
+
+for doc in docs:
+    if doc.get("kind") in {"Service", "Gateway", "UDPRoute", "HTTPRoute", "GRPCRoute", "Ingress"}:
+        fail("proof overlay must not create public routing or services")
+    text = yaml.safe_dump(doc, sort_keys=True)
+    forbidden = [
+        "hostNetwork: true",
+        "hostPID: true",
+        "hostIPC: true",
+        "hostPort:",
+        "privileged: true",
+        "docker.sock",
+        "ipBlock:",
+        "NodePort",
+        "LoadBalancer",
+        "ExternalIP",
+    ]
+    for marker in forbidden:
+        if marker in text:
+            fail(f"proof overlay contains forbidden setting {marker}")
+
+namespace = by_key("Namespace", "", "utcp-proof")
+ns_labels = meta(namespace).get("labels") or {}
+if ns_labels.get("pod-security.kubernetes.io/enforce") != "restricted":
+    fail("utcp-proof namespace must enforce restricted Pod Security")
+
+job = by_key("Job", "utcp-proof", "t3-media-prover")
+job_spec = job.get("spec") or {}
+if job_spec.get("backoffLimit") != 0:
+    fail("proof Job must use backoffLimit 0")
+if not isinstance(job_spec.get("activeDeadlineSeconds"), int) or job_spec["activeDeadlineSeconds"] <= 0 or job_spec["activeDeadlineSeconds"] > 900:
+    fail("proof Job must have a bounded activeDeadlineSeconds")
+if not isinstance(job_spec.get("ttlSecondsAfterFinished"), int) or job_spec["ttlSecondsAfterFinished"] <= 0:
+    fail("proof Job must have ttlSecondsAfterFinished")
+pod_spec = ((job_spec.get("template") or {}).get("spec") or {})
+if pod_spec.get("restartPolicy") != "Never":
+    fail("proof Job must use restartPolicy Never")
+if pod_spec.get("automountServiceAccountToken") is not False:
+    fail("proof Job must disable service account token mounting")
+if pod_spec.get("hostNetwork") or pod_spec.get("hostPID") or pod_spec.get("hostIPC"):
+    fail("proof Job must not use host namespaces")
+pod_security = pod_spec.get("securityContext") or {}
+if pod_security.get("runAsNonRoot") is not True or pod_security.get("runAsUser") != 1000 or pod_security.get("runAsGroup") != 1000:
+    fail("proof Pod must run as non-root UID/GID 1000")
+if (pod_security.get("seccompProfile") or {}).get("type") != "RuntimeDefault":
+    fail("proof Pod must use RuntimeDefault seccomp")
+containers = pod_spec.get("containers") or []
+if len(containers) != 1:
+    fail("proof Job must have exactly one prover container")
+container = containers[0]
+if container.get("name") != "prover":
+    fail("proof container must be named prover")
+if container.get("image") != "utcp-local-registry:5000/utcp/t3-media-prover:0.1.0-k1-dev":
+    fail("rendered proof image must use the local pinned prover image tag")
+container_security = container.get("securityContext") or {}
+if container_security.get("allowPrivilegeEscalation") is not False:
+    fail("proof container must disable privilege escalation")
+if container_security.get("readOnlyRootFilesystem") is not True:
+    fail("proof container must use a read-only root filesystem")
+if (container_security.get("capabilities") or {}).get("drop") != ["ALL"]:
+    fail("proof container must drop all Linux capabilities")
+if any("hostPath" in volume for volume in pod_spec.get("volumes") or []):
+    fail("proof Job must not mount hostPath volumes")
+if any(not ("emptyDir" in volume) for volume in pod_spec.get("volumes") or []):
+    fail("proof Job may only use emptyDir volumes")
+if not any((env_from.get("secretRef") or {}).get("name") == "t3-media-prover-credentials" for env_from in container.get("envFrom") or []):
+    fail("proof Job must receive runtime credentials from an external Secret")
+for env in container.get("env") or []:
+    name = env.get("name", "")
+    if ("PASSWORD" in name or "TOKEN" in name or "COOKIE" in name) and "value" in env:
+        fail("proof Job must not embed credentials")
+if "t3-media-prover-credentials" in render_path.read_text(encoding="utf-8") and any(doc.get("kind") == "Secret" for doc in docs):
+    fail("proof overlay must not render credential Secret data")
+
+default_deny = by_key("NetworkPolicy", "utcp-proof", "default-deny")
+if (default_deny.get("spec") or {}).get("podSelector") != {}:
+    fail("proof namespace default-deny must select all proof Pods")
+if set((default_deny.get("spec") or {}).get("policyTypes") or []) != {"Ingress", "Egress"}:
+    fail("proof namespace default-deny must deny ingress and egress")
+
+prover_policy = by_key("NetworkPolicy", "utcp-proof", "allow-t3-media-prover-required-egress")
+prover_spec = prover_policy.get("spec") or {}
+if labels(prover_spec.get("podSelector") or {}) != {"utcp.io/network-role": "t3-media-prover"}:
+    fail("prover egress policy must select only the media prover")
+if prover_spec.get("policyTypes") != ["Egress"]:
+    fail("prover egress policy must be egress-only")
+allowed_egress = {
+    (
+        "kube-system",
+        (("k8s-app", "kube-dns"),),
+        (("TCP", 53, None), ("UDP", 53, None)),
+    ),
+    (
+        "traefik-system",
+        (("app.kubernetes.io/name", "traefik"),),
+        (("TCP", 443, None),),
+    ),
+    (
+        "utcp-platform",
+        (("utcp.io/network-role", "rtpengine-media"),),
+        (("UDP", 40000, 40099),),
+    ),
+}
+if not all_peers_and_ports_are_exact(prover_spec.get("egress") or [], "egress", allowed_egress):
+    fail("prover egress must be limited to cluster DNS, Traefik HTTPS and rtpengine UDP 40000-40099")
+
+rtp_policy = by_key("NetworkPolicy", "utcp-platform", "allow-rtpengine-media-prover")
+rtp_spec = rtp_policy.get("spec") or {}
+if labels(rtp_spec.get("podSelector") or {}) != {"utcp.io/network-role": "rtpengine-media"}:
+    fail("rtpengine proof policy must select only rtpengine media Pods")
+media_ports = [{"protocol": "UDP", "port": 40000, "endPort": 40099}]
+if not has_rule(rtp_spec.get("ingress") or [], "ingress", "utcp-proof", {"utcp.io/network-role": "t3-media-prover"}, media_ports):
+    fail("rtpengine proof ingress must allow only prover UDP 40000-40099")
+if not has_rule(rtp_spec.get("egress") or [], "egress", "utcp-proof", {"utcp.io/network-role": "t3-media-prover"}, media_ports):
+    fail("rtpengine proof egress must allow only prover UDP 40000-40099")
+if len(rtp_spec.get("ingress") or []) != 1 or len(rtp_spec.get("egress") or []) != 1:
+    fail("rtpengine proof policy must not add broad media rules")
+
+required_source_markers = [
+    "RTCPeerConnection",
+    "getStats()",
+    "packetsSent",
+    "bytesSent",
+    "packetsReceived",
+    "bytesReceived",
+    "totalAudioEnergy",
+    "audioLevel",
+    "SDP-only success rejected",
+    "browser-bye",
+    "runtime-bye",
+    "naturalLogin",
+    "/login",
+    "--host-resolver-rules=MAP app.utcp.local.test",
+    "wss://sip.utcp.local.test/ws",
+    "cleanupResult",
+    "pc.close()",
+    "ws.close()",
+]
+for marker in required_source_markers:
+    if marker not in source:
+        fail(f"browser prover script is missing required marker {marker}")
+for forbidden in [r"\bARI\b", r"\bAMI\b", "asterisk channel", "Asterisk channel", "PJSIP channel", "fs_cli", "FreeSWITCH ESL", "hostNetwork"]:
+    if re.search(forbidden, source):
+        fail(f"browser prover script must not contain provider-specific media authority marker {forbidden}")
+if "Authorization:" in source and "console.log" in source[source.find("Authorization:") : source.find("Authorization:") + 250]:
+    fail("browser prover script must not log Authorization headers")
+
+for production_dir in production_dirs:
+    if not production_dir.exists():
+        continue
+    try:
+        rendered = subprocess.check_output(["kubectl", "kustomize", str(production_dir)], text=True, stderr=subprocess.STDOUT)
+    except subprocess.CalledProcessError as error:
+        fail(f"failed to render production directory {production_dir}: {error.output.strip()}")
+    if "t3-media-prover" in rendered or "utcp-proof" in rendered:
+        fail("proof workload must be absent from production/base renders")
+
+print("T3-S2B media prover config check passed")
+PY

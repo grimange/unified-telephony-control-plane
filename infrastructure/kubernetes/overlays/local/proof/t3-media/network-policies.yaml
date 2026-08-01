@@ -1,0 +1,105 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: utcp-proof
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: t3-media-prover
+    utcp.io/proof-scope: local-only
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-t3-media-prover-required-egress
+  namespace: utcp-proof
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: t3-media-prover
+    utcp.io/proof-scope: local-only
+spec:
+  podSelector:
+    matchLabels:
+      utcp.io/network-role: t3-media-prover
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 443
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: rtpengine-media
+      ports:
+        - protocol: UDP
+          port: 40000
+          endPort: 40099
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-rtpengine-media-prover
+  namespace: utcp-platform
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: t3-media-prover
+    utcp.io/proof-scope: local-only
+spec:
+  podSelector:
+    matchLabels:
+      utcp.io/network-role: rtpengine-media
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-proof
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: t3-media-prover
+      ports:
+        - protocol: UDP
+          port: 40000
+          endPort: 40099
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-proof
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: t3-media-prover
+      ports:
+        - protocol: UDP
+          port: 40000
+          endPort: 40099

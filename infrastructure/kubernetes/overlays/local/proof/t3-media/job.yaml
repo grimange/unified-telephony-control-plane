@@ -1,0 +1,79 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: t3-media-prover
+  namespace: utcp-proof
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: t3-media-prover
+    utcp.io/proof-scope: local-only
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 420
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: utcp
+        app.kubernetes.io/component: t3-media-prover
+        utcp.io/proof-scope: local-only
+        utcp.io/network-role: t3-media-prover
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: prover
+          image: utcp-t3-media-prover
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: UTCP_T3_MEDIA_PROVER_APP_URL
+              value: https://app.utcp.local.test
+            - name: UTCP_T3_MEDIA_PROVER_SIP_WSS_URL
+              value: wss://sip.utcp.local.test/ws
+            - name: UTCP_T3_MEDIA_PROVER_SIP_DOMAIN
+              value: sip.utcp.local.test
+            - name: UTCP_T3_MEDIA_PROVER_EXTENSION
+              value: "9900"
+            - name: UTCP_T3_MEDIA_PROVER_GATEWAY_SERVICE
+              value: traefik.traefik-system.svc.cluster.local
+            - name: UTCP_T3_MEDIA_PROVER_GATEWAY_PORT
+              value: "443"
+            - name: UTCP_T3_MEDIA_PROVER_RESULT_PATH
+              value: /proof/results/result.json
+          envFrom:
+            - secretRef:
+                name: t3-media-prover-credentials
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: home
+              mountPath: /home/pwuser
+            - name: results
+              mountPath: /proof/results
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: home
+          emptyDir: {}
+        - name: results
+          emptyDir: {}
