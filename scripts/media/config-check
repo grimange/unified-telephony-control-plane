@@ -513,10 +513,27 @@ for forbidden in ("2223", "40000", "40099", "rtpengine"):
     if forbidden in cluster_config:
         fail("k3d cluster config must not publish rtpengine host UDP ports")
 
-kamailio_config = (root / "infrastructure/kubernetes/base/platform/kamailio-configmap.yaml").read_text(encoding="utf-8")
-for forbidden in ("rtpengine_offer", "rtpengine_answer", "rtpengine_manage", "rtpengine_delete"):
-    if forbidden in kamailio_config:
-        fail("T3-S1 must not add production Kamailio media routing")
+kamailio_config = (
+    platform.get("ConfigMap/utcp-platform/kamailio-config", {})
+    .get("data", {})
+    .get("kamailio.cfg", "")
+)
+if not kamailio_config:
+    fail("T3-S2 must render the Kamailio signaling ConfigMap for media routing")
+for required in (
+    'loadmodule "rtpengine.so"',
+    'modparam("rtpengine", "rtpengine_sock", "udp:rtpengine.utcp-platform.svc.cluster.local:2223")',
+    "route[MEDIA_OFFER]",
+    "route[MEDIA_ANSWER]",
+    "route[MEDIA_DELETE]",
+    "rtpengine_offer(",
+    "rtpengine_answer(",
+    "rtpengine_delete()",
+):
+    if required not in kamailio_config:
+        fail(f"T3-S2 must wire provider-neutral Kamailio media routing: missing {required}")
+if "rtpengine_manage" in kamailio_config:
+    fail("T3-S2 must use explicit offer/answer/delete instead of rtpengine_manage")
 PY
 
 if grep -Eiq 'kind:[[:space:]]*(UDPRoute|TCPRoute|TLSRoute)|rtpengine|40000|40099|2223|2224' "$tmp_gateway"; then

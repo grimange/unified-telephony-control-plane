@@ -9,6 +9,7 @@ metadata:
 data:
   kamailio.cfg: |
     #!KAMAILIO
+    #!define FLT_MEDIA_RELAY_REQUIRED 10
 
     debug=2
     log_stderror=yes
@@ -42,6 +43,7 @@ data:
     loadmodule "registrar.so"
     loadmodule "db_postgres.so"
     loadmodule "nathelper.so"
+    loadmodule "rtpengine.so"
     loadmodule "pike.so"
 
     modparam("auth_db", "db_url", "postgres://__KAMAILIO_AUTH_DB_USER__:__KAMAILIO_AUTH_DB_PASSWORD__@postgres.utcp-data.svc.cluster.local:5432/utcp")
@@ -66,6 +68,8 @@ data:
 
     modparam("rr", "enable_full_lr", 1)
 
+    modparam("rtpengine", "rtpengine_sock", "udp:rtpengine.utcp-platform.svc.cluster.local:2223")
+
     request_route {
         if (!mf_process_maxfwd_header("10")) {
             sl_send_reply("483", "Too Many Hops");
@@ -84,6 +88,7 @@ data:
         }
 
         if ($rm == "CANCEL") {
+            route(MEDIA_DELETE);
             if (t_check_trans()) {
                 t_relay();
             }
@@ -167,6 +172,7 @@ data:
             }
         }
 
+        route(MEDIA_OFFER);
         record_route();
         route(ASTERISK_RELAY);
         exit;
@@ -194,6 +200,15 @@ data:
                 }
             }
 
+            if ($rm == "BYE") {
+                route(MEDIA_DELETE);
+            }
+
+            if (is_method("INVITE|UPDATE")) {
+                route(MEDIA_OFFER);
+                t_on_reply("APPLICATION_RUNTIME_MEDIA_REPLY");
+            }
+
             if (!t_relay()) {
                 xlog("L_WARN", "kamailio_application_dialog_relay_failed route=within_dialog method=$rm call_id=$ci\n");
                 sl_reply_error();
@@ -214,6 +229,7 @@ data:
 
     route[ASTERISK_RELAY] {
         $du = "sip:asterisk-sip.utcp-runtime.svc.cluster.local:5060;transport=udp";
+        t_on_reply("APPLICATION_RUNTIME_MEDIA_REPLY");
         t_on_failure("ASTERISK_UNAVAILABLE");
 
         if (!t_relay()) {
@@ -225,16 +241,75 @@ data:
         exit;
     }
 
+    route[MEDIA_OFFER] {
+        if (!has_body("application/sdp")) {
+            return;
+        }
+
+        if ($(ru{uri.param,alias}) != "" || $(ru{uri.param,transport}) == "ws" || $(ru{uri.param,transport}) == "wss" || $(ru{uri.host}) =~ "\\.invalid$") {
+            if (!rtpengine_offer("replace-origin replace-session-connection ICE=force RTP/SAVPF DTLS=passive rtcp-mux-offer")) {
+                xlog("L_WARN", "kamailio_application_dialog_media result=media_offer_failed method=$rm call_id=$ci\n");
+                sl_send_reply("488", "Media Relay Unavailable");
+                exit;
+            }
+        } else {
+            if (!rtpengine_offer("replace-origin replace-session-connection ICE=remove RTP/AVP rtcp-mux-demux")) {
+                xlog("L_WARN", "kamailio_application_dialog_media result=media_offer_failed method=$rm call_id=$ci\n");
+                sl_send_reply("488", "Media Relay Unavailable");
+                exit;
+            }
+        }
+
+        setflag(FLT_MEDIA_RELAY_REQUIRED);
+        xlog("L_INFO", "kamailio_application_dialog_media result=media_offer method=$rm call_id=$ci\n");
+    }
+
+    route[MEDIA_ANSWER] {
+        if (!has_body("application/sdp")) {
+            return;
+        }
+
+        if ($proto == "ws" || $proto == "wss") {
+            if (!rtpengine_answer("replace-origin replace-session-connection ICE=remove RTP/AVP rtcp-mux-demux")) {
+                xlog("L_WARN", "kamailio_application_dialog_media result=media_answer_failed method=$rm call_id=$ci\n");
+                drop();
+            }
+        } else {
+            if (!rtpengine_answer("replace-origin replace-session-connection ICE=force RTP/SAVPF DTLS=passive rtcp-mux-offer")) {
+                xlog("L_WARN", "kamailio_application_dialog_media result=media_answer_failed method=$rm call_id=$ci\n");
+                drop();
+            }
+        }
+
+        xlog("L_INFO", "kamailio_application_dialog_media result=media_answer method=$rm call_id=$ci\n");
+    }
+
+    route[MEDIA_DELETE] {
+        if (!rtpengine_delete()) {
+            xlog("L_WARN", "kamailio_application_dialog_media result=media_delete_failed method=$rm call_id=$ci\n");
+            return;
+        }
+
+        xlog("L_INFO", "kamailio_application_dialog_media result=media_delete method=$rm call_id=$ci\n");
+    }
+
     failure_route[ASTERISK_UNAVAILABLE] {
         if (t_is_canceled()) {
+            route(MEDIA_DELETE);
             exit;
         }
+
+        route(MEDIA_DELETE);
 
         if (t_check_status("408")) {
             xlog("L_WARN", "kamailio_application_dialog_rejected result=asterisk_unavailable method=$rm call_id=$ci\n");
             t_reply("503", "Application Runtime Unavailable");
             exit;
         }
+    }
+
+    onreply_route[APPLICATION_RUNTIME_MEDIA_REPLY] {
+        route(MEDIA_ANSWER);
     }
 
     event_route[xhttp:request] {

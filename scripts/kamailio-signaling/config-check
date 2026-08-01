@@ -194,6 +194,10 @@ within_loose_route_block = block_after(within_block, "if (loose_route())")
 asterisk_block = block_after(kamailio_config, "route[ASTERISK_RELAY]")
 failure_block = block_after(kamailio_config, "failure_route[ASTERISK_UNAVAILABLE]")
 register_block = block_after(kamailio_config, 'if ($rm == "REGISTER")')
+media_offer_block = block_after(kamailio_config, "route[MEDIA_OFFER]")
+media_answer_block = block_after(kamailio_config, "route[MEDIA_ANSWER]")
+media_delete_block = block_after(kamailio_config, "route[MEDIA_DELETE]")
+media_reply_block = block_after(kamailio_config, "onreply_route[APPLICATION_RUNTIME_MEDIA_REPLY]")
 
 register_block_required = [
     'if ($rm == "REGISTER")',
@@ -207,9 +211,8 @@ for expected in register_block_required:
     if expected not in kamailio_config:
         fail(f"REGISTER authority drifted; missing {expected}")
 
-for forbidden in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage"):
-    if forbidden in kamailio_config:
-        fail(f"T3-S2A must not include rtpengine operation {forbidden}")
+if "rtpengine_manage" in kamailio_config:
+    fail("T3-S2 media mediation must use explicit offer/answer/delete, not rtpengine_manage")
 for forbidden in (
     "set_contact_alias",
     "fix_nated_contact",
@@ -227,11 +230,25 @@ required_route_tokens = [
     'loadmodule "rr.so"',
     'loadmodule "siputils.so"',
     'loadmodule "nathelper.so"',
+    'loadmodule "rtpengine.so"',
     'modparam("rr", "enable_full_lr", 1)',
+    'modparam("rtpengine", "rtpengine_sock", "udp:rtpengine.utcp-platform.svc.cluster.local:2223")',
     'route(APPLICATION_DIALOG)',
     'route[APPLICATION_DIALOG]',
     'route[WITHINDLG]',
     'route[ASTERISK_RELAY]',
+    'route[MEDIA_OFFER]',
+    'route[MEDIA_ANSWER]',
+    'route[MEDIA_DELETE]',
+    'onreply_route[APPLICATION_RUNTIME_MEDIA_REPLY]',
+    'rtpengine_offer(',
+    'rtpengine_answer(',
+    'rtpengine_delete()',
+    'result=media_offer',
+    'result=media_answer',
+    'result=media_delete',
+    'result=media_offer_failed',
+    'result=media_answer_failed',
     'is_method("INVITE|ACK|CANCEL|BYE|UPDATE")',
     'if ($rm != "INVITE")',
     'record_route()',
@@ -318,6 +335,7 @@ require_in_order(
         'result=websocket_contact_alias_failed method=$rm call_id=$ci',
         'sl_send_reply("400", "Bad Request")',
         "exit;",
+        "route(MEDIA_OFFER)",
         "record_route()",
         "route(ASTERISK_RELAY)",
     ],
@@ -325,6 +343,99 @@ require_in_order(
 )
 if re.search(r'\$proto\s*==\s*"udp"', application_block, re.I) or 'if (true)' in application_block:
     fail("Contact alias creation must remain limited to WS/WSS initial application dialogs")
+if "route(MEDIA_OFFER)" not in application_block:
+    fail("initial application-dialog INVITE with SDP must invoke the provider-neutral media offer route")
+if any(token in application_block for token in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage")):
+    fail("APPLICATION_DIALOG must delegate media control to provider-neutral routes")
+if "route(MEDIA_OFFER)" in register_block or "route(MEDIA_ANSWER)" in register_block or "route(MEDIA_DELETE)" in register_block:
+    fail("REGISTER route must remain free of media mediation routes")
+for forbidden in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage"):
+    if forbidden in register_block:
+        fail(f"REGISTER route must not invoke {forbidden}")
+if any(token in request_block for token in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage", "route(MEDIA_OFFER)", "route(MEDIA_ANSWER)")):
+    fail("request_route must not run media offer or answer directly")
+if "route(MEDIA_DELETE)" in request_block and request_block.find('if ($rm == "CANCEL")') > request_block.find("route(MEDIA_DELETE)"):
+    fail("CANCEL cleanup must remain inside transaction-aware CANCEL handling")
+if "route(MEDIA_DELETE)" not in request_block:
+    fail("CANCEL must clean up any created media session")
+if "route(MEDIA_OFFER)" in asterisk_block:
+    fail("Asterisk relay route must not create media; media offer belongs to provider-neutral route before relay")
+if "route(MEDIA_ANSWER)" in asterisk_block:
+    fail("Asterisk relay route must not answer media directly; use the named onreply route")
+if any(token in asterisk_block for token in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage")):
+    fail("Asterisk relay must delegate media control to provider-neutral routes")
+if "t_on_reply(\"APPLICATION_RUNTIME_MEDIA_REPLY\")" not in asterisk_block:
+    fail("Asterisk relay must arm the provider-neutral SDP answer route before relay")
+require_in_order(
+    asterisk_block,
+    [
+        '$du = "sip:asterisk-sip.utcp-runtime.svc.cluster.local:5060;transport=udp"',
+        't_on_reply("APPLICATION_RUNTIME_MEDIA_REPLY")',
+        't_on_failure("ASTERISK_UNAVAILABLE")',
+        "t_relay()",
+    ],
+    "route[ASTERISK_RELAY] media transaction setup",
+)
+require_in_order(
+    media_offer_block,
+    [
+        'if (!has_body("application/sdp"))',
+        "return;",
+        'rtpengine_offer("replace-origin replace-session-connection ICE=force RTP/SAVPF DTLS=passive rtcp-mux-offer")',
+        'result=media_offer_failed method=$rm call_id=$ci',
+        'sl_send_reply("488", "Media Relay Unavailable")',
+        "exit;",
+        'rtpengine_offer("replace-origin replace-session-connection ICE=remove RTP/AVP rtcp-mux-demux")',
+        'setflag(FLT_MEDIA_RELAY_REQUIRED)',
+        'result=media_offer method=$rm call_id=$ci',
+    ],
+    "route[MEDIA_OFFER]",
+)
+require_in_order(
+    media_answer_block,
+    [
+        'if (!has_body("application/sdp"))',
+        "return;",
+        'rtpengine_answer("replace-origin replace-session-connection ICE=remove RTP/AVP rtcp-mux-demux")',
+        'result=media_answer_failed method=$rm call_id=$ci',
+        "drop();",
+        'rtpengine_answer("replace-origin replace-session-connection ICE=force RTP/SAVPF DTLS=passive rtcp-mux-offer")',
+        'result=media_answer method=$rm call_id=$ci',
+    ],
+    "route[MEDIA_ANSWER]",
+)
+require_in_order(
+    media_delete_block,
+    [
+        "rtpengine_delete()",
+        'result=media_delete_failed method=$rm call_id=$ci',
+        "return;",
+        'result=media_delete method=$rm call_id=$ci',
+    ],
+    "route[MEDIA_DELETE]",
+)
+if media_offer_block.count("rtpengine_offer(") != 2:
+    fail("MEDIA_OFFER must contain exactly the browser-facing and application-runtime-facing offer profiles")
+if media_answer_block.count("rtpengine_answer(") != 2:
+    fail("MEDIA_ANSWER must contain exactly the browser-facing and application-runtime-facing answer profiles")
+if media_delete_block.count("rtpengine_delete()") != 1:
+    fail("MEDIA_DELETE must be the single direct rtpengine delete authority")
+if 'route(MEDIA_ANSWER)' not in media_reply_block or "rtpengine_answer" in media_reply_block:
+    fail("SDP reply handling must delegate to MEDIA_ANSWER without becoming a second answer authority")
+if "rtpengine_delete()" in failure_block or "rtpengine_offer" in failure_block or "rtpengine_answer" in failure_block:
+    fail("failure route must delegate cleanup to MEDIA_DELETE instead of directly invoking rtpengine")
+if "route(MEDIA_DELETE)" not in failure_block:
+    fail("terminal Asterisk transaction failure must clean up media through MEDIA_DELETE")
+if failure_block.count("route(MEDIA_DELETE)") < 2:
+    fail("Asterisk failure route must clean up media for both cancellation and terminal failure")
+if 'route(MEDIA_DELETE)' not in within_loose_route_block or within_loose_route_block.find('if ($rm == "BYE")') > within_loose_route_block.find('route(MEDIA_DELETE)') or within_loose_route_block.find('route(MEDIA_DELETE)') > within_loose_route_block.find("t_relay()"):
+    fail("both established BYE directions must delete media before relay")
+if 'is_method("INVITE|UPDATE")' not in within_loose_route_block or 'route(MEDIA_OFFER)' not in within_loose_route_block or 't_on_reply("APPLICATION_RUNTIME_MEDIA_REPLY")' not in within_loose_route_block:
+    fail("in-dialog re-INVITE/UPDATE with SDP must update media and arm answer handling")
+if any(token in kamailio_config for token in ("ARI", "AMI", "channel_id", "asterisk_channel", "dialplan_context")):
+    fail("media lifecycle must not be controlled by provider-specific Asterisk state")
+if re.search(r"(?:10\.42\.|10\.43\.|127\.0\.0\.1|192\.168\.|172\.(?:1[6-9]|2[0-9]|3[0-1])\.)", media_offer_block + media_answer_block):
+    fail("media relay routes must not embed Pod, Service ClusterIP, node, or developer-host IP literals")
 alias_destination_block = block_after(within_loose_route_block, 'if ($du == "")')
 if alias_destination_block.lstrip().startswith("if (!handle_ruri_alias())"):
     fail("WITHINDLG must not require alias handling for every empty-$du established request")
@@ -380,9 +491,8 @@ require_in_order(
     ],
     "route[WITHINDLG]",
 )
-require_in_order(asterisk_block, ['$du = "sip:asterisk-sip.utcp-runtime.svc.cluster.local:5060;transport=udp"', 't_on_failure("ASTERISK_UNAVAILABLE")', "t_relay()"], "route[ASTERISK_RELAY]")
-if any(token in failure_block for token in ("append_branch", "t_relay()", "$du =", "rtpengine_", "record_route()", "www_authorize")):
-    fail("ASTERISK_UNAVAILABLE failure route must not add branches, change destination, relay, rtpengine, or authenticate")
+if any(token in failure_block for token in ("append_branch", "t_relay()", "$du =", "record_route()", "www_authorize")):
+    fail("ASTERISK_UNAVAILABLE failure route must not add branches, change destination, relay, Record-Route, or authenticate")
 if 't_is_canceled()' not in failure_block or failure_block.find('t_is_canceled()') > failure_block.find('t_check_status("408")'):
     fail("ASTERISK_UNAVAILABLE must not convert client cancellation to 503")
 if 't_check_status("408")' not in failure_block or 't_reply("503", "Application Runtime Unavailable")' not in failure_block:

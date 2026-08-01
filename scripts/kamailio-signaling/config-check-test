@@ -114,6 +114,10 @@ def validate(state: dict[str, Any]) -> None:
     asterisk_block = block_after(kamailio, "route[ASTERISK_RELAY]")
     failure_block = block_after(kamailio, "failure_route[ASTERISK_UNAVAILABLE]")
     register_block = block_after(kamailio, 'if ($rm == "REGISTER")')
+    media_offer_block = block_after(kamailio, "route[MEDIA_OFFER]")
+    media_answer_block = block_after(kamailio, "route[MEDIA_ANSWER]")
+    media_delete_block = block_after(kamailio, "route[MEDIA_DELETE]")
+    media_reply_block = block_after(kamailio, "onreply_route[APPLICATION_RUNTIME_MEDIA_REPLY]")
 
     require(re.search(r"^\s*autoload\s*=\s*no\s*$", modules, re.M) is not None, "autoload=no required")
     require("autoload = yes" not in modules, "autoload=yes forbidden")
@@ -191,8 +195,7 @@ def validate(state: dict[str, Any]) -> None:
         "kubectl.kubernetes.io/restartedAt" not in yaml.safe_dump(kamailio_deployment),
         "manual rollout restart timestamp forbidden",
     )
-    for forbidden in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage"):
-        require(forbidden not in kamailio, f"rtpengine operation forbidden in T3-S2A: {forbidden}")
+    require("rtpengine_manage" not in kamailio, "rtpengine_manage forbidden; use explicit offer/answer/delete")
     for forbidden in (
         "set_contact_alias",
         "fix_nated_contact",
@@ -210,9 +213,23 @@ def validate(state: dict[str, Any]) -> None:
         'loadmodule "rr.so"',
         'loadmodule "siputils.so"',
         'loadmodule "nathelper.so"',
+        'loadmodule "rtpengine.so"',
+        'modparam("rtpengine", "rtpengine_sock", "udp:rtpengine.utcp-platform.svc.cluster.local:2223")',
         'route[APPLICATION_DIALOG]',
         'route[WITHINDLG]',
         'route[ASTERISK_RELAY]',
+        'route[MEDIA_OFFER]',
+        'route[MEDIA_ANSWER]',
+        'route[MEDIA_DELETE]',
+        'onreply_route[APPLICATION_RUNTIME_MEDIA_REPLY]',
+        'rtpengine_offer(',
+        'rtpengine_answer(',
+        'rtpengine_delete()',
+        'result=media_offer',
+        'result=media_answer',
+        'result=media_delete',
+        'result=media_offer_failed',
+        'result=media_answer_failed',
         'is_method("INVITE|ACK|CANCEL|BYE|UPDATE")',
         'www_authorize("$fd", "kamailio_signaling_auth_view")',
         'record_route()',
@@ -282,10 +299,85 @@ def validate(state: dict[str, Any]) -> None:
             'result=websocket_contact_alias_failed method=$rm call_id=$ci',
             'sl_send_reply("400", "Bad Request")',
             "exit;",
+            "route(MEDIA_OFFER)",
             "record_route()",
             "route(ASTERISK_RELAY)",
         ],
         "route[APPLICATION_DIALOG]",
+    )
+    require("route(MEDIA_OFFER)" in application_block, "initial application-dialog INVITE with SDP must invoke media offer")
+    require(not any(token in application_block for token in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage")), "APPLICATION_DIALOG must delegate media control to provider-neutral routes")
+    require("route(MEDIA_OFFER)" not in register_block and "route(MEDIA_ANSWER)" not in register_block and "route(MEDIA_DELETE)" not in register_block, "REGISTER route must not invoke media routes")
+    for forbidden in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage"):
+        require(forbidden not in register_block, f"REGISTER route must not invoke {forbidden}")
+    require(
+        not any(token in request_block for token in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage", "route(MEDIA_OFFER)", "route(MEDIA_ANSWER)")),
+        "request_route must not run media offer or answer directly",
+    )
+    require("route(MEDIA_DELETE)" in request_block, "CANCEL must clean up any created media session")
+    require("t_on_reply(\"APPLICATION_RUNTIME_MEDIA_REPLY\")" in asterisk_block, "Asterisk relay must arm media answer route")
+    require(not any(token in asterisk_block for token in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage")), "Asterisk relay must delegate media control to provider-neutral routes")
+    require_in_order(
+        asterisk_block,
+        [
+            '$du = "sip:asterisk-sip.utcp-runtime.svc.cluster.local:5060;transport=udp"',
+            't_on_reply("APPLICATION_RUNTIME_MEDIA_REPLY")',
+            't_on_failure("ASTERISK_UNAVAILABLE")',
+            "t_relay()",
+        ],
+        "route[ASTERISK_RELAY] media transaction setup",
+    )
+    require_in_order(
+        media_offer_block,
+        [
+            'if (!has_body("application/sdp"))',
+            "return;",
+            'rtpengine_offer("replace-origin replace-session-connection ICE=force RTP/SAVPF DTLS=passive rtcp-mux-offer")',
+            'result=media_offer_failed method=$rm call_id=$ci',
+            'sl_send_reply("488", "Media Relay Unavailable")',
+            "exit;",
+            'rtpengine_offer("replace-origin replace-session-connection ICE=remove RTP/AVP rtcp-mux-demux")',
+            'setflag(FLT_MEDIA_RELAY_REQUIRED)',
+            'result=media_offer method=$rm call_id=$ci',
+        ],
+        "route[MEDIA_OFFER]",
+    )
+    require_in_order(
+        media_answer_block,
+        [
+            'if (!has_body("application/sdp"))',
+            "return;",
+            'rtpengine_answer("replace-origin replace-session-connection ICE=remove RTP/AVP rtcp-mux-demux")',
+            'result=media_answer_failed method=$rm call_id=$ci',
+            "drop();",
+            'rtpengine_answer("replace-origin replace-session-connection ICE=force RTP/SAVPF DTLS=passive rtcp-mux-offer")',
+            'result=media_answer method=$rm call_id=$ci',
+        ],
+        "route[MEDIA_ANSWER]",
+    )
+    require_in_order(
+        media_delete_block,
+        [
+            "rtpengine_delete()",
+            'result=media_delete_failed method=$rm call_id=$ci',
+            "return;",
+            'result=media_delete method=$rm call_id=$ci',
+        ],
+        "route[MEDIA_DELETE]",
+    )
+    require(media_offer_block.count("rtpengine_offer(") == 2, "MEDIA_OFFER must contain exactly two media profiles")
+    require(media_answer_block.count("rtpengine_answer(") == 2, "MEDIA_ANSWER must contain exactly two media profiles")
+    require(media_delete_block.count("rtpengine_delete()") == 1, "MEDIA_DELETE must be single direct delete authority")
+    require("route(MEDIA_ANSWER)" in media_reply_block and "rtpengine_answer" not in media_reply_block, "onreply route must delegate to MEDIA_ANSWER")
+    require("route(MEDIA_DELETE)" in failure_block, "terminal Asterisk transaction failure must clean up media")
+    require(failure_block.count("route(MEDIA_DELETE)") >= 2, "Asterisk failure route must clean up media for both cancellation and terminal failure")
+    require(not any(token in failure_block for token in ("rtpengine_delete()", "rtpengine_offer", "rtpengine_answer")), "failure route must delegate media cleanup")
+    require('route(MEDIA_DELETE)' in within_loose_route_block and within_loose_route_block.find('if ($rm == "BYE")') < within_loose_route_block.find('route(MEDIA_DELETE)') < within_loose_route_block.find("t_relay()"), "established BYE must delete media before relay")
+    require('is_method("INVITE|UPDATE")' in within_loose_route_block and 'route(MEDIA_OFFER)' in within_loose_route_block and 't_on_reply("APPLICATION_RUNTIME_MEDIA_REPLY")' in within_loose_route_block, "in-dialog re-INVITE/UPDATE must update media and arm answer handling")
+    require(not any(token in kamailio for token in ("ARI", "AMI", "channel_id", "asterisk_channel", "dialplan_context")), "media lifecycle must not use Asterisk-specific state")
+    require(
+        re.search(r"(?:10\.42\.|10\.43\.|127\.0\.0\.1|192\.168\.|172\.(?:1[6-9]|2[0-9]|3[0-1])\.)", media_offer_block + media_answer_block) is None,
+        "media routes must not embed Pod, Service ClusterIP, node, or developer-host IP literals",
     )
     alias_destination_block = block_after(within_loose_route_block, 'if ($du == "")')
     require(
@@ -347,12 +439,11 @@ def validate(state: dict[str, Any]) -> None:
         ],
         "route[WITHINDLG]",
     )
-    require_in_order(asterisk_block, ['$du = "sip:asterisk-sip.utcp-runtime.svc.cluster.local:5060;transport=udp"', 't_on_failure("ASTERISK_UNAVAILABLE")', "t_relay()"], "route[ASTERISK_RELAY]")
     require("t_reply(\"503\", \"Application Runtime Unavailable\")" in asterisk_block, "immediate relay failure must use committed 503")
     require("t_check_status(\"408\")" in failure_block, "failure route must match timeout/generated 408 only")
     require("t_reply(\"503\", \"Application Runtime Unavailable\")" in failure_block, "failure route must return committed 503")
     require("t_is_canceled()" in failure_block and failure_block.find("t_is_canceled()") < failure_block.find("t_check_status(\"408\")"), "failure route must not convert cancellation to 503")
-    for token in ("append_branch", "t_relay()", "$du =", "rtpengine_", "www_authorize"):
+    for token in ("append_branch", "t_relay()", "$du =", "www_authorize"):
         require(token not in failure_block, f"failure route must not contain {token}")
     require(re.search(r't_check_status\("(\.\*|[1-6]\[0-9\]\[0-9\]|[45]\[0-9\]\[0-9\]|[0-9]\{3\})"\)', failure_block) is None, "failure route must not map every downstream response")
     asterisk_targets = re.findall(r"\bsip:([^\";\s]+:5060)(?:;transport=udp)?", kamailio)
@@ -602,6 +693,8 @@ ALIAS_CONSUME_BLOCK = '''        if ($du == "") {
 
 
 def remove_alias_create_block(state: dict[str, Any]) -> None:
+    if ALIAS_CREATE_BLOCK not in state["kamailio"]:
+        raise RuntimeError("test setup could not find alias creation block")
     set_kamailio_config(state, state["kamailio"].replace(ALIAS_CREATE_BLOCK, "", 1), update_checksum=True)
 
 
@@ -631,6 +724,8 @@ def remove_alias_failure_exit(state: dict[str, Any]) -> None:
 
 
 def remove_alias_consume_block(state: dict[str, Any]) -> None:
+    if ALIAS_CONSUME_BLOCK not in state["kamailio"]:
+        raise RuntimeError("test setup could not find alias consumption block")
     set_kamailio_config(state, state["kamailio"].replace(ALIAS_CONSUME_BLOCK, "", 1), update_checksum=True)
 
 
@@ -651,22 +746,12 @@ def remove_alias_consume_du_guard(state: dict[str, Any]) -> None:
 
 
 def require_alias_for_every_established_request(state: dict[str, Any]) -> None:
-    unconditional_block = '''        if ($du == "") {
-            if (!handle_ruri_alias()) {
-                xlog("L_WARN", "kamailio_application_dialog_rejected result=invalid_dialog_contact_alias method=$rm call_id=$ci\\n");
-                sl_send_reply("400", "Bad Request");
-                exit;
-            }
-
-            if ($du == "") {
-                xlog("L_WARN", "kamailio_application_dialog_rejected result=missing_dialog_contact_alias method=$rm call_id=$ci\\n");
-                sl_send_reply("400", "Bad Request");
-                exit;
-            }
-        }
-
-'''
-    set_kamailio_config(state, state["kamailio"].replace(ALIAS_CONSUME_BLOCK, unconditional_block, 1), update_checksum=True)
+    catch_all_branch = '            } else {\n'
+    targeted_branch = '            } else if ($(ru{uri.param,transport}) == "ws" || $(ru{uri.param,transport}) == "wss" || $(ru{uri.host}) =~ "\\\\.invalid$") {\n'
+    config = state["kamailio"]
+    if targeted_branch not in config:
+        raise RuntimeError("test setup could not find targeted missing browser alias branch")
+    set_kamailio_config(state, config.replace(targeted_branch, catch_all_branch, 1), update_checksum=True)
 
 
 def remove_alias_presence_guard(state: dict[str, Any]) -> None:
@@ -784,6 +869,107 @@ def synthesize_asterisk_bound_destination(state: dict[str, Any]) -> None:
         state["kamailio"].replace('        if ($du == "") {\n', '        $du = "sip:asterisk-sip.utcp-runtime.svc.cluster.local:5060;transport=udp";\n        if ($du == "") {\n', 1),
         update_checksum=True,
     )
+
+
+def move_media_offer_after_record_route(state: dict[str, Any]) -> None:
+    config = state["kamailio"].replace("    route(MEDIA_OFFER);\n    record_route();\n", "    record_route();\n    route(MEDIA_OFFER);\n", 1)
+    set_kamailio_config(state, config, update_checksum=True)
+
+
+def move_media_offer_after_runtime_relay(state: dict[str, Any]) -> None:
+    config = state["kamailio"].replace("    route(MEDIA_OFFER);\n", "", 1)
+    config = config.replace("    route(ASTERISK_RELAY);\n", "    route(ASTERISK_RELAY);\n    route(MEDIA_OFFER);\n", 1)
+    set_kamailio_config(state, config, update_checksum=True)
+
+
+def remove_media_offer_sdp_guard(state: dict[str, Any]) -> None:
+    config = state["kamailio"].replace('    if (!has_body("application/sdp")) {\n        return;\n    }\n\n', "", 1)
+    set_kamailio_config(state, config, update_checksum=True)
+
+
+def remove_media_answer_sdp_guard(state: dict[str, Any]) -> None:
+    config = state["kamailio"]
+    guard = '    if (!has_body("application/sdp")) {\n        return;\n    }\n\n'
+    first = config.find(guard)
+    second = config.find(guard, first + 1)
+    if second < 0:
+        raise RuntimeError("test setup could not find MEDIA_ANSWER SDP guard")
+    config = config[:second] + config[second + len(guard):]
+    set_kamailio_config(state, config, update_checksum=True)
+
+
+def remove_initial_media_offer_call(state: dict[str, Any]) -> None:
+    set_kamailio_config(state, state["kamailio"].replace("    route(MEDIA_OFFER);\n    record_route();\n", "    record_route();\n", 1), update_checksum=True)
+
+
+def remove_media_answer_route(state: dict[str, Any]) -> None:
+    set_kamailio_config(state, state["kamailio"].replace('    t_on_reply("APPLICATION_RUNTIME_MEDIA_REPLY");\n', "", 1), update_checksum=True)
+
+
+def remove_onreply_media_answer_delegate(state: dict[str, Any]) -> None:
+    set_kamailio_config(state, state["kamailio"].replace("onreply_route[APPLICATION_RUNTIME_MEDIA_REPLY]", "onreply_route[APPLICATION_RUNTIME_NO_MEDIA_REPLY]", 1), update_checksum=True)
+
+
+def remove_established_bye_media_delete(state: dict[str, Any]) -> None:
+    bye_block = '''        if ($rm == "BYE") {
+            route(MEDIA_DELETE);
+        }
+
+'''
+    if bye_block not in state["kamailio"]:
+        raise RuntimeError("test setup could not find established BYE media delete")
+    set_kamailio_config(state, state["kamailio"].replace(bye_block, "", 1), update_checksum=True)
+
+
+def remove_cancel_media_delete(state: dict[str, Any]) -> None:
+    set_kamailio_config(state, state["kamailio"].replace("            route(MEDIA_DELETE);\n", "", 1), update_checksum=True)
+
+
+def remove_failure_media_delete(state: dict[str, Any]) -> None:
+    config = state["kamailio"]
+    marker = "failure_route[ASTERISK_UNAVAILABLE]"
+    start = config.find(marker)
+    if start < 0:
+        raise RuntimeError("test setup could not find failure route")
+    delete_index = config.find("    route(MEDIA_DELETE);\n", start)
+    if delete_index < 0:
+        raise RuntimeError("test setup could not find failure media delete")
+    line = "    route(MEDIA_DELETE);\n"
+    config = config[:delete_index] + config[delete_index + len(line):]
+    set_kamailio_config(state, config, update_checksum=True)
+
+
+def add_media_to_register(state: dict[str, Any]) -> None:
+    config = state["kamailio"].replace('        if (!save("location", "0x04")) {', '        route(MEDIA_OFFER);\n\n        if (!save("location", "0x04")) {', 1)
+    set_kamailio_config(state, config, update_checksum=True)
+
+
+def remove_media_offer_failure_exit(state: dict[str, Any]) -> None:
+    marker = "result=media_offer_failed"
+    config = state["kamailio"]
+    start = config.find(marker)
+    if start < 0:
+        raise RuntimeError("test setup could not find media offer failure")
+    exit_line = "            exit;\n"
+    exit_index = config.find(exit_line, start)
+    if exit_index < 0:
+        raise RuntimeError("test setup could not find media offer failure exit")
+    config = config[:exit_index] + config[exit_index + len(exit_line):]
+    set_kamailio_config(state, config, update_checksum=True)
+
+
+def remove_media_answer_failure_drop(state: dict[str, Any]) -> None:
+    marker = "result=media_answer_failed"
+    config = state["kamailio"]
+    start = config.find(marker)
+    if start < 0:
+        raise RuntimeError("test setup could not find media answer failure")
+    drop_line = "            drop();\n"
+    drop_index = config.find(drop_line, start)
+    if drop_index < 0:
+        raise RuntimeError("test setup could not find media answer failure drop")
+    config = config[:drop_index] + config[drop_index + len(drop_line):]
+    set_kamailio_config(state, config, update_checksum=True)
 
 
 def pass_case(name: str, state: dict[str, Any]) -> None:
@@ -951,9 +1137,29 @@ fail_case("mapping every Asterisk response to 503 fails", lambda s: set_kamailio
 fail_case("adding fallback branch in failure route fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('failure_route[ASTERISK_UNAVAILABLE] {', 'failure_route[ASTERISK_UNAVAILABLE] {\n        append_branch();')))
 fail_case("invoking rtpengine in failure route fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('failure_route[ASTERISK_UNAVAILABLE] {', 'failure_route[ASTERISK_UNAVAILABLE] {\n        rtpengine_delete();')))
 fail_case("missing unavailable-runtime log correlation fails", lambda s: set_kamailio_config(s, s["kamailio"].replace(' method=$rm call_id=$ci', ' method=$rm')))
-fail_case("converting cancellation to 503 fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('    if (t_is_canceled()) {\n        exit;\n    }\n\n', "")))
+fail_case("converting cancellation to 503 fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("t_is_canceled()", "false", 1), update_checksum=True))
 fail_case("adding second Asterisk target fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("route[ASTERISK_RELAY]", '$du = "sip:asterisk-alt.utcp-runtime.svc.cluster.local:5060;transport=udp";\n\n    route[ASTERISK_RELAY]')))
-fail_case("adding rtpengine operation fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("record_route();", "record_route();\n        rtpengine_offer();")))
+fail_case("removing rtpengine module fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('loadmodule "rtpengine.so"\n', ""), update_checksum=True))
+fail_case("removing rtpengine socket fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('modparam("rtpengine", "rtpengine_sock", "udp:rtpengine.utcp-platform.svc.cluster.local:2223")\n', ""), update_checksum=True))
+fail_case("removing initial media offer fails", remove_initial_media_offer_call)
+fail_case("moving media offer after Record-Route fails", move_media_offer_after_record_route)
+fail_case("moving media offer after runtime relay fails", move_media_offer_after_runtime_relay)
+fail_case("removing MEDIA_OFFER SDP guard fails", remove_media_offer_sdp_guard)
+fail_case("removing application-runtime answer route arming fails", remove_media_answer_route)
+fail_case("removing application-runtime answer delegate fails", remove_onreply_media_answer_delegate)
+fail_case("removing MEDIA_ANSWER SDP guard fails", remove_media_answer_sdp_guard)
+fail_case("removing browser BYE media delete fails", remove_established_bye_media_delete)
+fail_case("removing CANCEL media cleanup fails", remove_cancel_media_delete)
+fail_case("removing terminal failure media cleanup fails", remove_failure_media_delete)
+fail_case("adding media mediation to REGISTER fails", add_media_to_register)
+fail_case("rtpengine offer failure direct-media fallback fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('sl_send_reply("488", "Media Relay Unavailable");', "return;", 1), update_checksum=True))
+fail_case("removing rtpengine offer failure exit fails", remove_media_offer_failure_exit)
+fail_case("removing rtpengine answer failure drop fails", remove_media_answer_failure_drop)
+fail_case("using rtpengine_manage fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("rtpengine_offer(", "rtpengine_manage(", 1), update_checksum=True))
+fail_case("using Asterisk channel state for media fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("route[MEDIA_OFFER] {", 'route[MEDIA_OFFER] {\n        $var(asterisk_channel) = "forbidden";', 1), update_checksum=True))
+fail_case("embedding media IP literal fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("replace-origin replace-session-connection", "replace-origin replace-session-connection advertised-address=10.42.1.99", 1), update_checksum=True))
+fail_case("adding duplicate media delete authority fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("route[MEDIA_DELETE] {", "route[MEDIA_DELETE] {\n        rtpengine_delete();", 1), update_checksum=True))
+fail_case("adding direct rtpengine operation outside media routes fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("record_route();", "record_route();\n        rtpengine_offer();"), update_checksum=True))
 fail_case("removing Asterisk reverse egress fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio", lambda d: d["spec"].pop("egress", None), "security_docs"))
 fail_case("removing Kamailio reverse ingress fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic", lambda d: d["spec"].update(ingress=[rule for rule in d["spec"]["ingress"] if rule.get("ports") != [{"protocol": "UDP", "port": 5060}]]), "security_docs"))
 fail_case("widening Asterisk reverse egress fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio", lambda d: d["spec"]["egress"][0]["to"][0].pop("podSelector", None), "security_docs"))
