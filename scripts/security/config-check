@@ -537,13 +537,30 @@ if asterisk_egress_peers != [
 ]:
     fail("Kamailio Asterisk SIP egress must use the exact utcp-runtime canonical Asterisk selector")
 
+dns_ports = [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]
+kamailio_dns_egress = [
+    rule
+    for rule in kamailio_spec.get("egress") or []
+    if rule.get("ports") == dns_ports
+]
+if len(kamailio_dns_egress) != 1:
+    fail("allow-kamailio-signaling-required-traffic must include exactly one cluster-DNS egress rule")
+cluster_dns_peers = kamailio_dns_egress[0].get("to") or []
+if cluster_dns_peers != [
+    {
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+        "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+    }
+]:
+    fail("Kamailio DNS egress must use the exact kube-system CoreDNS selector")
+
 asterisk_sip_spec = asterisk_sip_policy.get("spec") or {}
 if (asterisk_sip_spec.get("podSelector") or {}).get("matchLabels") != {
     "app.kubernetes.io/component": "asterisk-ari",
     "utcp.io/network-role": "asterisk-ari",
     "utcp.dev/runtime-node": "local-asterisk-ari",
 }:
-    fail("allow-asterisk-sip-from-kamailio must target only Asterisk runtime Pods")
+    fail("allow-asterisk-sip-from-kamailio must target only the canonical Asterisk runtime Pods")
 if asterisk_sip_spec.get("policyTypes") != ["Ingress", "Egress"]:
     fail("allow-asterisk-sip-from-kamailio must enforce ingress and egress")
 asterisk_ingress = asterisk_sip_spec.get("ingress") or []
@@ -560,7 +577,17 @@ if asterisk_ingress != [
 ]:
     fail("Asterisk SIP ingress must be exact Kamailio UDP 5060 only")
 asterisk_egress = asterisk_sip_spec.get("egress") or []
-if asterisk_egress != [
+if len(asterisk_egress) != 2:
+    fail("Asterisk egress must define exactly SIP and cluster-DNS rules")
+for rule in asterisk_egress:
+    if not rule.get("to"):
+        fail("Asterisk egress must not include unrestricted destinations")
+asterisk_sip_egress = [
+    rule
+    for rule in asterisk_egress
+    if rule.get("ports") == [{"protocol": "UDP", "port": 5060}]
+]
+if asterisk_sip_egress != [
     {
         "to": [
             {
@@ -575,6 +602,15 @@ if asterisk_egress != [
     }
 ]:
     fail("Asterisk SIP egress must be exact Kamailio UDP 5060 only")
+asterisk_dns_egress = [
+    rule
+    for rule in asterisk_egress
+    if rule.get("ports") == dns_ports
+]
+if len(asterisk_dns_egress) != 1:
+    fail("Asterisk egress must include exact UDP and TCP 53 cluster-DNS")
+if asterisk_dns_egress[0].get("to") != cluster_dns_peers:
+    fail("Asterisk DNS egress must mirror Kamailio cluster-DNS selector")
 
 for policy_name, policy_doc in {
     "allow-kamailio-signaling-required-traffic": kamailio_policy,
@@ -583,6 +619,8 @@ for policy_name, policy_doc in {
     rendered_policy = yaml.safe_dump(policy_doc, sort_keys=True)
     if "ipBlock" in rendered_policy:
         fail(f"{policy_name} must not use ipBlock for internal SIP authority")
+    if "0.0.0.0/0" in rendered_policy or "::/0" in rendered_policy:
+        fail(f"{policy_name} must not allow broad egress")
     for rule_key in ("from", "to"):
         for rule in (policy_doc.get("spec") or {}).get("ingress", []) + (policy_doc.get("spec") or {}).get("egress", []):
             for peer in rule.get(rule_key) or []:

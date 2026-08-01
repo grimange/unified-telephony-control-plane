@@ -455,7 +455,7 @@ if not any(rule.get("from") == [{
 }] and rule.get("ports") == [{"protocol": "UDP", "port": 5060}] for rule in kamailio_ingress):
     fail("Kamailio ingress must allow only canonical Asterisk UDP 5060 reverse signaling")
 asterisk_egress = (asterisk_policy.get("spec") or {}).get("egress") or []
-if asterisk_egress != [{
+asterisk_sip_egress = {
     "to": [{
         "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
         "podSelector": {"matchLabels": {
@@ -464,8 +464,16 @@ if asterisk_egress != [{
         }},
     }],
     "ports": [{"protocol": "UDP", "port": 5060}],
-}]:
-    fail("Asterisk egress must allow only exact Kamailio UDP 5060 reverse signaling")
+}
+asterisk_dns_egress = {
+    "to": [{
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+        "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+    }],
+    "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}],
+}
+if len(asterisk_egress) != 2 or asterisk_sip_egress not in asterisk_egress or asterisk_dns_egress not in asterisk_egress:
+    fail("Asterisk egress must allow only exact Kamailio UDP 5060 reverse signaling and cluster-DNS UDP/TCP 53")
 if (asterisk_policy.get("spec") or {}).get("podSelector", {}).get("matchLabels", {}).get("utcp.dev/runtime-node") != "local-asterisk-ari":
     fail("Asterisk reverse SIP policy must select only the canonical local Asterisk runtime")
 kamailio_egress = (kamailio_policy.get("spec") or {}).get("egress") or []

@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VALIDATOR="$ROOT/scripts/security/validate-observability-apiserver-egress"
 SOURCE_TEMPLATE="$ROOT/infrastructure/kubernetes/observability/network-policies/allow-apiserver-egress.template.yaml"
 SOURCE_INVENTORY="$ROOT/scripts/security/observability-api-workloads.yaml"
+SECURITY_SOURCE="$ROOT/infrastructure/kubernetes/security"
+KAMAILIO_CONFIGMAP="$ROOT/infrastructure/kubernetes/base/platform/kamailio-configmap.yaml"
 TMP_DIR="$(mktemp -d)"
 
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -189,5 +191,324 @@ pass_case "declared API-dependent workloads selected by bounded policy" \
 fail_case "new API-dependent workload without policy rejected" \
   "missing source policy selecting API-dependent workload uncovered-api-client" \
   "$uncovered_inventory" "$correct_policy"
+
+validate_asterisk_dns_policy() {
+  local rendered_security="$1"
+  local kamailio_configmap="$2"
+
+  python3 - "$rendered_security" "$kamailio_configmap" <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+docs = [
+    doc
+    for doc in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(doc, dict)
+]
+kamailio_config = Path(sys.argv[2]).read_text(encoding="utf-8")
+
+
+def fail(message: str) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def key(doc: dict[str, Any]) -> str:
+    meta = doc.get("metadata") or {}
+    return f"{doc.get('kind')}/{meta.get('namespace')}/{meta.get('name')}"
+
+
+objects = {key(doc): doc for doc in docs}
+asterisk = objects.get("NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio")
+kamailio = objects.get("NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic")
+runtime_default_deny = objects.get("NetworkPolicy/utcp-runtime/default-deny")
+if not asterisk:
+    fail("missing Asterisk SIP policy")
+if not kamailio:
+    fail("missing Kamailio signaling policy")
+if not runtime_default_deny:
+    fail("missing runtime default-deny policy")
+if (runtime_default_deny.get("spec") or {}).get("podSelector") != {}:
+    fail("runtime default-deny must remain namespace-wide")
+
+internal_rr_host = "kamailio-sip-internal.utcp-platform.svc.cluster.local:5060"
+if internal_rr_host not in kamailio_config:
+    fail("internal Kamailio route-set identity must remain Service DNS")
+if re.search(r"advertise\s+(?:10|127|172|192)\.\d+\.\d+\.\d+:5060", kamailio_config):
+    fail("internal Kamailio route-set identity must not be an IP literal")
+
+asterisk_spec = asterisk.get("spec") or {}
+if (asterisk_spec.get("podSelector") or {}).get("matchLabels") != {
+    "app.kubernetes.io/component": "asterisk-ari",
+    "utcp.io/network-role": "asterisk-ari",
+    "utcp.dev/runtime-node": "local-asterisk-ari",
+}:
+    fail("Asterisk policy must select only canonical Asterisk")
+if "local-asterisk-ari-b" in yaml.safe_dump(asterisk, sort_keys=True):
+    fail("Asterisk policy must not include secondary Asterisk")
+
+kamailio_spec = kamailio.get("spec") or {}
+dns_ports = [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]
+kamailio_dns = [
+    rule for rule in kamailio_spec.get("egress") or []
+    if rule.get("ports") == dns_ports
+]
+if len(kamailio_dns) != 1:
+    fail("Kamailio DNS authority must expose exact UDP and TCP 53")
+cluster_dns_peer = [
+    {
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+        "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+    }
+]
+if kamailio_dns[0].get("to") != cluster_dns_peer:
+    fail("Kamailio DNS authority must use combined kube-system and CoreDNS selectors")
+
+ingress = asterisk_spec.get("ingress") or []
+if ingress != [
+    {
+        "from": [
+            {
+                "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
+                "podSelector": {"matchLabels": {"utcp.io/network-role": "kamailio-signaling"}},
+            }
+        ],
+        "ports": [{"protocol": "UDP", "port": 5060}],
+    }
+]:
+    fail("Asterisk SIP ingress must remain exact Kamailio UDP 5060")
+
+egress = asterisk_spec.get("egress") or []
+if len(egress) != 2:
+    fail("Asterisk egress must contain exactly SIP and DNS")
+for rule in egress:
+    if not rule.get("to"):
+        fail("Asterisk egress must not be unrestricted")
+    rendered_rule = yaml.safe_dump(rule, sort_keys=True)
+    if "ipBlock" in rendered_rule or "0.0.0.0/0" in rendered_rule:
+        fail("Asterisk egress must not use ipBlock or broad CIDR")
+
+sip_rules = [
+    rule for rule in egress
+    if rule.get("ports") == [{"protocol": "UDP", "port": 5060}]
+]
+if sip_rules != [
+    {
+        "to": [
+            {
+                "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
+                "podSelector": {"matchLabels": {
+                    "app.kubernetes.io/component": "kamailio",
+                    "utcp.io/network-role": "kamailio-signaling",
+                }},
+            }
+        ],
+        "ports": [{"protocol": "UDP", "port": 5060}],
+    }
+]:
+    fail("Asterisk SIP egress must remain exact Kamailio UDP 5060")
+
+dns_rules = [rule for rule in egress if rule.get("ports") == dns_ports]
+if len(dns_rules) != 1:
+    fail("Asterisk DNS egress must expose exact UDP and TCP 53")
+if dns_rules[0].get("to") != kamailio_dns[0].get("to"):
+    fail("Asterisk DNS egress must mirror Kamailio cluster-DNS selector")
+PY
+}
+
+asterisk_dns_pass_case() {
+  local name="$1"
+  local rendered_security="$2"
+  local kamailio_configmap="${3:-$KAMAILIO_CONFIGMAP}"
+
+  if ! validate_asterisk_dns_policy "$rendered_security" "$kamailio_configmap" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
+    printf 'expected Asterisk DNS policy check to pass: %s\n' "$name" >&2
+    cat "$TMP_DIR/err" >&2
+    exit 1
+  fi
+}
+
+asterisk_dns_fail_case() {
+  local name="$1"
+  local expected="$2"
+  local rendered_security="$3"
+  local kamailio_configmap="${4:-$KAMAILIO_CONFIGMAP}"
+
+  if validate_asterisk_dns_policy "$rendered_security" "$kamailio_configmap" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
+    printf 'expected Asterisk DNS policy check to fail: %s\n' "$name" >&2
+    cat "$TMP_DIR/out" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$expected" "$TMP_DIR/err"; then
+    printf 'expected failure for %s to include: %s\n' "$name" "$expected" >&2
+    cat "$TMP_DIR/err" >&2
+    exit 1
+  fi
+}
+
+mutate_security_render() {
+  local file="$1"
+  local mutation="$2"
+
+  python3 - "$file" "$mutation" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+mutation = sys.argv[2]
+docs = [doc for doc in yaml.safe_load_all(path.read_text(encoding="utf-8")) if isinstance(doc, dict)]
+
+
+def policy(namespace: str, name: str) -> dict:
+    for doc in docs:
+        meta = doc.get("metadata") or {}
+        if doc.get("kind") == "NetworkPolicy" and meta.get("namespace") == namespace and meta.get("name") == name:
+            return doc
+    raise SystemExit(f"policy not found: {namespace}/{name}")
+
+
+asterisk = policy("utcp-runtime", "allow-asterisk-sip-from-kamailio")
+asterisk_spec = asterisk["spec"]
+kamailio = policy("utcp-platform", "allow-kamailio-signaling-required-traffic")
+kamailio_spec = kamailio["spec"]
+
+
+def asterisk_dns_rule() -> dict:
+    for rule in asterisk_spec.get("egress") or []:
+        ports = rule.get("ports") or []
+        if any(port.get("port") == 53 for port in ports):
+            return rule
+    raise SystemExit("Asterisk DNS rule not found")
+
+
+def asterisk_sip_rule() -> dict:
+    for rule in asterisk_spec.get("egress") or []:
+        if rule.get("ports") == [{"protocol": "UDP", "port": 5060}]:
+            return rule
+    raise SystemExit("Asterisk SIP rule not found")
+
+
+def kamailio_dns_rule() -> dict:
+    for rule in kamailio_spec.get("egress") or []:
+        ports = rule.get("ports") or []
+        if any(port.get("port") == 53 for port in ports):
+            return rule
+    raise SystemExit("Kamailio DNS rule not found")
+
+
+if mutation == "remove-udp-53":
+    asterisk_dns_rule()["ports"] = [port for port in asterisk_dns_rule()["ports"] if port != {"protocol": "UDP", "port": 53}]
+elif mutation == "remove-tcp-53":
+    asterisk_dns_rule()["ports"] = [port for port in asterisk_dns_rule()["ports"] if port != {"protocol": "TCP", "port": 53}]
+elif mutation == "change-dns-port":
+    asterisk_dns_rule()["ports"][0]["port"] = 5353
+elif mutation == "remove-dns-pod-selector":
+    asterisk_dns_rule()["to"][0].pop("podSelector", None)
+elif mutation == "remove-dns-namespace-selector":
+    asterisk_dns_rule()["to"][0].pop("namespaceSelector", None)
+elif mutation == "split-dns-selectors":
+    peer = asterisk_dns_rule()["to"][0]
+    asterisk_dns_rule()["to"] = [
+        {"namespaceSelector": peer["namespaceSelector"]},
+        {"podSelector": peer["podSelector"]},
+    ]
+elif mutation == "widen-kube-system-dns":
+    asterisk_dns_rule()["to"][0].pop("podSelector", None)
+elif mutation == "dns-ipblock":
+    asterisk_dns_rule()["to"] = [{"ipBlock": {"cidr": "10.43.0.10/32"}}]
+elif mutation == "dns-broad-cidr":
+    asterisk_dns_rule()["to"] = [{"ipBlock": {"cidr": "0.0.0.0/0"}}]
+elif mutation == "unrestricted-egress":
+    asterisk_spec.setdefault("egress", []).append({})
+elif mutation == "allow-secondary-asterisk":
+    asterisk_spec["podSelector"]["matchLabels"]["utcp.dev/runtime-node"] = "local-asterisk-ari-b"
+elif mutation == "remove-sip-egress":
+    asterisk_spec["egress"] = [
+        rule for rule in asterisk_spec.get("egress") or []
+        if rule.get("ports") != [{"protocol": "UDP", "port": 5060}]
+    ]
+elif mutation == "widen-sip-egress":
+    asterisk_sip_rule()["to"][0].pop("podSelector", None)
+elif mutation == "kamailio-dns-drift":
+    kamailio_dns_rule()["to"][0]["podSelector"]["matchLabels"]["k8s-app"] = "coredns"
+else:
+    raise SystemExit(f"unknown security mutation: {mutation}")
+
+path.write_text(yaml.safe_dump_all(docs, sort_keys=False), encoding="utf-8")
+PY
+}
+
+security_correct="$TMP_DIR/security.correct.yaml"
+kubectl kustomize "$SECURITY_SOURCE" > "$security_correct"
+asterisk_dns_pass_case "correct repository Asterisk DNS policy" "$security_correct"
+
+for mutation in \
+  remove-udp-53 \
+  remove-tcp-53 \
+  change-dns-port \
+  remove-dns-pod-selector \
+  remove-dns-namespace-selector \
+  split-dns-selectors \
+  widen-kube-system-dns \
+  dns-ipblock \
+  dns-broad-cidr \
+  unrestricted-egress \
+  allow-secondary-asterisk \
+  remove-sip-egress \
+  widen-sip-egress \
+  kamailio-dns-drift
+do
+  mutated="$TMP_DIR/security.$mutation.yaml"
+  cp "$security_correct" "$mutated"
+  mutate_security_render "$mutated" "$mutation"
+  case "$mutation" in
+    remove-udp-53|remove-tcp-53|change-dns-port)
+      expected="Asterisk DNS egress must expose exact UDP and TCP 53"
+      ;;
+    remove-dns-pod-selector|remove-dns-namespace-selector|split-dns-selectors|widen-kube-system-dns|kamailio-dns-drift)
+      expected="Asterisk DNS egress must mirror Kamailio cluster-DNS selector"
+      if [ "$mutation" = "kamailio-dns-drift" ]; then
+        expected="Kamailio DNS authority must use combined kube-system and CoreDNS selectors"
+      fi
+      ;;
+    dns-ipblock|dns-broad-cidr)
+      expected="Asterisk egress must not use ipBlock or broad CIDR"
+      ;;
+    unrestricted-egress)
+      expected="Asterisk egress must contain exactly SIP and DNS"
+      ;;
+    allow-secondary-asterisk)
+      expected="Asterisk policy must select only canonical Asterisk"
+      ;;
+    remove-sip-egress)
+      expected="Asterisk egress must contain exactly SIP and DNS"
+      ;;
+    widen-sip-egress)
+      expected="Asterisk SIP egress must remain exact Kamailio UDP 5060"
+      ;;
+    *)
+      expected="Asterisk DNS policy mutation rejected"
+      ;;
+  esac
+  asterisk_dns_fail_case "$mutation rejected" "$expected" "$mutated"
+done
+
+route_identity_ip="$TMP_DIR/kamailio-configmap.ip-route.yaml"
+sed 's/kamailio-sip-internal\.utcp-platform\.svc\.cluster\.local:5060/10.43.12.34:5060/g' \
+  "$KAMAILIO_CONFIGMAP" > "$route_identity_ip"
+asterisk_dns_fail_case "internal route-set IP literal rejected" \
+  "internal Kamailio route-set identity must remain Service DNS" \
+  "$security_correct" "$route_identity_ip"
 
 printf 'security config check regression tests passed\n'

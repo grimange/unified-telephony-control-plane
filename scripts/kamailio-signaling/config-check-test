@@ -318,13 +318,27 @@ def validate(state: dict[str, Any]) -> None:
         }],
         "ports": [{"protocol": "UDP", "port": 5060}],
     }], "Asterisk ingress must be exact Kamailio UDP 5060")
-    require((asterisk_policy.get("spec") or {}).get("egress") == [{
+    asterisk_egress = (asterisk_policy.get("spec") or {}).get("egress") or []
+    asterisk_sip_egress = {
         "to": [{
             "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
             "podSelector": {"matchLabels": {"app.kubernetes.io/component": "kamailio", "utcp.io/network-role": "kamailio-signaling"}},
         }],
         "ports": [{"protocol": "UDP", "port": 5060}],
-    }], "Asterisk egress must be exact Kamailio UDP 5060")
+    }
+    asterisk_dns_egress = {
+        "to": [{
+            "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}},
+            "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+        }],
+        "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}],
+    }
+    require(
+        len(asterisk_egress) == 2
+        and asterisk_sip_egress in asterisk_egress
+        and asterisk_dns_egress in asterisk_egress,
+        "Asterisk egress must be exact Kamailio UDP 5060 plus cluster-DNS UDP/TCP 53",
+    )
     require((asterisk_policy.get("spec") or {}).get("podSelector", {}).get("matchLabels", {}).get("utcp.dev/runtime-node") == "local-asterisk-ari", "Asterisk SIP policy must select only the canonical runtime")
     require(any(rule.get("from") == [{
         "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
