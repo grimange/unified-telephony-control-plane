@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "prove": "node ./prover.mjs"
+    "prove": "node ./prover.mjs",
+    "test:unit": "node ./sip-dialog-test.mjs"
   },
   "dependencies": {
     "@playwright/test": "1.61.1"

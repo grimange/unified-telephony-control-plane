@@ -26,6 +26,7 @@ const REQUIRED_RESULT_FIELDS = [
   'inboundRtpPackets',
   'inboundRtpBytes',
   'audioEnergy',
+  'audioEnergySource',
   'byeDirection',
   'finalSipResult',
   'cleanupResult',
@@ -59,7 +60,7 @@ const result = {
 
 let browser;
 let page;
-let chromiumProfile;
+let nssDatabasePath;
 
 try {
   if (!['browser-originated-bye', 'runtime-originated-bye'].includes(config.scenario)) {
@@ -67,14 +68,13 @@ try {
   }
 
   const gatewayAddress = await resolveGatewayAddress(config.gatewayService);
-  chromiumProfile = await prepareChromiumTrust();
+  nssDatabasePath = await prepareChromiumTrust();
   browser = await chromium.launch({
     headless: true,
     args: [
       '--use-fake-ui-for-media-stream',
       '--use-fake-device-for-media-stream',
       '--autoplay-policy=no-user-gesture-required',
-      `--user-data-dir=${chromiumProfile}`,
       `--host-resolver-rules=MAP app.utcp.local.test ${gatewayAddress},MAP sip.utcp.local.test ${gatewayAddress}`,
     ],
   });
@@ -105,6 +105,7 @@ try {
       'inboundRtpPackets',
       'inboundRtpBytes',
       'audioEnergy',
+      'audioEnergySource',
       'byeDirection',
       'finalSipResult',
       'cleanupResult',
@@ -186,17 +187,23 @@ try {
       throw new Error('SDP answer is not a WebRTC audio answer with rtcp-mux');
     }
     await pc.setRemoteDescription({ type: 'answer', sdp: remoteSdp });
-    const toTag = parseTag(header(response, 'To'));
-    const routeSet = parseRecordRoutes(response);
+    const dialog = createDialog({
+      response,
+      initialRequestUri: target,
+      callId,
+      localTag: fromTag,
+      inviteCseq: inviteCseq + 1,
+    });
     ws.send(buildRequest({
       method: 'ACK',
-      target,
+      target: dialog.remoteTarget,
       callId,
       fromTag,
-      toTag,
-      cseq: inviteCseq + 1,
+      toTag: dialog.remoteTag,
+      toUri: dialog.remoteUri,
+      cseq: dialog.inviteCseq,
       contact,
-      routeSet,
+      routeSet: dialog.routeSet,
       cfg,
     }));
 
@@ -214,13 +221,14 @@ try {
       byeDirection = 'browser';
       ws.send(buildRequest({
         method: 'BYE',
-        target,
+        target: dialog.remoteTarget,
         callId,
         fromTag,
-        toTag,
-        cseq: inviteCseq + 2,
+        toTag: dialog.remoteTag,
+        toUri: dialog.remoteUri,
+        cseq: dialog.inviteCseq + 1,
         contact,
-        routeSet,
+        routeSet: dialog.routeSet,
         cfg,
       }));
       const byeOk = await waitForMessage(messages, (message) => sipStatus(message) === 200 && /CSeq:\s*3 BYE/i.test(message), cfg.callTimeoutMs, messageCursor);
@@ -258,6 +266,7 @@ try {
       inboundRtpPackets: after.inboundPackets,
       inboundRtpBytes: after.inboundBytes,
       audioEnergy: after.audioEnergy,
+      audioEnergySource: after.audioEnergySource,
       jitter: after.jitter,
       packetsLost: after.packetsLost,
       byeDirection,
@@ -272,13 +281,13 @@ try {
     }
     return output;
 
-    function buildRequest({ method, target, callId, fromTag, toTag, cseq, contact, routeSet = [], authorization, extraHeaders = [], body = '', cfg }) {
+    function buildRequest({ method, target, toUri = target, callId, fromTag, toTag, cseq, contact, routeSet = [], authorization, extraHeaders = [], body = '', cfg }) {
       const branch = `z9hG4bK-${Math.random().toString(16).slice(2)}`;
       const lines = [
         `${method} ${target} SIP/2.0`,
         `Via: SIP/2.0/WS ${location.host};branch=${branch}`,
         `Max-Forwards: 70`,
-        `To: <${target}>${toTag ? `;tag=${toTag}` : ''}`,
+        `To: <${toUri}>${toTag ? `;tag=${toTag}` : ''}`,
         `From: <sip:${cfg.sipUsername}@${cfg.sipDomain}>;tag=${fromTag}`,
         `Call-ID: ${callId}`,
         `CSeq: ${cseq} ${method}`,
@@ -340,9 +349,8 @@ try {
           aggregate.inboundBytes += report.bytesReceived || 0;
           aggregate.jitter += report.jitter || 0;
           aggregate.packetsLost += report.packetsLost || 0;
-        }
-        if (report.type === 'track' && report.kind === 'audio') {
-          aggregate.audioEnergy += report.totalAudioEnergy || report.audioLevel || 0;
+          aggregate.audioEnergy += report.totalAudioEnergy || 0;
+          aggregate.audioEnergySource = 'inbound-rtp.totalAudioEnergy';
         }
         if (report.type === 'transport') {
           aggregate.dtlsState = report.dtlsState || aggregate.dtlsState;
@@ -374,6 +382,8 @@ try {
       if (after.inboundPackets <= before.inboundPackets) failures.push('inbound RTP packet count did not increase');
       if (after.inboundBytes <= before.inboundBytes) failures.push('inbound RTP byte count did not increase');
       if (after.audioEnergy <= before.audioEnergy) failures.push('received audio energy did not increase');
+      if (after.audioEnergy <= 0) failures.push('received audio energy was not positive');
+      if (after.audioEnergySource !== 'inbound-rtp.totalAudioEnergy') failures.push('audio energy source is not inbound-rtp.totalAudioEnergy');
       if (!after.selectedCandidatePair) failures.push('no selected ICE candidate pair');
       if (failures.length > 0) throw new Error(failures.join('; '));
     }
@@ -391,15 +401,18 @@ try {
     }
 
     async function waitForMessage(messages, predicate, timeoutMs, cursorState) {
+      let matched;
       await waitFor(() => {
         for (; cursorState.value < messages.length; cursorState.value += 1) {
           const message = messages[cursorState.value];
-          if (predicate(message)) return true;
+          if (predicate(message)) {
+            matched = message;
+            cursorState.value += 1;
+            return true;
+          }
         }
         return false;
       }, timeoutMs, 'SIP message');
-      const matched = messages[cursorState.value];
-      cursorState.value += 1;
       return matched;
     }
 
@@ -425,8 +438,27 @@ try {
       const match = value.match(/;tag=([^;\s]+)/i);
       return match ? match[1] : '';
     }
-    function parseRecordRoutes(message) {
-      return (message.match(/^Record-Route:\s*(.*)$/gmi) || []).map((line) => line.replace(/^Record-Route:\s*/i, '').trim()).reverse();
+    function parseContactUri(message) {
+      const value = header(message, 'Contact');
+      const match = value.match(/<((?:sips?):[^>\s]+)>/i) || value.match(/((?:sips?):[^;\s]+)/i);
+      if (!match) throw new Error('successful SIP response is missing a valid Contact URI');
+      return match[1];
+    }
+    function createDialog({ response, initialRequestUri, callId, localTag, inviteCseq }) {
+      const to = header(response, 'To');
+      const remoteUri = (to.match(/<([^>]+)>/) || [])[1];
+      const remoteTag = parseTag(to);
+      if (!remoteUri || !remoteTag) throw new Error('successful SIP response is missing a valid To dialog identity');
+      return {
+        callId,
+        localTag,
+        remoteTag,
+        remoteUri,
+        remoteTarget: parseContactUri(response),
+        routeSet: (response.match(/^Record-Route:\s*(.*)$/gmi) || []).map((line) => line.replace(/^Record-Route:\s*/i, '').trim()).reverse(),
+        inviteCseq,
+        initialRequestUri,
+      };
     }
     function addressClass(address) {
       if (/^10\.|^172\.(1[6-9]|2\d|3[01])\.|^192\.168\./.test(address)) return 'private';
@@ -454,7 +486,7 @@ try {
 } finally {
   if (page) await page.close().catch(() => {});
   if (browser) await browser.close().catch(() => {});
-  if (chromiumProfile) await fs.rm(chromiumProfile, { recursive: true, force: true }).catch(() => {});
+  if (nssDatabasePath) await fs.rm(nssDatabasePath, { recursive: true, force: true }).catch(() => {});
 }
 
 function env(name, fallback) {
@@ -476,48 +508,31 @@ async function resolveGatewayAddress(serviceName) {
 
 async function naturalLogin(page) {
   await page.goto(`${config.applicationUrl}/login`, { waitUntil: 'domcontentloaded', timeout: config.callTimeoutMs });
-  await page.locator('#app').waitFor({ state: 'visible', timeout: config.callTimeoutMs });
-  const email = await firstLocator(page, ['input[name="email"]', 'input[type="email"]']);
-  const password = await firstLocator(page, ['input[name="password"]', 'input[type="password"]']);
+  const email = page.locator('input[type="email"]').first();
+  const password = page.locator('input[type="password"]').first();
+  const submit = page.locator('button[type="submit"]').first();
   await email.waitFor({ state: 'visible', timeout: config.callTimeoutMs });
+  await waitForLocatorReady(email, 'login email');
   await password.waitFor({ state: 'visible', timeout: config.callTimeoutMs });
+  await waitForLocatorReady(password, 'login password');
+  await submit.waitFor({ state: 'visible', timeout: config.callTimeoutMs });
+  await waitForLocatorReady(submit, 'login submit');
   await email.fill(config.loginEmail);
   await password.fill(config.loginPassword);
   await Promise.all([
     page.waitForURL((url) => !url.pathname.endsWith('/login'), { timeout: config.callTimeoutMs }),
-    clickFirst(page, ['button[type="submit"]', 'text=Sign in', 'text=Log in']),
+    submit.click(),
   ]);
-  await page.locator('#app').waitFor({ state: 'visible', timeout: config.callTimeoutMs });
+  await page.locator('.app-shell, nav, [data-testid="app-shell"]').first().waitFor({ state: 'visible', timeout: config.callTimeoutMs });
 }
 
-async function firstLocator(page, selectors) {
-  for (const selector of selectors) {
-    const locator = page.locator(selector).first();
-    if (await locator.count()) return locator;
+async function waitForLocatorReady(locator, label) {
+  const deadline = Date.now() + config.callTimeoutMs;
+  while (Date.now() < deadline) {
+    if (await locator.isEnabled() && await locator.isEditable().catch(() => true)) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`none of the expected login selectors exists: ${selectors.join(', ')}`);
-}
-
-async function fillFirst(page, selectors, value) {
-  for (const selector of selectors) {
-    const locator = page.locator(selector).first();
-    if (await locator.count()) {
-      await locator.fill(value);
-      return;
-    }
-  }
-  throw new Error(`none of the expected login selectors exists: ${selectors.join(', ')}`);
-}
-
-async function clickFirst(page, selectors) {
-  for (const selector of selectors) {
-    const locator = page.locator(selector).first();
-    if (await locator.count()) {
-      await locator.click();
-      return;
-    }
-  }
-  throw new Error(`none of the expected login submit selectors exists: ${selectors.join(', ')}`);
+  throw new Error(`timed out waiting for ${label} to be enabled and editable`);
 }
 
 function redactConfigForBrowser(raw) {
@@ -536,11 +551,13 @@ function redactConfigForBrowser(raw) {
 }
 
 async function prepareChromiumTrust() {
-  const profile = await fs.mkdtemp(path.join('/home/ubuntu', 'chromium-profile-'));
-  const nssDb = `sql:${profile}`;
+  const databaseDir = path.join(process.env.HOME || '/home/ubuntu', '.pki', 'nssdb');
+  await fs.rm(databaseDir, { recursive: true, force: true });
+  await fs.mkdir(databaseDir, { recursive: true, mode: 0o700 });
+  const nssDb = `sql:${databaseDir}`;
   await execFile('certutil', ['-N', '-d', nssDb, '--empty-password']);
   await execFile('certutil', ['-A', '-d', nssDb, '-n', 'UTCP local public CA', '-t', 'C,,', '-i', '/etc/ssl/certs/utcp-local-ca.crt']);
-  return profile;
+  return databaseDir;
 }
 
 function assertStructuredResult(output) {
@@ -554,6 +571,9 @@ function assertStructuredResult(output) {
   }
   if (output.inboundRtpPackets <= 0 || output.inboundRtpBytes <= 0 || output.audioEnergy <= 0) {
     throw new Error('SDP-only success rejected: inbound RTP and audio energy were not proven');
+  }
+  if (output.audioEnergySource !== 'inbound-rtp.totalAudioEnergy') {
+    throw new Error('structured result audio energy source is invalid');
   }
 }
 

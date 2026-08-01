@@ -8,6 +8,11 @@ COPY tools/t3-media-prover/package.json ./
 RUN npm install --omit=dev --no-audit --no-fund --ignore-scripts \
     && npm cache clean --force \
     && test "$(node -p "require('./package.json').dependencies['@playwright/test']")" = "$T3_MEDIA_PROVER_PLAYWRIGHT_VERSION"
+USER root
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes libnss3-tools \
+    && rm -rf /var/lib/apt/lists/* \
+    && certutil -H >/dev/null 2>&1
 COPY tools/t3-media-prover/prover.mjs ./prover.mjs
 
 USER 1000:1000

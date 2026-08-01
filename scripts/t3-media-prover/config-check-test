@@ -224,6 +224,60 @@ elif mutation == "public-media-advertisement":
     }
     dump_yaml(overlay / "udp-route.yaml", [route])
     add_resource("udp-route.yaml")
+elif mutation == "remove-libnss3-tools":
+    source = (tool / "Dockerfile").read_text(encoding="utf-8").replace("apt-get install --no-install-recommends --yes libnss3-tools", "apt-get install --no-install-recommends --yes ca-certificates")
+    (tool / "Dockerfile").write_text(source, encoding="utf-8")
+elif mutation == "remove-certutil-check":
+    source = (tool / "Dockerfile").read_text(encoding="utf-8").replace("    && certutil -H >/dev/null 2>&1\n", "")
+    (tool / "Dockerfile").write_text(source, encoding="utf-8")
+elif mutation == "nss-outside-home":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("'.pki', 'nssdb'", "'chromium-profile'")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "user-data-dir":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("'--use-fake-ui-for-media-stream',", "'--user-data-dir=/tmp/profile',\n      '--use-fake-ui-for-media-stream',")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "tls-bypass":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("headless: true,", "headless: true,\n    ignoreHTTPSErrors: true,")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "cert-bypass-flag":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("'--use-fake-ui-for-media-stream',", "'--ignore-certificate-errors',\n      '--use-fake-ui-for-media-stream',")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "private-key-import":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8") + "\nawait execFile('certutil', ['-K']);\n"
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "login-app-only":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("page.locator('input[type=\"email\"]')", "page.locator('#app')")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "login-count":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("await email.fill", "await email.count();\n  await email.fill")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "remove-authenticated-state":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("page.waitForURL((url) => !url.pathname.endsWith('/login'), { timeout: config.callTimeoutMs }),", "Promise.resolve(),")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "track-energy":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("if (report.type === 'inbound-rtp' && report.kind === 'audio') {", "if (report.type === 'track' && report.kind === 'audio') {", 1)
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "remove-energy-assertion":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("if (after.audioEnergy <= before.audioEnergy) failures.push('received audio energy did not increase');", "")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "remove-inbound-assertions":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("if (after.inboundPackets <= before.inboundPackets) failures.push('inbound RTP packet count did not increase');", "").replace("if (after.inboundBytes <= before.inboundBytes) failures.push('inbound RTP byte count did not increase');", "")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "original-dialog-target":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("target: dialog.remoteTarget", "target", 1)
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "remove-route-set":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("routeSet: dialog.routeSet", "routeSet: []")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "remove-contact-failure":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("successful SIP response is missing a valid Contact URI", "contact accepted")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "provider-target":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8") + "\nconst providerTarget = 'sip:asterisk-ari';\n"
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "wrong-cseq":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("cseq: dialog.inviteCseq + 1", "cseq: dialog.inviteCseq")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
 else:
     raise RuntimeError(f"unknown mutation {mutation}")
 PY
@@ -260,5 +314,23 @@ fail_case "removing cleanup fails" "browser prover script is missing required ma
 fail_case "removing execution timeout fails" "proof Job must have a bounded activeDeadlineSeconds" "remove-timeout"
 fail_case "adding provider media authority fails" "browser prover script must not contain provider-specific media authority marker Asterisk channel" "provider-media-authority"
 fail_case "adding public media advertisement fails" "proof overlay must not create public routing or services" "public-media-advertisement"
+fail_case "removing libnss3-tools fails" "Dockerfile must install libnss3-tools during image build" "remove-libnss3-tools"
+fail_case "removing certutil check fails" "Dockerfile must perform a certutil presence check" "remove-certutil-check"
+fail_case "moving NSS database outside HOME fails" "browser prover script is missing required marker '.pki', 'nssdb'" "nss-outside-home"
+fail_case "adding user-data-dir fails" "browser prover must not pass --user-data-dir to chromium.launch()" "user-data-dir"
+fail_case "adding TLS bypass fails" "browser prover script must not contain provider-specific media authority marker ignoreHTTPSErrors" "tls-bypass"
+fail_case "adding certificate bypass flag fails" "browser prover script must not contain provider-specific media authority marker --ignore-certificate-errors" "cert-bypass-flag"
+fail_case "importing private key fails" "browser prover must import only public certificate material" "private-key-import"
+fail_case "using app-only login readiness fails" "natural login must auto-wait for the actual email form control" "login-app-only"
+fail_case "using count for login readiness fails" "natural login must not use #app-only or non-auto-waiting count() readiness" "login-count"
+fail_case "removing authenticated state wait fails" "natural login must wait for authenticated application state" "remove-authenticated-state"
+fail_case "restoring track energy fails" "browser prover must not use deprecated track statistics for audio energy" "track-energy"
+fail_case "removing audio energy assertion fails" "browser prover must retain inbound RTP and audio-energy assertions" "remove-energy-assertion"
+fail_case "removing inbound assertions fails" "browser prover must retain inbound RTP and audio-energy assertions" "remove-inbound-assertions"
+fail_case "reusing original dialog target fails" "ACK and BYE must use the successful response Contact remote target" "original-dialog-target"
+fail_case "removing route-set preservation fails" "ACK and BYE must preserve the established route set" "remove-route-set"
+fail_case "removing Contact failure handling fails" "browser prover script is missing required marker successful SIP response is missing a valid Contact URI" "remove-contact-failure"
+fail_case "hard-coding provider target fails" "browser prover must not hard-code a provider-specific dialog target" "provider-target"
+fail_case "incorrect CSeq handling fails" "BYE must use the next valid local CSeq" "wrong-cseq"
 
 printf 'T3-S2B media prover config mutation tests passed\n'

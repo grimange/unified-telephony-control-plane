@@ -39,6 +39,8 @@ grep -Fq "USER 1000:1000" "$TOOL_DIR/Dockerfile" || fail "Dockerfile must run as
 if grep -Eq 'playwright install|:latest|chromium:latest' "$TOOL_DIR/Dockerfile"; then
   fail "Dockerfile must not download an unpinned browser or use latest"
 fi
+grep -Fq 'apt-get install --no-install-recommends --yes libnss3-tools' "$TOOL_DIR/Dockerfile" || fail "Dockerfile must install libnss3-tools during image build"
+grep -Fq 'certutil -H' "$TOOL_DIR/Dockerfile" || fail "Dockerfile must perform a certutil presence check"
 
 python3 - "$TOOL_DIR/package.json" "$T3_MEDIA_PROVER_PLAYWRIGHT_VERSION" <<'PY'
 from __future__ import annotations
@@ -285,7 +287,6 @@ required_source_markers = [
     "packetsReceived",
     "bytesReceived",
     "totalAudioEnergy",
-    "audioLevel",
     "SDP-only success rejected",
     "browser-originated-bye",
     "runtime-originated-bye",
@@ -298,6 +299,15 @@ required_source_markers = [
     "ws.close()",
     "certutil",
     "UTCP local public CA",
+    "'.pki', 'nssdb'",
+    "inbound-rtp.totalAudioEnergy",
+    "remoteTarget",
+    "parseContactUri",
+    "successful SIP response is missing a valid Contact URI",
+    "createDialog",
+    "initialRequestUri",
+    "routeSet",
+    "CSeq",
     "document.body.dataset.utcpMediaReady",
     "cursorState.value",
 ]
@@ -307,6 +317,32 @@ for marker in required_source_markers:
 for forbidden in [r"\bARI\b", r"\bAMI\b", "asterisk channel", "Asterisk channel", "PJSIP channel", "fs_cli", "FreeSWITCH ESL", "hostNetwork", "ignoreHTTPSErrors", "--ignore-certificate-errors", "max-bundle"]:
     if re.search(forbidden, source):
         fail(f"browser prover script must not contain provider-specific media authority marker {forbidden}")
+if "--user-data-dir" in source:
+    fail("browser prover must not pass --user-data-dir to chromium.launch()")
+if "certutil -K" in source or "['-K']" in source or "private key" in source.lower():
+    fail("browser prover must import only public certificate material")
+if "report.type === 'track'" in source or "report.type == 'track'" in source:
+    fail("browser prover must not use deprecated track statistics for audio energy")
+if "input[type=\"email\"]" not in source or "waitForLocatorReady" not in source:
+    fail("natural login must auto-wait for the actual email form control")
+if "locator('#app')" in source or ".count()" in source:
+    fail("natural login must not use #app-only or non-auto-waiting count() readiness")
+if "aggregate.audioEnergySource = 'inbound-rtp.totalAudioEnergy'" not in source:
+    fail("structured result must identify inbound-rtp.totalAudioEnergy")
+if "initialRequestUri" not in source or "remoteTarget" not in source or source.count("target: dialog.remoteTarget") < 2:
+    fail("ACK and BYE must use the successful response Contact remote target")
+if "initialRequestUri" in source and "target: dialog.remoteTarget" not in source:
+    fail("original INVITE Request-URI must not be reused for in-dialog requests")
+if source.count("routeSet: dialog.routeSet") < 2:
+    fail("ACK and BYE must preserve the established route set")
+if "cseq: dialog.inviteCseq + 1" not in source:
+    fail("BYE must use the next valid local CSeq")
+if "page.waitForURL((url) => !url.pathname.endsWith('/login')" not in source or ".app-shell, nav" not in source:
+    fail("natural login must wait for authenticated application state")
+if "received audio energy did not increase" not in source or "inbound RTP packet count did not increase" not in source or "inbound RTP byte count did not increase" not in source:
+    fail("browser prover must retain inbound RTP and audio-energy assertions")
+if "sip:asterisk" in source.lower() or "asterisk-ari" in source.lower():
+    fail("browser prover must not hard-code a provider-specific dialog target")
 if "Authorization:" in source and "console.log" in source[source.find("Authorization:") : source.find("Authorization:") + 250]:
     fail("browser prover script must not log Authorization headers")
 if "Complete=True" not in runner or "Failed=True" not in runner or "logs" not in runner or "containerStatuses" not in runner:
