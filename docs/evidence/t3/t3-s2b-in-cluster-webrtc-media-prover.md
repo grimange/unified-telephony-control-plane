@@ -335,8 +335,39 @@ advertised-address, NAT/firewall, and public media-edge design.
 
 `T3-S2A = Complete`.
 
-`T3-S2B in-cluster WebRTC media-flow proof = prover corrected in repository,
-live proof pending`.
+`T3-S2B in-cluster WebRTC media-flow proof = executed and INCOMPLETE`. See
+`docs/evidence/t3/t3-s2b-in-cluster-webrtc-media-live-proof.md`.
+
+The live execution proved ICE, DTLS-SRTP, and real outbound browser-to-rtpengine
+media through the committed proof overlay, and re-confirmed SDP mediation
+against a real Chromium WebRTC client. It did **not** prove inbound echo,
+because `PRODUCT_DEFECT-15` blocks RTP between rtpengine and the reference
+runtime: `utcp-runtime` permits no media ingress to the runtime Pod,
+`allow-asterisk-sip-from-kamailio` confines runtime egress to SIP `5060` plus
+DNS, and `allow-rtpengine-media` egress to `asterisk-ari` is scoped to UDP
+`40000-40099` rather than the runtime's configured `10000-20000` RTP range.
+
+Six proof-harness defects in this prover are open and must be corrected before
+the proof is re-run:
+
+```text
+PROOF_HARNESS_DEFECT-1  no local-CA trust; natural login fails
+                        net::ERR_CERT_AUTHORITY_INVALID
+PROOF_HARNESS_DEFECT-2  runner waits only on condition=complete for 480s while
+                        the Job sets ttlSecondsAfterFinished: 300, so failed
+                        runs are collected before their logs and result are read
+PROOF_HARNESS_DEFECT-3  waitForMessage returns messages[cursor - 1], the message
+                        before the match
+PROOF_HARNESS_DEFECT-4  naturalLogin races Vue SPA hydration
+PROOF_HARNESS_DEFECT-5  bundlePolicy: 'max-bundle' rejects rtpengine's answer,
+                        which carries no a=group:BUNDLE
+PROOF_HARNESS_DEFECT-6  neither the runner nor job.yaml sets
+                        UTCP_T3_MEDIA_PROVER_SCENARIO, so Scenario B is
+                        unreachable through the committed entry point
+```
+
+The proof-only NetworkPolicies were sufficient and correctly selected; no
+`PROOF_POLICY_DEFECT` was found.
 
 `T3-S2C second-runtime parity, preferably FreeSWITCH = Not Started`.
 
