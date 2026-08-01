@@ -110,8 +110,10 @@ def validate(state: dict[str, Any]) -> None:
     request_block = block_after(kamailio, "request_route")
     application_block = block_after(kamailio, "route[APPLICATION_DIALOG]")
     within_block = block_after(kamailio, "route[WITHINDLG]")
+    within_loose_route_block = block_after(within_block, "if (loose_route())")
     asterisk_block = block_after(kamailio, "route[ASTERISK_RELAY]")
     failure_block = block_after(kamailio, "failure_route[ASTERISK_UNAVAILABLE]")
+    register_block = block_after(kamailio, 'if ($rm == "REGISTER")')
 
     require(re.search(r"^\s*autoload\s*=\s*no\s*$", modules, re.M) is not None, "autoload=no required")
     require("autoload = yes" not in modules, "autoload=yes forbidden")
@@ -191,17 +193,34 @@ def validate(state: dict[str, Any]) -> None:
     )
     for forbidden in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage"):
         require(forbidden not in kamailio, f"rtpengine operation forbidden in T3-S2A: {forbidden}")
+    for forbidden in (
+        "set_contact_alias",
+        "fix_nated_contact",
+        "fix_nated_register",
+        "loadmodule \"path.so\"",
+        "add_path",
+        "path(",
+        "outbound",
+        "gruu",
+    ):
+        require(forbidden not in kamailio.lower(), f"forbidden WebSocket dialog authority introduced: {forbidden}")
     for token in (
         'if ($rm == "REGISTER")',
         'save("location", "0x04")',
         'loadmodule "rr.so"',
         'loadmodule "siputils.so"',
+        'loadmodule "nathelper.so"',
         'route[APPLICATION_DIALOG]',
         'route[WITHINDLG]',
         'route[ASTERISK_RELAY]',
         'is_method("INVITE|ACK|CANCEL|BYE|UPDATE")',
         'www_authorize("$fd", "kamailio_signaling_auth_view")',
         'record_route()',
+        'if ($proto == "WS" || $proto == "WSS")',
+        'add_contact_alias()',
+        'result=websocket_contact_alias_failed',
+        'handle_ruri_alias()',
+        'result=invalid_dialog_contact_alias',
         'has_totag()',
         'loose_route()',
         'if ($rm == "ACK")',
@@ -233,8 +252,47 @@ def validate(state: dict[str, Any]) -> None:
     require('if ($rd != "sip.utcp.local.test")' not in application_block, "initial domain validation must not run inside application dialog route")
     require("loose_route()" in within_block, "WITHINDLG must use loose_route")
     require('www_authorize("$fd", "kamailio_signaling_auth_view")' not in within_block, "WITHINDLG must not authenticate as an initial request")
-    require("route(ASTERISK_RELAY)" not in within_block and "$du =" not in within_block, "WITHINDLG must not repeat Asterisk destination selection")
+    require("route(ASTERISK_RELAY)" not in within_block and re.search(r"\$du\s*=\s*\"sip:", within_block) is None, "WITHINDLG must not repeat Asterisk destination selection")
     require('result=initial_foreign_domain' in kamailio and 'result=foreign_domain' not in kamailio, "initial domain rejection label required")
+    require(kamailio.count("add_contact_alias()") == 1, "exactly one initial WebSocket Contact alias creation required")
+    require(kamailio.count("handle_ruri_alias()") == 1, "exactly one established-dialog alias consumption required")
+    require("add_contact_alias()" not in register_block and "handle_ruri_alias()" not in register_block, "REGISTER route must not use dialog alias helpers")
+    require("add_contact_alias()" not in request_block and "handle_ruri_alias()" not in request_block, "request_route must not run dialog alias helpers directly")
+    require("handle_ruri_alias()" not in application_block, "initial requests must not consume R-URI aliases")
+    require("add_contact_alias()" not in within_block, "sequential requests must not append Contact aliases")
+    require(
+        'if ($proto == "UDP")' not in application_block and 'if (true)' not in application_block,
+        "Contact aliasing must remain guarded by WS/WSS transport",
+    )
+    require_in_order(
+        application_block,
+        [
+            'if ($rm == "ACK")',
+            'if ($rm != "INVITE")',
+            'www_authorize("$fd", "kamailio_signaling_auth_view")',
+            'if ($au != $fU)',
+            'if ($proto == "WS" || $proto == "WSS")',
+            'if (!add_contact_alias())',
+            'result=websocket_contact_alias_failed method=$rm call_id=$ci',
+            'sl_send_reply("400", "Bad Request")',
+            "exit;",
+            "record_route()",
+            "route(ASTERISK_RELAY)",
+        ],
+        "route[APPLICATION_DIALOG]",
+    )
+    require_in_order(
+        within_loose_route_block,
+        [
+            'if ($du == "")',
+            'if (!handle_ruri_alias())',
+            'result=invalid_dialog_contact_alias method=$rm call_id=$ci',
+            'sl_send_reply("400", "Bad Request")',
+            "exit;",
+            "t_relay()",
+        ],
+        "route[WITHINDLG]",
+    )
     require_in_order(asterisk_block, ['$du = "sip:asterisk-sip.utcp-runtime.svc.cluster.local:5060;transport=udp"', 't_on_failure("ASTERISK_UNAVAILABLE")', "t_relay()"], "route[ASTERISK_RELAY]")
     require("t_reply(\"503\", \"Application Runtime Unavailable\")" in asterisk_block, "immediate relay failure must use committed 503")
     require("t_check_status(\"408\")" in failure_block, "failure route must match timeout/generated 408 only")
@@ -456,6 +514,88 @@ def move_initial_domain_before_has_totag(state: dict[str, Any]) -> None:
     set_kamailio_config(state, config)
 
 
+ALIAS_CREATE_BLOCK = '''    if ($proto == "WS" || $proto == "WSS") {
+        if (!add_contact_alias()) {
+            xlog("L_WARN", "kamailio_application_dialog_rejected result=websocket_contact_alias_failed method=$rm call_id=$ci\\n");
+            sl_send_reply("400", "Bad Request");
+            exit;
+        }
+    }
+
+'''
+
+ALIAS_CONSUME_BLOCK = '''        if ($du == "") {
+            if (!handle_ruri_alias()) {
+                xlog("L_WARN", "kamailio_application_dialog_rejected result=invalid_dialog_contact_alias method=$rm call_id=$ci\\n");
+                sl_send_reply("400", "Bad Request");
+                exit;
+            }
+        }
+
+'''
+
+
+def remove_alias_create_block(state: dict[str, Any]) -> None:
+    set_kamailio_config(state, state["kamailio"].replace(ALIAS_CREATE_BLOCK, "", 1), update_checksum=True)
+
+
+def move_alias_creation_before_authentication(state: dict[str, Any]) -> None:
+    config = state["kamailio"].replace(ALIAS_CREATE_BLOCK, "", 1)
+    config = config.replace('    if (!www_authorize("$fd", "kamailio_signaling_auth_view")) {', ALIAS_CREATE_BLOCK + '    if (!www_authorize("$fd", "kamailio_signaling_auth_view")) {', 1)
+    set_kamailio_config(state, config, update_checksum=True)
+
+
+def move_alias_creation_after_record_route(state: dict[str, Any]) -> None:
+    config = state["kamailio"].replace(ALIAS_CREATE_BLOCK, "", 1)
+    config = config.replace("    record_route();\n", "    record_route();\n" + ALIAS_CREATE_BLOCK, 1)
+    set_kamailio_config(state, config, update_checksum=True)
+
+
+def move_alias_creation_after_t_relay(state: dict[str, Any]) -> None:
+    config = state["kamailio"].replace(ALIAS_CREATE_BLOCK, "", 1)
+    config = config.replace('    if (!t_relay()) {\n', '    if (!t_relay()) {\n' + ALIAS_CREATE_BLOCK, 1)
+    set_kamailio_config(state, config, update_checksum=True)
+
+
+def remove_alias_failure_exit(state: dict[str, Any]) -> None:
+    failure_block = '''            sl_send_reply("400", "Bad Request");
+            exit;
+'''
+    set_kamailio_config(state, state["kamailio"].replace(failure_block, '                sl_send_reply("400", "Bad Request");\n', 1), update_checksum=True)
+
+
+def remove_alias_consume_block(state: dict[str, Any]) -> None:
+    set_kamailio_config(state, state["kamailio"].replace(ALIAS_CONSUME_BLOCK, "", 1), update_checksum=True)
+
+
+def move_alias_consumption_before_loose_route(state: dict[str, Any]) -> None:
+    config = state["kamailio"].replace(ALIAS_CONSUME_BLOCK, "", 1)
+    config = config.replace("route[WITHINDLG] {\n", "route[WITHINDLG] {\n" + ALIAS_CONSUME_BLOCK, 1)
+    set_kamailio_config(state, config, update_checksum=True)
+
+
+def move_alias_consumption_after_t_relay(state: dict[str, Any]) -> None:
+    config = state["kamailio"].replace(ALIAS_CONSUME_BLOCK, "", 1)
+    config = config.replace("        if (!t_relay()) {\n", "        if (!t_relay()) {\n" + ALIAS_CONSUME_BLOCK, 1)
+    set_kamailio_config(state, config, update_checksum=True)
+
+
+def remove_alias_consume_du_guard(state: dict[str, Any]) -> None:
+    set_kamailio_config(state, state["kamailio"].replace('        if ($du == "") {\n', '        if (true) {\n', 1), update_checksum=True)
+
+
+def remove_invalid_alias_failure_exit(state: dict[str, Any]) -> None:
+    failure_block = '''                sl_send_reply("400", "Bad Request");
+                exit;
+'''
+    config = state["kamailio"]
+    index = config.find(failure_block)
+    if index < 0:
+        raise RuntimeError("test setup could not find invalid alias failure exit")
+    config = config[:index] + '                sl_send_reply("400", "Bad Request");\n' + config[index + len(failure_block):]
+    set_kamailio_config(state, config, update_checksum=True)
+
+
 def pass_case(name: str, state: dict[str, Any]) -> None:
     try:
         validate(state)
@@ -538,6 +678,27 @@ fail_case("moving initial domain validation before has_totag fails", move_initia
 fail_case("removing request_route WITHINDLG dispatch fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('    if (has_totag()) {\n        route(WITHINDLG);\n        exit;\n    }\n\n', "")))
 fail_case("sending established requests through initial authentication fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("route(WITHINDLG);", "route(APPLICATION_DIALOG);", 1)))
 fail_case("removing initial foreign-domain rejection fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('    if ($rd != "sip.utcp.local.test") {\n        xlog("L_WARN", "kamailio_registration_rejected result=initial_foreign_domain\\n");\n        sl_send_reply("403", "Forbidden");\n        exit;\n    }\n\n', "")))
+fail_case("removing WebSocket Contact alias creation fails", remove_alias_create_block)
+fail_case("using set_contact_alias instead of add_contact_alias fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("add_contact_alias()", "set_contact_alias()"), update_checksum=True))
+fail_case("moving WebSocket alias creation before authentication fails", move_alias_creation_before_authentication)
+fail_case("moving WebSocket alias creation after Record-Route fails", move_alias_creation_after_record_route)
+fail_case("moving WebSocket alias creation after relay fails", move_alias_creation_after_t_relay)
+fail_case("removing WebSocket transport guard fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('if ($proto == "WS" || $proto == "WSS")', "if (true)", 1), update_checksum=True))
+fail_case("aliasing Asterisk UDP requests fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('if ($proto == "WS" || $proto == "WSS")', 'if ($proto == "UDP")', 1), update_checksum=True))
+fail_case("adding duplicate Contact alias creation fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("record_route();", "add_contact_alias();\n        record_route();", 1), update_checksum=True))
+fail_case("removing Contact alias failure handling fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("if (!add_contact_alias())", "if (add_contact_alias())", 1), update_checksum=True))
+fail_case("allowing Contact alias failure to continue fails", remove_alias_failure_exit)
+fail_case("removing R-URI alias consumption fails", remove_alias_consume_block)
+fail_case("placing R-URI alias consumption before loose_route fails", move_alias_consumption_before_loose_route)
+fail_case("placing R-URI alias consumption after relay fails", move_alias_consumption_after_t_relay)
+fail_case("removing R-URI alias destination guard fails", remove_alias_consume_du_guard)
+fail_case("removing invalid-alias failure handling fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("if (!handle_ruri_alias())", "if (handle_ruri_alias())", 1), update_checksum=True))
+fail_case("falling back to DNS after invalid alias fails", remove_invalid_alias_failure_exit)
+fail_case("running alias consumption on initial request fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("record_route();", "handle_ruri_alias();\n        record_route();", 1), update_checksum=True))
+fail_case("running alias consumption in REGISTER fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('        if (!save("location", "0x04")) {', '        handle_ruri_alias();\n\n        if (!save("location", "0x04")) {', 1), update_checksum=True))
+fail_case("adding alias creation to REGISTER fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('        if (!save("location", "0x04")) {', '        add_contact_alias();\n\n        if (!save("location", "0x04")) {', 1), update_checksum=True))
+fail_case("adding Outbound Path GRUU authority fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('loadmodule "nathelper.so"', 'loadmodule "nathelper.so"\n    loadmodule "path.so"'), update_checksum=True))
+fail_case("allowing arbitrary initial alias routing fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('    if (!www_authorize("$fd", "kamailio_signaling_auth_view")) {', '    handle_ruri_alias();\n\n    if (!www_authorize("$fd", "kamailio_signaling_auth_view")) {', 1), update_checksum=True))
 fail_case("removing Kamailio UDP listener fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("listen=udp:0.0.0.0:5060 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060\n", ""), update_checksum=True))
 fail_case("changing Kamailio UDP listener to TCP fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("listen=udp:0.0.0.0:5060 advertise", "listen=tcp:0.0.0.0:5060 advertise"), update_checksum=True))
 fail_case("changing Kamailio UDP listener port fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("listen=udp:0.0.0.0:5060 advertise", "listen=udp:0.0.0.0:5062 advertise"), update_checksum=True))

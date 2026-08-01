@@ -190,8 +190,10 @@ if not kamailio_config:
 request_block = block_after(kamailio_config, "request_route")
 application_block = block_after(kamailio_config, "route[APPLICATION_DIALOG]")
 within_block = block_after(kamailio_config, "route[WITHINDLG]")
+within_loose_route_block = block_after(within_block, "if (loose_route())")
 asterisk_block = block_after(kamailio_config, "route[ASTERISK_RELAY]")
 failure_block = block_after(kamailio_config, "failure_route[ASTERISK_UNAVAILABLE]")
+register_block = block_after(kamailio_config, 'if ($rm == "REGISTER")')
 
 register_block_required = [
     'if ($rm == "REGISTER")',
@@ -208,10 +210,23 @@ for expected in register_block_required:
 for forbidden in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage"):
     if forbidden in kamailio_config:
         fail(f"T3-S2A must not include rtpengine operation {forbidden}")
+for forbidden in (
+    "set_contact_alias",
+    "fix_nated_contact",
+    "fix_nated_register",
+    "loadmodule \"path.so\"",
+    "add_path",
+    "path(",
+    "outbound",
+    "gruu",
+):
+    if forbidden in kamailio_config.lower():
+        fail(f"T3-S2A WebSocket dialog aliasing must not introduce {forbidden}")
 
 required_route_tokens = [
     'loadmodule "rr.so"',
     'loadmodule "siputils.so"',
+    'loadmodule "nathelper.so"',
     'modparam("rr", "enable_full_lr", 1)',
     'route(APPLICATION_DIALOG)',
     'route[APPLICATION_DIALOG]',
@@ -220,6 +235,11 @@ required_route_tokens = [
     'is_method("INVITE|ACK|CANCEL|BYE|UPDATE")',
     'if ($rm != "INVITE")',
     'record_route()',
+    'if ($proto == "WS" || $proto == "WSS")',
+    'add_contact_alias()',
+    'result=websocket_contact_alias_failed',
+    'handle_ruri_alias()',
+    'result=invalid_dialog_contact_alias',
     'has_totag()',
     'loose_route()',
     'if ($rm == "ACK")',
@@ -258,13 +278,55 @@ if "has_totag()" in application_block or 'if ($rd != "sip.utcp.local.test")' in 
     fail("established-dialog and initial domain routing must be owned by request_route")
 if 'result=foreign_domain' in kamailio_config or 'result=initial_foreign_domain' not in kamailio_config:
     fail("initial foreign-domain rejection must use the accurate initial_foreign_domain label")
-if any(token in within_block for token in ('www_authorize("$fd", "kamailio_signaling_auth_view")', 'record_route()', 'route(ASTERISK_RELAY)', "$du =")):
+if any(token in within_block for token in ('www_authorize("$fd", "kamailio_signaling_auth_view")', 'record_route()', 'route(ASTERISK_RELAY)')) or re.search(r"\$du\s*=\s*\"sip:", within_block):
     fail("WITHINDLG must not repeat initial authentication, Record-Route, or destination selection")
 if "loose_route()" not in within_block:
     fail("WITHINDLG must process Route headers with loose_route()")
 if 'sl_send_reply("404", "Not Found")' not in within_block:
     fail("malformed sequential requests must fail explicitly")
-require_in_order(application_block, ['if ($rm == "ACK")', 'if ($rm != "INVITE")', 'www_authorize("$fd", "kamailio_signaling_auth_view")', "record_route()", "route(ASTERISK_RELAY)"], "route[APPLICATION_DIALOG]")
+if kamailio_config.count("add_contact_alias()") != 1:
+    fail("initial WebSocket dialog path must add exactly one Contact alias")
+if kamailio_config.count("handle_ruri_alias()") != 1:
+    fail("established-dialog route must consume exactly one R-URI alias")
+if "add_contact_alias()" in register_block or "handle_ruri_alias()" in register_block:
+    fail("REGISTER route must remain free of WebSocket dialog alias operations")
+if "add_contact_alias()" in request_block or "handle_ruri_alias()" in request_block:
+    fail("request_route must dispatch authority and not run dialog alias helpers directly")
+if "handle_ruri_alias()" in application_block:
+    fail("initial application-dialog requests must not consume arbitrary R-URI aliases")
+if "add_contact_alias()" in within_block:
+    fail("established-dialog requests must not append Contact aliases")
+require_in_order(
+    application_block,
+    [
+        'if ($rm == "ACK")',
+        'if ($rm != "INVITE")',
+        'www_authorize("$fd", "kamailio_signaling_auth_view")',
+        'if ($au != $fU)',
+        'if ($proto == "WS" || $proto == "WSS")',
+        'if (!add_contact_alias())',
+        'result=websocket_contact_alias_failed method=$rm call_id=$ci',
+        'sl_send_reply("400", "Bad Request")',
+        "exit;",
+        "record_route()",
+        "route(ASTERISK_RELAY)",
+    ],
+    "route[APPLICATION_DIALOG]",
+)
+if 'if ($proto == "UDP")' in application_block or 'if (true)' in application_block:
+    fail("Contact alias creation must remain limited to WS/WSS initial application dialogs")
+require_in_order(
+    within_loose_route_block,
+    [
+        'if ($du == "")',
+        'if (!handle_ruri_alias())',
+        'result=invalid_dialog_contact_alias method=$rm call_id=$ci',
+        'sl_send_reply("400", "Bad Request")',
+        "exit;",
+        "t_relay()",
+    ],
+    "route[WITHINDLG]",
+)
 require_in_order(asterisk_block, ['$du = "sip:asterisk-sip.utcp-runtime.svc.cluster.local:5060;transport=udp"', 't_on_failure("ASTERISK_UNAVAILABLE")', "t_relay()"], "route[ASTERISK_RELAY]")
 if any(token in failure_block for token in ("append_branch", "t_relay()", "$du =", "rtpengine_", "record_route()", "www_authorize")):
     fail("ASTERISK_UNAVAILABLE failure route must not add branches, change destination, relay, rtpengine, or authenticate")
