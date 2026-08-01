@@ -8,9 +8,11 @@ KUBE_CONTEXT="${UTCP_KUBE_CONTEXT:-k3d-utcp-local}"
 NAMESPACE="utcp-proof"
 JOB_NAME="t3-media-prover"
 SECRET_NAME="t3-media-prover-credentials"
+SCENARIO_CONFIGMAP="t3-media-prover-scenario"
+CA_CONFIGMAP="t3-media-prover-local-ca"
 RESULT_DIR="${UTCP_T3_MEDIA_PROVER_RESULT_DIR:-$ROOT/.runtime/t3-media-prover}"
 RESULT_FILE="$RESULT_DIR/result.json"
-TIMEOUT="${UTCP_T3_MEDIA_PROVER_WAIT_TIMEOUT:-480s}"
+WAIT_TIMEOUT_SECONDS="$(printenv UTCP_T3_MEDIA_PROVER_WAIT_TIMEOUT_SECONDS || printf '480')"
 
 fail() {
   printf 't3 media prover run failed: %s\n' "$1" >&2
@@ -30,6 +32,10 @@ require_env UTCP_T3_MEDIA_PROVER_LOGIN_EMAIL
 require_env UTCP_T3_MEDIA_PROVER_LOGIN_PASSWORD
 require_env UTCP_T3_MEDIA_PROVER_SIP_USERNAME
 require_env UTCP_T3_MEDIA_PROVER_SIP_PASSWORD
+scenario="$(printenv UTCP_T3_MEDIA_PROVER_SCENARIO || true)"
+[ "$scenario" = "browser-originated-bye" ] || [ "$scenario" = "runtime-originated-bye" ] || fail "UTCP_T3_MEDIA_PROVER_SCENARIO must be browser-originated-bye or runtime-originated-bye"
+CA_CERT="$ROOT/.runtime/tls/utcp-local-ca.crt"
+[ -s "$CA_CERT" ] || fail "trusted local CA certificate is required at $CA_CERT"
 
 mkdir -p "$RESULT_DIR"
 rm -f "$RESULT_FILE"
@@ -41,6 +47,7 @@ kubectl_cmd() {
 cleanup() {
   set +e
   kubectl_cmd -n "$NAMESPACE" delete secret "$SECRET_NAME" --ignore-not-found=true >/dev/null 2>&1
+  kubectl_cmd -n "$NAMESPACE" delete configmap "$SCENARIO_CONFIGMAP" "$CA_CONFIGMAP" --ignore-not-found=true >/dev/null 2>&1
   kubectl_cmd delete -k "$OVERLAY_DIR" --ignore-not-found=true >/dev/null 2>&1
   kubectl_cmd delete namespace "$NAMESPACE" --ignore-not-found=true --wait=false >/dev/null 2>&1
 }
@@ -59,13 +66,26 @@ kubectl_cmd -n "$NAMESPACE" create secret generic "$SECRET_NAME" \
   --from-literal=UTCP_T3_MEDIA_PROVER_SIP_PASSWORD="$UTCP_T3_MEDIA_PROVER_SIP_PASSWORD" \
   --dry-run=client -o yaml | kubectl_cmd apply -f -
 
+kubectl_cmd -n "$NAMESPACE" create configmap "$SCENARIO_CONFIGMAP" \
+  --from-literal=scenario="$scenario" \
+  --dry-run=client -o yaml | kubectl_cmd apply -f -
+kubectl_cmd -n "$NAMESPACE" create configmap "$CA_CONFIGMAP" \
+  --from-file=ca.crt="$CA_CERT" \
+  --dry-run=client -o yaml | kubectl_cmd apply -f -
+
 kubectl_cmd -n "$NAMESPACE" delete job "$JOB_NAME" --ignore-not-found=true
 kubectl_cmd apply -k "$OVERLAY_DIR"
 
-if ! kubectl_cmd -n "$NAMESPACE" wait --for=condition=complete "job/$JOB_NAME" --timeout="$TIMEOUT"; then
-  kubectl_cmd -n "$NAMESPACE" logs "job/$JOB_NAME" --tail=-1 || true
-  fail "proof Job did not complete successfully"
-fi
+deadline=$((SECONDS + WAIT_TIMEOUT_SECONDS))
+terminal=""
+while [ "$SECONDS" -lt "$deadline" ]; do
+  complete="$(kubectl_cmd -n "$NAMESPACE" get job "$JOB_NAME" -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || true)"
+  failed="$(kubectl_cmd -n "$NAMESPACE" get job "$JOB_NAME" -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || true)"
+  if [ "$complete" = "True" ]; then terminal=complete; break; fi
+  if [ "$failed" = "True" ]; then terminal=failed; break; fi
+  sleep 2
+done
+[ -n "$terminal" ] || fail "proof Job did not reach Complete=True or Failed=True before bounded timeout"
 
 logs="$(kubectl_cmd -n "$NAMESPACE" logs "job/$JOB_NAME" --tail=-1)"
 printf '%s\n' "$logs"
@@ -73,8 +93,9 @@ result_line="$(printf '%s\n' "$logs" | grep '^T3_MEDIA_PROVER_RESULT_JSON=' | ta
 [ -n "$result_line" ] || fail "structured proof result was not emitted"
 printf '%s\n' "${result_line#T3_MEDIA_PROVER_RESULT_JSON=}" >"$RESULT_FILE"
 
-if ! kubectl_cmd -n "$NAMESPACE" get pod -l job-name="$JOB_NAME" -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' | grep -Eq '^Succeeded$'; then
-  fail "proof Pod did not end in Succeeded state"
-fi
+pod_phase="$(kubectl_cmd -n "$NAMESPACE" get pod -l job-name="$JOB_NAME" -o jsonpath='{.items[0].status.phase}')"
+pod_exit_code="$(kubectl_cmd -n "$NAMESPACE" get pod -l job-name="$JOB_NAME" -o jsonpath='{.items[0].status.containerStatuses[0].state.terminated.exitCode}' 2>/dev/null || true)"
+printf 'job_terminal_state=%s pod_phase=%s pod_exit_code=%s\n' "$terminal" "$pod_phase" "$pod_exit_code"
+[ "$terminal" = complete ] && [ "$pod_phase" = Succeeded ] || fail "proof Job failed: terminal=$terminal pod=$pod_phase exit=$pod_exit_code"
 
 printf 'T3 media prover result written to %s\n' "$RESULT_FILE"

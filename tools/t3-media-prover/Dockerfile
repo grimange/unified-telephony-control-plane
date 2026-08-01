@@ -11,4 +11,5 @@ RUN npm install --omit=dev --no-audit --no-fund --ignore-scripts \
 COPY tools/t3-media-prover/prover.mjs ./prover.mjs
 
 USER 1000:1000
+ENV HOME=/home/ubuntu
 ENTRYPOINT ["node", "/opt/utcp/t3-media-prover/prover.mjs"]

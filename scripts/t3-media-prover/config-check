@@ -59,7 +59,7 @@ tmp_render="$(mktemp)"
 trap 'rm -f "$tmp_render"' EXIT
 kubectl kustomize "$OVERLAY_DIR" >"$tmp_render"
 
-python3 - "$tmp_render" "$TOOL_DIR/prover.mjs" "$PRODUCTION_DIRS" <<'PY'
+python3 - "$tmp_render" "$TOOL_DIR/prover.mjs" "$ROOT/scripts/t3-media-prover/run" "$PRODUCTION_DIRS" <<'PY'
 from __future__ import annotations
 
 import re
@@ -72,9 +72,11 @@ import yaml
 
 render_path = Path(sys.argv[1])
 prover_path = Path(sys.argv[2])
-production_dirs = [Path(item) for item in sys.argv[3].split(":") if item]
+runner_path = Path(sys.argv[3])
+production_dirs = [Path(item) for item in sys.argv[4].split(":") if item]
 docs = [doc for doc in yaml.safe_load_all(render_path.read_text(encoding="utf-8")) if isinstance(doc, dict)]
 source = prover_path.read_text(encoding="utf-8")
+runner = runner_path.read_text(encoding="utf-8")
 
 
 def fail(message: str) -> None:
@@ -175,8 +177,8 @@ if job_spec.get("backoffLimit") != 0:
     fail("proof Job must use backoffLimit 0")
 if not isinstance(job_spec.get("activeDeadlineSeconds"), int) or job_spec["activeDeadlineSeconds"] <= 0 or job_spec["activeDeadlineSeconds"] > 900:
     fail("proof Job must have a bounded activeDeadlineSeconds")
-if not isinstance(job_spec.get("ttlSecondsAfterFinished"), int) or job_spec["ttlSecondsAfterFinished"] <= 0:
-    fail("proof Job must have ttlSecondsAfterFinished")
+if not isinstance(job_spec.get("ttlSecondsAfterFinished"), int) or job_spec["ttlSecondsAfterFinished"] <= job_spec["activeDeadlineSeconds"] + 60:
+    fail("proof Job TTL must exceed active deadline plus evidence collection margin")
 pod_spec = ((job_spec.get("template") or {}).get("spec") or {})
 if pod_spec.get("restartPolicy") != "Never":
     fail("proof Job must use restartPolicy Never")
@@ -206,8 +208,8 @@ if (container_security.get("capabilities") or {}).get("drop") != ["ALL"]:
     fail("proof container must drop all Linux capabilities")
 if any("hostPath" in volume for volume in pod_spec.get("volumes") or []):
     fail("proof Job must not mount hostPath volumes")
-if any(not ("emptyDir" in volume) for volume in pod_spec.get("volumes") or []):
-    fail("proof Job may only use emptyDir volumes")
+if any(not ("emptyDir" in volume or "configMap" in volume) for volume in pod_spec.get("volumes") or []):
+    fail("proof Job may only use emptyDir or public CA ConfigMap volumes")
 if not any((env_from.get("secretRef") or {}).get("name") == "t3-media-prover-credentials" for env_from in container.get("envFrom") or []):
     fail("proof Job must receive runtime credentials from an external Secret")
 for env in container.get("env") or []:
@@ -216,6 +218,20 @@ for env in container.get("env") or []:
         fail("proof Job must not embed credentials")
 if "t3-media-prover-credentials" in render_path.read_text(encoding="utf-8") and any(doc.get("kind") == "Secret" for doc in docs):
     fail("proof overlay must not render credential Secret data")
+env_by_name = {entry.get("name"): entry for entry in container.get("env") or []}
+if ((env_by_name.get("UTCP_T3_MEDIA_PROVER_SCENARIO") or {}).get("valueFrom") or {}).get("configMapKeyRef") != {"name": "t3-media-prover-scenario", "key": "scenario"}:
+    fail("proof Job must receive the explicitly selected scenario from the runner")
+if (env_by_name.get("HOME") or {}).get("value") != "/home/ubuntu":
+    fail("proof Job HOME must match the pinned image user")
+if (env_by_name.get("NODE_EXTRA_CA_CERTS") or {}).get("value") != "/etc/ssl/certs/utcp-local-ca.crt":
+    fail("proof Job must expose the public local CA to Node and Chromium")
+mounts = {mount.get("mountPath"): mount for mount in container.get("volumeMounts") or []}
+if mounts.get("/home/ubuntu", {}).get("name") != "home":
+    fail("proof Job must mount writable home at /home/ubuntu")
+if mounts.get("/etc/ssl/certs/utcp-local-ca.crt", {}).get("name") != "local-ca":
+    fail("proof Job must mount the public local CA certificate")
+if not any((volume.get("configMap") or {}).get("name") == "t3-media-prover-local-ca" for volume in pod_spec.get("volumes") or []):
+    fail("proof Job must source only public local CA material from a ConfigMap")
 
 default_deny = by_key("NetworkPolicy", "utcp-proof", "default-deny")
 if (default_deny.get("spec") or {}).get("podSelector") != {}:
@@ -271,8 +287,8 @@ required_source_markers = [
     "totalAudioEnergy",
     "audioLevel",
     "SDP-only success rejected",
-    "browser-bye",
-    "runtime-bye",
+    "browser-originated-bye",
+    "runtime-originated-bye",
     "naturalLogin",
     "/login",
     "--host-resolver-rules=MAP app.utcp.local.test",
@@ -280,15 +296,25 @@ required_source_markers = [
     "cleanupResult",
     "pc.close()",
     "ws.close()",
+    "certutil",
+    "UTCP local public CA",
+    "document.body.dataset.utcpMediaReady",
+    "cursorState.value",
 ]
 for marker in required_source_markers:
     if marker not in source:
         fail(f"browser prover script is missing required marker {marker}")
-for forbidden in [r"\bARI\b", r"\bAMI\b", "asterisk channel", "Asterisk channel", "PJSIP channel", "fs_cli", "FreeSWITCH ESL", "hostNetwork"]:
+for forbidden in [r"\bARI\b", r"\bAMI\b", "asterisk channel", "Asterisk channel", "PJSIP channel", "fs_cli", "FreeSWITCH ESL", "hostNetwork", "ignoreHTTPSErrors", "--ignore-certificate-errors", "max-bundle"]:
     if re.search(forbidden, source):
         fail(f"browser prover script must not contain provider-specific media authority marker {forbidden}")
 if "Authorization:" in source and "console.log" in source[source.find("Authorization:") : source.find("Authorization:") + 250]:
     fail("browser prover script must not log Authorization headers")
+if "Complete=True" not in runner or "Failed=True" not in runner or "logs" not in runner or "containerStatuses" not in runner:
+    fail("runner must collect successful and failed Job evidence before cleanup")
+if "wait --for=condition=complete" in runner:
+    fail("runner must not wait only for Complete")
+if "browser-originated-bye" not in runner or "runtime-originated-bye" not in runner:
+    fail("runner must fail closed and explicitly supply both committed scenarios")
 
 for production_dir in production_dirs:
     if not production_dir.exists():

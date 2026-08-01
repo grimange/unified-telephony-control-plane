@@ -10,7 +10,7 @@ metadata:
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 420
-  ttlSecondsAfterFinished: 300
+  ttlSecondsAfterFinished: 900
   template:
     metadata:
       labels:
@@ -47,6 +47,15 @@ spec:
               value: "443"
             - name: UTCP_T3_MEDIA_PROVER_RESULT_PATH
               value: /proof/results/result.json
+            - name: UTCP_T3_MEDIA_PROVER_SCENARIO
+              valueFrom:
+                configMapKeyRef:
+                  name: t3-media-prover-scenario
+                  key: scenario
+            - name: HOME
+              value: /home/ubuntu
+            - name: NODE_EXTRA_CA_CERTS
+              value: /etc/ssl/certs/utcp-local-ca.crt
           envFrom:
             - secretRef:
                 name: t3-media-prover-credentials
@@ -67,7 +76,11 @@ spec:
             - name: tmp
               mountPath: /tmp
             - name: home
-              mountPath: /home/pwuser
+              mountPath: /home/ubuntu
+            - name: local-ca
+              mountPath: /etc/ssl/certs/utcp-local-ca.crt
+              subPath: utcp-local-ca.crt
+              readOnly: true
             - name: results
               mountPath: /proof/results
       volumes:
@@ -75,5 +88,11 @@ spec:
           emptyDir: {}
         - name: home
           emptyDir: {}
+        - name: local-ca
+          configMap:
+            name: t3-media-prover-local-ca
+            items:
+              - key: ca.crt
+                path: utcp-local-ca.crt
         - name: results
           emptyDir: {}

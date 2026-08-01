@@ -1,9 +1,13 @@
 import { chromium } from '@playwright/test';
 import crypto from 'node:crypto';
+import { execFile as execFileCallback } from 'node:child_process';
 import dns from 'node:dns/promises';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
+
+const execFile = promisify(execFileCallback);
 
 const REQUIRED_RESULT_FIELDS = [
   'scenario',
@@ -29,7 +33,7 @@ const REQUIRED_RESULT_FIELDS = [
 ];
 
 const config = {
-  scenario: env('UTCP_T3_MEDIA_PROVER_SCENARIO', 'browser-bye'),
+  scenario: env('UTCP_T3_MEDIA_PROVER_SCENARIO', ''),
   applicationUrl: env('UTCP_T3_MEDIA_PROVER_APP_URL', 'https://app.utcp.local.test'),
   sipWssUrl: env('UTCP_T3_MEDIA_PROVER_SIP_WSS_URL', 'wss://sip.utcp.local.test/ws'),
   sipDomain: env('UTCP_T3_MEDIA_PROVER_SIP_DOMAIN', 'sip.utcp.local.test'),
@@ -55,19 +59,22 @@ const result = {
 
 let browser;
 let page;
+let chromiumProfile;
 
 try {
-  if (!['browser-bye', 'runtime-bye'].includes(config.scenario)) {
+  if (!['browser-originated-bye', 'runtime-originated-bye'].includes(config.scenario)) {
     throw new Error(`unsupported scenario ${config.scenario}`);
   }
 
   const gatewayAddress = await resolveGatewayAddress(config.gatewayService);
+  chromiumProfile = await prepareChromiumTrust();
   browser = await chromium.launch({
     headless: true,
     args: [
       '--use-fake-ui-for-media-stream',
       '--use-fake-device-for-media-stream',
       '--autoplay-policy=no-user-gesture-required',
+      `--user-data-dir=${chromiumProfile}`,
       `--host-resolver-rules=MAP app.utcp.local.test ${gatewayAddress},MAP sip.utcp.local.test ${gatewayAddress}`,
     ],
   });
@@ -75,7 +82,6 @@ try {
   const context = await browser.newContext({
     baseURL: config.applicationUrl,
     permissions: ['microphone'],
-    ignoreHTTPSErrors: false,
   });
   page = await context.newPage();
   await page.exposeFunction('utcpMd5', (value) => crypto.createHash('md5').update(value).digest('hex'));
@@ -108,7 +114,6 @@ try {
     const startedAt = Date.now();
     const pc = new RTCPeerConnection({
       iceServers: [],
-      bundlePolicy: 'max-bundle',
       rtcpMuxPolicy: 'require',
     });
     const audioContext = new AudioContext();
@@ -134,6 +139,7 @@ try {
 
     const ws = new WebSocket(cfg.sipWssUrl, 'sip');
     const messages = [];
+    const messageCursor = { value: 0 };
     ws.addEventListener('message', (event) => messages.push(String(event.data)));
     await waitFor(() => ws.readyState === WebSocket.OPEN, cfg.callTimeoutMs, 'SIP WebSocket open');
 
@@ -159,7 +165,7 @@ try {
     });
     ws.send(invite);
 
-    let response = await waitForMessage(messages, (message) => sipStatus(message) === 401, cfg.callTimeoutMs);
+    let response = await waitForMessage(messages, (message) => sipStatus(message) === 401, cfg.callTimeoutMs, messageCursor);
     const auth = await digestAuthorization(response, 'INVITE', target, cfg.sipUsername, cfg.sipPassword);
     ws.send(buildRequest({
       method: 'INVITE',
@@ -174,7 +180,7 @@ try {
       cfg,
     }));
 
-    response = await waitForMessage(messages, (message) => sipStatus(message) === 200 && /CSeq:\s*2 INVITE/i.test(message), cfg.callTimeoutMs);
+    response = await waitForMessage(messages, (message) => sipStatus(message) === 200 && /CSeq:\s*2 INVITE/i.test(message), cfg.callTimeoutMs, messageCursor);
     const remoteSdp = bodyOf(response);
     if (!remoteSdp.includes('m=audio') || !remoteSdp.includes('a=rtcp-mux')) {
       throw new Error('SDP answer is not a WebRTC audio answer with rtcp-mux');
@@ -200,10 +206,11 @@ try {
     await sleep(3500);
     const after = await collectStats(pc);
     assertMediaCounters(before, after);
+    document.body.dataset.utcpMediaReady = cfg.scenario;
 
     let finalSipResult;
     let byeDirection;
-    if (cfg.scenario === 'browser-bye') {
+    if (cfg.scenario === 'browser-originated-bye') {
       byeDirection = 'browser';
       ws.send(buildRequest({
         method: 'BYE',
@@ -216,11 +223,12 @@ try {
         routeSet,
         cfg,
       }));
-      const byeOk = await waitForMessage(messages, (message) => sipStatus(message) === 200 && /CSeq:\s*3 BYE/i.test(message), cfg.callTimeoutMs);
+      const byeOk = await waitForMessage(messages, (message) => sipStatus(message) === 200 && /CSeq:\s*3 BYE/i.test(message), cfg.callTimeoutMs, messageCursor);
       finalSipResult = firstLine(byeOk);
     } else {
       byeDirection = 'runtime';
-      const bye = await waitForMessage(messages, (message) => /^BYE\s/i.test(message) && message.includes(callId), cfg.runtimeByeWaitMs);
+      await waitFor(() => document.body.dataset.utcpMediaReady === 'runtime-originated-bye', cfg.mediaTimeoutMs, 'runtime-originated-bye synchronization');
+      const bye = await waitForMessage(messages, (message) => /^BYE\s/i.test(message) && message.includes(callId), cfg.runtimeByeWaitMs, messageCursor);
       finalSipResult = '200 OK';
       ws.send(buildResponse({ status: '200 OK', request: bye, cfg }));
     }
@@ -382,15 +390,17 @@ try {
       });
     }
 
-    async function waitForMessage(messages, predicate, timeoutMs) {
-      let cursor = 0;
+    async function waitForMessage(messages, predicate, timeoutMs, cursorState) {
       await waitFor(() => {
-        for (; cursor < messages.length; cursor += 1) {
-          if (predicate(messages[cursor])) return true;
+        for (; cursorState.value < messages.length; cursorState.value += 1) {
+          const message = messages[cursorState.value];
+          if (predicate(message)) return true;
         }
         return false;
       }, timeoutMs, 'SIP message');
-      return messages[Math.max(0, cursor - 1)];
+      const matched = messages[cursorState.value];
+      cursorState.value += 1;
+      return matched;
     }
 
     function header(message, name) {
@@ -444,6 +454,7 @@ try {
 } finally {
   if (page) await page.close().catch(() => {});
   if (browser) await browser.close().catch(() => {});
+  if (chromiumProfile) await fs.rm(chromiumProfile, { recursive: true, force: true }).catch(() => {});
 }
 
 function env(name, fallback) {
@@ -465,12 +476,26 @@ async function resolveGatewayAddress(serviceName) {
 
 async function naturalLogin(page) {
   await page.goto(`${config.applicationUrl}/login`, { waitUntil: 'domcontentloaded', timeout: config.callTimeoutMs });
-  await fillFirst(page, ['input[name="email"]', 'input[type="email"]'], config.loginEmail);
-  await fillFirst(page, ['input[name="password"]', 'input[type="password"]'], config.loginPassword);
+  await page.locator('#app').waitFor({ state: 'visible', timeout: config.callTimeoutMs });
+  const email = await firstLocator(page, ['input[name="email"]', 'input[type="email"]']);
+  const password = await firstLocator(page, ['input[name="password"]', 'input[type="password"]']);
+  await email.waitFor({ state: 'visible', timeout: config.callTimeoutMs });
+  await password.waitFor({ state: 'visible', timeout: config.callTimeoutMs });
+  await email.fill(config.loginEmail);
+  await password.fill(config.loginPassword);
   await Promise.all([
-    page.waitForLoadState('networkidle', { timeout: config.callTimeoutMs }).catch(() => {}),
+    page.waitForURL((url) => !url.pathname.endsWith('/login'), { timeout: config.callTimeoutMs }),
     clickFirst(page, ['button[type="submit"]', 'text=Sign in', 'text=Log in']),
   ]);
+  await page.locator('#app').waitFor({ state: 'visible', timeout: config.callTimeoutMs });
+}
+
+async function firstLocator(page, selectors) {
+  for (const selector of selectors) {
+    const locator = page.locator(selector).first();
+    if (await locator.count()) return locator;
+  }
+  throw new Error(`none of the expected login selectors exists: ${selectors.join(', ')}`);
 }
 
 async function fillFirst(page, selectors, value) {
@@ -508,6 +533,14 @@ function redactConfigForBrowser(raw) {
     mediaTimeoutMs: raw.mediaTimeoutMs,
     runtimeByeWaitMs: raw.runtimeByeWaitMs,
   };
+}
+
+async function prepareChromiumTrust() {
+  const profile = await fs.mkdtemp(path.join('/home/ubuntu', 'chromium-profile-'));
+  const nssDb = `sql:${profile}`;
+  await execFile('certutil', ['-N', '-d', nssDb, '--empty-password']);
+  await execFile('certutil', ['-A', '-d', nssDb, '-n', 'UTCP local public CA', '-t', 'C,,', '-i', '/etc/ssl/certs/utcp-local-ca.crt']);
+  return profile;
 }
 
 function assertStructuredResult(output) {
