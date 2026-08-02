@@ -437,3 +437,151 @@ UTCP_PHASE=T1
 The remaining proof is the committed host-browser Scenario A and Scenario B
 run against the temporary media-edge cluster, including reciprocal RTP, audio
 energy, both BYE paths, failure behaviour, containment, and restoration.
+
+---
+
+# T3-S3B Live Host-Browser Run At `619ec15` — External Media Rejected By Policy
+
+## Summary
+
+`PRODUCT_DEFECT-24` is confirmed closed live: canonical
+`kubectl apply -k infrastructure/kubernetes/overlays/local-media-edge`
+succeeded against a fresh `utcp-mediaedge` proof cluster with no load-restrictor
+override. The whole external edge — publication, host browser login, SIP/WSS
+signalling, SDP mediation, advertised address, rtpengine port binding, serverlb
+forwarding, and NodePort programming — is proven working.
+
+External browser media still does not flow. The failure is isolated to exactly
+one seam and one new product defect.
+
+**Verdict: `T3_S3B_EXTERNAL_BROWSER_MEDIA_BLOCKED_BY_MEDIA_INGRESS_POLICY`.**
+
+## PRODUCT_DEFECT-25 — No External Ingress Peer For Published Media
+
+`allow-rtpengine-media` admits UDP `40000-40099` only from
+`namespaceSelector` + `podSelector` peers:
+
+```text
+policy: allow-rtpengine-media  selector: {utcp.io/network-role: rtpengine-media}
+   ingress ports: ['UDP/2223-']          from: [['namespaceSelector','podSelector']]
+   ingress ports: ['UDP/40000-40099']    from: [['namespaceSelector','podSelector']]
+   ingress ports: ['UDP/40000-40099']    from: [['namespaceSelector','podSelector']]
+   ingress ports: ['TCP/2224-']          from: [['namespaceSelector','podSelector']]
+```
+
+Externally published media arrives through the NodePort from a **non-Pod
+source** (the k3d serverlb / node address). It matches no peer, so the
+kube-router pod firewall rejects it:
+
+```text
+-A KUBE-POD-FW-DWQNARJAWJKH3K42 -m comment --comment "rule to REJECT traffic
+   destined for POD name:rtpengine-5f97dd98d6-sv2gg namespace: utcp-platform"
+   -m mark ! --mark 0x10000/0x10000 -j REJECT --reject-with icmp-port-unreachable
+```
+
+That REJECT is what the serverlb reports, and it is the direct cause of the
+browser failure:
+
+```text
+prover: "errors":["page.evaluate: Error: timed out waiting for ICE connected"]
+
+serverlb: recv() failed (111: Connection refused) while proxying and reading
+  from upstream, udp client: 172.21.0.1, server: 0.0.0.0:40023,
+  upstream: "172.21.0.2:40023", bytes from/to client:4784/0,
+  bytes from/to upstream:0/4784
+```
+
+The in-cluster T3-S2B proof passed because that prover ran **as a Pod**, which
+does match the podSelector. The defect is therefore specific to the external
+media edge and was not reachable before T3-S3B.
+
+## Isolation Chain — Each Hop Proven In Turn
+
+```text
+host browser natural login          PASS  session 200, tenant local active, logout 401
+SIP/WSS signalling                  PASS  INVITE challenged, dialog established
+rtpengine SDP mediation             PASS  'offer' -> 'answer', "Creating new call"
+advertised address                  PASS  --interface=internal/10.42.0.8!127.0.0.1
+rtpengine media socket binding      PASS  /proc/net/udp shows 10.42.0.8:40004,40005,
+                                          40033,40073,40082,40083 held for the call
+browser destination correctness     PASS  browser sent to 40073 and 40033, both bound
+host publication                    PASS  100 UDP maps on 127.0.0.1:40000-40099
+serverlb forwarding                 PASS  bytes from/to upstream 0/4784 (forwarded)
+NodePort programming                PASS  1100 nat rules, KUBE-NODEPORTS dport rules,
+                                          endpoint 10.42.0.8 ready on the media-edge node
+externalTrafficPolicy: Local        PASS  local ready endpoint present
+node -> Pod media delivery          FAIL  42 rejects, 0 successes; ICMP port-unreachable
+rtpengine browser leg counters      FAIL  in 0 p, 0 b; out 0 p, 0 b
+```
+
+The failing seam is **media ingress authorization**, not host-runner origin
+selection, candidate rewriting, DTLS, host UDP publication, serverlb
+forwarding, or NodePort forwarding.
+
+## Method Notes
+
+Probing an unallocated port in `40000-40099` also returns ICMP unreachable.
+That is expected: rtpengine allocates media sockets per call, not all 100 at
+boot. Every conclusion above correlates the probed port against the bound set
+read from `/proc/net/udp` inside the rtpengine container during the live call.
+
+## Not Executed
+
+Scenario B, the four bounded failure cases, and the containment sweep were not
+run. They depend on external media reaching rtpengine, which `PRODUCT_DEFECT-25`
+prevents. Running them now would produce no additional information.
+
+## PROOF_HARNESS_DEFECT-I — Applicability Check Does Not Unwrap `kind: List`
+
+`scripts/media-edge/overlay-applicability-check` runs
+`kubectl apply -k ... --dry-run=client -o yaml`, which returns a single
+`kind: List` document with 45 `items`. The script scans only top-level
+documents for `kind: Service`, so it never finds `rtpengine-media` and always
+fails. This makes `make check`, `media-edge-projection-check`, and
+`media-edge-overlay-applicability-check` fail at `619ec15` on a clean tree.
+
+The underlying Service is correct. Server-side dry-run against the proof
+cluster returned 45 objects, `rtpengine-media` as `NodePort` with
+`externalTrafficPolicy: Local`, 100 contiguous nodePorts `40000-40099`,
+0 violations, and ConfigMap `utcp-media-edge-authority` carrying
+`UTCP_PUBLIC_MEDIA_ADDRESS=127.0.0.1`.
+
+## Cleanup And Restoration
+
+The `utcp-mediaedge` proof cluster was deleted. The preserved kubeconfig was
+restored, the registry container was renamed back to `utcp-local-registry` and
+started, and `utcp-local` was returned to service.
+
+`k3d cluster start utcp-local` did not restore the cluster on its own: the
+serverlb stayed `Exited`, and after starting it explicitly the apiserver still
+failed with
+
+```text
+failed to start networking: unable to initialize network policy controller:
+error getting node subnet: failed to find interface with specified node ip
+```
+
+A full `k3d cluster stop` followed by `k3d cluster start` resolved it.
+
+Final state: 3 nodes Ready, 35 pods all fully ready, and
+`kubectl diff -k infrastructure/kubernetes/overlays/local` exit `0` — zero
+drift. Temporary Helm, the proof cluster profile, and `.playwright-mcp/` were
+removed. No credential value appears in this document.
+
+## Status
+
+```text
+T3-S3A = Complete
+T3-S3B = blocked on PRODUCT_DEFECT-25
+T3-S3  = In Progress
+T3     = In Progress
+UTCP_PHASE=T1
+```
+
+## Recommended Next Step
+
+Bounded implementation on `allow-rtpengine-media` to admit the external media
+source for the published range, plus `PROOF_HARNESS_DEFECT-I`. The peer choice
+is a security-policy decision — an `ipBlock` scoped to the node/cluster address
+range versus an unrestricted `from` on the media ports — and must not be
+silently widened.
