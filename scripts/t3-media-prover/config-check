@@ -40,7 +40,18 @@ if grep -Eq 'playwright install|:latest|chromium:latest' "$TOOL_DIR/Dockerfile";
   fail "Dockerfile must not download an unpinned browser or use latest"
 fi
 grep -Fq 'apt-get install --no-install-recommends --yes libnss3-tools' "$TOOL_DIR/Dockerfile" || fail "Dockerfile must install libnss3-tools during image build"
-grep -Fq 'certutil -H' "$TOOL_DIR/Dockerfile" || fail "Dockerfile must perform a certutil presence check"
+if grep -Eq 'certutil (-H|-V|--help|--version)' "$TOOL_DIR/Dockerfile"; then
+    fail "Dockerfile must not use a certutil help or version command as a presence check"
+fi
+grep -Fq 'command -v certutil >/dev/null' "$TOOL_DIR/Dockerfile" || fail "Dockerfile must perform a certutil executable-presence check"
+grep -Fq 'nss_dir="$(mktemp -d)"' "$TOOL_DIR/Dockerfile" || fail "Dockerfile must use a temporary NSS database"
+grep -Fq 'certutil -N -d "sql:${nss_dir}" --empty-password' "$TOOL_DIR/Dockerfile" || fail "Dockerfile must initialize a temporary SQL NSS database"
+grep -Fq 'test -f "${nss_dir}/cert9.db"' "$TOOL_DIR/Dockerfile" || fail "Dockerfile must assert the NSS certificate database exists"
+grep -Fq 'test -f "${nss_dir}/key4.db"' "$TOOL_DIR/Dockerfile" || fail "Dockerfile must assert the NSS key database exists"
+grep -Fq 'rm -rf "${nss_dir}"' "$TOOL_DIR/Dockerfile" || fail "Dockerfile must remove the temporary NSS database"
+if grep -Eq 'certutil -N.*\|\|[[:space:]]*true' "$TOOL_DIR/Dockerfile"; then
+    fail "Dockerfile must not suppress NSS smoke-test failures"
+fi
 
 python3 - "$TOOL_DIR/package.json" "$T3_MEDIA_PROVER_PLAYWRIGHT_VERSION" <<'PY'
 from __future__ import annotations
@@ -310,6 +321,7 @@ required_source_markers = [
     "CSeq",
     "document.body.dataset.utcpMediaReady",
     "cursorState.value",
+    "UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP",
 ]
 for marker in required_source_markers:
     if marker not in source:
@@ -341,6 +353,18 @@ if "page.waitForURL((url) => !url.pathname.endsWith('/login')" not in source or 
     fail("natural login must wait for authenticated application state")
 if "received audio energy did not increase" not in source or "inbound RTP packet count did not increase" not in source or "inbound RTP byte count did not increase" not in source:
     fail("browser prover must retain inbound RTP and audio-energy assertions")
+marker = "UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP"
+if source.count(marker) != 1:
+    fail("Scenario B readiness marker must be emitted exactly once")
+marker_pos = source.find(marker)
+if source.find("assertMediaCounters(before, after);") > marker_pos or source.find("document.body.dataset.utcpMediaReady = cfg.scenario;") > marker_pos:
+    fail("Scenario B readiness marker must follow media assertions")
+marker_context = source[max(0, marker_pos - 180):marker_pos]
+if "cfg.scenario === 'runtime-originated-bye'" not in marker_context:
+    fail("Scenario B readiness marker must be restricted to runtime-originated-bye")
+marker_line = next((line for line in source.splitlines() if marker in line), "")
+if re.search(r"credential|password|cookie|authorization|ice|sdp|certificate", marker_line, re.IGNORECASE):
+    fail("Scenario B readiness marker must not include sensitive data")
 if "sip:asterisk" in source.lower() or "asterisk-ari" in source.lower():
     fail("browser prover must not hard-code a provider-specific dialog target")
 if "Authorization:" in source and "console.log" in source[source.find("Authorization:") : source.find("Authorization:") + 250]:

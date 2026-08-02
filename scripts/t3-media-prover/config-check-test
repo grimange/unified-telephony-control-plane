@@ -228,7 +228,34 @@ elif mutation == "remove-libnss3-tools":
     source = (tool / "Dockerfile").read_text(encoding="utf-8").replace("apt-get install --no-install-recommends --yes libnss3-tools", "apt-get install --no-install-recommends --yes ca-certificates")
     (tool / "Dockerfile").write_text(source, encoding="utf-8")
 elif mutation == "remove-certutil-check":
-    source = (tool / "Dockerfile").read_text(encoding="utf-8").replace("    && certutil -H >/dev/null 2>&1\n", "")
+    source = (tool / "Dockerfile").read_text(encoding="utf-8").replace("    && command -v certutil >/dev/null \\\n", "")
+    (tool / "Dockerfile").write_text(source, encoding="utf-8")
+elif mutation == "certutil-help-check":
+    source = (tool / "Dockerfile").read_text(encoding="utf-8").replace("command -v certutil >/dev/null", "certutil --help >/dev/null")
+    (tool / "Dockerfile").write_text(source, encoding="utf-8")
+elif mutation == "certutil-version-check":
+    source = (tool / "Dockerfile").read_text(encoding="utf-8").replace("command -v certutil >/dev/null", "certutil --version >/dev/null")
+    (tool / "Dockerfile").write_text(source, encoding="utf-8")
+elif mutation == "restore-certutil-help":
+    source = (tool / "Dockerfile").read_text(encoding="utf-8") + "\nRUN certutil -H >/dev/null 2>&1\n"
+    (tool / "Dockerfile").write_text(source, encoding="utf-8")
+elif mutation == "remove-nss-smoke":
+    source = (tool / "Dockerfile").read_text(encoding="utf-8").replace("    && certutil -N -d \"sql:${nss_dir}\" --empty-password \\\n", "")
+    (tool / "Dockerfile").write_text(source, encoding="utf-8")
+elif mutation == "remove-sql-prefix":
+    source = (tool / "Dockerfile").read_text(encoding="utf-8").replace('-d "sql:${nss_dir}"', '-d "${nss_dir}"')
+    (tool / "Dockerfile").write_text(source, encoding="utf-8")
+elif mutation == "persistent-nss-path":
+    source = (tool / "Dockerfile").read_text(encoding="utf-8").replace('nss_dir="$(mktemp -d)"', 'nss_dir="/opt/nss-smoke"')
+    (tool / "Dockerfile").write_text(source, encoding="utf-8")
+elif mutation == "remove-db-files":
+    source = (tool / "Dockerfile").read_text(encoding="utf-8").replace('    && test -f "${nss_dir}/cert9.db" \\\n', '').replace('    && test -f "${nss_dir}/key4.db" \\\n', '')
+    (tool / "Dockerfile").write_text(source, encoding="utf-8")
+elif mutation == "suppress-smoke-failure":
+    source = (tool / "Dockerfile").read_text(encoding="utf-8").replace('    && certutil -N -d "sql:${nss_dir}" --empty-password \\\n', '    && certutil -N -d "sql:${nss_dir}" --empty-password || true \\\n')
+    (tool / "Dockerfile").write_text(source, encoding="utf-8")
+elif mutation == "remove-smoke-cleanup":
+    source = (tool / "Dockerfile").read_text(encoding="utf-8").replace('    && rm -rf "${nss_dir}"\n', '')
     (tool / "Dockerfile").write_text(source, encoding="utf-8")
 elif mutation == "nss-outside-home":
     source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("'.pki', 'nssdb'", "'chromium-profile'")
@@ -278,6 +305,22 @@ elif mutation == "provider-target":
 elif mutation == "wrong-cseq":
     source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("cseq: dialog.inviteCseq + 1", "cseq: dialog.inviteCseq")
     (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "remove-readiness-marker":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("      console.log('UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP');\n", "")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "early-readiness-marker":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("      console.log('UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP');\n", "", 1)
+    source = source.replace("    assertMediaCounters(before, after);", "    console.log('UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP');\n    assertMediaCounters(before, after);", 1)
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "scenario-a-readiness-marker":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("cfg.scenario === 'runtime-originated-bye'", "cfg.scenario === 'browser-originated-bye'", 1)
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "duplicate-readiness-marker":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("      console.log('UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP');\n", "      console.log('UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP');\n      console.log('UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP');\n")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
+elif mutation == "sensitive-readiness-marker":
+    source = (tool / "prover.mjs").read_text(encoding="utf-8").replace("      console.log('UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP');", "      console.log('UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP ' + cfg.sipPassword);")
+    (tool / "prover.mjs").write_text(source, encoding="utf-8")
 else:
     raise RuntimeError(f"unknown mutation {mutation}")
 PY
@@ -315,7 +358,16 @@ fail_case "removing execution timeout fails" "proof Job must have a bounded acti
 fail_case "adding provider media authority fails" "browser prover script must not contain provider-specific media authority marker Asterisk channel" "provider-media-authority"
 fail_case "adding public media advertisement fails" "proof overlay must not create public routing or services" "public-media-advertisement"
 fail_case "removing libnss3-tools fails" "Dockerfile must install libnss3-tools during image build" "remove-libnss3-tools"
-fail_case "removing certutil check fails" "Dockerfile must perform a certutil presence check" "remove-certutil-check"
+fail_case "restoring certutil help fails" "Dockerfile must not use a certutil help or version command as a presence check" "restore-certutil-help"
+fail_case "using certutil --help fails" "Dockerfile must not use a certutil help or version command as a presence check" "certutil-help-check"
+fail_case "using certutil --version fails" "Dockerfile must not use a certutil help or version command as a presence check" "certutil-version-check"
+fail_case "removing certutil executable check fails" "Dockerfile must perform a certutil executable-presence check" "remove-certutil-check"
+fail_case "removing NSS smoke test fails" "Dockerfile must initialize a temporary SQL NSS database" "remove-nss-smoke"
+fail_case "removing SQL NSS prefix fails" "Dockerfile must initialize a temporary SQL NSS database" "remove-sql-prefix"
+fail_case "using persistent NSS smoke path fails" "Dockerfile must use a temporary NSS database" "persistent-nss-path"
+fail_case "removing NSS database assertions fails" "Dockerfile must assert the NSS certificate database exists" "remove-db-files"
+fail_case "suppressing NSS smoke failure fails" "Dockerfile must not suppress NSS smoke-test failures" "suppress-smoke-failure"
+fail_case "removing NSS smoke cleanup fails" "Dockerfile must remove the temporary NSS database" "remove-smoke-cleanup"
 fail_case "moving NSS database outside HOME fails" "browser prover script is missing required marker '.pki', 'nssdb'" "nss-outside-home"
 fail_case "adding user-data-dir fails" "browser prover must not pass --user-data-dir to chromium.launch()" "user-data-dir"
 fail_case "adding TLS bypass fails" "browser prover script must not contain provider-specific media authority marker ignoreHTTPSErrors" "tls-bypass"
@@ -332,5 +384,10 @@ fail_case "removing route-set preservation fails" "ACK and BYE must preserve the
 fail_case "removing Contact failure handling fails" "browser prover script is missing required marker successful SIP response is missing a valid Contact URI" "remove-contact-failure"
 fail_case "hard-coding provider target fails" "browser prover must not hard-code a provider-specific dialog target" "provider-target"
 fail_case "incorrect CSeq handling fails" "BYE must use the next valid local CSeq" "wrong-cseq"
+fail_case "removing Scenario B readiness fails" "browser prover script is missing required marker UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP" "remove-readiness-marker"
+fail_case "early Scenario B readiness fails" "Scenario B readiness marker must follow media assertions" "early-readiness-marker"
+fail_case "Scenario A readiness fails" "Scenario B readiness marker must be restricted to runtime-originated-bye" "scenario-a-readiness-marker"
+fail_case "duplicate Scenario B readiness fails" "Scenario B readiness marker must be emitted exactly once" "duplicate-readiness-marker"
+fail_case "sensitive Scenario B readiness fails" "Scenario B readiness marker must not include sensitive data" "sensitive-readiness-marker"
 
 printf 'T3-S2B media prover config mutation tests passed\n'

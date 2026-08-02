@@ -12,7 +12,12 @@ USER root
 RUN apt-get update \
     && apt-get install --no-install-recommends --yes libnss3-tools \
     && rm -rf /var/lib/apt/lists/* \
-    && certutil -H >/dev/null 2>&1
+    && command -v certutil >/dev/null \
+    && nss_dir="$(mktemp -d)" \
+    && certutil -N -d "sql:${nss_dir}" --empty-password \
+    && test -f "${nss_dir}/cert9.db" \
+    && test -f "${nss_dir}/key4.db" \
+    && rm -rf "${nss_dir}"
 COPY tools/t3-media-prover/prover.mjs ./prover.mjs
 
 USER 1000:1000

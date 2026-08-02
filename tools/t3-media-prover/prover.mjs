@@ -84,6 +84,12 @@ try {
     permissions: ['microphone'],
   });
   page = await context.newPage();
+  const runtimeHangupMarker = ['UTCP', 'T3', 'MEDIA', 'PROVER', 'READY', 'FOR', 'RUNTIME', 'HANGUP'].join('_');
+  page.on('console', (message) => {
+    if (message.type() === 'log' && message.text() === runtimeHangupMarker) {
+      console.log(message.text());
+    }
+  });
   await page.exposeFunction('utcpMd5', (value) => crypto.createHash('md5').update(value).digest('hex'));
   await naturalLogin(page);
 
@@ -214,6 +220,9 @@ try {
     const after = await collectStats(pc);
     assertMediaCounters(before, after);
     document.body.dataset.utcpMediaReady = cfg.scenario;
+    if (cfg.scenario === 'runtime-originated-bye') {
+      console.log('UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP');
+    }
 
     let finalSipResult;
     let byeDirection;
