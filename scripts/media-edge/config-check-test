@@ -7,7 +7,7 @@ tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
 cp "$ROOT/versions.env" "$tmpdir/versions.env"
-cp "$ROOT/infrastructure/k3d/cluster-media-edge.yaml" "$tmpdir/cluster.yaml"
+cp "$ROOT/infrastructure/k3d/cluster.yaml" "$tmpdir/cluster.yaml"
 cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/rtpengine-media-service.yaml" "$tmpdir/service.yaml"
 cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/allow-rtpengine-external-media.yaml" "$tmpdir/external-policy.yaml"
 cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/generated/public-media.env" "$tmpdir/public-media.env"
@@ -156,10 +156,10 @@ expect_fail "port mismatch" run_check
 cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/rtpengine-media-service.yaml" "$tmpdir/service.yaml"
 sed -i 's/127.0.0.1:40000-40099:40000-40099\/udp/0.0.0.0:40000-40099:40000-40099\/udp/' "$tmpdir/cluster.yaml"
 expect_fail "wildcard host publication" run_check
-cp "$ROOT/infrastructure/k3d/cluster-media-edge.yaml" "$tmpdir/cluster.yaml"
+cp "$ROOT/infrastructure/k3d/cluster.yaml" "$tmpdir/cluster.yaml"
 sed -i 's/utcp.dev\/media-edge=true/utcp.dev\/wrong=true/' "$tmpdir/cluster.yaml"
 expect_fail "node label mismatch" run_check
-cp "$ROOT/infrastructure/k3d/cluster-media-edge.yaml" "$tmpdir/cluster.yaml"
+cp "$ROOT/infrastructure/k3d/cluster.yaml" "$tmpdir/cluster.yaml"
 
 sed -i '/rtpengine-media-service.yaml/d' "$tmpdir/kustomization.yaml"
 expect_fail "parity service removal" grep -q 'rtpengine-media-service' "$tmpdir/kustomization.yaml"

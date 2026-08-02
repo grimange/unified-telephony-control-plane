@@ -51,7 +51,13 @@ K2 adds the one-cluster-at-a-time standard local edge:
 ```text
 127.0.0.1:80 -> k3d load balancer port 80
 127.0.0.1:443 -> k3d load balancer port 443
+127.0.0.1:40000-40099/UDP -> k3d server:0 media-edge ports
 ```
+
+The RTP publication is part of the canonical `infrastructure/k3d/cluster.yaml`
+provisioning. The NodePort range is extended to `30000-40099` and the selected
+server is labelled `utcp.dev/media-edge=true`; there is no separate media-edge
+cluster profile or alternate registry lifecycle.
 
 If another process owns either port, `make k3d-create` and `make k3d-recreate-proof` fail before creating or recreating the UTCP cluster. The scripts report the owner and never stop APNTalk or any unrelated listener.
 
@@ -130,6 +136,8 @@ make k3d-recreate-proof
 ```
 
 `k3d-recreate-proof` deletes and recreates only `utcp-local`. It leaves optional Compose debug projects and unrelated k3d clusters untouched.
+The recreate uses the canonical cluster configuration, including the loopback
+UDP range `127.0.0.1:40000-40099/UDP`.
 
 When switching between local application clusters, run cluster lifecycle commands explicitly. For example, the operator may stop APNTalk before starting UTCP, or stop UTCP before starting APNTalk. UTCP repository commands do not automate that switch.
 

@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$BASH_SOURCE")/../.." && pwd)"
 VERSIONS_FILE="${UTCP_MEDIA_EDGE_VERSIONS:-$ROOT/versions.env}"
-K3D_CONFIG_FILE="${UTCP_MEDIA_EDGE_K3D_CONFIG:-$ROOT/infrastructure/k3d/cluster-media-edge.yaml}"
+K3D_CONFIG_FILE="${UTCP_MEDIA_EDGE_K3D_CONFIG:-$ROOT/infrastructure/k3d/cluster.yaml}"
 SERVICE_FILE="${UTCP_MEDIA_EDGE_SERVICE:-$ROOT/infrastructure/kubernetes/overlays/local-media-edge/rtpengine-media-service.yaml}"
 EXTERNAL_POLICY_FILE="${UTCP_MEDIA_EDGE_EXTERNAL_POLICY:-$ROOT/infrastructure/kubernetes/overlays/local-media-edge/allow-rtpengine-external-media.yaml}"
 ENTRYPOINT_FILE="${UTCP_MEDIA_EDGE_ENTRYPOINT:-$ROOT/infrastructure/docker/rtpengine/entrypoint}"

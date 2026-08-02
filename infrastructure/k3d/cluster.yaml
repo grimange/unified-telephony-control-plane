@@ -15,6 +15,9 @@ ports:
   - port: 127.0.0.1:443:443
     nodeFilters:
       - loadbalancer
+  - port: 127.0.0.1:40000-40099:40000-40099/udp
+    nodeFilters:
+      - server:0
 registries:
   create:
     name: utcp-local-registry
@@ -27,6 +30,13 @@ options:
       - arg: --disable=traefik
         nodeFilters:
           - server:*
+      - arg: --kube-apiserver-arg=service-node-port-range=30000-40099
+        nodeFilters:
+          - server:*
+    nodeLabels:
+      - label: utcp.dev/media-edge=true
+        nodeFilters:
+          - server:0
   kubeconfig:
     updateDefaultKubeconfig: false
     switchCurrentContext: false

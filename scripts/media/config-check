@@ -558,9 +558,15 @@ for object_id, doc in {**platform, **observability}.items():
             fail(f"public metrics resource exposes TCP 2224 through {object_id}")
 
 cluster_config = (root / "infrastructure/k3d/cluster.yaml").read_text(encoding="utf-8")
-for forbidden in ("2223", "40000", "40099", "rtpengine"):
+if "port: 127.0.0.1:40000-40099:40000-40099/udp" not in cluster_config:
+    fail("canonical k3d cluster config must publish UDP 40000-40099 on loopback")
+if "service-node-port-range=30000-40099" not in cluster_config:
+    fail("canonical k3d cluster config must extend the NodePort range to 40099")
+if "label: utcp.dev/media-edge=true" not in cluster_config:
+    fail("canonical k3d cluster config must label the media-edge server")
+for forbidden in ("2223", "2224", "10000", "20000", "21000", "21099", "5060", "5061", "hostNetwork"):
     if forbidden in cluster_config:
-        fail("k3d cluster config must not publish rtpengine host UDP ports")
+        fail(f"k3d cluster config must not publish non-media telephony port or host namespace: {forbidden}")
 
 kamailio_config = (
     platform.get("ConfigMap/utcp-platform/kamailio-config", {})

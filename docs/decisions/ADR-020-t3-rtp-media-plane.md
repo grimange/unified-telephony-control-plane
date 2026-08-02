@@ -266,9 +266,13 @@ sole advertised-address authority, while `RTPENGINE_MEDIA_PORT_MIN` and
 internal-only.
 
 The bounded local media-edge projection consumes the address `127.0.0.1`,
-publishes UDP `40000-40099` through a dedicated k3d profile and a 100-entry
+publishes UDP `40000-40099` through the canonical `utcp-local` k3d
+configuration (`infrastructure/k3d/cluster.yaml`) and a 100-entry
 `rtpengine-media` NodePort Service with `externalTrafficPolicy: Local`, and
-pins rtpengine to the k3d server labelled `utcp.dev/media-edge=true`.
+pins rtpengine to the k3d server labelled `utcp.dev/media-edge=true`. The
+canonical cluster publishes `127.0.0.1:40000-40099/UDP` and extends the K3s
+NodePort range to `30000-40099`; a separate media-edge cluster profile is not
+supported.
 
 The original T3-S3A projection assumed that changing the advertised half of a
 single rtpengine interface was sufficient. Live T3-S3B evidence disproved that

@@ -103,8 +103,12 @@ if ! docker ps --filter "name=k3d-${K3D_CLUSTER_NAME}-serverlb" --format '{{.Por
 fi
 
 serverlb_ports="$(docker ps --filter "name=k3d-${K3D_CLUSTER_NAME}-serverlb" --format '{{.Ports}}')"
-if printf '%s\n' "$serverlb_ports" | grep -Eiq '/udp|:2223->|:400[0-9][0-9]->|:40100->|NodePort|rtpengine'; then
-  printf 'rtpengine host UDP publication or control exposure found on k3d server load balancer\n' >&2
+if ! printf '%s\n' "$serverlb_ports" | grep -Fq '127.0.0.1:40000-40099->40000-40099/udp'; then
+  printf 'canonical RTP UDP range publication not found on k3d server load balancer\n' >&2
+  exit 1
+fi
+if printf '%s\n' "$serverlb_ports" | grep -Eiq ':2223->|:2224->|:10000->|:20000->|:21000->|:21099->|:5060->|:5061->'; then
+  printf 'rtpengine control, metrics, runtime, or SIP host exposure found on k3d server load balancer\n' >&2
   exit 1
 fi
 if ! printf '%s\n' "$serverlb_ports" | grep -Fq "${UTCP_EDGE_HTTP_HOST}:${UTCP_EDGE_HTTP_HOST_PORT}->80"; then

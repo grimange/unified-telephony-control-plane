@@ -78,10 +78,12 @@ test: api-test web-test ## Run backend and frontend tests.
 
 check: repository-hygiene media-config-check media-config-check-test media-edge-config-check media-edge-config-check-test media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test rtpengine-advertised-address-check freeswitch-config-check freeswitch-config-check-test freeswitch-overlay-check t3-media-prover-config-check t3-media-prover-config-check-test t3-media-prover-host-check security-config-check-test kamailio-signaling-config-check api-check web-lint web-typecheck ## Run repository, backend, frontend, media, security, and Kamailio signaling static checks.
 
-.PHONY: rtpengine-advertised-address-check media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test t3-media-prover-host-check t3-media-prover-host-check-test
+.PHONY: rtpengine-advertised-address-check media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test t3-media-prover-host-check t3-media-prover-host-check-test k3d-config-check-test
 
-k3d-media-edge-config-check: ## Validate the bounded media-edge k3d profile.
-	@K3D_CONFIG_FILE=infrastructure/k3d/cluster-media-edge.yaml K3D_MEDIA_EDGE_PROFILE=1 ./scripts/k3d/config-check
+k3d-config-check-test: ## Run canonical utcp-local RTP publication mutation checks.
+	@./scripts/k3d/config-check-test
+
+k3d-media-edge-config-check: k3d-config-check ## Validate canonical utcp-local media-edge publication.
 
 media-edge-config-check: ## Validate the external media-edge projection.
 	@./scripts/media-edge/config-check

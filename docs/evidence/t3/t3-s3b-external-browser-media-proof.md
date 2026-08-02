@@ -840,3 +840,15 @@ suite now fails on missing, swapped, or renamed rtpengine directions.
 Live Scenario A, Scenario B, the four bounded failure cases, and the
 containment sweep remain proof obligations for the subsequent live section of
 this file.
+
+## Canonical Lifecycle Correction
+
+The earlier repository evidence used `infrastructure/k3d/cluster-media-edge.yaml`
+as a temporary media-edge profile. That profile was not adopted as a supported
+UTCP environment. The canonical lifecycle is now consolidated in
+`infrastructure/k3d/cluster.yaml`: `utcp-local` owns the standard HTTP/HTTPS
+edge, the loopback UDP range `127.0.0.1:40000-40099`, the
+`utcp-local-registry` on `127.0.0.1:5001`, and the `utcp.dev/media-edge=true`
+server label. The alternate profile was removed from the repository so the
+external proof uses the same canonical cluster lifecycle as the baseline
+deployment.

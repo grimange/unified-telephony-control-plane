@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CHECK="$ROOT/scripts/k3d/config-check"
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
+cp "$ROOT/infrastructure/k3d/cluster.yaml" "$tmpdir/cluster.yaml"
+
+expect_pass() {
+  K3D_CONFIG_FILE="$tmpdir/cluster.yaml" "$CHECK" >/dev/null
+}
+
+expect_fail() {
+  local label="$1"
+  if K3D_CONFIG_FILE="$tmpdir/cluster.yaml" "$CHECK" >/dev/null 2>&1; then
+    printf 'k3d config mutation unexpectedly passed: %s\n' "$label" >&2
+    exit 1
+  fi
+}
+
+expect_pass
+
+sed -i 's/name: utcp-local/name: utcp-other/' "$tmpdir/cluster.yaml"
+expect_fail "alternate cluster identity"
+cp "$ROOT/infrastructure/k3d/cluster.yaml" "$tmpdir/cluster.yaml"
+sed -i 's/name: utcp-local-registry/name: other-registry/' "$tmpdir/cluster.yaml"
+expect_fail "alternate registry identity"
+cp "$ROOT/infrastructure/k3d/cluster.yaml" "$tmpdir/cluster.yaml"
+sed -i '0,/hostPort: "5001"/s//hostPort: "5002"/' "$tmpdir/cluster.yaml"
+expect_fail "alternate registry port"
+cp "$ROOT/infrastructure/k3d/cluster.yaml" "$tmpdir/cluster.yaml"
+sed -i 's#127.0.0.1:40000-40099:40000-40099/udp#127.0.0.1:40000-40098:40000-40098/udp#' "$tmpdir/cluster.yaml"
+expect_fail "truncated UDP range"
+cp "$ROOT/infrastructure/k3d/cluster.yaml" "$tmpdir/cluster.yaml"
+sed -i 's#127.0.0.1:40000-40099:40000-40099/udp#127.0.0.1:40000-40099:40000-40099/tcp#' "$tmpdir/cluster.yaml"
+expect_fail "TCP instead of UDP"
+cp "$ROOT/infrastructure/k3d/cluster.yaml" "$tmpdir/cluster.yaml"
+sed -i '/127.0.0.1:40000-40099:40000-40099\/udp/d' "$tmpdir/cluster.yaml"
+expect_fail "missing UDP publication"
+cp "$ROOT/infrastructure/k3d/cluster.yaml" "$tmpdir/cluster.yaml"
+sed -i 's/--kube-apiserver-arg=service-node-port-range=30000-40099/--kube-apiserver-arg=service-node-port-range=30000-30099/' "$tmpdir/cluster.yaml"
+expect_fail "missing extended NodePort range"
+cp "$ROOT/infrastructure/k3d/cluster.yaml" "$tmpdir/cluster.yaml"
+sed -i 's/utcp.dev\/media-edge=true/utcp.dev\/wrong=true/' "$tmpdir/cluster.yaml"
+expect_fail "media-edge node label mutation"
+
+printf 'k3d config mutation checks passed\n'
