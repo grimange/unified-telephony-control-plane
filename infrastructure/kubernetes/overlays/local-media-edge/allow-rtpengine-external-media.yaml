@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-rtpengine-external-media
+  namespace: utcp-platform
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/managed-by: utcp-k3-media-edge
+spec:
+  podSelector:
+    matchLabels:
+      utcp.io/network-role: rtpengine-media
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: UDP
+          port: 40000
+          endPort: 40099

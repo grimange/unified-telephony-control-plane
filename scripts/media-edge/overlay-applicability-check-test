@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CHECK="$ROOT/scripts/media-edge/overlay-applicability-check"
+OVERLAY="$ROOT/infrastructure/kubernetes/overlays/local-media-edge"
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
+kubectl kustomize "$OVERLAY" >"$tmpdir/render.yaml"
+python3 - "$tmpdir/render.yaml" "$tmpdir/valid-list.json" "$tmpdir/direct-array.json" <<'PY'
+from pathlib import Path
+import json
+import sys
+import yaml
+
+documents = [doc for doc in yaml.safe_load_all(Path(sys.argv[1]).read_text()) if isinstance(doc, dict)]
+Path(sys.argv[2]).write_text(json.dumps({"apiVersion": "v1", "kind": "List", "items": documents}))
+Path(sys.argv[3]).write_text(json.dumps(documents))
+PY
+
+run_case() {
+  local label="$1" expected="$2" fixture="$3"
+  if UTCP_MEDIA_EDGE_APPLICABILITY_INPUT="$fixture" "$CHECK" >/dev/null 2>&1; then
+    actual=pass
+  else
+    actual=fail
+  fi
+  if [ "$actual" != "$expected" ]; then
+    printf 'applicability mutation mismatch: %s expected=%s actual=%s\n' "$label" "$expected" "$actual" >&2
+    exit 1
+  fi
+}
+
+run_case "valid kind List" pass "$tmpdir/valid-list.json"
+run_case "direct JSON object array" pass "$tmpdir/direct-array.json"
+
+python3 - "$tmpdir/valid-list.json" "$tmpdir/missing-items.json" "$tmpdir/empty-items.json" "$tmpdir/missing-service.json" "$tmpdir/duplicate-service.json" "$tmpdir/invalid-service.json" "$tmpdir/invalid-policy.json" "$tmpdir/tcp-policy.json" "$tmpdir/missing-local-policy.json" "$tmpdir/malformed.json" <<'PY'
+from copy import deepcopy
+import json
+from pathlib import Path
+import sys
+
+valid = json.loads(Path(sys.argv[1]).read_text())
+items = valid["items"]
+service = next(item for item in items if item.get("kind") == "Service" and item.get("metadata", {}).get("name") == "rtpengine-media")
+policy = next(item for item in items if item.get("kind") == "NetworkPolicy" and item.get("metadata", {}).get("name") == "allow-rtpengine-external-media")
+
+Path(sys.argv[2]).write_text(json.dumps({"apiVersion": "v1", "kind": "List"}))
+Path(sys.argv[3]).write_text(json.dumps({"apiVersion": "v1", "kind": "List", "items": []}))
+Path(sys.argv[4]).write_text(json.dumps({"apiVersion": "v1", "kind": "List", "items": [item for item in items if item is not service]}))
+Path(sys.argv[5]).write_text(json.dumps({"apiVersion": "v1", "kind": "List", "items": items + [deepcopy(service)]}))
+
+invalid_service = deepcopy(valid)
+invalid_service["items"] = [deepcopy(item) for item in items]
+next(item for item in invalid_service["items"] if item.get("kind") == "Service" and item.get("metadata", {}).get("name") == "rtpengine-media")["spec"]["ports"] = []
+Path(sys.argv[6]).write_text(json.dumps(invalid_service))
+
+invalid_policy = deepcopy(valid)
+invalid_policy["items"] = [deepcopy(item) for item in items]
+next(item for item in invalid_policy["items"] if item.get("kind") == "NetworkPolicy")["spec"]["ingress"][0]["ports"][0]["endPort"] = 40100
+Path(sys.argv[7]).write_text(json.dumps(invalid_policy))
+
+tcp_policy = deepcopy(valid)
+tcp_policy["items"] = [deepcopy(item) for item in items]
+next(item for item in tcp_policy["items"] if item.get("kind") == "NetworkPolicy")["spec"]["ingress"][0]["ports"][0]["protocol"] = "TCP"
+Path(sys.argv[8]).write_text(json.dumps(tcp_policy))
+
+missing_local = deepcopy(valid)
+missing_local["items"] = [deepcopy(item) for item in items]
+next(item for item in missing_local["items"] if item.get("kind") == "Service" and item.get("metadata", {}).get("name") == "rtpengine-media")["spec"]["externalTrafficPolicy"] = "Cluster"
+Path(sys.argv[9]).write_text(json.dumps(missing_local))
+
+Path(sys.argv[10]).write_text('{"kind":"List","items":')
+PY
+
+run_case "missing items" fail "$tmpdir/missing-items.json"
+run_case "empty items" fail "$tmpdir/empty-items.json"
+run_case "missing media Service" fail "$tmpdir/missing-service.json"
+run_case "duplicate media Service" fail "$tmpdir/duplicate-service.json"
+run_case "invalid nested Service" fail "$tmpdir/invalid-service.json"
+run_case "invalid nested NetworkPolicy" fail "$tmpdir/invalid-policy.json"
+run_case "TCP media policy" fail "$tmpdir/tcp-policy.json"
+run_case "missing externalTrafficPolicy Local" fail "$tmpdir/missing-local-policy.json"
+run_case "malformed JSON" fail "$tmpdir/malformed.json"
+
+printf 'media-edge applicability mutation checks passed\n'

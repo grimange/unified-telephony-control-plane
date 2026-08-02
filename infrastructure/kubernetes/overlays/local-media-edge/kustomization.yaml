@@ -5,6 +5,7 @@ generatorOptions:
 resources:
   - ../local
   - rtpengine-media-service.yaml
+  - allow-rtpengine-external-media.yaml
 configMapGenerator:
   - name: utcp-media-edge-authority
     namespace: utcp-platform

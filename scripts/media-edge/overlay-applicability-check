@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OVERLAY="${UTCP_MEDIA_EDGE_OVERLAY_DIR:-$ROOT/infrastructure/kubernetes/overlays/local-media-edge}"
 CHECK="${UTCP_MEDIA_EDGE_CONFIG_CHECK:-$ROOT/scripts/media-edge/config-check}"
+VERSIONS_FILE="${UTCP_MEDIA_EDGE_VERSIONS:-$ROOT/versions.env}"
 fail() { printf 'media-edge overlay applicability check failed: %s\n' "$1" >&2; exit 1; }
 
 command -v kubectl >/dev/null 2>&1 || fail "kubectl is required"
@@ -11,24 +12,135 @@ render="$(kubectl kustomize "$OVERLAY")" || fail "plain kubectl kustomize failed
 dry_run_file="$(mktemp)"
 dry_run_error="$(mktemp)"
 trap 'rm -f "$dry_run_file" "$dry_run_error"' EXIT
-if ! kubectl apply -k "$OVERLAY" --dry-run=client --validate=false -o yaml >"$dry_run_file" 2>"$dry_run_error"; then
-  if grep -Eqi 'connection refused|failed to download openapi|unable to recognize|couldn.t get current server API group list' "$dry_run_error"; then
-    printf 'client-side apply dry-run unavailable: no reachable API server; validating rendered objects offline\n' >&2
-    printf '%s\n' "$render" >"$dry_run_file"
+if [ -n "${UTCP_MEDIA_EDGE_APPLICABILITY_INPUT:-}" ]; then
+  cp "$UTCP_MEDIA_EDGE_APPLICABILITY_INPUT" "$dry_run_file"
+else
+  if ! kubectl apply -k "$OVERLAY" --dry-run=client --validate=false -o json >"$dry_run_file" 2>"$dry_run_error"; then
+    if grep -Eqi 'connection refused|failed to download openapi|unable to recognize|couldn.t get current server API group list' "$dry_run_error"; then
+      printf 'client-side apply dry-run unavailable: no reachable API server; validating rendered objects offline\n' >&2
+      printf '%s\n' "$render" >"$dry_run_file"
+    else
+      cat "$dry_run_error" >&2
+      fail "client-side apply dry-run failed"
+    fi
   else
-    cat "$dry_run_error" >&2
-    fail "client-side apply dry-run failed"
+    :
   fi
 fi
-dry_run="$(<"$dry_run_file")"
 
 grep -Fq 'UTCP_PUBLIC_MEDIA_ADDRESS: 127.0.0.1' <<<"$render" || fail "rendered public address is missing"
-grep -Fq 'name: rtpengine-media' "$dry_run_file" || fail "dry-run omitted rtpengine-media"
-python3 - "$dry_run_file" <<'PY' || fail "dry-run media Service is not the bounded 100-port projection"
-import sys, yaml
-docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if isinstance(d, dict)]
-s = next((d for d in docs if d.get("kind") == "Service" and (d.get("metadata") or {}).get("name") == "rtpengine-media"), None)
-assert s and s["spec"].get("type") == "NodePort" and s["spec"].get("externalTrafficPolicy") == "Local" and len(s["spec"].get("ports", [])) == 100
+python3 - "$dry_run_file" "$VERSIONS_FILE" <<'PY' || fail "dry-run media projection is invalid"
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+versions = dict(
+    line.split("=", 1)
+    for line in Path(sys.argv[2]).read_text(encoding="utf-8").splitlines()
+    if line and not line.startswith("#") and "=" in line
+)
+media_min = int(versions["RTPENGINE_MEDIA_PORT_MIN"])
+media_max = int(versions["RTPENGINE_MEDIA_PORT_MAX"])
+
+
+def fail(message: str) -> None:
+    raise SystemExit(message)
+
+
+def validate_object(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        fail("every rendered item must be an object")
+    if not value.get("apiVersion") or not value.get("kind"):
+        fail("every rendered item must have apiVersion and kind")
+    metadata = value.get("metadata")
+    if not isinstance(metadata, dict) or not metadata.get("name"):
+        fail("every rendered item must have metadata.name")
+    return value
+
+
+def flatten(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, dict) and value.get("kind") == "List":
+        items = value.get("items")
+        if not isinstance(items, list) or not items:
+            fail("List must contain a non-empty items array")
+        flattened: list[dict[str, Any]] = []
+        for item in items:
+            if isinstance(item, dict) and item.get("kind") == "List":
+                fail("nested List entries are not supported")
+            flattened.extend(flatten(item))
+        return flattened
+    if isinstance(value, list):
+        if not value:
+            fail("object array must not be empty")
+        flattened = []
+        for item in value:
+            flattened.extend(flatten(item))
+        return flattened
+    return [validate_object(value)]
+
+
+raw = Path(sys.argv[1]).read_text(encoding="utf-8")
+try:
+    parsed = json.loads(raw)
+    objects = flatten(parsed)
+except json.JSONDecodeError:
+    try:
+        documents = [doc for doc in yaml.safe_load_all(raw) if doc is not None]
+    except yaml.YAMLError as exc:
+        fail(f"malformed JSON/YAML: {exc}")
+    if not documents:
+        fail("rendered output is empty")
+    objects = []
+    for document in documents:
+        objects.extend(flatten(document))
+
+def resource_key(obj: dict[str, Any]) -> tuple[str, str]:
+    return obj["kind"], (obj.get("metadata") or {}).get("name", "")
+
+services = [obj for obj in objects if resource_key(obj) == ("Service", "rtpengine-media")]
+policies = [obj for obj in objects if resource_key(obj) == ("NetworkPolicy", "allow-rtpengine-external-media")]
+if len(services) != 1:
+    fail("expected exactly one rtpengine-media Service")
+if len(policies) != 1:
+    fail("expected exactly one external media NetworkPolicy")
+
+service = services[0]
+spec = service.get("spec") or {}
+if service.get("metadata", {}).get("namespace") != "utcp-platform":
+    fail("rtpengine-media Service must be in utcp-platform")
+if spec.get("type") != "NodePort" or spec.get("externalTrafficPolicy") != "Local":
+    fail("rtpengine-media Service must be NodePort with externalTrafficPolicy Local")
+ports = spec.get("ports") or []
+if len(ports) != 100:
+    fail("rtpengine-media Service must contain exactly 100 ports")
+expected_ports = list(range(media_min, media_max + 1))
+actual_ports = []
+for port in ports:
+    if port.get("protocol") != "UDP" or port.get("port") != port.get("targetPort") or port.get("port") != port.get("nodePort"):
+        fail("every rtpengine-media port must be UDP with equal port, targetPort, and nodePort")
+    actual_ports.append(port.get("port"))
+if actual_ports != expected_ports:
+    fail(f"rtpengine-media ports must exactly equal {media_min}-{media_max}")
+
+policy = policies[0]
+policy_spec = policy.get("spec") or {}
+if policy.get("metadata", {}).get("namespace") != "utcp-platform":
+    fail("external media NetworkPolicy must be in utcp-platform")
+if policy_spec.get("podSelector", {}).get("matchLabels") != {"utcp.io/network-role": "rtpengine-media"}:
+    fail("external media NetworkPolicy must select only rtpengine")
+if policy_spec.get("policyTypes") != ["Ingress"] or "egress" in policy_spec:
+    fail("external media NetworkPolicy must be ingress-only")
+ingress = policy_spec.get("ingress") or []
+if len(ingress) != 1 or set(ingress[0]) != {"ports"}:
+    fail("external media NetworkPolicy must have one bounded ingress rule without a source")
+if ingress[0].get("ports") != [{"protocol": "UDP", "port": media_min, "endPort": media_max}]:
+    fail(f"external media NetworkPolicy must permit exactly UDP {media_min}-{media_max}")
 PY
+
 "$CHECK" >/dev/null
 printf 'media-edge overlay is plainly renderable and offline-applicable\n'

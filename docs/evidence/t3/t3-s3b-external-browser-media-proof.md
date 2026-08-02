@@ -341,6 +341,28 @@ kubectl diff -k overlays/local   exit 0 — zero drift
 | `PROOF_LIMITATION` | k3d publishes via the **serverlb** nginx UDP proxy rather than binding the node container directly; the architecture document did not name this hop. It is correct behaviour and the path is proven, but the rerun should assert the nginx session stability explicitly |
 | `EXPECTED_BEHAVIOR` | The repository has no canonical Helm bootstrap despite `gateway-config-check` requiring Helm; a temporary pinned `v4.0.3` binary was used and removed |
 
+## PRODUCT_DEFECT-25 and PROOF_HARNESS_DEFECT-I Repository Correction
+
+`PRODUCT_DEFECT-25` is corrected in the repository. The canonical internal
+`allow-rtpengine-media` policy remains unchanged in the default local
+projection. The dedicated media-edge projection now adds an ingress-only
+`allow-rtpengine-external-media` policy selecting only the canonical rtpengine
+Pods, omitting `from` so variable external browser addresses are admitted, and
+restricting ingress to UDP `40000-40099`. It has no egress, source `ipBlock`,
+control, metrics, runtime, SIP, ESL, ARI, or AMI access.
+
+`PROOF_HARNESS_DEFECT-I` is corrected. The media-edge applicability checker
+now parses structured JSON and unwraps `kind: List` items, while also handling
+the supported direct-object and array shapes. It validates every nested
+Service and NetworkPolicy, rejects malformed or duplicate objects, and keeps
+the rendered projection and canonical range checks active. Static and
+mutation coverage cover the external policy boundary and List normalization.
+
+No Kubernetes resource was applied, no cluster was recreated, and no browser
+media scenario was run. The external transport path, rtpengine advertisement,
+and browser destination-port observations remain the previously established
+live evidence; resumed browser proof is pending this repository correction.
+
 ## Status
 
 ```text
@@ -572,7 +594,7 @@ removed. No credential value appears in this document.
 
 ```text
 T3-S3A = Complete
-T3-S3B = blocked on PRODUCT_DEFECT-25
+T3-S3B = ready to resume external browser media proof
 T3-S3  = In Progress
 T3     = In Progress
 UTCP_PHASE=T1

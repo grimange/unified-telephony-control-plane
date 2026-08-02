@@ -433,6 +433,11 @@ if grep -Eiq '18080|18443|5061|sips|NodePort|LoadBalancer|hostPort:|hostNetwork:
   exit 1
 fi
 
+if grep -Fq 'allow-rtpengine-external-media' "$tmp"; then
+  printf 'default security render must not include the media-edge external RTP policy\n' >&2
+  exit 1
+fi
+
 python3 - "$tmp" <<'PY'
 from __future__ import annotations
 

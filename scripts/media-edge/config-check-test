@@ -9,8 +9,10 @@ trap 'rm -rf "$tmpdir"' EXIT
 cp "$ROOT/versions.env" "$tmpdir/versions.env"
 cp "$ROOT/infrastructure/k3d/cluster-media-edge.yaml" "$tmpdir/cluster.yaml"
 cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/rtpengine-media-service.yaml" "$tmpdir/service.yaml"
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/allow-rtpengine-external-media.yaml" "$tmpdir/external-policy.yaml"
 cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/generated/public-media.env" "$tmpdir/public-media.env"
 cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/kustomization.yaml" "$tmpdir/kustomization.yaml"
+cp "$ROOT/infrastructure/kubernetes/overlays/local/kustomization.yaml" "$tmpdir/local-kustomization.yaml"
 cp "$ROOT/infrastructure/docker/rtpengine/entrypoint" "$tmpdir/entrypoint"
 
 validation_passes() {
@@ -28,9 +30,11 @@ run_check() {
   UTCP_MEDIA_EDGE_VERSIONS="$tmpdir/versions.env" \
     UTCP_MEDIA_EDGE_K3D_CONFIG="$tmpdir/cluster.yaml" \
     UTCP_MEDIA_EDGE_SERVICE="$tmpdir/service.yaml" \
+    UTCP_MEDIA_EDGE_EXTERNAL_POLICY="$tmpdir/external-policy.yaml" \
     UTCP_MEDIA_EDGE_ENTRYPOINT="$tmpdir/entrypoint" \
     UTCP_MEDIA_EDGE_GENERATED_PROJECTION="$tmpdir/public-media.env" \
     UTCP_MEDIA_EDGE_KUSTOMIZATION="$tmpdir/kustomization.yaml" \
+    UTCP_MEDIA_EDGE_LOCAL_KUSTOMIZATION="$tmpdir/local-kustomization.yaml" \
     "$CHECK" >/dev/null
 }
 
@@ -92,6 +96,43 @@ cp "$ROOT/infrastructure/docker/rtpengine/entrypoint" "$tmpdir/entrypoint"
 sed -i '/- name: media-40099/,$d' "$tmpdir/service.yaml"
 expect_fail "missing NodePort entry" run_check
 cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/rtpengine-media-service.yaml" "$tmpdir/service.yaml"
+
+sed -i '/^  ingress:/,/^      ports:/ s/^    - ports:/    - from:\n        - ipBlock:\n            cidr: 0.0.0.0\/0\n      ports:/' "$tmpdir/external-policy.yaml"
+expect_fail "external policy source ipBlock" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/allow-rtpengine-external-media.yaml" "$tmpdir/external-policy.yaml"
+sed -i '/^    - ports:/a\      from:\n        - podSelector: {}' "$tmpdir/external-policy.yaml"
+expect_fail "external policy source selector" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/allow-rtpengine-external-media.yaml" "$tmpdir/external-policy.yaml"
+sed -i 's/protocol: UDP/protocol: TCP/' "$tmpdir/external-policy.yaml"
+expect_fail "external policy TCP" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/allow-rtpengine-external-media.yaml" "$tmpdir/external-policy.yaml"
+sed -i 's/endPort: 40099/endPort: 40100/' "$tmpdir/external-policy.yaml"
+expect_fail "external policy widened range" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/allow-rtpengine-external-media.yaml" "$tmpdir/external-policy.yaml"
+sed -i 's/port: 40000/port: 2223/' "$tmpdir/external-policy.yaml"
+expect_fail "external policy control port" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/allow-rtpengine-external-media.yaml" "$tmpdir/external-policy.yaml"
+sed -i 's/port: 40000/port: 21000/' "$tmpdir/external-policy.yaml"
+expect_fail "external policy runtime port" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/allow-rtpengine-external-media.yaml" "$tmpdir/external-policy.yaml"
+sed -i '/^  policyTypes:/a\  egress: []' "$tmpdir/external-policy.yaml"
+expect_fail "external policy egress" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/allow-rtpengine-external-media.yaml" "$tmpdir/external-policy.yaml"
+sed -i 's/utcp.io\/network-role: rtpengine-media/utcp.io\/network-role: freeswitch-sip/' "$tmpdir/external-policy.yaml"
+expect_fail "external policy runtime selector" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/allow-rtpengine-external-media.yaml" "$tmpdir/external-policy.yaml"
+
+rm -f "$tmpdir/external-policy.yaml"
+expect_fail "missing external policy" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/allow-rtpengine-external-media.yaml" "$tmpdir/external-policy.yaml"
+
+if grep -Fq 'allow-rtpengine-external-media.yaml' "$ROOT/infrastructure/kubernetes/overlays/local/kustomization.yaml"; then
+  printf 'canonical local overlay unexpectedly includes external media policy\n' >&2
+  exit 1
+fi
+printf '\n  - allow-rtpengine-external-media.yaml\n' >> "$tmpdir/local-kustomization.yaml"
+expect_fail "external policy added to default local overlay" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local/kustomization.yaml" "$tmpdir/local-kustomization.yaml"
 sed -i '0,/protocol: UDP/{s/protocol: UDP/protocol: TCP/}' "$tmpdir/service.yaml"
 expect_fail "TCP media publication" run_check
 cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/rtpengine-media-service.yaml" "$tmpdir/service.yaml"

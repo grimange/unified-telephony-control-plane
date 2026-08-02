@@ -4,18 +4,20 @@ ROOT="$(cd "$(dirname "$BASH_SOURCE")/../.." && pwd)"
 VERSIONS_FILE="${UTCP_MEDIA_EDGE_VERSIONS:-$ROOT/versions.env}"
 K3D_CONFIG_FILE="${UTCP_MEDIA_EDGE_K3D_CONFIG:-$ROOT/infrastructure/k3d/cluster-media-edge.yaml}"
 SERVICE_FILE="${UTCP_MEDIA_EDGE_SERVICE:-$ROOT/infrastructure/kubernetes/overlays/local-media-edge/rtpengine-media-service.yaml}"
+EXTERNAL_POLICY_FILE="${UTCP_MEDIA_EDGE_EXTERNAL_POLICY:-$ROOT/infrastructure/kubernetes/overlays/local-media-edge/allow-rtpengine-external-media.yaml}"
 ENTRYPOINT_FILE="${UTCP_MEDIA_EDGE_ENTRYPOINT:-$ROOT/infrastructure/docker/rtpengine/entrypoint}"
 ADDRESS_VALIDATION_FILE="$ROOT/infrastructure/docker/rtpengine/address-validation"
 DOCKERFILE="$ROOT/infrastructure/docker/rtpengine/Dockerfile"
 OVERLAY_DIR="${UTCP_MEDIA_EDGE_OVERLAY_DIR:-$ROOT/infrastructure/kubernetes/overlays/local-media-edge}"
 GENERATED_PROJECTION="${UTCP_MEDIA_EDGE_GENERATED_PROJECTION:-$OVERLAY_DIR/generated/public-media.env}"
 KUSTOMIZATION_FILE="${UTCP_MEDIA_EDGE_KUSTOMIZATION:-$OVERLAY_DIR/kustomization.yaml}"
+LOCAL_KUSTOMIZATION_FILE="${UTCP_MEDIA_EDGE_LOCAL_KUSTOMIZATION:-$ROOT/infrastructure/kubernetes/overlays/local/kustomization.yaml}"
 GENERATOR="$ROOT/scripts/media-edge/sync-public-media-projection"
 fail() { printf 'media-edge config check failed: %s\n' "$1" >&2; exit 1; }
-for file in "$VERSIONS_FILE" "$K3D_CONFIG_FILE" "$SERVICE_FILE" "$ENTRYPOINT_FILE" "$ADDRESS_VALIDATION_FILE" "$DOCKERFILE" "$KUSTOMIZATION_FILE" "$GENERATED_PROJECTION"; do
+for file in "$VERSIONS_FILE" "$K3D_CONFIG_FILE" "$SERVICE_FILE" "$EXTERNAL_POLICY_FILE" "$ENTRYPOINT_FILE" "$ADDRESS_VALIDATION_FILE" "$DOCKERFILE" "$KUSTOMIZATION_FILE" "$LOCAL_KUSTOMIZATION_FILE" "$GENERATED_PROJECTION"; do
   [ -s "$file" ] || fail "required file is missing: $file"
 done
-python3 - "$ROOT" "$VERSIONS_FILE" "$K3D_CONFIG_FILE" "$SERVICE_FILE" "$ENTRYPOINT_FILE" "$ADDRESS_VALIDATION_FILE" "$DOCKERFILE" "$GENERATED_PROJECTION" "$GENERATOR" "$OVERLAY_DIR" "$KUSTOMIZATION_FILE" <<'PY'
+python3 - "$ROOT" "$VERSIONS_FILE" "$K3D_CONFIG_FILE" "$SERVICE_FILE" "$EXTERNAL_POLICY_FILE" "$ENTRYPOINT_FILE" "$ADDRESS_VALIDATION_FILE" "$DOCKERFILE" "$GENERATED_PROJECTION" "$GENERATOR" "$OVERLAY_DIR" "$KUSTOMIZATION_FILE" "$LOCAL_KUSTOMIZATION_FILE" <<'PY'
 from pathlib import Path
 import re
 import subprocess
@@ -26,13 +28,15 @@ root = Path(sys.argv[1])
 versions_path = Path(sys.argv[2])
 k3d_path = Path(sys.argv[3])
 service_path = Path(sys.argv[4])
-entrypoint_path = Path(sys.argv[5])
-validation_path = Path(sys.argv[6])
-dockerfile_path = Path(sys.argv[7])
-generated_path = Path(sys.argv[8])
-generator_path = Path(sys.argv[9])
-overlay_path = Path(sys.argv[10])
-kustomization_path = Path(sys.argv[11])
+external_policy_path = Path(sys.argv[5])
+entrypoint_path = Path(sys.argv[6])
+validation_path = Path(sys.argv[7])
+dockerfile_path = Path(sys.argv[8])
+generated_path = Path(sys.argv[9])
+generator_path = Path(sys.argv[10])
+overlay_path = Path(sys.argv[11])
+kustomization_path = Path(sys.argv[12])
+kustomization_local_path = Path(sys.argv[13])
 fail = lambda message: (_ for _ in ()).throw(SystemExit(f"media-edge config check failed: {message}"))
 
 def vals(path):
@@ -66,6 +70,8 @@ if "../../../../versions.env" in kustomization_raw or "LoadRestrictionsNone" in 
     fail("media-edge Kustomization must not load versions.env outside its root or require unrestricted loading")
 if "generated/public-media.env" not in kustomization_raw:
     fail("media-edge Kustomization must consume the in-root generated projection")
+if "allow-rtpengine-external-media.yaml" in kustomization_local_path.read_text():
+    fail("canonical local overlay must not include the external media policy")
 
 entry = entrypoint_path.read_text()
 if '--interface=' not in entry or 'advertised_address' not in entry or 'UTCP_PUBLIC_MEDIA_ADDRESS' not in entry:
@@ -118,6 +124,30 @@ for item in ports:
 if actual != expected:
     fail("NodePort entries must exactly equal 40000-40099")
 
+external_policy = next(yaml.safe_load_all(external_policy_path.read_text()))
+if external_policy.get("kind") != "NetworkPolicy" or external_policy.get("metadata", {}).get("name") != "allow-rtpengine-external-media":
+    fail("media-edge external NetworkPolicy is missing or misnamed")
+external_spec = external_policy.get("spec") or {}
+if external_spec.get("podSelector", {}).get("matchLabels") != {"utcp.io/network-role": "rtpengine-media"}:
+    fail("external media policy must select only canonical rtpengine Pods")
+if external_spec.get("policyTypes") != ["Ingress"] or "egress" in external_spec:
+    fail("external media policy must be ingress-only")
+external_ingress = external_spec.get("ingress") or []
+if len(external_ingress) != 1:
+    fail("external media policy must contain exactly one ingress rule")
+external_rule = external_ingress[0]
+if "from" in external_rule:
+    fail("external media policy must omit from and admit variable external sources")
+if set(external_rule) != {"ports"}:
+    fail("external media policy may contain only its bounded ports in the ingress rule")
+external_ports = external_rule.get("ports") or []
+media_min = int(v["RTPENGINE_MEDIA_PORT_MIN"])
+media_max = int(v["RTPENGINE_MEDIA_PORT_MAX"])
+if external_ports != [{"protocol": "UDP", "port": media_min, "endPort": media_max}]:
+    fail(f"external media policy must permit exactly UDP {media_min}-{media_max}")
+if external_policy.get("metadata", {}).get("namespace") != "utcp-platform":
+    fail("external media policy must target utcp-platform")
+
 k3d = next(yaml.safe_load_all(k3d_path.read_text()))
 publication = [p for p in k3d.get("ports", []) if "40000-40099:40000-40099/udp" in str(p.get("port"))]
 if len(publication) != 1 or publication[0].get("nodeFilters") != ["server:0"]:
@@ -143,6 +173,13 @@ if "v1/Service/utcp-platform/rtpengine-media" in local or any("UTCP_PUBLIC_MEDIA
     fail("canonical local overlay must remain internal-only")
 if "v1/Service/utcp-platform/rtpengine-media" not in edge:
     fail("media-edge Service is absent from the rendered projection")
+external_key = "networking.k8s.io/v1/NetworkPolicy/utcp-platform/allow-rtpengine-external-media"
+if external_key not in edge:
+    fail("media-edge external NetworkPolicy is absent from the rendered projection")
+if edge[external_key] != external_policy:
+    fail("rendered external media policy differs from its bounded source")
+if external_key in local:
+    fail("canonical local overlay must not include the external media policy")
 for key, doc in edge.items():
     if doc.get("kind") == "Service" and doc.get("spec", {}).get("clusterIP") == v.get("UTCP_PUBLIC_MEDIA_ADDRESS"):
         fail("public media address must not equal a rendered Service ClusterIP")
@@ -155,7 +192,7 @@ if pod.get("nodeSelector") != {"utcp.dev/media-edge": "true"}:
 env = next((x for x in pod["containers"][0].get("env", []) if x.get("name") == "UTCP_PUBLIC_MEDIA_ADDRESS"), None)
 if not env or env.get("valueFrom", {}).get("configMapKeyRef", {}).get("key") != "UTCP_PUBLIC_MEDIA_ADDRESS":
     fail("public address is not projected from the canonical authority")
-allowed = {"v1/ConfigMap/utcp-platform/utcp-media-edge-authority", "v1/Service/utcp-platform/rtpengine-media", "apps/v1/Deployment/utcp-platform/rtpengine"}
+allowed = {"v1/ConfigMap/utcp-platform/utcp-media-edge-authority", "v1/Service/utcp-platform/rtpengine-media", "apps/v1/Deployment/utcp-platform/rtpengine", external_key}
 for key, value in local.items():
     if key == "apps/v1/Deployment/utcp-platform/rtpengine":
         continue
