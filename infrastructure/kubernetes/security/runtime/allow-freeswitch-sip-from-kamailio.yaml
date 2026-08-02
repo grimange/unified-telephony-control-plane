@@ -1,0 +1,73 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-freeswitch-sip-from-kamailio
+  namespace: utcp-runtime
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/managed-by: utcp-k3-security
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: freeswitch
+      utcp.io/network-role: freeswitch-sip
+      utcp.dev/runtime-node: local-freeswitch-esl
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: kamailio-signaling
+      ports:
+        - protocol: UDP
+          port: 5060
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: rtpengine-media
+      ports:
+        - protocol: UDP
+          port: 21000
+          endPort: 21099
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: kamailio-signaling
+      ports:
+        - protocol: UDP
+          port: 5060
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-platform
+          podSelector:
+            matchLabels:
+              utcp.io/network-role: rtpengine-media
+      ports:
+        - protocol: UDP
+          port: 40000
+          endPort: 40099
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

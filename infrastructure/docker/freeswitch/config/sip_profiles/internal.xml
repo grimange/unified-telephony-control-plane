@@ -1,0 +1,13 @@
+<profile name="internal">
+  <settings>
+    <param name="sip-ip" value="0.0.0.0"/>
+    <param name="rtp-ip" value="0.0.0.0"/>
+    <param name="sip-port" value="5060"/>
+    <param name="dialplan" value="XML"/>
+    <param name="context" value="default"/>
+    <param name="inbound-codec-prefs" value="PCMU"/>
+    <param name="outbound-codec-prefs" value="PCMU"/>
+    <param name="disable-transcoding" value="true"/>
+    <param name="inbound-late-negotiation" value="false"/>
+  </settings>
+</profile>

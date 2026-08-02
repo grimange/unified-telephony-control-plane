@@ -24,4 +24,5 @@ resources:
   - empty-namespaces/default-deny-runtime.yaml
   - runtime/allow-asterisk-ari-ingress.yaml
   - runtime/allow-asterisk-sip-from-kamailio.yaml
+  - runtime/allow-freeswitch-sip-from-kamailio.yaml
   - empty-namespaces/default-deny-observability.yaml

@@ -174,7 +174,7 @@ data:
 
         route(MEDIA_OFFER);
         record_route();
-        route(ASTERISK_RELAY);
+        route(APPLICATION_RUNTIME_RELAY);
         exit;
     }
 
@@ -227,13 +227,13 @@ data:
         exit;
     }
 
-    route[ASTERISK_RELAY] {
-        $du = "sip:asterisk-sip.utcp-runtime.svc.cluster.local:5060;transport=udp";
+    route[APPLICATION_RUNTIME_RELAY] {
+        $du = "sip:application-runtime-sip.utcp-runtime.svc.cluster.local:5060;transport=udp";
         t_on_reply("APPLICATION_RUNTIME_MEDIA_REPLY");
-        t_on_failure("ASTERISK_UNAVAILABLE");
+        t_on_failure("APPLICATION_RUNTIME_UNAVAILABLE");
 
         if (!t_relay()) {
-            xlog("L_WARN", "kamailio_application_dialog_rejected result=asterisk_unavailable method=$rm call_id=$ci\n");
+            xlog("L_WARN", "kamailio_application_dialog_rejected result=application_runtime_unavailable method=$rm call_id=$ci\n");
             t_reply("503", "Application Runtime Unavailable");
             exit;
         }
@@ -293,7 +293,7 @@ data:
         xlog("L_INFO", "kamailio_application_dialog_media result=media_delete method=$rm call_id=$ci\n");
     }
 
-    failure_route[ASTERISK_UNAVAILABLE] {
+    failure_route[APPLICATION_RUNTIME_UNAVAILABLE] {
         if (t_is_canceled()) {
             route(MEDIA_DELETE);
             exit;
@@ -302,7 +302,7 @@ data:
         route(MEDIA_DELETE);
 
         if (t_check_status("408")) {
-            xlog("L_WARN", "kamailio_application_dialog_rejected result=asterisk_unavailable method=$rm call_id=$ci\n");
+            xlog("L_WARN", "kamailio_application_dialog_rejected result=application_runtime_unavailable method=$rm call_id=$ci\n");
             t_reply("503", "Application Runtime Unavailable");
             exit;
         }

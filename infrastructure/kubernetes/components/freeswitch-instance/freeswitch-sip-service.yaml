@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: freeswitch-sip
+  namespace: utcp-runtime
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: freeswitch
+    utcp.dev/runtime-node: local-freeswitch-esl
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/component: freeswitch
+    utcp.dev/runtime-node: local-freeswitch-esl
+  ports:
+    - name: sip
+      protocol: UDP
+      port: 5060
+      targetPort: sip

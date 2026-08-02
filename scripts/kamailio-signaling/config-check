@@ -191,8 +191,8 @@ request_block = block_after(kamailio_config, "request_route")
 application_block = block_after(kamailio_config, "route[APPLICATION_DIALOG]")
 within_block = block_after(kamailio_config, "route[WITHINDLG]")
 within_loose_route_block = block_after(within_block, "if (loose_route())")
-asterisk_block = block_after(kamailio_config, "route[ASTERISK_RELAY]")
-failure_block = block_after(kamailio_config, "failure_route[ASTERISK_UNAVAILABLE]")
+asterisk_block = block_after(kamailio_config, "route[APPLICATION_RUNTIME_RELAY]")
+failure_block = block_after(kamailio_config, "failure_route[APPLICATION_RUNTIME_UNAVAILABLE]")
 register_block = block_after(kamailio_config, 'if ($rm == "REGISTER")')
 media_offer_block = block_after(kamailio_config, "route[MEDIA_OFFER]")
 media_answer_block = block_after(kamailio_config, "route[MEDIA_ANSWER]")
@@ -236,7 +236,7 @@ required_route_tokens = [
     'route(APPLICATION_DIALOG)',
     'route[APPLICATION_DIALOG]',
     'route[WITHINDLG]',
-    'route[ASTERISK_RELAY]',
+    'route[APPLICATION_RUNTIME_RELAY]',
     'route[MEDIA_OFFER]',
     'route[MEDIA_ANSWER]',
     'route[MEDIA_DELETE]',
@@ -264,13 +264,13 @@ required_route_tokens = [
     'if ($rm == "CANCEL")',
     't_check_trans()',
     't_relay()',
-    't_on_failure("ASTERISK_UNAVAILABLE")',
-    'failure_route[ASTERISK_UNAVAILABLE]',
+    't_on_failure("APPLICATION_RUNTIME_UNAVAILABLE")',
+    'failure_route[APPLICATION_RUNTIME_UNAVAILABLE]',
     't_is_canceled()',
     't_check_status("408")',
-    'asterisk-sip.utcp-runtime.svc.cluster.local:5060;transport=udp',
+    'application-runtime-sip.utcp-runtime.svc.cluster.local:5060;transport=udp',
     't_reply("503", "Application Runtime Unavailable")',
-    'result=asterisk_unavailable',
+    'result=application_runtime_unavailable',
     'sl_send_reply("405", "Method Not Allowed")',
 ]
 for expected in required_route_tokens:
@@ -296,7 +296,7 @@ if "has_totag()" in application_block or 'if ($rd != "sip.utcp.local.test")' in 
     fail("established-dialog and initial domain routing must be owned by request_route")
 if 'result=foreign_domain' in kamailio_config or 'result=initial_foreign_domain' not in kamailio_config:
     fail("initial foreign-domain rejection must use the accurate initial_foreign_domain label")
-if any(token in within_block for token in ('www_authorize("$fd", "kamailio_signaling_auth_view")', 'record_route()', 'route(ASTERISK_RELAY)')) or re.search(r"\$du\s*=\s*\"sip:", within_block):
+if any(token in within_block for token in ('www_authorize("$fd", "kamailio_signaling_auth_view")', 'record_route()', 'route(APPLICATION_RUNTIME_RELAY)')) or re.search(r"\$du\s*=\s*\"sip:", within_block):
     fail("WITHINDLG must not repeat initial authentication, Record-Route, or destination selection")
 if "loose_route()" not in within_block:
     fail("WITHINDLG must process Route headers with loose_route()")
@@ -337,7 +337,7 @@ require_in_order(
         "exit;",
         "route(MEDIA_OFFER)",
         "record_route()",
-        "route(ASTERISK_RELAY)",
+        "route(APPLICATION_RUNTIME_RELAY)",
     ],
     "route[APPLICATION_DIALOG]",
 )
@@ -369,12 +369,12 @@ if "t_on_reply(\"APPLICATION_RUNTIME_MEDIA_REPLY\")" not in asterisk_block:
 require_in_order(
     asterisk_block,
     [
-        '$du = "sip:asterisk-sip.utcp-runtime.svc.cluster.local:5060;transport=udp"',
+        '$du = "sip:application-runtime-sip.utcp-runtime.svc.cluster.local:5060;transport=udp"',
         't_on_reply("APPLICATION_RUNTIME_MEDIA_REPLY")',
-        't_on_failure("ASTERISK_UNAVAILABLE")',
+        't_on_failure("APPLICATION_RUNTIME_UNAVAILABLE")',
         "t_relay()",
     ],
-    "route[ASTERISK_RELAY] media transaction setup",
+    "route[APPLICATION_RUNTIME_RELAY] media transaction setup",
 )
 require_in_order(
     media_offer_block,
@@ -492,25 +492,25 @@ require_in_order(
     "route[WITHINDLG]",
 )
 if any(token in failure_block for token in ("append_branch", "t_relay()", "$du =", "record_route()", "www_authorize")):
-    fail("ASTERISK_UNAVAILABLE failure route must not add branches, change destination, relay, Record-Route, or authenticate")
+    fail("APPLICATION_RUNTIME_UNAVAILABLE failure route must not add branches, change destination, relay, Record-Route, or authenticate")
 if 't_is_canceled()' not in failure_block or failure_block.find('t_is_canceled()') > failure_block.find('t_check_status("408")'):
-    fail("ASTERISK_UNAVAILABLE must not convert client cancellation to 503")
+    fail("APPLICATION_RUNTIME_UNAVAILABLE must not convert client cancellation to 503")
 if 't_check_status("408")' not in failure_block or 't_reply("503", "Application Runtime Unavailable")' not in failure_block:
-    fail("ASTERISK_UNAVAILABLE must map generated 408 timeout to committed 503")
+    fail("APPLICATION_RUNTIME_UNAVAILABLE must map generated 408 timeout to committed 503")
 if re.search(r't_check_status\("(\.\*|[1-6]\[0-9\]\[0-9\]|[45]\[0-9\]\[0-9\]|[0-9]\{3\})"\)', failure_block):
-    fail("ASTERISK_UNAVAILABLE must not map every downstream response to 503")
+    fail("APPLICATION_RUNTIME_UNAVAILABLE must not map every downstream response to 503")
 
 asterisk_targets = re.findall(r"\bsip:([^\";\s]+:5060)(?:;transport=udp)?", kamailio_config)
 if any(re.match(r"(?:\d{1,3}\.){3}\d{1,3}:5060$", target) for target in asterisk_targets):
     fail("Asterisk destination must use Service DNS, not an IP literal")
-if asterisk_targets != ["asterisk-sip.utcp-runtime.svc.cluster.local:5060"]:
+if asterisk_targets != ["application-runtime-sip.utcp-runtime.svc.cluster.local:5060"]:
     fail("Kamailio must configure exactly one canonical Asterisk SIP destination")
 
 asterisk_destinations = re.findall(
     r'\$du\s*=\s*"sip:([^";\s]+):(\d+);transport=([a-zA-Z]+)"',
     kamailio_config,
 )
-if asterisk_destinations != [("asterisk-sip.utcp-runtime.svc.cluster.local", "5060", "udp")]:
+if asterisk_destinations != [("application-runtime-sip.utcp-runtime.svc.cluster.local", "5060", "udp")]:
     fail("Kamailio must configure exactly one Asterisk relay destination over UDP 5060")
 
 listeners = re.findall(r"^\s*listen=(udp|tcp):([^:\s]+):(\d+)\s+advertise\s+([^:\s]+):(\d+)\s*$", kamailio_config, re.M | re.I)
@@ -604,21 +604,29 @@ if readiness_command != ["/usr/local/bin/utcp-asterisk-readiness"]:
     fail("Asterisk readiness must use the repository readiness script")
 
 ari_service = objects.get("Service/utcp-runtime/asterisk-ari")
-sip_service = objects.get("Service/utcp-runtime/asterisk-sip")
-if not ari_service or not sip_service:
-    fail("Asterisk ARI and SIP Services must both render")
+asterisk_sip_service = objects.get("Service/utcp-runtime/asterisk-sip")
+application_runtime_service = objects.get("Service/utcp-runtime/application-runtime-sip")
+if not ari_service or not asterisk_sip_service or not application_runtime_service:
+    fail("Asterisk ARI, Asterisk SIP, and selected application-runtime Services must render")
 if [port.get("name") for port in (ari_service.get("spec") or {}).get("ports") or []] != ["ari"]:
     fail("ARI Service must remain ARI-only")
-sip_spec = sip_service.get("spec") or {}
-if sip_spec.get("type") != "ClusterIP":
+asterisk_sip_spec = asterisk_sip_service.get("spec") or {}
+if asterisk_sip_spec.get("type") != "ClusterIP":
     fail("Asterisk SIP Service must be ClusterIP")
-if sip_spec.get("ports") != [{"name": "sip", "protocol": "UDP", "port": 5060, "targetPort": "sip"}]:
+if asterisk_sip_spec.get("ports") != [{"name": "sip", "protocol": "UDP", "port": 5060, "targetPort": "sip"}]:
     fail("Asterisk SIP Service must expose only named UDP 5060")
-if sip_spec.get("selector") != {
+if asterisk_sip_spec.get("selector") != {
     "app.kubernetes.io/component": "asterisk-ari",
     "utcp.dev/runtime-node": "local-asterisk-ari",
 }:
     fail("Asterisk SIP Service selector must target the canonical local Asterisk runtime")
+selected_spec = application_runtime_service.get("spec") or {}
+if selected_spec.get("type") != "ClusterIP":
+    fail("selected application-runtime Service must be ClusterIP")
+if selected_spec.get("ports") != [{"name": "sip", "protocol": "UDP", "port": 5060, "targetPort": "sip"}]:
+    fail("selected application-runtime Service must expose only named UDP 5060")
+if selected_spec.get("selector") != {"utcp.dev/runtime-selection": "selected-application-runtime"}:
+    fail("selected application-runtime Service must use the canonical runtime-selection selector")
 
 fixture = objects.get("ConfigMap/utcp-runtime/asterisk-local-sip-fixtures")
 if not fixture:

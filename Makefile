@@ -11,6 +11,8 @@ UTCP_IMAGE_SOURCE ?= local
 UTCP_GATEWAY_IMAGE ?= utcp-gateway:dev
 UTCP_RTPENGINE_IMAGE ?= utcp-rtpengine:dev
 UTCP_T3_MEDIA_PROVER_IMAGE ?= utcp-t3-media-prover:dev
+UTCP_FREESWITCH_IMAGE ?= utcp-freeswitch:dev
+FREESWITCH_BASE_IMAGE ?= docker.io/safarov/freeswitch:1.10.12@sha256:b31c743f4c911a19687c61e3214968f2a24f93f9d3d667cc26284192e158ffc6
 T3_MEDIA_PROVER_PLAYWRIGHT_VERSION ?= 1.61.1
 T3_MEDIA_PROVER_BROWSER_IMAGE ?= mcr.microsoft.com/playwright:v1.61.1-noble
 RTPENGINE_VERSION ?= mr26.0.1.19
@@ -22,7 +24,7 @@ COMPOSE_FILE ?= infrastructure/compose/compose.yaml
 COMPOSE_ENV_FILES ?= --env-file versions.env --env-file infrastructure/compose/env.example
 COMPOSE ?= docker compose $(COMPOSE_ENV_FILES) -f $(COMPOSE_FILE) -p $(UTCP_COMPOSE_PROJECT_NAME)
 
-.PHONY: help doctor repository-hygiene workflow-check security-audit secret-scan api-install api-test api-check web-install web-test web-lint web-typecheck web-build install test check build image-build-api image-build-web image-build-rtpengine image-build-t3-media-prover image-test-api image-test-web image-smoke-api image-smoke-web image-smoke image-inspect container-check local-config-check local-up local-status local-proof local-down compose-config compose-build compose-debug-up compose-up compose-status compose-logs compose-test compose-proof compose-ci compose-down compose-reset k3d-config-check k3d-registry-check-test k3d-create k3d-status k3d-verify k3d-registry-proof k3d-recreate-proof k3d-delete k8s-config-check k8s-image-build k8s-image-push k8s-apply k8s-status k8s-proof k8s-persistence-proof k8s-restart-proof k8s-delete gateway-config-check gateway-crds-install traefik-install gateway-tls gateway-tls-apply gateway-apply gateway-status gateway-proof gateway-delete security-config-check security-config-check-test security-apply security-status security-proof security-delete media-config-check media-config-check-test t3-media-prover-config-check t3-media-prover-config-check-test t3-media-prover-run observability-config-check observability-install observability-apply observability-status observability-proof observability-persistence-proof observability-delete control-plane-config-check control-plane-test control-plane-migrate-proof control-plane-proof control-plane-status identity-config-check identity-test identity-bootstrap-local identity-api-proof identity-browser-proof identity-status user-access-reset-password runtime-registry-config-check runtime-registry-test runtime-registry-api-proof runtime-registry-browser-proof runtime-registry-status runtime-engine-config-check runtime-engine-test runtime-engine-proof runtime-engine-status simulator-config-check simulator-test simulator-api-proof simulator-runtime-proof simulator-status telephony-domain-config-check telephony-domain-test telephony-domain-api-proof telephony-domain-runtime-proof telephony-domain-status asterisk-ari-config-check asterisk-ari-test asterisk-ari-api-proof asterisk-ari-runtime-proof asterisk-ari-status asterisk-conference-config-check asterisk-conference-test asterisk-conference-api-proof asterisk-conference-runtime-proof asterisk-conference-status asterisk-conference-recovery-test asterisk-conference-recovery-runtime-proof asterisk-conference-recovery-status kamailio-signaling-config-check-test ci ci-check ci-k3d k3d-ci
+.PHONY: help doctor repository-hygiene workflow-check security-audit secret-scan api-install api-test api-check web-install web-test web-lint web-typecheck web-build install test check build image-build-api image-build-web image-build-rtpengine image-build-t3-media-prover image-build-freeswitch image-test-api image-test-web image-smoke-api image-smoke-web image-smoke image-inspect container-check local-config-check local-up local-status local-proof local-down compose-config compose-build compose-debug-up compose-up compose-status compose-logs compose-test compose-proof compose-ci compose-down compose-reset k3d-config-check k3d-registry-check-test k3d-create k3d-status k3d-verify k3d-registry-proof k3d-recreate-proof k3d-delete k8s-config-check k8s-image-build k8s-image-push k8s-apply k8s-status k8s-proof k8s-persistence-proof k8s-restart-proof k8s-delete gateway-config-check gateway-crds-install traefik-install gateway-tls gateway-tls-apply gateway-apply gateway-status gateway-proof gateway-delete security-config-check security-config-check-test security-apply security-status security-proof security-delete media-config-check media-config-check-test freeswitch-config-check freeswitch-config-check-test t3-media-prover-config-check t3-media-prover-config-check-test t3-media-prover-run observability-config-check observability-install observability-apply observability-status observability-proof observability-persistence-proof observability-delete control-plane-config-check control-plane-test control-plane-migrate-proof control-plane-proof control-plane-status identity-config-check identity-test identity-bootstrap-local identity-api-proof identity-browser-proof identity-status user-access-reset-password runtime-registry-config-check runtime-registry-test runtime-registry-api-proof runtime-registry-browser-proof runtime-registry-status runtime-engine-config-check runtime-engine-test runtime-engine-proof runtime-engine-status simulator-config-check simulator-test simulator-api-proof simulator-runtime-proof simulator-status telephony-domain-config-check telephony-domain-test telephony-domain-api-proof telephony-domain-runtime-proof telephony-domain-status asterisk-ari-config-check asterisk-ari-test asterisk-ari-api-proof asterisk-ari-runtime-proof asterisk-ari-status asterisk-conference-config-check asterisk-conference-test asterisk-conference-api-proof asterisk-conference-runtime-proof asterisk-conference-status asterisk-conference-recovery-test asterisk-conference-recovery-runtime-proof asterisk-conference-recovery-status kamailio-signaling-config-check-test ci ci-check ci-k3d k3d-ci
 
 help: ## Show available commands.
 	@awk 'BEGIN {FS = ":.*##"; printf "UTCP commands:\n"} /^[a-zA-Z0-9_.-]+:.*##/ {printf "  %-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -74,7 +76,7 @@ install: api-install web-install ## Install all application dependencies.
 
 test: api-test web-test ## Run backend and frontend tests.
 
-check: repository-hygiene media-config-check media-config-check-test t3-media-prover-config-check t3-media-prover-config-check-test security-config-check-test kamailio-signaling-config-check api-check web-lint web-typecheck ## Run repository, backend, frontend, media, security, and Kamailio signaling static checks.
+check: repository-hygiene media-config-check media-config-check-test freeswitch-config-check freeswitch-config-check-test t3-media-prover-config-check t3-media-prover-config-check-test security-config-check-test kamailio-signaling-config-check api-check web-lint web-typecheck ## Run repository, backend, frontend, media, security, and Kamailio signaling static checks.
 
 build: web-build ## Build deployable application artifacts introduced so far.
 
@@ -119,6 +121,13 @@ image-build-t3-media-prover: ## Build the local-only T3-S2B WebRTC media prover 
 		--tag $(UTCP_T3_MEDIA_PROVER_IMAGE) \
 		--build-arg T3_MEDIA_PROVER_BROWSER_IMAGE=$(T3_MEDIA_PROVER_BROWSER_IMAGE) \
 		--build-arg T3_MEDIA_PROVER_PLAYWRIGHT_VERSION=$(T3_MEDIA_PROVER_PLAYWRIGHT_VERSION) \
+		.
+
+image-build-freeswitch: ## Build the local-only T3-S2C FreeSWITCH parity image.
+	docker build \
+		--file infrastructure/docker/freeswitch/Dockerfile \
+		--tag $(UTCP_FREESWITCH_IMAGE) \
+		--build-arg FREESWITCH_BASE_IMAGE=$(FREESWITCH_BASE_IMAGE) \
 		.
 
 image-build: image-build-api image-build-web image-build-rtpengine ## Build all production images.
@@ -310,6 +319,12 @@ media-config-check: ## Validate the pinned T3-S1 rtpengine media-plane foundatio
 
 media-config-check-test: ## Run focused T3-S1 media guard regression tests.
 	@./scripts/media/config-check-test
+
+freeswitch-config-check: ## Validate the bounded local FreeSWITCH parity adapter.
+	@./scripts/freeswitch/config-check
+
+freeswitch-config-check-test: ## Run focused FreeSWITCH parity mutation tests.
+	@./scripts/freeswitch/config-check-test
 
 t3-media-prover-config-check: ## Validate the local-only T3-S2B in-cluster WebRTC media prover.
 	@./scripts/t3-media-prover/config-check

@@ -428,7 +428,7 @@ for required in \
   }
 done
 
-if grep -Eiq '18080|18443|5061|sips|freeswitch|NodePort|LoadBalancer|hostPort:|hostNetwork:[[:space:]]*true|privileged:[[:space:]]*true' "$tmp"; then
+if grep -Eiq '18080|18443|5061|sips|NodePort|LoadBalancer|hostPort:|hostNetwork:[[:space:]]*true|privileged:[[:space:]]*true' "$tmp"; then
   printf 'security manifests include custom edge or prohibited media material\n' >&2
   exit 1
 fi
@@ -475,10 +475,10 @@ if spec.get("policyTypes") != ["Ingress", "Egress"]:
 
 ingress = spec.get("ingress") or []
 egress = spec.get("egress") or []
-if len(ingress) != 3:
-    fail("allow-rtpengine-media must define exactly ng, media, and metrics ingress")
-if len(egress) != 1:
-    fail("allow-rtpengine-media must define exactly bounded media egress")
+if len(ingress) != 4:
+    fail("allow-rtpengine-media must define exactly ng, two runtime media, and metrics ingress")
+if len(egress) != 2:
+    fail("allow-rtpengine-media must define exactly the Asterisk and FreeSWITCH media egress rules")
 
 rendered = yaml.safe_dump(policy, sort_keys=True)
 for forbidden in ("utcp-data", "postgres", "redis", "kube-system", "0.0.0.0/0", "::/0"):
@@ -495,6 +495,10 @@ if "utcp.io/network-role: kamailio-signaling" not in rendered:
     fail("allow-rtpengine-media must bound ng control to Kamailio signaling")
 if "utcp.io/network-role: asterisk-ari" not in rendered:
     fail("allow-rtpengine-media must bound in-cluster media to the selected runtime role")
+if "app.kubernetes.io/component: freeswitch" not in rendered or "utcp.io/network-role: freeswitch-sip" not in rendered:
+    fail("allow-rtpengine-media must bound FreeSWITCH media to the canonical runtime role")
+if "port: 21000" not in rendered or "endPort: 21099" not in rendered:
+    fail("allow-rtpengine-media must bound FreeSWITCH media egress to UDP 21000-21099")
 if "app.kubernetes.io/name" not in rendered or "prometheus" not in rendered:
     fail("allow-rtpengine-media must bound metrics ingress to Prometheus")
 
@@ -522,8 +526,8 @@ kamailio_asterisk_egress = [
     for rule in kamailio_spec.get("egress") or []
     if rule.get("ports") == [{"protocol": "UDP", "port": 5060}]
 ]
-if len(kamailio_asterisk_egress) != 1:
-    fail("allow-kamailio-signaling-required-traffic must include exactly one Asterisk UDP 5060 egress rule")
+if len(kamailio_asterisk_egress) != 2:
+    fail("allow-kamailio-signaling-required-traffic must include exactly the Asterisk and FreeSWITCH UDP 5060 egress rules")
 asterisk_egress_peers = kamailio_asterisk_egress[0].get("to") or []
 if asterisk_egress_peers != [
     {
@@ -536,6 +540,15 @@ if asterisk_egress_peers != [
     }
 ]:
     fail("Kamailio Asterisk SIP egress must use the exact utcp-runtime canonical Asterisk selector")
+if not any(rule.get("to") == [{
+    "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+    "podSelector": {"matchLabels": {
+        "app.kubernetes.io/component": "freeswitch",
+        "utcp.io/network-role": "freeswitch-sip",
+        "utcp.dev/runtime-node": "local-freeswitch-esl",
+    }},
+}] for rule in kamailio_asterisk_egress):
+    fail("Kamailio FreeSWITCH SIP egress must use the exact canonical FreeSWITCH selector")
 
 dns_ports = [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]
 kamailio_dns_egress = [

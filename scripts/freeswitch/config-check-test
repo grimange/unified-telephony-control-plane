@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CHECK="$ROOT/scripts/freeswitch/config-check"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+cp "$ROOT/infrastructure/docker/freeswitch/Dockerfile" "$TMP/Dockerfile"
+cp "$ROOT/infrastructure/docker/freeswitch/config/freeswitch.xml" "$TMP/freeswitch.xml"
+cp "$ROOT/infrastructure/docker/freeswitch/config/sip_profiles/internal.xml" "$TMP/internal.xml"
+cp "$ROOT/infrastructure/docker/freeswitch/config/dialplan/default.xml" "$TMP/dialplan.xml"
+cp "$ROOT/infrastructure/docker/freeswitch/entrypoint" "$TMP/entrypoint"
+
+pass() { "$CHECK" >/dev/null; }
+fail_case() {
+  if UTCP_FREESWITCH_DOCKERFILE="$TMP/Dockerfile" \
+    UTCP_FREESWITCH_XML="$TMP/freeswitch.xml" \
+    UTCP_FREESWITCH_INTERNAL_XML="$TMP/internal.xml" \
+    UTCP_FREESWITCH_DIALPLAN="$TMP/dialplan.xml" \
+    UTCP_FREESWITCH_ENTRYPOINT="$TMP/entrypoint" "$CHECK" >/dev/null 2>&1; then
+    printf 'expected FreeSWITCH mutation to fail: %s\n' "$1" >&2
+    exit 1
+  fi
+}
+
+pass
+cp "$TMP/Dockerfile" "$TMP/original"
+sed -i 's|@sha256:[0-9a-f]*||' "$TMP/Dockerfile"; fail_case 'mutable image'
+cp "$TMP/original" "$TMP/Dockerfile"
+sed -i 's/21000-21099/10000-20000/' "$TMP/Dockerfile"; fail_case 'overlapping RTP range'
+cp "$TMP/original" "$TMP/Dockerfile"
+sed -i '/USER 1000:1000/d' "$TMP/Dockerfile"; fail_case 'wrong runtime identity'
+cp "$TMP/original" "$TMP/Dockerfile"
+sed -i 's/rtp-start-port" value="21000/rtp-start-port" value="10000/' "$TMP/freeswitch.xml"; fail_case 'missing explicit range'
+cp "$ROOT/infrastructure/docker/freeswitch/config/freeswitch.xml" "$TMP/freeswitch.xml"
+sed -i 's/destination_number" expression="\^9900\$/destination_number" expression="^9901$/' "$TMP/dialplan.xml"; fail_case 'missing Echo extension'
+cp "$ROOT/infrastructure/docker/freeswitch/config/dialplan/default.xml" "$TMP/dialplan.xml"
+sed -i '/application="echo"/d' "$TMP/dialplan.xml"; fail_case 'missing Echo action'
+cp "$ROOT/infrastructure/docker/freeswitch/config/dialplan/default.xml" "$TMP/dialplan.xml"
+sed -i '/application="hangup"/d' "$TMP/dialplan.xml"; fail_case 'missing clean hangup'
+cp "$ROOT/infrastructure/docker/freeswitch/config/dialplan/default.xml" "$TMP/dialplan.xml"
+sed -i '/application="answer"/d' "$TMP/dialplan.xml"; fail_case 'missing answer'
+
+printf 'FreeSWITCH config mutation tests passed\n'

@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+fail() { printf 'FreeSWITCH config check failed: %s\n' "$1" >&2; exit 1; }
+
+dockerfile="${UTCP_FREESWITCH_DOCKERFILE:-$ROOT/infrastructure/docker/freeswitch/Dockerfile}"
+freeswitch_xml="${UTCP_FREESWITCH_XML:-$ROOT/infrastructure/docker/freeswitch/config/freeswitch.xml}"
+internal_xml="${UTCP_FREESWITCH_INTERNAL_XML:-$ROOT/infrastructure/docker/freeswitch/config/sip_profiles/internal.xml}"
+dialplan="${UTCP_FREESWITCH_DIALPLAN:-$ROOT/infrastructure/docker/freeswitch/config/dialplan/default.xml}"
+entrypoint="${UTCP_FREESWITCH_ENTRYPOINT:-$ROOT/infrastructure/docker/freeswitch/entrypoint}"
+
+for file in "$dockerfile" "$freeswitch_xml" "$internal_xml" "$dialplan" "$entrypoint"; do
+  [ -s "$file" ] || fail "required FreeSWITCH file is missing: $file"
+done
+
+grep -Eq '^ARG FREESWITCH_BASE_IMAGE=.*@sha256:[0-9a-f]{64}$' "$dockerfile" || fail "image must be immutably pinned"
+grep -Fq 'USER 1000:1000' "$dockerfile" || fail "image must preserve runtime UID/GID 1000"
+grep -Fq '21000-21099/udp' "$dockerfile" || fail "image must expose the canonical RTP range"
+grep -Fq 'freeswitch' "$entrypoint" || fail "entrypoint must execute FreeSWITCH"
+grep -Fq 'rtp-start-port" value="21000' "$freeswitch_xml" || fail "explicit RTP start is missing"
+grep -Fq 'rtp-end-port" value="21099' "$freeswitch_xml" || fail "explicit RTP end is missing"
+grep -Fq 'sip-port" value="5060' "$internal_xml" || fail "internal SIP listener is missing"
+grep -Fq 'inbound-codec-prefs" value="PCMU' "$internal_xml" || fail "minimal PCMU codec contract is missing"
+grep -Fq 'destination_number" expression="^9900$"' "$dialplan" || fail "9900 Echo fixture is missing"
+grep -Fq 'application="answer"' "$dialplan" || fail "Echo fixture must answer"
+grep -Fq 'application="echo"' "$dialplan" || fail "Echo fixture must echo media"
+grep -Fq 'application="hangup"' "$dialplan" || fail "Echo fixture must hang up cleanly"
+if grep -Eiq 'event_socket|mod_event_socket|esl|conference|bridge|external|gateway' "$freeswitch_xml" "$internal_xml" "$dialplan"; then
+  fail "FreeSWITCH fixture contains an unnecessary management or future feature"
+fi
+
+tmp_dir="$(mktemp -d)"
+trap 'rm -rf "$tmp_dir"' EXIT
+kubectl kustomize infrastructure/kubernetes/overlays/local-freeswitch >"$tmp_dir/render.yaml" || fail "FreeSWITCH overlay does not render"
+kubectl kustomize infrastructure/kubernetes/security >"$tmp_dir/security.yaml" || fail "security overlay does not render"
+
+python3 - "$ROOT" "$tmp_dir/render.yaml" "$tmp_dir/security.yaml" <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+root = Path(sys.argv[1])
+render = [d for d in yaml.safe_load_all(Path(sys.argv[2]).read_text()) if isinstance(d, dict)]
+security = [d for d in yaml.safe_load_all(Path(sys.argv[3]).read_text()) if isinstance(d, dict)]
+
+def key(doc: dict[str, Any]) -> str:
+    meta = doc.get("metadata") or {}
+    return f"{doc.get('kind')}/{meta.get('namespace')}/{meta.get('name')}"
+
+objects = {key(d): d for d in render}
+security_objects = {key(d): d for d in security}
+
+def fail(message: str) -> None:
+    print(f"FreeSWITCH config check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+def labels(doc: dict[str, Any]) -> dict[str, Any]:
+    return ((doc.get("spec") or {}).get("template") or {}).get("metadata", {}).get("labels", {})
+
+def exact_peer(peer: dict[str, Any], namespace: str, pod: dict[str, str]) -> bool:
+    return "ipBlock" not in peer and (peer.get("namespaceSelector") or {}).get("matchLabels") == {"kubernetes.io/metadata.name": namespace} and (peer.get("podSelector") or {}).get("matchLabels") == pod
+
+def has_rule(rules: list[dict[str, Any]], side: str, namespace: str, pod: dict[str, str], start: int, end: int | None = None) -> bool:
+    for rule in rules:
+        peers = rule.get(side) or []
+        ports = rule.get("ports") or []
+        expected = {"protocol": "UDP", "port": start}
+        if end is not None:
+            expected["endPort"] = end
+        if len(peers) == 1 and ports == [expected] and exact_peer(peers[0], namespace, pod):
+            return True
+    return False
+
+fs_pod = {
+    "app.kubernetes.io/component": "freeswitch",
+    "utcp.io/network-role": "freeswitch-sip",
+    "utcp.dev/runtime-node": "local-freeswitch-esl",
+}
+fs_template_labels = {
+    "app.kubernetes.io/part-of": "utcp",
+    **fs_pod,
+    "utcp.dev/runtime-selection": "selected-application-runtime",
+}
+rtp_pod = {"utcp.io/network-role": "rtpengine-media"}
+kamailio_pod = {"utcp.io/network-role": "kamailio-signaling"}
+deployment = objects.get("Deployment/utcp-runtime/freeswitch")
+service = objects.get("Service/utcp-runtime/freeswitch-sip")
+selected = objects.get("Service/utcp-runtime/application-runtime-sip")
+if not deployment or not service or not selected:
+    fail("FreeSWITCH Deployment and both internal SIP Services are required")
+if service["spec"].get("type") != "ClusterIP" or selected["spec"].get("type") != "ClusterIP":
+    fail("FreeSWITCH SIP Services must be ClusterIP")
+if service["spec"].get("selector") != {"app.kubernetes.io/component": "freeswitch", "utcp.dev/runtime-node": "local-freeswitch-esl"}:
+    fail("FreeSWITCH SIP Service selector is not canonical")
+if selected["spec"].get("selector") != {"app.kubernetes.io/component": "freeswitch", "utcp.dev/runtime-node": "local-freeswitch-esl", "utcp.dev/runtime-selection": "selected-application-runtime"}:
+    fail("selected-runtime Service must select exactly FreeSWITCH in this overlay")
+if (deployment.get("spec") or {}).get("replicas") != 1:
+    fail("FreeSWITCH must have one selected replica")
+template = (deployment.get("spec") or {}).get("template") or {}
+if labels(deployment) != fs_template_labels:
+    fail("FreeSWITCH runtime labels are not canonical")
+pod_spec = template.get("spec") or {}
+if pod_spec.get("automountServiceAccountToken") is not False:
+    fail("FreeSWITCH must not receive a Kubernetes API token")
+security_context = pod_spec.get("securityContext") or {}
+if security_context.get("runAsUser") != 1000 or security_context.get("runAsGroup") != 1000 or security_context.get("runAsNonRoot") is not True:
+    fail("FreeSWITCH must run non-root as UID/GID 1000")
+container = (pod_spec.get("containers") or [{}])[0]
+if not str(container.get("image", "")).endswith("/freeswitch:0.1.0-t3-s2c"):
+    fail("FreeSWITCH image authority drifted")
+if (container.get("securityContext") or {}).get("readOnlyRootFilesystem") is not True:
+    fail("FreeSWITCH root filesystem must be read-only")
+if not any(v.get("emptyDir") is not None for v in pod_spec.get("volumes") or []):
+    fail("FreeSWITCH writable state must use bounded emptyDir storage")
+
+fs_policy = security_objects.get("NetworkPolicy/utcp-runtime/allow-freeswitch-sip-from-kamailio")
+rtp_policy = security_objects.get("NetworkPolicy/utcp-platform/allow-rtpengine-media")
+kamailio_policy = security_objects.get("NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic")
+if not fs_policy or not rtp_policy or not kamailio_policy:
+    fail("FreeSWITCH reciprocal and Kamailio policies are required")
+spec = fs_policy.get("spec") or {}
+if (spec.get("podSelector") or {}).get("matchLabels") != fs_pod:
+    fail("FreeSWITCH policy selector must be exact")
+if not has_rule(spec.get("ingress") or [], "from", "utcp-platform", kamailio_pod, 5060):
+    fail("FreeSWITCH ingress from Kamailio UDP 5060 is missing")
+if not has_rule(spec.get("egress") or [], "to", "utcp-platform", kamailio_pod, 5060):
+    fail("FreeSWITCH egress to Kamailio UDP 5060 is missing")
+if not has_rule(spec.get("ingress") or [], "from", "utcp-platform", rtp_pod, 21000, 21099):
+    fail("FreeSWITCH ingress from rtpengine must use destination RTP range 21000-21099")
+if not has_rule(spec.get("egress") or [], "to", "utcp-platform", rtp_pod, 40000, 40099):
+    fail("FreeSWITCH egress to rtpengine must use destination media range 40000-40099")
+rtp_spec = rtp_policy.get("spec") or {}
+if not has_rule(rtp_spec.get("ingress") or [], "from", "utcp-runtime", fs_pod, 40000, 40099):
+    fail("rtpengine ingress from FreeSWITCH is missing")
+if not has_rule(rtp_spec.get("egress") or [], "to", "utcp-runtime", fs_pod, 21000, 21099):
+    fail("rtpengine egress to FreeSWITCH must use FreeSWITCH destination range")
+if not has_rule((kamailio_policy.get("spec") or {}).get("ingress") or [], "from", "utcp-runtime", fs_pod, 5060):
+    fail("Kamailio ingress from FreeSWITCH is missing")
+if not has_rule((kamailio_policy.get("spec") or {}).get("egress") or [], "to", "utcp-runtime", fs_pod, 5060):
+    fail("Kamailio egress to FreeSWITCH is missing")
+
+kamailio = (root / "infrastructure/kubernetes/base/platform/kamailio-configmap.yaml").read_text()
+if "route[APPLICATION_RUNTIME_RELAY]" not in kamailio or "application-runtime-sip.utcp-runtime.svc.cluster.local:5060" not in kamailio:
+    fail("Kamailio must use the generic selected-runtime SIP destination")
+if re.search(r"FREESWITCH|freeswitch|ESL|esl", kamailio):
+    fail("generic Kamailio configuration must not contain provider-specific FreeSWITCH authority")
+if "route[MEDIA_OFFER]" not in kamailio or "route[MEDIA_ANSWER]" not in kamailio or "route[MEDIA_DELETE]" not in kamailio:
+    fail("generic media routes must remain present")
+if "REGISTER" not in kamailio or "route[WITHINDLG]" not in kamailio:
+    fail("generic REGISTER and dialog routes must remain present")
+if any("ipBlock" in peer for policy in security_objects.values() if policy.get("kind") == "NetworkPolicy" for rule in (policy.get("spec") or {}).get("ingress", []) + (policy.get("spec") or {}).get("egress", []) for peer in rule.get("from", []) + rule.get("to", [])):
+    fail("FreeSWITCH security validation must not permit ipBlock peers")
+
+for doc in render:
+    if doc.get("kind") == "Service" and doc.get("metadata", {}).get("namespace") == "utcp-runtime" and doc.get("metadata", {}).get("name") in {"freeswitch-sip", "application-runtime-sip"}:
+        if (doc.get("spec") or {}).get("type") != "ClusterIP":
+            fail("public FreeSWITCH SIP exposure is forbidden")
+    if "LoadBalancer" == (doc.get("spec") or {}).get("type") and "freeswitch" in str(doc).lower():
+        fail("public FreeSWITCH exposure is forbidden")
+
+print("FreeSWITCH config check passed")
+PY

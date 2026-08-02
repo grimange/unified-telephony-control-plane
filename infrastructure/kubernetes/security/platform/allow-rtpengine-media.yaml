@@ -40,6 +40,19 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: utcp-runtime
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: freeswitch
+              utcp.io/network-role: freeswitch-sip
+              utcp.dev/runtime-node: local-freeswitch-esl
+      ports:
+        - protocol: UDP
+          port: 40000
+          endPort: 40099
+    - from:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: utcp-observability
           podSelector:
             matchExpressions:
@@ -64,3 +77,16 @@ spec:
         - protocol: UDP
           port: 10000
           endPort: 20000
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-runtime
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: freeswitch
+              utcp.io/network-role: freeswitch-sip
+              utcp.dev/runtime-node: local-freeswitch-esl
+      ports:
+        - protocol: UDP
+          port: 21000
+          endPort: 21099

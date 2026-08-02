@@ -5,3 +5,4 @@ resources:
   - asterisk-ari-deployment.yaml
   - asterisk-ari-service.yaml
   - asterisk-sip-service.yaml
+  - application-runtime-sip-service.yaml

@@ -1,0 +1,22 @@
+<include>
+  <X-PRE-PROCESS cmd="set" data="ip=0.0.0.0"/>
+  <X-PRE-PROCESS cmd="set" data="rtp_start_port=21000"/>
+  <X-PRE-PROCESS cmd="set" data="rtp_end_port=21099"/>
+  <settings>
+    <param name="loglevel" value="warning"/>
+    <param name="rtp-start-port" value="21000"/>
+    <param name="rtp-end-port" value="21099"/>
+    <param name="sip-port" value="5060"/>
+  </settings>
+  <modules>
+    <load module="mod_sofia"/>
+    <load module="mod_dialplan_xml"/>
+    <load module="mod_dptools"/>
+  </modules>
+  <profiles>
+    <profile name="internal" file="sip_profiles/internal.xml"/>
+  </profiles>
+  <dialplans>
+    <dialplan name="default" file="dialplan/default.xml"/>
+  </dialplans>
+</include>

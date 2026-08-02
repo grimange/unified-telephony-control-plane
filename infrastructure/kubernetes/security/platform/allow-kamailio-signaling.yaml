@@ -36,6 +36,18 @@ spec:
       ports:
         - protocol: UDP
           port: 5060
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-runtime
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: freeswitch
+              utcp.io/network-role: freeswitch-sip
+              utcp.dev/runtime-node: local-freeswitch-esl
+      ports:
+        - protocol: UDP
+          port: 5060
   egress:
     - to:
         - namespaceSelector:
@@ -78,6 +90,18 @@ spec:
               app.kubernetes.io/component: asterisk-ari
               utcp.io/network-role: asterisk-ari
               utcp.dev/runtime-node: local-asterisk-ari
+      ports:
+        - protocol: UDP
+          port: 5060
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-runtime
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: freeswitch
+              utcp.io/network-role: freeswitch-sip
+              utcp.dev/runtime-node: local-freeswitch-esl
       ports:
         - protocol: UDP
           port: 5060

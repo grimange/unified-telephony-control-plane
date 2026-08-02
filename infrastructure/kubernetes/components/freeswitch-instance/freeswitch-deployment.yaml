@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: freeswitch
+  namespace: utcp-runtime
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: freeswitch
+    utcp.dev/runtime-node: local-freeswitch-esl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: utcp
+      app.kubernetes.io/component: freeswitch
+      utcp.dev/runtime-node: local-freeswitch-esl
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: utcp
+        app.kubernetes.io/component: freeswitch
+        utcp.dev/runtime-node: local-freeswitch-esl
+        utcp.dev/runtime-selection: selected-application-runtime
+        utcp.io/network-role: freeswitch-sip
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: freeswitch
+          image: utcp-freeswitch
+          imagePullPolicy: Always
+          ports:
+            - name: sip
+              containerPort: 5060
+              protocol: UDP
+            - name: rtp
+              containerPort: 21000
+              protocol: UDP
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          readinessProbe:
+            tcpSocket:
+              port: sip
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: sip
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+          volumeMounts:
+            - name: freeswitch-runtime
+              mountPath: /var/lib/freeswitch
+            - name: freeswitch-run
+              mountPath: /var/run/freeswitch
+            - name: freeswitch-log
+              mountPath: /var/log/freeswitch
+      volumes:
+        - name: freeswitch-runtime
+          emptyDir: {}
+        - name: freeswitch-run
+          emptyDir: {}
+        - name: freeswitch-log
+          emptyDir: {}
