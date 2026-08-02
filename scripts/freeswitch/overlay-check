@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+K8S_ROOT="${UTCP_K8S_ROOT:-$ROOT/infrastructure/kubernetes}"
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+fail() {
+  printf 'FreeSWITCH overlay check failed: %s\n' "$1" >&2
+  exit 1
+}
+
+command -v kubectl >/dev/null 2>&1 || fail 'kubectl is required'
+
+kubectl kustomize "$K8S_ROOT/overlays/local" >"$TMP_DIR/local.yaml" || fail 'canonical local overlay does not render'
+kubectl kustomize "$K8S_ROOT/overlays/local-freeswitch" >"$TMP_DIR/freeswitch.yaml" || fail 'FreeSWITCH parity overlay does not render'
+
+python3 - "$K8S_ROOT" "$TMP_DIR/local.yaml" "$TMP_DIR/freeswitch.yaml" <<'PY'
+from __future__ import annotations
+
+import copy
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+k8s_root = Path(sys.argv[1])
+local_path = Path(sys.argv[2])
+parity_path = Path(sys.argv[3])
+
+
+def fail(message: str) -> None:
+    print(f"FreeSWITCH overlay check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def documents(path: Path) -> list[dict[str, Any]]:
+    result = []
+    for document in yaml.safe_load_all(path.read_text()):
+        if document:
+            if not isinstance(document, dict):
+                fail(f"non-object YAML document in {path}")
+            result.append(document)
+    return result
+
+
+def resource_key(document: dict[str, Any]) -> tuple[str, str, str, str]:
+    metadata = document.get("metadata") or {}
+    return (
+        str(document.get("apiVersion", "")),
+        str(document.get("kind", "")),
+        str(metadata.get("namespace", "")),
+        str(metadata.get("name", "")),
+    )
+
+
+def index(items: list[dict[str, Any]]) -> dict[tuple[str, str, str, str], dict[str, Any]]:
+    result: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for document in items:
+        key = resource_key(document)
+        if key in result:
+            fail(f"duplicate rendered resource identity: {key}")
+        result[key] = document
+    return result
+
+
+def remove_path(document: dict[str, Any], path: tuple[str, ...]) -> dict[str, Any]:
+    result = copy.deepcopy(document)
+    cursor: Any = result
+    for part in path[:-1]:
+        cursor = cursor.get(part, {}) if isinstance(cursor, dict) else {}
+    if isinstance(cursor, dict):
+        cursor.pop(path[-1], None)
+    return result
+
+
+def container_images(document: dict[str, Any]) -> list[tuple[str, str, str]]:
+    pod_spec = ((document.get("spec") or {}).get("template") or {}).get("spec") or {}
+    result = []
+    for field in ("containers", "initContainers"):
+        for container in pod_spec.get(field) or []:
+            result.append((field, str(container.get("name", "")), str(container.get("image", ""))))
+    return result
+
+
+def all_references(document: Any, field: str | None = None):
+    if isinstance(document, dict):
+        for key, value in document.items():
+            if key in {"configMap", "configMapRef", "configMapKeyRef"} and isinstance(value, dict):
+                if value.get("name"):
+                    yield "ConfigMap", str(value["name"])
+            if key in {"secret", "secretRef", "secretKeyRef"} and isinstance(value, dict):
+                if value.get("secretName"):
+                    yield "Secret", str(value["secretName"])
+                elif value.get("name"):
+                    yield "Secret", str(value["name"])
+            yield from all_references(value, key)
+    elif isinstance(document, list):
+        for value in document:
+            yield from all_references(value, field)
+
+
+local = index(documents(local_path))
+parity = index(documents(parity_path))
+
+# The parity overlay is a delta on the canonical local overlay, never a second
+# copy of the platform/runtime composition.
+kustomization = yaml.safe_load((k8s_root / "overlays/local-freeswitch/kustomization.yaml").read_text())
+resources = kustomization.get("resources") or []
+if "../local" not in resources:
+    fail("parity overlay must inherit ../local")
+if any(str(resource) in {"../../base/platform", "../../base/runtime"} for resource in resources):
+    fail("parity overlay must not directly include base platform/runtime")
+
+added = set(parity) - set(local)
+removed = set(local) - set(parity)
+expected_added = {
+    ("apps/v1", "Deployment", "utcp-runtime", "freeswitch"),
+    ("v1", "Service", "utcp-runtime", "freeswitch-sip"),
+    ("v1", "Secret", "utcp-runtime", "utcp-local-freeswitch-esl-credentials"),
+}
+if removed:
+    fail(f"canonical local resources were removed: {sorted(removed)}")
+if added != expected_added:
+    fail(f"unexpected parity resources: {sorted(added)}")
+
+required_canonical_generated = {
+    ("v1", "ConfigMap", "utcp-platform", "utcp-application-config"),
+    ("v1", "ConfigMap", "utcp-runtime", "asterisk-local-sip-fixtures"),
+    ("v1", "Secret", "utcp-data", "utcp-local-data-credentials"),
+    ("v1", "Secret", "utcp-platform", "utcp-local-data-credentials"),
+    ("v1", "Secret", "utcp-platform", "utcp-local-kamailio-db-credentials"),
+    ("v1", "Secret", "utcp-platform", "utcp-local-reverb-credentials"),
+    ("v1", "Secret", "utcp-runtime", "utcp-local-asterisk-ari-credentials"),
+}
+if not required_canonical_generated <= set(local):
+    fail("canonical local generator output is incomplete")
+if not required_canonical_generated <= set(parity):
+    fail("parity overlay dropped canonical local generator output")
+
+# Only these two canonical resources may change, and only in the listed field.
+allowed_changes = {
+    ("apps/v1", "Deployment", "utcp-runtime", "asterisk-ari"): ("spec", "replicas"),
+    ("v1", "Service", "utcp-runtime", "application-runtime-sip"): ("spec", "selector"),
+}
+for key in set(local) & set(parity):
+    if local[key] == parity[key]:
+        continue
+    allowed_path = allowed_changes.get(key)
+    if allowed_path is None or remove_path(local[key], allowed_path) != remove_path(parity[key], allowed_path):
+        fail(f"unbounded change to canonical resource: {key}")
+
+for key, document in parity.items():
+    for field, name, image in container_images(document):
+        if not image:
+            fail(f"empty {field} image in {key} ({name})")
+        if re.fullmatch(r"utcp-[^/:]+(?::[^/]*)?", image):
+            fail(f"unresolved bare image in {key}: {image}")
+    if key in local and container_images(local[key]) != container_images(document):
+        fail(f"container image drift for canonical workload: {key}")
+
+    for kind, name in all_references(document):
+        expected_kind = "ConfigMap" if kind == "ConfigMap" else "Secret"
+        if not any(k[1] == expected_kind and k[3] == name for k in parity):
+            fail(f"{kind} reference has no rendered target: {key} -> {name}")
+
+for key, document in parity.items():
+    if key[1] == "ConfigMap" or key[1] == "Secret":
+        if key in local and local[key] != document:
+            fail(f"canonical generated resource drifted: {key}")
+
+for document in parity.values():
+    for _, _, image in container_images(document):
+        if re.fullmatch(r"utcp-[^/:]+(?::[^/]*)?", image):
+            fail(f"bare UTCP image remains in rendered parity output: {image}")
+        if image.startswith("utcp-local-registry:") and "/utcp/" not in image:
+            fail(f"local-registry image has invalid repository form: {image}")
+
+def get(kind: str, namespace: str, name: str) -> dict[str, Any]:
+    key = ("apps/v1" if kind == "Deployment" else "v1", kind, namespace, name)
+    if key not in parity:
+        fail(f"required parity resource missing: {key}")
+    return parity[key]
+
+
+freeswitch = get("Deployment", "utcp-runtime", "freeswitch")
+asterisk = get("Deployment", "utcp-runtime", "asterisk-ari")
+selected = get("Service", "utcp-runtime", "application-runtime-sip")
+fs_service = get("Service", "utcp-runtime", "freeswitch-sip")
+fs_labels = ((freeswitch.get("spec") or {}).get("template") or {}).get("metadata", {}).get("labels", {})
+if fs_labels.get("utcp.dev/runtime-selection") != "selected-application-runtime":
+    fail("FreeSWITCH is missing the selected-runtime label")
+if container_images(freeswitch) != [("containers", "freeswitch", "utcp-local-registry:5000/utcp/freeswitch:0.1.0-t3-s2c")]:
+    fail("FreeSWITCH image is not the committed parity image")
+if (asterisk.get("spec") or {}).get("replicas") != 0:
+    fail("Asterisk must be scaled to zero in the parity overlay")
+if (selected.get("spec") or {}).get("selector") != {
+    "app.kubernetes.io/component": "freeswitch",
+    "utcp.dev/runtime-node": "local-freeswitch-esl",
+    "utcp.dev/runtime-selection": "selected-application-runtime",
+}:
+    fail("selected-runtime Service must select only FreeSWITCH")
+if (fs_service.get("spec") or {}).get("type") != "ClusterIP":
+    fail("FreeSWITCH SIP Service must remain ClusterIP-only")
+
+local_asterisk = local[("apps/v1", "Deployment", "utcp-runtime", "asterisk-ari")]
+if (local_asterisk.get("spec") or {}).get("replicas") != 1:
+    fail("canonical local overlay must continue to run the Asterisk default")
+
+kamailio = parity[("v1", "ConfigMap", "utcp-platform", "kamailio-config")]
+kamailio_cfg = (kamailio.get("data") or {}).get("kamailio.cfg", "")
+if "route[APPLICATION_RUNTIME_RELAY]" not in kamailio_cfg:
+    fail("generic Kamailio application-runtime relay route is missing")
+if "application-runtime-sip.utcp-runtime.svc.cluster.local:5060" not in kamailio_cfg:
+    fail("Kamailio relay does not use the canonical selected-runtime Service")
+if re.search(r"FREESWITCH|freeswitch|ESL|esl", kamailio_cfg):
+    fail("generic Kamailio relay contains provider-specific authority")
+
+for document in parity.values():
+    spec = document.get("spec") or {}
+    if spec.get("type") in {"LoadBalancer", "NodePort"} and "freeswitch" in str(document).lower():
+        fail("public FreeSWITCH Service exposure is forbidden")
+    if "8021" in str(spec):
+        fail("Event Socket must not be exposed by a rendered Service or workload port")
+
+if any(
+    document.get("kind") == "Service"
+    and document.get("metadata", {}).get("namespace") == "utcp-runtime"
+    and document.get("metadata", {}).get("name") == "application-runtime-sip"
+    and "asterisk" in str(document.get("spec", {}).get("selector", {})).lower()
+    for document in parity.values()
+):
+    fail("selected-runtime Service contains an Asterisk fallback")
+
+local_selected = local[("v1", "Service", "utcp-runtime", "application-runtime-sip")]
+if (local_selected.get("spec") or {}).get("selector") != {
+    "utcp.dev/runtime-selection": "selected-application-runtime",
+}:
+    fail("canonical local overlay no longer has its generic selected-runtime selector")
+
+print("FreeSWITCH overlay check passed")
+PY

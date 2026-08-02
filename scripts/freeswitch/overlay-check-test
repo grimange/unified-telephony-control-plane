@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CHECK="$ROOT/scripts/freeswitch/overlay-check"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+reset_tree() {
+  rm -rf "$TMP/kubernetes"
+  cp -a "$ROOT/infrastructure/kubernetes" "$TMP/kubernetes"
+}
+
+run_check() {
+  UTCP_K8S_ROOT="$TMP/kubernetes" "$CHECK" >/dev/null
+}
+
+fail_case() {
+  if run_check; then
+    printf 'expected FreeSWITCH overlay mutation to fail: %s\n' "$1" >&2
+    exit 1
+  fi
+}
+
+reset_tree
+run_check
+
+# Composition and canonical local image/generator inheritance.
+reset_tree
+sed -i 's#  - ../local#  - ../../base/platform#' "$TMP/kubernetes/overlays/local-freeswitch/kustomization.yaml"
+fail_case 'direct base platform inclusion'
+
+reset_tree
+sed -i 's#  - ../local#  - ../../base/runtime#' "$TMP/kubernetes/overlays/local-freeswitch/kustomization.yaml"
+fail_case 'direct base runtime inclusion'
+
+reset_tree
+sed -i '/  - \.\.\/local/d' "$TMP/kubernetes/overlays/local-freeswitch/kustomization.yaml"
+fail_case 'removed canonical local inheritance'
+
+reset_tree
+sed -i 's#newName: utcp-local-registry:5000/utcp/api#newName: utcp-api#' \
+  "$TMP/kubernetes/overlays/local/kustomization.yaml"
+fail_case 'reverted API image'
+
+reset_tree
+sed -i 's#newName: ghcr.io/kamailio/kamailio#newName: utcp-kamailio#' \
+  "$TMP/kubernetes/overlays/local/kustomization.yaml"
+fail_case 'reverted Kamailio image'
+
+reset_tree
+sed -i 's#newName: utcp-local-registry:5000/utcp/rtpengine#newName: utcp-rtpengine#' \
+  "$TMP/kubernetes/overlays/local/kustomization.yaml"
+fail_case 'reverted rtpengine image'
+
+reset_tree
+sed -i 's#newName: utcp-local-registry:5000/utcp/asterisk-ari#newName: utcp-asterisk-ari#' \
+  "$TMP/kubernetes/overlays/local/kustomization.yaml"
+sed -i 's#newName: utcp-local-registry:5000/utcp/asterisk-ari#newName: utcp-asterisk-ari#' \
+  "$TMP/kubernetes/overlays/local/runtime/kustomization.yaml"
+fail_case 'reverted Asterisk image'
+
+reset_tree
+sed -i '/- name: utcp-application-config/,+3d' "$TMP/kubernetes/overlays/local/kustomization.yaml"
+fail_case 'removed canonical ConfigMap generator'
+
+reset_tree
+sed -i '/- name: utcp-local-reverb-credentials/,+3d' "$TMP/kubernetes/overlays/local/kustomization.yaml"
+fail_case 'removed canonical Secret generator'
+
+reset_tree
+sed -i 's/utcp-local-asterisk-ari-credentials/utcp-missing-credentials/g' \
+  "$TMP/kubernetes/base/runtime/asterisk-ari-deployment.yaml"
+fail_case 'broken generated-resource reference'
+
+# Bounded delta and runtime selection.
+reset_tree
+sed -i 's/newTag: 0.1.0-t3-s2c/newTag: 0.1.0-t3-s2c\n  - name: utcp-local-registry:5000\/utcp\/api:0.1.0-k1-dev\n    newName: utcp-local-registry:5000\/utcp\/api\n    newTag: drift/' \
+  "$TMP/kubernetes/overlays/local-freeswitch/kustomization.yaml"
+fail_case 'unrelated Deployment image drift'
+
+reset_tree
+sed -i 's/replicas: 0/replicas: 2/' "$TMP/kubernetes/overlays/local-freeswitch/asterisk-disabled.yaml"
+fail_case 'unrelated Deployment replica drift'
+
+reset_tree
+sed -i 's/utcp.dev\/runtime-node: local-freeswitch-esl/utcp.dev\/runtime-node: wrong-runtime/' \
+  "$TMP/kubernetes/overlays/local-freeswitch/selected-runtime-service.yaml"
+fail_case 'unrelated selected Service selector drift'
+
+reset_tree
+sed -i '/  - \.\.\/\.\.\/components\/freeswitch-instance/d' \
+  "$TMP/kubernetes/overlays/local-freeswitch/kustomization.yaml"
+fail_case 'removed FreeSWITCH Deployment and Service'
+
+reset_tree
+sed -i '/  - path: selected-runtime-service.yaml/d' \
+  "$TMP/kubernetes/overlays/local-freeswitch/kustomization.yaml"
+fail_case 'removed selected-runtime Service delta'
+
+reset_tree
+sed -i 's/app.kubernetes.io\/component: freeswitch/app.kubernetes.io\/component: asterisk-ari/' \
+  "$TMP/kubernetes/overlays/local-freeswitch/selected-runtime-service.yaml"
+fail_case 'dual Asterisk and FreeSWITCH selector'
+
+reset_tree
+sed -i 's/type: ClusterIP/type: LoadBalancer/' \
+  "$TMP/kubernetes/components/freeswitch-instance/freeswitch-sip-service.yaml"
+fail_case 'public FreeSWITCH SIP exposure'
+
+reset_tree
+sed -i 's/application-runtime-sip.utcp-runtime.svc.cluster.local:5060/asterisk-sip.utcp-runtime.svc.cluster.local:5060/' \
+  "$TMP/kubernetes/base/platform/kamailio-configmap.yaml"
+fail_case 'provider-specific or fallback relay destination'
+
+reset_tree
+# The canonical runtime replica is a base resource; mutate its parity delta to
+# ensure selected-runtime disabling remains explicit.
+sed -i 's/replicas: 0/replicas: 1/' "$TMP/kubernetes/overlays/local-freeswitch/asterisk-disabled.yaml"
+fail_case 'missing Asterisk zero-replica selection'
+
+printf 'FreeSWITCH overlay mutation tests passed\n'

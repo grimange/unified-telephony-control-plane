@@ -3,8 +3,7 @@ kind: Kustomization
 generatorOptions:
   disableNameSuffixHash: true
 resources:
-  - ../../base/platform
-  - ../../base/runtime
+  - ../local
   - ../../components/freeswitch-instance
 secretGenerator:
   - name: utcp-local-freeswitch-esl-credentials
