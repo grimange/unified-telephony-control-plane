@@ -236,7 +236,8 @@ recurring manual commands or a second management plane, which
 public media address    UTCP_PUBLIC_MEDIA_ADDRESS   (single declaration, versions.env)
 public UDP range        RTPENGINE_MEDIA_PORT_MIN/MAX (existing; NOT redeclared)
 internal media endpoint rtpengine Pod IP via downward API (unchanged)
-advertised candidate    --interface=internal/${POD_IP}!${UTCP_PUBLIC_MEDIA_ADDRESS}
+runtime advertisement   --interface=runtime/${POD_IP}!${POD_IP}
+browser advertisement   --interface=browser/${POD_IP}!${UTCP_PUBLIC_MEDIA_ADDRESS}
 external readiness      proven reachability on the public address, not process health
 default mode            internal-only when no public address is declared
 ```
@@ -245,9 +246,9 @@ default mode            internal-only when no public address is declared
 
 | Field | Canonical owner | Projected into |
 |---|---|---|
-| public media address | `versions.env: UTCP_PUBLIC_MEDIA_ADDRESS` | rtpengine `--interface` advertised half, and the media-edge config check |
+| public media address | `versions.env: UTCP_PUBLIC_MEDIA_ADDRESS` | rtpengine browser interface advertised half, and the media-edge config check |
 | public media port range | `versions.env: RTPENGINE_MEDIA_PORT_MIN/MAX` (existing) | rtpengine `--port-min/--port-max`, the NodePort Service ports, the k3d publication range, the NetworkPolicy range |
-| internal rtpengine address | Kubernetes downward API `status.podIP` | `--listen-ng`, `--interface` bind half, `--listen-http` |
+| internal rtpengine address | Kubernetes downward API `status.podIP` | `--listen-ng`, both `--interface` bind halves, runtime interface advertised half, `--listen-http` |
 | host UDP publication | `infrastructure/k3d/cluster.yaml` | k3d/Docker port mapping |
 | node→Pod forwarding | `rtpengine-media` NodePort Service | kube-proxy |
 | NAT mapping | Docker publication + kube-proxy | none manual |
@@ -276,13 +277,21 @@ Service/utcp-platform/rtpengine-media   type NodePort, 100 UDP entries,
 Deployment/utcp-platform/rtpengine      nodeSelector pinning to the published node
                                         (kubernetes.io/hostname: k3d-utcp-local-server-0)
 
-rtpengine entrypoint                    --interface=internal/${POD_IP}!${UTCP_PUBLIC_MEDIA_ADDRESS}
+rtpengine entrypoint                    --interface=runtime/${POD_IP}!${POD_IP}
+                                        --interface=browser/${POD_IP}!${UTCP_PUBLIC_MEDIA_ADDRESS}
 ```
 
 `127.0.0.1` is chosen for the local projection only because the acceptance
 browser runs on the host, exactly as it does for `https://app.utcp.local.test`.
 It is a projected value of the canonical field, never a hard-coded universal
 public media address.
+
+Live T3-S3B evidence later disproved the earlier single-interface form
+`internal/${POD_IP}!${UTCP_PUBLIC_MEDIA_ADDRESS}`: it advertised `127.0.0.1` to
+the application runtime, so Asterisk returned RTP to its own loopback. The
+replacement contract uses the two named interfaces above and Kamailio selects
+the leg with rtpengine `direction=` parameters at the existing provider-neutral
+offer/answer call sites.
 
 ### Future deployment projection
 
@@ -456,8 +465,10 @@ campaigns, agent state, and durable call control.
 3. **How external traffic reaches the Pod** — host `127.0.0.1:40000-40099/udp`
    → Docker publication → pinned k3d node container → kube-proxy NodePort →
    rtpengine Pod.
-4. **How rtpengine advertises** — `--interface=internal/${POD_IP}!${UTCP_PUBLIC_MEDIA_ADDRESS}`,
-   using the existing pinned-binary seam.
+4. **How rtpengine advertises** — two named interfaces using the pinned
+   `--interface=[NAME/]IP[!IP]` seam: `runtime/${POD_IP}!${POD_IP}` for the
+   application-runtime-facing leg and
+   `browser/${POD_IP}!${UTCP_PUBLIC_MEDIA_ADDRESS}` for the browser-facing leg.
 5. **Node pinning** — yes, `nodeSelector` to the published node.
 6. **Pod restart or move** — advertised address is independent of Pod and node
    IPs, so it survives; in-flight media does not, unchanged from ADR-020.

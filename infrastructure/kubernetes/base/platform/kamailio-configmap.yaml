@@ -249,13 +249,13 @@ data:
         }
 
         if ($(ru{uri.param,alias}) != "" || $(ru{uri.param,transport}) == "ws" || $(ru{uri.param,transport}) == "wss" || $(ru{uri.host}) =~ "\\.invalid$") {
-            if (!rtpengine_offer("replace-origin replace-session-connection ICE=force RTP/SAVPF DTLS=passive rtcp-mux-offer")) {
+            if (!rtpengine_offer("replace-origin replace-session-connection ICE=force RTP/SAVPF DTLS=passive rtcp-mux-offer direction=runtime direction=browser")) {
                 xlog("L_WARN", "kamailio_application_dialog_media result=media_offer_failed method=$rm call_id=$ci\n");
                 sl_send_reply("488", "Media Relay Unavailable");
                 exit;
             }
         } else {
-            if (!rtpengine_offer("replace-origin replace-session-connection ICE=remove RTP/AVP rtcp-mux-demux")) {
+            if (!rtpengine_offer("replace-origin replace-session-connection ICE=remove RTP/AVP rtcp-mux-demux direction=browser direction=runtime")) {
                 xlog("L_WARN", "kamailio_application_dialog_media result=media_offer_failed method=$rm call_id=$ci\n");
                 sl_send_reply("488", "Media Relay Unavailable");
                 exit;
@@ -272,12 +272,12 @@ data:
         }
 
         if ($proto == "ws" || $proto == "wss") {
-            if (!rtpengine_answer("replace-origin replace-session-connection ICE=remove RTP/AVP rtcp-mux-demux")) {
+            if (!rtpengine_answer("replace-origin replace-session-connection ICE=remove RTP/AVP rtcp-mux-demux direction=browser direction=runtime")) {
                 xlog("L_WARN", "kamailio_application_dialog_media result=media_answer_failed method=$rm call_id=$ci\n");
                 drop();
             }
         } else {
-            if (!rtpengine_answer("replace-origin replace-session-connection ICE=force RTP/SAVPF DTLS=passive rtcp-mux-offer")) {
+            if (!rtpengine_answer("replace-origin replace-session-connection ICE=force RTP/SAVPF DTLS=passive rtcp-mux-offer direction=runtime direction=browser")) {
                 xlog("L_WARN", "kamailio_application_dialog_media result=media_answer_failed method=$rm call_id=$ci\n");
                 drop();
             }

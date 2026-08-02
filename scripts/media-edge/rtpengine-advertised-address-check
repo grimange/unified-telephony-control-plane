@@ -16,8 +16,17 @@ docker run --rm --entrypoint sh \
     require_bindable_ipv4 "$POD_IP"
     require_advertised_for_pod "$UTCP_PUBLIC_MEDIA_ADDRESS" "$POD_IP"
     test "$POD_IP" != "$UTCP_PUBLIC_MEDIA_ADDRESS"
-    effective_interface="internal/${POD_IP}!${UTCP_PUBLIC_MEDIA_ADDRESS}"
-    test "$effective_interface" = "internal/192.0.2.10!127.0.0.1"
+    entrypoint="$(cat /usr/local/bin/utcp-rtpengine-entrypoint)"
+    printf "%s" "$entrypoint" | grep -F -- "--interface=\"runtime/\${POD_IP}!\${POD_IP}\"" >/dev/null
+    printf "%s" "$entrypoint" | grep -F -- "--interface=\"browser/\${POD_IP}!\${browser_advertised_address}\"" >/dev/null
+    printf "%s" "$entrypoint" | grep -F -- "browser_advertised_address=\"\$POD_IP\"" >/dev/null
+    printf "%s" "$entrypoint" | grep -F -- "browser_advertised_address=\"\$UTCP_PUBLIC_MEDIA_ADDRESS\"" >/dev/null
+    runtime_interface="runtime/${POD_IP}!${POD_IP}"
+    browser_interface="browser/${POD_IP}!${UTCP_PUBLIC_MEDIA_ADDRESS}"
+    default_browser_interface="browser/${POD_IP}!${POD_IP}"
+    test "$runtime_interface" = "runtime/192.0.2.10!192.0.2.10"
+    test "$browser_interface" = "browser/192.0.2.10!127.0.0.1"
+    test "$default_browser_interface" = "browser/192.0.2.10!192.0.2.10"
     test "40000" = "40000"
     test "40099" = "40099"
   '

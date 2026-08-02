@@ -346,11 +346,11 @@ def validate(state: dict[str, Any]) -> None:
         [
             'if (!has_body("application/sdp"))',
             "return;",
-            'rtpengine_offer("replace-origin replace-session-connection ICE=force RTP/SAVPF DTLS=passive rtcp-mux-offer")',
+            'rtpengine_offer("replace-origin replace-session-connection ICE=force RTP/SAVPF DTLS=passive rtcp-mux-offer direction=runtime direction=browser")',
             'result=media_offer_failed method=$rm call_id=$ci',
             'sl_send_reply("488", "Media Relay Unavailable")',
             "exit;",
-            'rtpengine_offer("replace-origin replace-session-connection ICE=remove RTP/AVP rtcp-mux-demux")',
+            'rtpengine_offer("replace-origin replace-session-connection ICE=remove RTP/AVP rtcp-mux-demux direction=browser direction=runtime")',
             'setflag(FLT_MEDIA_RELAY_REQUIRED)',
             'result=media_offer method=$rm call_id=$ci',
         ],
@@ -361,10 +361,10 @@ def validate(state: dict[str, Any]) -> None:
         [
             'if (!has_body("application/sdp"))',
             "return;",
-            'rtpengine_answer("replace-origin replace-session-connection ICE=remove RTP/AVP rtcp-mux-demux")',
+            'rtpengine_answer("replace-origin replace-session-connection ICE=remove RTP/AVP rtcp-mux-demux direction=browser direction=runtime")',
             'result=media_answer_failed method=$rm call_id=$ci',
             "drop();",
-            'rtpengine_answer("replace-origin replace-session-connection ICE=force RTP/SAVPF DTLS=passive rtcp-mux-offer")',
+            'rtpengine_answer("replace-origin replace-session-connection ICE=force RTP/SAVPF DTLS=passive rtcp-mux-offer direction=runtime direction=browser")',
             'result=media_answer method=$rm call_id=$ci',
         ],
         "route[MEDIA_ANSWER]",
@@ -1181,6 +1181,10 @@ fail_case("removing MEDIA_OFFER SDP guard fails", remove_media_offer_sdp_guard)
 fail_case("removing application-runtime answer route arming fails", remove_media_answer_route)
 fail_case("removing application-runtime answer delegate fails", remove_onreply_media_answer_delegate)
 fail_case("removing MEDIA_ANSWER SDP guard fails", remove_media_answer_sdp_guard)
+fail_case("removing browser-facing offer directions fails", lambda s: set_kamailio_config(s, s["kamailio"].replace(" direction=runtime direction=browser", "", 1), update_checksum=True))
+fail_case("swapping runtime-facing offer directions fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("direction=browser direction=runtime", "direction=runtime direction=browser", 1), update_checksum=True))
+fail_case("renaming runtime rtpengine direction fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("direction=runtime", "direction=internal", 1), update_checksum=True))
+fail_case("renaming browser rtpengine direction fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("direction=browser", "direction=external", 1), update_checksum=True))
 fail_case("removing browser BYE media delete fails", remove_established_bye_media_delete)
 fail_case("removing CANCEL media cleanup fails", remove_cancel_media_delete)
 fail_case("removing terminal failure media cleanup fails", remove_failure_media_delete)

@@ -24,13 +24,13 @@ if [ "$RTPENGINE_NG_PORT" != "2223" ]; then
   exit 1
 fi
 
-advertised_address="$POD_IP"
+browser_advertised_address="$POD_IP"
 if [ "${UTCP_PUBLIC_MEDIA_ADDRESS+x}" = "x" ]; then
   if ! require_advertised_for_pod "$UTCP_PUBLIC_MEDIA_ADDRESS" "$POD_IP"; then
     printf 'invalid UTCP_PUBLIC_MEDIA_ADDRESS for rtpengine advertisement: %s\n' "$UTCP_PUBLIC_MEDIA_ADDRESS" >&2
     exit 1
   fi
-  advertised_address="$UTCP_PUBLIC_MEDIA_ADDRESS"
+  browser_advertised_address="$UTCP_PUBLIC_MEDIA_ADDRESS"
 fi
 
 exec /usr/bin/rtpengine \
@@ -38,7 +38,8 @@ exec /usr/bin/rtpengine \
   --pidfile=/run/rtpengine/rtpengine.pid \
   --table=-1 \
   --listen-ng="${POD_IP}:${RTPENGINE_NG_PORT}" \
-  --interface="internal/${POD_IP}!${advertised_address}" \
+  --interface="runtime/${POD_IP}!${POD_IP}" \
+  --interface="browser/${POD_IP}!${browser_advertised_address}" \
   --port-min="${RTPENGINE_MEDIA_PORT_MIN}" \
   --port-max="${RTPENGINE_MEDIA_PORT_MAX}" \
   --listen-http="${POD_IP}:${RTPENGINE_METRICS_PORT}" \

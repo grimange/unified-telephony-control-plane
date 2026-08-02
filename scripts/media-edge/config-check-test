@@ -86,11 +86,23 @@ printf 'UTCP_PUBLIC_MEDIA_ADDRESS=192.0.2.10\n' >> "$tmpdir/versions.env"
 expect_fail "duplicate public-address authority" run_check
 cp "$ROOT/versions.env" "$tmpdir/versions.env"
 
-sed -i 's/advertised_address/127.0.0.1 advertised_address/' "$tmpdir/entrypoint"
+sed -i 's/browser_advertised_address/127.0.0.1 browser_advertised_address/' "$tmpdir/entrypoint"
 expect_fail "hard-coded advertised address" run_check
 cp "$ROOT/infrastructure/docker/rtpengine/entrypoint" "$tmpdir/entrypoint"
-sed -i 's/advertised_address="\$POD_IP"/advertised_address="127.0.0.1"/' "$tmpdir/entrypoint"
-expect_fail "Pod-IP-only projection" run_check
+sed -i 's/--interface="runtime\/${POD_IP}!${POD_IP}"/--interface="runtime\/${POD_IP}!${browser_advertised_address}"/' "$tmpdir/entrypoint"
+expect_fail "runtime interface public advertisement" run_check
+cp "$ROOT/infrastructure/docker/rtpengine/entrypoint" "$tmpdir/entrypoint"
+sed -i 's/--interface="runtime\/${POD_IP}!${POD_IP}"/--interface="internal\/${POD_IP}!${POD_IP}"/' "$tmpdir/entrypoint"
+expect_fail "runtime interface name drift" run_check
+cp "$ROOT/infrastructure/docker/rtpengine/entrypoint" "$tmpdir/entrypoint"
+sed -i 's/--interface="browser\/${POD_IP}!${browser_advertised_address}"/--interface="external\/${POD_IP}!${browser_advertised_address}"/' "$tmpdir/entrypoint"
+expect_fail "browser interface name drift" run_check
+cp "$ROOT/infrastructure/docker/rtpengine/entrypoint" "$tmpdir/entrypoint"
+sed -i 's/browser_advertised_address="$POD_IP"/browser_advertised_address="192.0.2.11"/' "$tmpdir/entrypoint"
+expect_fail "browser fallback does not use Pod IP" run_check
+cp "$ROOT/infrastructure/docker/rtpengine/entrypoint" "$tmpdir/entrypoint"
+sed -i 's/browser_advertised_address="$UTCP_PUBLIC_MEDIA_ADDRESS"/browser_advertised_address="$POD_IP"/' "$tmpdir/entrypoint"
+expect_fail "public address projection removed" run_check
 cp "$ROOT/infrastructure/docker/rtpengine/entrypoint" "$tmpdir/entrypoint"
 
 sed -i '/- name: media-40099/,$d' "$tmpdir/service.yaml"

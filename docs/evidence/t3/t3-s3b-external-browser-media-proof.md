@@ -775,3 +775,68 @@ Bounded implementation: give rtpengine a runtime-facing interface that
 advertises the Pod IP and a browser-facing interface that advertises the public
 address, and select direction per leg in the media adapter. Then re-run host
 Scenario A and B, the failure cases, and containment.
+
+# T3-S3B PRODUCT_DEFECT-26 Repository Correction
+
+Date: 2026-08-03
+
+Starting commit: `d100921251474a20345fc95774072eec820769cb`
+
+Phase marker: `UTCP_PHASE=T1`
+
+Verdict: `T3_S3B_PRODUCT_DEFECT_26_IMPLEMENTED_REPOSITORY`
+
+## Corrected Contract
+
+Live T3-S3B evidence disproved the earlier single-interface advertisement
+assumption. The process form
+`--interface=internal/${POD_IP}!${UTCP_PUBLIC_MEDIA_ADDRESS}` advertised the
+public browser address to the application-runtime-facing SDP as well as the
+browser-facing SDP. With the local media-edge value `127.0.0.1`, Asterisk was
+therefore instructed to return RTP to its own loopback.
+
+The repository correction defines two named rtpengine logical interfaces:
+
+```text
+runtime/${POD_IP}!${POD_IP}
+browser/${POD_IP}!${browser_advertised_address}
+```
+
+`browser_advertised_address` defaults to the Pod IP when
+`UTCP_PUBLIC_MEDIA_ADDRESS` is absent, preserving the internal-only default. If
+`UTCP_PUBLIC_MEDIA_ADDRESS` is configured, the entrypoint continues to validate
+it with the advertised-address validator and uses it only on the browser-facing
+interface. The Pod IP still uses the bind-address validator.
+
+Kamailio remains the only rtpengine ng-control authority. The four existing
+provider-neutral `rtpengine_offer` and `rtpengine_answer` calls now select
+directions explicitly:
+
+```text
+runtime -> browser  for browser-facing SDP
+browser -> runtime  for application-runtime-facing SDP
+```
+
+No fifth branch, application-runtime-side media authority, feature gate,
+allowlist, manual switch, NetworkPolicy widening, or single-interface fallback
+was added.
+
+## Repository Verification
+
+Focused checks were run before the implementation commit:
+
+```text
+./scripts/media-edge/config-check        PASS
+./scripts/media-edge/config-check-test   PASS
+./scripts/kamailio-signaling/config-check        PASS
+./scripts/kamailio-signaling/config-check-test   PASS
+```
+
+The media-edge mutation suite now fails on runtime interface name drift,
+browser interface name drift, runtime advertisement drift, browser public
+projection removal, and browser default fallback drift. The Kamailio mutation
+suite now fails on missing, swapped, or renamed rtpengine directions.
+
+Live Scenario A, Scenario B, the four bounded failure cases, and the
+containment sweep remain proof obligations for the subsequent live section of
+this file.

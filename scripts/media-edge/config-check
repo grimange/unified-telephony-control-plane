@@ -74,8 +74,18 @@ if "allow-rtpengine-external-media.yaml" in kustomization_local_path.read_text()
     fail("canonical local overlay must not include the external media policy")
 
 entry = entrypoint_path.read_text()
-if '--interface=' not in entry or 'advertised_address' not in entry or 'UTCP_PUBLIC_MEDIA_ADDRESS' not in entry:
-    fail("rtpengine advertised-address projection is missing")
+if entry.count('--interface=') != 2:
+    fail("rtpengine must declare exactly two named media interfaces")
+if '--interface="runtime/${POD_IP}!${POD_IP}"' not in entry:
+    fail("rtpengine runtime-facing interface must bind and advertise the Pod IP")
+if '--interface="browser/${POD_IP}!${browser_advertised_address}"' not in entry:
+    fail("rtpengine browser-facing interface must use the browser advertised-address projection")
+if 'browser_advertised_address="$POD_IP"' not in entry:
+    fail("rtpengine browser-facing interface must fall back to the Pod IP")
+if 'browser_advertised_address="$UTCP_PUBLIC_MEDIA_ADDRESS"' not in entry or 'UTCP_PUBLIC_MEDIA_ADDRESS' not in entry:
+    fail("rtpengine browser-facing interface must consume the public media address when configured")
+if '--interface="internal/${POD_IP}!' in entry:
+    fail("rtpengine single internal interface advertisement must not remain active")
 if '127.0.0.1' in entry:
     fail("rtpengine entrypoint contains a duplicated public-address literal")
 validation = validation_path.read_text()

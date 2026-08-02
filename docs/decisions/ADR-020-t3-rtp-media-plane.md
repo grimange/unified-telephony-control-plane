@@ -268,10 +268,25 @@ internal-only.
 The bounded local media-edge projection consumes the address `127.0.0.1`,
 publishes UDP `40000-40099` through a dedicated k3d profile and a 100-entry
 `rtpengine-media` NodePort Service with `externalTrafficPolicy: Local`, and
-pins rtpengine to the k3d server labelled `utcp.dev/media-edge=true`. The
-rtpengine process continues to bind its internal interface to its Pod IP and
-changes only the advertised half of the existing interface declaration. No
-control, metrics, SIP, runtime RTP, ESL, ARI, or AMI port is projected.
+pins rtpengine to the k3d server labelled `utcp.dev/media-edge=true`.
+
+The original T3-S3A projection assumed that changing the advertised half of a
+single rtpengine interface was sufficient. Live T3-S3B evidence disproved that
+assumption: the public advertised address was applied to the application-runtime
+leg as well as the browser leg, causing Asterisk to send RTP to its own
+loopback. T3-S3B therefore replaces the single-interface assumption with two
+named logical interfaces on the same Pod-IP bind model:
+
+```text
+runtime/${POD_IP}!${POD_IP}
+browser/${POD_IP}!${browser_advertised_address}
+```
+
+Kamailio remains the sole ng-control caller and selects the media leg using
+`direction=runtime direction=browser` or
+`direction=browser direction=runtime` at the four existing offer/answer call
+sites. No control, metrics, SIP, runtime RTP, ESL, ARI, or AMI port is
+projected.
 
 This is a projection contract, not an external reachability proof. Cluster
 recreation and real host-browser UDP validation are deferred to T3-S3B. A
