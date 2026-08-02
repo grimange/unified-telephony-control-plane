@@ -9,6 +9,8 @@ trap 'rm -rf "$tmpdir"' EXIT
 cp "$ROOT/versions.env" "$tmpdir/versions.env"
 cp "$ROOT/infrastructure/k3d/cluster-media-edge.yaml" "$tmpdir/cluster.yaml"
 cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/rtpengine-media-service.yaml" "$tmpdir/service.yaml"
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/generated/public-media.env" "$tmpdir/public-media.env"
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/kustomization.yaml" "$tmpdir/kustomization.yaml"
 cp "$ROOT/infrastructure/docker/rtpengine/entrypoint" "$tmpdir/entrypoint"
 
 validation_passes() {
@@ -27,6 +29,8 @@ run_check() {
     UTCP_MEDIA_EDGE_K3D_CONFIG="$tmpdir/cluster.yaml" \
     UTCP_MEDIA_EDGE_SERVICE="$tmpdir/service.yaml" \
     UTCP_MEDIA_EDGE_ENTRYPOINT="$tmpdir/entrypoint" \
+    UTCP_MEDIA_EDGE_GENERATED_PROJECTION="$tmpdir/public-media.env" \
+    UTCP_MEDIA_EDGE_KUSTOMIZATION="$tmpdir/kustomization.yaml" \
     "$CHECK" >/dev/null
 }
 
@@ -55,6 +59,25 @@ validation_fails require_advertised_for_pod malformed 192.0.2.10
 sed -i '/^UTCP_PUBLIC_MEDIA_ADDRESS=/d' "$tmpdir/versions.env"
 expect_fail "missing public-address authority" run_check
 cp "$ROOT/versions.env" "$tmpdir/versions.env"
+
+rm -f "$tmpdir/public-media.env"
+expect_fail "missing generated projection" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/generated/public-media.env" "$tmpdir/public-media.env"
+sed -i 's/127.0.0.1/192.0.2.11/' "$tmpdir/public-media.env"
+expect_fail "generated projection drift" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/generated/public-media.env" "$tmpdir/public-media.env"
+printf 'UNRELATED=value\n' >> "$tmpdir/public-media.env"
+expect_fail "generated projection extra variable" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/generated/public-media.env" "$tmpdir/public-media.env"
+sed -i '1d' "$tmpdir/public-media.env"
+expect_fail "generated projection marker removal" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/generated/public-media.env" "$tmpdir/public-media.env"
+sed -i 's#generated/public-media.env#../../../../versions.env#' "$tmpdir/kustomization.yaml"
+expect_fail "out-of-root versions reference" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/kustomization.yaml" "$tmpdir/kustomization.yaml"
+printf 'load-restrictor: LoadRestrictionsNone\n' >> "$tmpdir/kustomization.yaml"
+expect_fail "unrestricted kustomize loading" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/kustomization.yaml" "$tmpdir/kustomization.yaml"
 printf 'UTCP_PUBLIC_MEDIA_ADDRESS=192.0.2.10\n' >> "$tmpdir/versions.env"
 expect_fail "duplicate public-address authority" run_check
 cp "$ROOT/versions.env" "$tmpdir/versions.env"
@@ -85,7 +108,6 @@ sed -i 's/utcp.dev\/media-edge=true/utcp.dev\/wrong=true/' "$tmpdir/cluster.yaml
 expect_fail "node label mismatch" run_check
 cp "$ROOT/infrastructure/k3d/cluster-media-edge.yaml" "$tmpdir/cluster.yaml"
 
-cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/kustomization.yaml" "$tmpdir/kustomization.yaml"
 sed -i '/rtpengine-media-service.yaml/d' "$tmpdir/kustomization.yaml"
 expect_fail "parity service removal" grep -q 'rtpengine-media-service' "$tmpdir/kustomization.yaml"
 

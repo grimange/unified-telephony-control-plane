@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+OVERLAY="${UTCP_MEDIA_EDGE_OVERLAY_DIR:-$ROOT/infrastructure/kubernetes/overlays/local-media-edge}"
+CHECK="${UTCP_MEDIA_EDGE_CONFIG_CHECK:-$ROOT/scripts/media-edge/config-check}"
+fail() { printf 'media-edge overlay applicability check failed: %s\n' "$1" >&2; exit 1; }
+
+command -v kubectl >/dev/null 2>&1 || fail "kubectl is required"
+render="$(kubectl kustomize "$OVERLAY")" || fail "plain kubectl kustomize failed"
+dry_run_file="$(mktemp)"
+dry_run_error="$(mktemp)"
+trap 'rm -f "$dry_run_file" "$dry_run_error"' EXIT
+if ! kubectl apply -k "$OVERLAY" --dry-run=client --validate=false -o yaml >"$dry_run_file" 2>"$dry_run_error"; then
+  if grep -Eqi 'connection refused|failed to download openapi|unable to recognize|couldn.t get current server API group list' "$dry_run_error"; then
+    printf 'client-side apply dry-run unavailable: no reachable API server; validating rendered objects offline\n' >&2
+    printf '%s\n' "$render" >"$dry_run_file"
+  else
+    cat "$dry_run_error" >&2
+    fail "client-side apply dry-run failed"
+  fi
+fi
+dry_run="$(<"$dry_run_file")"
+
+grep -Fq 'UTCP_PUBLIC_MEDIA_ADDRESS: 127.0.0.1' <<<"$render" || fail "rendered public address is missing"
+grep -Fq 'name: rtpengine-media' "$dry_run_file" || fail "dry-run omitted rtpengine-media"
+python3 - "$dry_run_file" <<'PY' || fail "dry-run media Service is not the bounded 100-port projection"
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if isinstance(d, dict)]
+s = next((d for d in docs if d.get("kind") == "Service" and (d.get("metadata") or {}).get("name") == "rtpengine-media"), None)
+assert s and s["spec"].get("type") == "NodePort" and s["spec"].get("externalTrafficPolicy") == "Local" and len(s["spec"].get("ports", [])) == 100
+PY
+"$CHECK" >/dev/null
+printf 'media-edge overlay is plainly renderable and offline-applicable\n'

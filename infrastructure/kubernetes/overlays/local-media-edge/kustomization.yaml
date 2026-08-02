@@ -9,7 +9,7 @@ configMapGenerator:
   - name: utcp-media-edge-authority
     namespace: utcp-platform
     envs:
-      - ../../../../versions.env
+      - generated/public-media.env
 patches:
   - path: rtpengine-media-edge-patch.yaml
 images:

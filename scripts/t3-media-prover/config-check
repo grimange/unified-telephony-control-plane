@@ -375,6 +375,18 @@ if "wait --for=condition=complete" in runner:
     fail("runner must not wait only for Complete")
 if "browser-originated-bye" not in runner or "runtime-originated-bye" not in runner:
     fail("runner must fail closed and explicitly supply both committed scenarios")
+if 'EXECUTION_MODE="${UTCP_T3_MEDIA_PROVER_EXECUTION_MODE:-kubernetes}"' not in runner:
+    fail("Kubernetes must remain the default prover execution mode")
+if 'kubernetes|host' not in runner or '--execution-mode' not in runner:
+    fail("prover must support exactly kubernetes and host execution modes")
+if 'node "$ROOT/tools/t3-media-prover/prover.mjs"' not in runner:
+    fail("host mode must invoke the shared browser prover")
+if 'kubernetes_resources=none' not in runner or 'trap cleanup_host EXIT INT TERM' not in runner:
+    fail("host mode must provide a no-resource dry-run and interrupt cleanup")
+if 'UTCP_T3_MEDIA_PROVER_GATEWAY_SERVICE="${UTCP_T3_MEDIA_PROVER_GATEWAY_SERVICE:-127.0.0.1}"' not in runner:
+    fail("host mode must use a host gateway address with canonical hostnames")
+if 'UTCP_T3_MEDIA_PROVER_RESULT_PATH' not in runner:
+    fail("host mode must preserve the shared result path contract")
 
 for production_dir in production_dirs:
     if not production_dir.exists():

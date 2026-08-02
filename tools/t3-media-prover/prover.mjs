@@ -41,6 +41,7 @@ const config = {
   extension: env('UTCP_T3_MEDIA_PROVER_EXTENSION', '9900'),
   gatewayService: env('UTCP_T3_MEDIA_PROVER_GATEWAY_SERVICE', 'traefik.traefik-system.svc.cluster.local'),
   gatewayPort: Number(env('UTCP_T3_MEDIA_PROVER_GATEWAY_PORT', '443')),
+  caCert: env('UTCP_T3_MEDIA_PROVER_CA_CERT', '/etc/ssl/certs/utcp-local-ca.crt'),
   loginEmail: requiredEnv('UTCP_T3_MEDIA_PROVER_LOGIN_EMAIL'),
   loginPassword: requiredEnv('UTCP_T3_MEDIA_PROVER_LOGIN_PASSWORD'),
   sipUsername: requiredEnv('UTCP_T3_MEDIA_PROVER_SIP_USERNAME'),
@@ -565,7 +566,7 @@ async function prepareChromiumTrust() {
   await fs.mkdir(databaseDir, { recursive: true, mode: 0o700 });
   const nssDb = `sql:${databaseDir}`;
   await execFile('certutil', ['-N', '-d', nssDb, '--empty-password']);
-  await execFile('certutil', ['-A', '-d', nssDb, '-n', 'UTCP local public CA', '-t', 'C,,', '-i', '/etc/ssl/certs/utcp-local-ca.crt']);
+  await execFile('certutil', ['-A', '-d', nssDb, '-n', 'UTCP local public CA', '-t', 'C,,', '-i', config.caCert]);
   return databaseDir;
 }
 

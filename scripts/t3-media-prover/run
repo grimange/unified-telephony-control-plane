@@ -11,39 +11,79 @@ SECRET_NAME="t3-media-prover-credentials"
 SCENARIO_CONFIGMAP="t3-media-prover-scenario"
 CA_CONFIGMAP="t3-media-prover-local-ca"
 RESULT_DIR="${UTCP_T3_MEDIA_PROVER_RESULT_DIR:-$ROOT/.runtime/t3-media-prover}"
-RESULT_FILE="$RESULT_DIR/result.json"
 WAIT_TIMEOUT_SECONDS="$(printenv UTCP_T3_MEDIA_PROVER_WAIT_TIMEOUT_SECONDS || printf '480')"
+EXECUTION_MODE="${UTCP_T3_MEDIA_PROVER_EXECUTION_MODE:-kubernetes}"
+SCENARIO="${UTCP_T3_MEDIA_PROVER_SCENARIO:-}"
+DRY_RUN=0
 
-fail() {
-  printf 't3 media prover run failed: %s\n' "$1" >&2
-  exit 1
-}
+fail() { printf 't3 media prover run failed: %s\n' "$1" >&2; exit 1; }
+require_env() { local name="$1"; [ -n "${!name:-}" ] || fail "$name is required at execution time"; }
 
-require_env() {
-  local name="$1"
-  [ -n "${!name:-}" ] || fail "$name is required at execution time"
-}
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --execution-mode) [ "$#" -ge 2 ] || fail "--execution-mode requires a value"; EXECUTION_MODE="$2"; shift 2 ;;
+    --scenario) [ "$#" -ge 2 ] || fail "--scenario requires a value"; SCENARIO="$2"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    *) fail "unknown argument: $1" ;;
+  esac
+done
+
+case "$EXECUTION_MODE" in
+  kubernetes|host) ;;
+  *) fail "execution mode must be kubernetes or host" ;;
+esac
+[ "$SCENARIO" = "browser-originated-bye" ] || [ "$SCENARIO" = "runtime-originated-bye" ] || fail "scenario must be browser-originated-bye or runtime-originated-bye"
+
+if [ "$EXECUTION_MODE" = host ]; then
+  [ "$DRY_RUN" -eq 1 ] || {
+    require_env UTCP_T3_MEDIA_PROVER_LOGIN_EMAIL
+    require_env UTCP_T3_MEDIA_PROVER_LOGIN_PASSWORD
+    require_env UTCP_T3_MEDIA_PROVER_SIP_USERNAME
+    require_env UTCP_T3_MEDIA_PROVER_SIP_PASSWORD
+    [ -s "$ROOT/.runtime/tls/utcp-local-ca.crt" ] || fail "trusted local CA certificate is required at $ROOT/.runtime/tls/utcp-local-ca.crt"
+  }
+  command -v node >/dev/null 2>&1 || fail "node is required for host execution"
+  [ -f "$ROOT/tools/t3-media-prover/prover.mjs" ] || fail "shared browser prover is missing"
+  mkdir -p "$RESULT_DIR"
+  result_file="$RESULT_DIR/host-${SCENARIO}.json"
+  state_dir="$(mktemp -d "$RESULT_DIR/host-state.XXXXXX")"
+  cleanup_host() { rm -rf "$state_dir"; }
+  trap cleanup_host EXIT INT TERM
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf 'execution_mode=host\nshared_prover=%s\napplication_url=%s\nsip_wss_url=%s\nkubernetes_resources=none\nresult_path=%s\ncleanup=installed\n' \
+      "$ROOT/tools/t3-media-prover/prover.mjs" \
+      "${UTCP_T3_MEDIA_PROVER_APP_URL:-https://app.utcp.local.test}" \
+      "${UTCP_T3_MEDIA_PROVER_SIP_WSS_URL:-wss://sip.utcp.local.test/ws}" \
+      "$result_file"
+    exit 0
+  fi
+  set +e
+  env \
+    UTCP_T3_MEDIA_PROVER_EXECUTION_MODE=host \
+    UTCP_T3_MEDIA_PROVER_SCENARIO="$SCENARIO" \
+    UTCP_T3_MEDIA_PROVER_GATEWAY_SERVICE="${UTCP_T3_MEDIA_PROVER_GATEWAY_SERVICE:-127.0.0.1}" \
+    UTCP_T3_MEDIA_PROVER_CA_CERT="${UTCP_T3_MEDIA_PROVER_CA_CERT:-$ROOT/.runtime/tls/utcp-local-ca.crt}" \
+    UTCP_T3_MEDIA_PROVER_RESULT_PATH="$result_file" \
+    node "$ROOT/tools/t3-media-prover/prover.mjs"
+  status=$?
+  set -e
+  exit "$status"
+fi
 
 command -v kubectl >/dev/null 2>&1 || fail "kubectl is required"
 [ -f "$KUBECONFIG_PATH" ] || fail "kubeconfig not found at $KUBECONFIG_PATH"
 [ -d "$OVERLAY_DIR" ] || fail "proof overlay not found at $OVERLAY_DIR"
-
 require_env UTCP_T3_MEDIA_PROVER_LOGIN_EMAIL
 require_env UTCP_T3_MEDIA_PROVER_LOGIN_PASSWORD
 require_env UTCP_T3_MEDIA_PROVER_SIP_USERNAME
 require_env UTCP_T3_MEDIA_PROVER_SIP_PASSWORD
-scenario="$(printenv UTCP_T3_MEDIA_PROVER_SCENARIO || true)"
-[ "$scenario" = "browser-originated-bye" ] || [ "$scenario" = "runtime-originated-bye" ] || fail "UTCP_T3_MEDIA_PROVER_SCENARIO must be browser-originated-bye or runtime-originated-bye"
 CA_CERT="$ROOT/.runtime/tls/utcp-local-ca.crt"
 [ -s "$CA_CERT" ] || fail "trusted local CA certificate is required at $CA_CERT"
 
 mkdir -p "$RESULT_DIR"
-rm -f "$RESULT_FILE"
+rm -f "$RESULT_DIR/result.json"
 
-kubectl_cmd() {
-  kubectl --kubeconfig "$KUBECONFIG_PATH" --context "$KUBE_CONTEXT" "$@"
-}
-
+kubectl_cmd() { kubectl --kubeconfig "$KUBECONFIG_PATH" --context "$KUBE_CONTEXT" "$@"; }
 cleanup() {
   set +e
   kubectl_cmd -n "$NAMESPACE" delete secret "$SECRET_NAME" --ignore-not-found=true >/dev/null 2>&1
@@ -55,7 +95,6 @@ trap cleanup EXIT
 
 current_context="$(kubectl --kubeconfig "$KUBECONFIG_PATH" config current-context 2>/dev/null || true)"
 [ "$current_context" = "$KUBE_CONTEXT" ] || fail "expected kubeconfig current context $KUBE_CONTEXT, got ${current_context:-none}"
-
 "$ROOT/scripts/t3-media-prover/config-check"
 
 kubectl_cmd apply -f "$OVERLAY_DIR/namespace.yaml"
@@ -65,14 +104,8 @@ kubectl_cmd -n "$NAMESPACE" create secret generic "$SECRET_NAME" \
   --from-literal=UTCP_T3_MEDIA_PROVER_SIP_USERNAME="$UTCP_T3_MEDIA_PROVER_SIP_USERNAME" \
   --from-literal=UTCP_T3_MEDIA_PROVER_SIP_PASSWORD="$UTCP_T3_MEDIA_PROVER_SIP_PASSWORD" \
   --dry-run=client -o yaml | kubectl_cmd apply -f -
-
-kubectl_cmd -n "$NAMESPACE" create configmap "$SCENARIO_CONFIGMAP" \
-  --from-literal=scenario="$scenario" \
-  --dry-run=client -o yaml | kubectl_cmd apply -f -
-kubectl_cmd -n "$NAMESPACE" create configmap "$CA_CONFIGMAP" \
-  --from-file=ca.crt="$CA_CERT" \
-  --dry-run=client -o yaml | kubectl_cmd apply -f -
-
+kubectl_cmd -n "$NAMESPACE" create configmap "$SCENARIO_CONFIGMAP" --from-literal=scenario="$SCENARIO" --dry-run=client -o yaml | kubectl_cmd apply -f -
+kubectl_cmd -n "$NAMESPACE" create configmap "$CA_CONFIGMAP" --from-file=ca.crt="$CA_CERT" --dry-run=client -o yaml | kubectl_cmd apply -f -
 kubectl_cmd -n "$NAMESPACE" delete job "$JOB_NAME" --ignore-not-found=true
 kubectl_cmd apply -k "$OVERLAY_DIR"
 
@@ -81,21 +114,18 @@ terminal=""
 while [ "$SECONDS" -lt "$deadline" ]; do
   complete="$(kubectl_cmd -n "$NAMESPACE" get job "$JOB_NAME" -o jsonpath='{.status.conditions[?(@.type=="Complete")].status}' 2>/dev/null || true)"
   failed="$(kubectl_cmd -n "$NAMESPACE" get job "$JOB_NAME" -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || true)"
-  if [ "$complete" = "True" ]; then terminal=complete; break; fi
-  if [ "$failed" = "True" ]; then terminal=failed; break; fi
+  if [ "$complete" = True ]; then terminal=complete; break; fi
+  if [ "$failed" = True ]; then terminal=failed; break; fi
   sleep 2
 done
 [ -n "$terminal" ] || fail "proof Job did not reach Complete=True or Failed=True before bounded timeout"
-
 logs="$(kubectl_cmd -n "$NAMESPACE" logs "job/$JOB_NAME" --tail=-1)"
 printf '%s\n' "$logs"
 result_line="$(printf '%s\n' "$logs" | grep '^T3_MEDIA_PROVER_RESULT_JSON=' | tail -n 1 || true)"
 [ -n "$result_line" ] || fail "structured proof result was not emitted"
-printf '%s\n' "${result_line#T3_MEDIA_PROVER_RESULT_JSON=}" >"$RESULT_FILE"
-
+printf '%s\n' "${result_line#T3_MEDIA_PROVER_RESULT_JSON=}" >"$RESULT_DIR/result.json"
 pod_phase="$(kubectl_cmd -n "$NAMESPACE" get pod -l job-name="$JOB_NAME" -o jsonpath='{.items[0].status.phase}')"
 pod_exit_code="$(kubectl_cmd -n "$NAMESPACE" get pod -l job-name="$JOB_NAME" -o jsonpath='{.items[0].status.containerStatuses[0].state.terminated.exitCode}' 2>/dev/null || true)"
 printf 'job_terminal_state=%s pod_phase=%s pod_exit_code=%s\n' "$terminal" "$pod_phase" "$pod_exit_code"
 [ "$terminal" = complete ] && [ "$pod_phase" = Succeeded ] || fail "proof Job failed: terminal=$terminal pod=$pod_phase exit=$pod_exit_code"
-
-printf 'T3 media prover result written to %s\n' "$RESULT_FILE"
+printf 'T3 media prover result written to %s\n' "$RESULT_DIR/result.json"

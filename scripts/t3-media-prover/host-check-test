@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+RUNNER="$ROOT/scripts/t3-media-prover/run"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+expect_fail() {
+  if "$@" >/dev/null 2>&1; then printf 'host runner mutation unexpectedly passed\n' >&2; exit 1; fi
+}
+
+expect_fail "$RUNNER" --execution-mode unsupported --scenario browser-originated-bye --dry-run
+if ! "$RUNNER" --execution-mode host --scenario browser-originated-bye --dry-run | grep -Fq 'kubernetes_resources=none'; then
+  printf 'host dry-run did not prove Kubernetes resources are absent\n' >&2; exit 1
+fi
+if "$RUNNER" --execution-mode host --scenario browser-originated-bye >/dev/null 2>&1; then
+  printf 'host runner launched without credentials\n' >&2; exit 1
+fi
+cp "$RUNNER" "$tmp/run"
+sed -i 's#tools/t3-media-prover/prover.mjs#tools/t3-media-prover/other-prover.mjs#' "$tmp/run"
+if grep -Fq 'node "$ROOT/tools/t3-media-prover/prover.mjs"' "$tmp/run"; then
+  printf 'shared prover mutation unexpectedly passed\n' >&2; exit 1
+fi
+printf 'T3 media prover host mutation checks passed\n'

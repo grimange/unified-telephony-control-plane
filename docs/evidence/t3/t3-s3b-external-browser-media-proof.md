@@ -394,3 +394,46 @@ host loopback UDP publication
 
 No Kubernetes resource was applied, the cluster was not recreated, and the
 browser media proof remains the T3-S3B gap.
+
+## T3-S3B repository corrections at `099dcac`
+
+`PRODUCT_DEFECT-24` is corrected. The media-edge Kustomization no longer reads
+`versions.env` from outside its root. `scripts/media-edge/sync-public-media-projection`
+deterministically generates the in-root `generated/public-media.env` from the
+sole `versions.env` authority, validates the value through the shared
+rtpengine advertised-address validator, and writes it atomically. The media
+edge check compares authority, generated projection, and rendered Deployment
+value, rejects unrestricted loading, duplicate variables, marker drift, and
+unrelated generated content.
+
+Plain `kubectl kustomize infrastructure/kubernetes/overlays/local-media-edge`
+now succeeds without `LoadRestrictionsNone`. The repository applicability
+target also invokes the canonical `kubectl apply -k ... --dry-run=client`
+path. In this environment kubectl's configured API endpoint is unavailable,
+so the client dry-run cannot complete discovery; the target reports that
+environmental condition and validates the rendered object set offline instead.
+No Kubernetes resource was applied.
+
+`PROOF_HARNESS_DEFECT-H` is corrected. `scripts/t3-media-prover/run` now
+supports exactly `kubernetes` (the unchanged default) and `host` execution
+modes. Host mode invokes the same `tools/t3-media-prover/prover.mjs`, uses the
+canonical host HTTPS/WSS origins, preserves both scenarios and the runtime
+hangup readiness marker, propagates the shared result and exit-code contract,
+and cleans transient state on exit or interruption. It creates no Kubernetes
+proof resources. `scripts/t3-media-prover/host-check` and its mutation checks
+cover preflight, dry-run orchestration, fail-closed modes, shared browser
+logic, and cleanup contracts. No real browser or media scenario was run.
+
+Status:
+
+```text
+T3-S3A = Complete
+T3-S3B = ready to resume live host-browser proof
+T3-S3 = In Progress
+T3 = In Progress
+UTCP_PHASE=T1
+```
+
+The remaining proof is the committed host-browser Scenario A and Scenario B
+run against the temporary media-edge cluster, including reciprocal RTP, audio
+energy, both BYE paths, failure behaviour, containment, and restoration.

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+RUNNER="$ROOT/scripts/t3-media-prover/run"
+PROVER="$ROOT/tools/t3-media-prover/prover.mjs"
+RESULT_DIR="$ROOT/.runtime/t3-media-prover"
+fail() { printf 't3 media prover host check failed: %s\n' "$1" >&2; exit 1; }
+
+command -v node >/dev/null 2>&1 || fail "node is required"
+[ -f "$RUNNER" ] || fail "runner is missing"
+[ -f "$PROVER" ] || fail "shared prover is missing"
+node --version >/dev/null || fail "node version check failed"
+[ -d "$ROOT/tools/t3-media-prover/node_modules/@playwright/test" ] || fail "pinned Playwright package is not installed"
+(cd "$ROOT/tools/t3-media-prover" && node -e "import('@playwright/test').then(() => process.exit(0)).catch(() => process.exit(1))") || fail "Playwright cannot be loaded"
+
+grep -Fq 'kubernetes|host' "$RUNNER" || fail "runner must support exactly kubernetes and host modes"
+grep -Fq 'EXECUTION_MODE="${UTCP_T3_MEDIA_PROVER_EXECUTION_MODE:-kubernetes}"' "$RUNNER" || fail "Kubernetes must remain the default mode"
+grep -Fq 'node "$ROOT/tools/t3-media-prover/prover.mjs"' "$RUNNER" || fail "host mode must invoke the shared prover"
+grep -Fq 'UTCP_T3_MEDIA_PROVER_GATEWAY_SERVICE="${UTCP_T3_MEDIA_PROVER_GATEWAY_SERVICE:-127.0.0.1}"' "$RUNNER" || fail "host mode must use the host gateway address"
+grep -Fq 'kubernetes_resources=none' "$RUNNER" || fail "host dry-run must prove no Kubernetes resources are created"
+grep -Fq 'trap cleanup_host EXIT INT TERM' "$RUNNER" || fail "host cleanup must cover exit and interruption"
+grep -Fq 'UTCP_T3_MEDIA_PROVER_RESULT_PATH' "$RUNNER" || fail "host mode must preserve the result path contract"
+grep -Fq 'browser-originated-bye' "$RUNNER" || fail "Scenario A is missing"
+grep -Fq 'runtime-originated-bye' "$RUNNER" || fail "Scenario B is missing"
+grep -Fq 'https://app.utcp.local.test' "$PROVER" || fail "canonical HTTPS origin is missing"
+grep -Fq 'wss://sip.utcp.local.test/ws' "$PROVER" || fail "canonical WSS origin is missing"
+if grep -Eq 'traefik\.[a-z0-9.-]+\.svc\.cluster\.local' "$RUNNER"; then fail "host runner must not select an in-cluster DNS name"; fi
+mkdir -p "$RESULT_DIR"
+[ -w "$RESULT_DIR" ] || fail "result directory is not writable"
+case "$ROOT/.gitignore" in
+  *) grep -Fq '.runtime/' "$ROOT/.gitignore" || fail ".runtime proof output must be gitignored" ;;
+esac
+"$RUNNER" --execution-mode host --scenario browser-originated-bye --dry-run >/dev/null || fail "host dry-run failed"
+"$RUNNER" --execution-mode host --scenario runtime-originated-bye --dry-run >/dev/null || fail "Scenario B host dry-run failed"
+if "$RUNNER" --execution-mode unsupported --scenario browser-originated-bye --dry-run >/dev/null 2>&1; then fail "unsupported execution mode was accepted"; fi
+printf 'T3 media prover host preflight passed (no media call executed)\n'
