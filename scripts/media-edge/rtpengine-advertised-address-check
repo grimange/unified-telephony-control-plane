@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+IMAGE="${UTCP_RTPENGINE_IMAGE:-utcp-rtpengine:dev}"
+public_address="$(awk -F= '$1 == "UTCP_PUBLIC_MEDIA_ADDRESS" {print $2}' "$ROOT/versions.env")"
+[ "$public_address" = "127.0.0.1" ]
+
+docker image inspect "$IMAGE" >/dev/null
+docker run --rm --entrypoint sh \
+  -e POD_IP=192.0.2.10 \
+  -e UTCP_PUBLIC_MEDIA_ADDRESS="$public_address" \
+  "$IMAGE" -c '
+    set -eu
+    . /usr/local/lib/utcp-rtpengine/address-validation
+    require_bindable_ipv4 "$POD_IP"
+    require_advertised_for_pod "$UTCP_PUBLIC_MEDIA_ADDRESS" "$POD_IP"
+    test "$POD_IP" != "$UTCP_PUBLIC_MEDIA_ADDRESS"
+    effective_interface="internal/${POD_IP}!${UTCP_PUBLIC_MEDIA_ADDRESS}"
+    test "$effective_interface" = "internal/192.0.2.10!127.0.0.1"
+    test "40000" = "40000"
+    test "40099" = "40099"
+  '
+
+printf 'rtpengine image advertised-address preflight passed\n'

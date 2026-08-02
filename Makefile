@@ -76,7 +76,9 @@ install: api-install web-install ## Install all application dependencies.
 
 test: api-test web-test ## Run backend and frontend tests.
 
-check: repository-hygiene media-config-check media-config-check-test media-edge-config-check media-edge-config-check-test freeswitch-config-check freeswitch-config-check-test freeswitch-overlay-check t3-media-prover-config-check t3-media-prover-config-check-test security-config-check-test kamailio-signaling-config-check api-check web-lint web-typecheck ## Run repository, backend, frontend, media, security, and Kamailio signaling static checks.
+check: repository-hygiene media-config-check media-config-check-test media-edge-config-check media-edge-config-check-test rtpengine-advertised-address-check freeswitch-config-check freeswitch-config-check-test freeswitch-overlay-check t3-media-prover-config-check t3-media-prover-config-check-test security-config-check-test kamailio-signaling-config-check api-check web-lint web-typecheck ## Run repository, backend, frontend, media, security, and Kamailio signaling static checks.
+
+.PHONY: rtpengine-advertised-address-check
 
 k3d-media-edge-config-check: ## Validate the bounded media-edge k3d profile.
 	@K3D_CONFIG_FILE=infrastructure/k3d/cluster-media-edge.yaml K3D_MEDIA_EDGE_PROFILE=1 ./scripts/k3d/config-check
@@ -88,6 +90,10 @@ media-edge-config-check-test: ## Run media-edge projection mutation checks.
 	@./scripts/media-edge/config-check-test
 
 media-edge-projection-check: media-edge-config-check media-edge-config-check-test k3d-media-edge-config-check ## Validate the complete offline media-edge projection.
+
+rtpengine-advertised-address-check: ## Execute the shared rtpengine address validators.
+	@./scripts/media-edge/config-check
+	@./scripts/media-edge/rtpengine-advertised-address-check
 
 build: web-build ## Build deployable application artifacts introduced so far.
 

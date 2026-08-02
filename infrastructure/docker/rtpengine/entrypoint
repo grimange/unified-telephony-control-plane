@@ -1,22 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-require_ipv4() {
-  value="$1"
-  case "$value" in
-    ""|0.0.0.0|127.*|169.254.*)
-      return 1
-      ;;
-  esac
-  printf '%s\n' "$value" | awk -F. '
-    NF != 4 {exit 1}
-    {
-      for (i = 1; i <= 4; i++) {
-        if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255) exit 1
-      }
-    }
-  '
-}
+. /usr/local/lib/utcp-rtpengine/address-validation
 
 : "${POD_IP:?POD_IP must be supplied from status.podIP}"
 : "${RTPENGINE_NG_PORT:?RTPENGINE_NG_PORT must be set}"
@@ -24,8 +9,8 @@ require_ipv4() {
 : "${RTPENGINE_MEDIA_PORT_MAX:?RTPENGINE_MEDIA_PORT_MAX must be set}"
 : "${RTPENGINE_METRICS_PORT:?RTPENGINE_METRICS_PORT must be set}"
 
-if ! require_ipv4 "$POD_IP"; then
-  printf 'invalid POD_IP for rtpengine bind/advertisement: %s\n' "$POD_IP" >&2
+if ! require_bindable_ipv4 "$POD_IP"; then
+  printf 'invalid POD_IP for rtpengine bind: %s\n' "$POD_IP" >&2
   exit 1
 fi
 
@@ -41,7 +26,7 @@ fi
 
 advertised_address="$POD_IP"
 if [ "${UTCP_PUBLIC_MEDIA_ADDRESS+x}" = "x" ]; then
-  if ! require_ipv4 "$UTCP_PUBLIC_MEDIA_ADDRESS" || [ "$UTCP_PUBLIC_MEDIA_ADDRESS" = "$POD_IP" ]; then
+  if ! require_advertised_for_pod "$UTCP_PUBLIC_MEDIA_ADDRESS" "$POD_IP"; then
     printf 'invalid UTCP_PUBLIC_MEDIA_ADDRESS for rtpengine advertisement: %s\n' "$UTCP_PUBLIC_MEDIA_ADDRESS" >&2
     exit 1
   fi

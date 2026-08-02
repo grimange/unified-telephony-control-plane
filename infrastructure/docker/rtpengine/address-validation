@@ -1,0 +1,59 @@
+#!/usr/bin/env sh
+
+is_ipv4() {
+  value="$1"
+  printf '%s\n' "$value" | awk -F. '
+    NF != 4 {exit 1}
+    {
+      for (i = 1; i <= 4; i++) {
+        if ($i !~ /^[0-9]+$/ || $i < 0 || $i > 255) exit 1
+      }
+    }
+  '
+}
+
+ipv4_octet() {
+  printf '%s\n' "$1" | awk -F. -v part="$2" '{print $part}'
+}
+
+require_bindable_ipv4() {
+  value="$1"
+  is_ipv4 "$value" || return 1
+
+  first_octet="$(ipv4_octet "$value" 1)"
+  last_octet="$(ipv4_octet "$value" 4)"
+  case "$value" in
+    0.0.0.0|169.254.*)
+      return 1
+      ;;
+  esac
+  [ "$first_octet" -ne 0 ] || return 1
+  [ "$first_octet" -lt 127 ] || [ "$first_octet" -gt 127 ] || return 1
+  [ "$first_octet" -lt 224 ] || return 1
+  [ "$first_octet" -ne 255 ] || return 1
+  [ "$last_octet" -ne 255 ] || return 1
+}
+
+require_advertisable_ipv4() {
+  value="$1"
+  is_ipv4 "$value" || return 1
+
+  first_octet="$(ipv4_octet "$value" 1)"
+  last_octet="$(ipv4_octet "$value" 4)"
+  case "$value" in
+    0.0.0.0|169.254.*)
+      return 1
+      ;;
+  esac
+  [ "$first_octet" -ne 0 ] || return 1
+  [ "$first_octet" -lt 224 ] || return 1
+  [ "$first_octet" -ne 255 ] || return 1
+  [ "$last_octet" -ne 255 ] || return 1
+}
+
+require_advertised_for_pod() {
+  advertised="$1"
+  pod_ip="$2"
+  require_advertisable_ipv4 "$advertised" || return 1
+  [ "$advertised" != "$pod_ip" ]
+}

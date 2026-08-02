@@ -5,11 +5,13 @@ VERSIONS_FILE="${UTCP_MEDIA_EDGE_VERSIONS:-$ROOT/versions.env}"
 K3D_CONFIG_FILE="${UTCP_MEDIA_EDGE_K3D_CONFIG:-$ROOT/infrastructure/k3d/cluster-media-edge.yaml}"
 SERVICE_FILE="${UTCP_MEDIA_EDGE_SERVICE:-$ROOT/infrastructure/kubernetes/overlays/local-media-edge/rtpengine-media-service.yaml}"
 ENTRYPOINT_FILE="${UTCP_MEDIA_EDGE_ENTRYPOINT:-$ROOT/infrastructure/docker/rtpengine/entrypoint}"
+ADDRESS_VALIDATION_FILE="$ROOT/infrastructure/docker/rtpengine/address-validation"
+DOCKERFILE="$ROOT/infrastructure/docker/rtpengine/Dockerfile"
 fail() { printf 'media-edge config check failed: %s\n' "$1" >&2; exit 1; }
-for file in "$VERSIONS_FILE" "$K3D_CONFIG_FILE" "$SERVICE_FILE" "$ENTRYPOINT_FILE"; do
+for file in "$VERSIONS_FILE" "$K3D_CONFIG_FILE" "$SERVICE_FILE" "$ENTRYPOINT_FILE" "$ADDRESS_VALIDATION_FILE" "$DOCKERFILE"; do
   [ -s "$file" ] || fail "required file is missing: $file"
 done
-python3 - "$ROOT" "$VERSIONS_FILE" "$K3D_CONFIG_FILE" "$SERVICE_FILE" "$ENTRYPOINT_FILE" <<'PY'
+python3 - "$ROOT" "$VERSIONS_FILE" "$K3D_CONFIG_FILE" "$SERVICE_FILE" "$ENTRYPOINT_FILE" "$ADDRESS_VALIDATION_FILE" "$DOCKERFILE" <<'PY'
 from pathlib import Path
 import re
 import subprocess
@@ -21,6 +23,8 @@ versions_path = Path(sys.argv[2])
 k3d_path = Path(sys.argv[3])
 service_path = Path(sys.argv[4])
 entrypoint_path = Path(sys.argv[5])
+validation_path = Path(sys.argv[6])
+dockerfile_path = Path(sys.argv[7])
 fail = lambda message: (_ for _ in ()).throw(SystemExit(f"media-edge config check failed: {message}"))
 
 def vals(path):
@@ -39,6 +43,31 @@ if '--interface=' not in entry or 'advertised_address' not in entry or 'UTCP_PUB
     fail("rtpengine advertised-address projection is missing")
 if '127.0.0.1' in entry:
     fail("rtpengine entrypoint contains a duplicated public-address literal")
+validation = validation_path.read_text()
+if 'require_bindable_ipv4' not in entry or 'require_advertisable_ipv4' not in validation:
+    fail("bind and advertised address validators must be separate")
+if 'require_advertised_for_pod' not in entry or '/usr/local/lib/utcp-rtpengine/address-validation' not in entry:
+    fail("entrypoint must use the shared address-validation library")
+if 'require_ipv4' in entry or 'require_ipv4' in validation:
+    fail("ambiguous shared IPv4 validator must be absent")
+if 'COPY infrastructure/docker/rtpengine/address-validation /usr/local/lib/utcp-rtpengine/address-validation' not in dockerfile_path.read_text():
+    fail("Dockerfile must install the shared address-validation library")
+
+def run_validation(function, value, pod_ip="192.0.2.10"):
+    command = f'. "{validation_path}"; {function} "{value}" "{pod_ip}"'
+    return subprocess.run(["sh", "-c", command], cwd=root).returncode == 0
+
+if not run_validation("require_advertised_for_pod", v["UTCP_PUBLIC_MEDIA_ADDRESS"]):
+    fail("declared public address fails the entrypoint advertised-address validator")
+if run_validation("require_bindable_ipv4", v["UTCP_PUBLIC_MEDIA_ADDRESS"]):
+    fail("declared loopback address must fail bind validation")
+if run_validation("require_advertised_for_pod", "192.0.2.10"):
+    fail("advertised address equal to POD_IP must fail")
+for invalid in ("", "0.0.0.0", "169.254.1.1", "224.0.0.1", "192.0.2.255", "not-an-ip"):
+    if run_validation("require_advertised_for_pod", invalid):
+        fail(f"invalid advertised address was accepted: {invalid!r}")
+if not run_validation("require_bindable_ipv4", "192.0.2.10"):
+    fail("normal Pod IP fails bind validation")
 
 service = next(yaml.safe_load_all(service_path.read_text()))
 spec = service.get("spec", {})

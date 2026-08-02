@@ -11,6 +11,17 @@ cp "$ROOT/infrastructure/k3d/cluster-media-edge.yaml" "$tmpdir/cluster.yaml"
 cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/rtpengine-media-service.yaml" "$tmpdir/service.yaml"
 cp "$ROOT/infrastructure/docker/rtpengine/entrypoint" "$tmpdir/entrypoint"
 
+validation_passes() {
+  sh -c '. "$1"; "$2" "$3" "$4"' sh "$ROOT/infrastructure/docker/rtpengine/address-validation" "$1" "$2" "$3"
+}
+
+validation_fails() {
+  if validation_passes "$@"; then
+    printf 'media-edge validation mutation unexpectedly passed: %s %s\n' "$1" "$2" >&2
+    exit 1
+  fi
+}
+
 run_check() {
   UTCP_MEDIA_EDGE_VERSIONS="$tmpdir/versions.env" \
     UTCP_MEDIA_EDGE_K3D_CONFIG="$tmpdir/cluster.yaml" \
@@ -29,6 +40,17 @@ expect_fail() {
 }
 
 run_check
+
+validation_passes require_advertised_for_pod 127.0.0.1 192.0.2.10
+validation_fails require_bindable_ipv4 127.0.0.1 192.0.2.10
+validation_passes require_bindable_ipv4 192.0.2.10 192.0.2.10
+validation_passes require_advertised_for_pod 192.0.2.11 192.0.2.10
+validation_fails require_advertised_for_pod 192.0.2.10 192.0.2.10
+validation_fails require_advertised_for_pod 0.0.0.0 192.0.2.10
+validation_fails require_advertised_for_pod 169.254.1.1 192.0.2.10
+validation_fails require_advertised_for_pod 224.0.0.1 192.0.2.10
+validation_fails require_advertised_for_pod 192.0.2.255 192.0.2.10
+validation_fails require_advertised_for_pod malformed 192.0.2.10
 
 sed -i '/^UTCP_PUBLIC_MEDIA_ADDRESS=/d' "$tmpdir/versions.env"
 expect_fail "missing public-address authority" run_check

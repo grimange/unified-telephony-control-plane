@@ -50,8 +50,9 @@ RUN set -eux; \
     chown -R 1000:1000 /tmp/rtpengine /run/rtpengine
 
 COPY infrastructure/docker/rtpengine/entrypoint /usr/local/bin/utcp-rtpengine-entrypoint
+COPY infrastructure/docker/rtpengine/address-validation /usr/local/lib/utcp-rtpengine/address-validation
 COPY infrastructure/docker/rtpengine/readiness /usr/local/bin/utcp-rtpengine-ng-ping
-RUN chmod 0755 /usr/local/bin/utcp-rtpengine-entrypoint /usr/local/bin/utcp-rtpengine-ng-ping
+RUN chmod 0755 /usr/local/bin/utcp-rtpengine-entrypoint /usr/local/lib/utcp-rtpengine/address-validation /usr/local/bin/utcp-rtpengine-ng-ping
 
 USER 1000:1000
 EXPOSE 2223/udp 40000-40099/udp 2224/tcp

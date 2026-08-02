@@ -362,3 +362,35 @@ Bounded implementation of `PRODUCT_DEFECT-23` — split the bind and advertised
 address validators and add the cross-validation check and mutation cases — then
 rerun this proof from §4. Every other element of the local media-edge projection
 is already proven live and does not need re-litigation.
+
+## PRODUCT_DEFECT-23 correction
+
+The repository correction separates rtpengine bind and advertisement semantics.
+`require_bindable_ipv4()` continues to reject loopback, link-local, multicast,
+broadcast, malformed, and unspecified bind addresses. The new
+`require_advertisable_ipv4()` accepts the committed local projection's
+`127.0.0.1` while rejecting unspecified, link-local, multicast, broadcast, and
+malformed values; `require_advertised_for_pod()` additionally rejects an
+explicit value equal to `POD_IP`.
+
+Both the entrypoint and the media-edge execution check source the same
+repository-owned validation library. The declared `UTCP_PUBLIC_MEDIA_ADDRESS`
+from `versions.env` passes as an advertised address and fails as a bind address;
+the image-level preflight proves the effective interface remains
+`internal/192.0.2.10!127.0.0.1` with media range `40000-40099`. The media-edge
+static validator also rejects a declared value matching a rendered Service
+ClusterIP and preserves the existing NodePort, placement, and publication
+contracts.
+
+The live local forwarding path is recorded accurately as:
+
+```text
+host loopback UDP publication
+→ k3d serverlb nginx UDP proxy
+→ media-edge server node
+→ NodePort with externalTrafficPolicy Local
+→ rtpengine Pod
+```
+
+No Kubernetes resource was applied, the cluster was not recreated, and the
+browser media proof remains the T3-S3B gap.
