@@ -164,6 +164,8 @@ data:
             exit;
         }
 
+        consume_credentials();
+
         if ($proto == "ws" || $proto == "wss") {
             if (!add_contact_alias()) {
                 xlog("L_WARN", "kamailio_application_dialog_rejected result=websocket_contact_alias_failed method=$rm call_id=$ci\n");

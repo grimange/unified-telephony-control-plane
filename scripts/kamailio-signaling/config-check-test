@@ -299,6 +299,7 @@ def validate(state: dict[str, Any]) -> None:
             'if ($rm != "INVITE")',
             'www_authorize("$fd", "kamailio_signaling_auth_view")',
             'if ($au != $fU)',
+            'consume_credentials()',
             'if ($proto == "ws" || $proto == "wss")',
             'if (!add_contact_alias())',
             'result=websocket_contact_alias_failed method=$rm call_id=$ci',
@@ -311,6 +312,14 @@ def validate(state: dict[str, Any]) -> None:
         "route[APPLICATION_DIALOG]",
     )
     require("route(MEDIA_OFFER)" in application_block, "initial application-dialog INVITE with SDP must invoke media offer")
+    require(application_block.count("consume_credentials()") == 1, "authenticated application INVITE must consume credentials exactly once")
+    require(
+        application_block.find('www_authorize("$fd", "kamailio_signaling_auth_view")') < application_block.find("consume_credentials()") < application_block.find("route(APPLICATION_RUNTIME_RELAY)"),
+        "credential consumption must follow authentication and precede runtime relay",
+    )
+    require("consume_credentials()" not in register_block, "REGISTER must retain its existing authentication lifecycle")
+    for forbidden in ("accept-blind-auth", "accept-blind-reg", "407", "Authorization:", "Proxy-Authorization:", "auth_username", "auth_password"):
+        require(forbidden not in kamailio, f"downstream or blind authentication is forbidden: {forbidden}")
     require(not any(token in application_block for token in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage")), "APPLICATION_DIALOG must delegate media control to provider-neutral routes")
     require("route(MEDIA_OFFER)" not in register_block and "route(MEDIA_ANSWER)" not in register_block and "route(MEDIA_DELETE)" not in register_block, "REGISTER route must not invoke media routes")
     for forbidden in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage"):
@@ -1139,6 +1148,13 @@ fail_case("Kamailio Pod IP listener fails", lambda s: set_kamailio_config(s, s["
 fail_case("removing Kamailio checksum update fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("listen=udp:0.0.0.0:5060 advertise", "listen=udp:0.0.0.0:5062 advertise")))
 fail_case("Asterisk IP literal fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("application-runtime-sip.utcp-runtime.svc.cluster.local", "10.43.1.27")))
 fail_case("removing initial INVITE authentication fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('www_authorize("$fd", "kamailio_signaling_auth_view")', 'allow_without_authorize()', 1).replace('www_authorize("$fd", "kamailio_signaling_auth_view")', 'allow_without_authorize()')))
+remove_credentials = lambda config: re.sub(r"(?m)^\s*consume_credentials\(\);\s*\n", "", config, count=1)
+fail_case("removing credential consumption fails", lambda s: set_kamailio_config(s, remove_credentials(s["kamailio"]), update_checksum=True))
+fail_case("moving credential consumption before authentication fails", lambda s: set_kamailio_config(s, remove_credentials(s["kamailio"]).replace('        if (!www_authorize("$fd", "kamailio_signaling_auth_view")) {', '        consume_credentials();\n\n        if (!www_authorize("$fd", "kamailio_signaling_auth_view")) {', 1), update_checksum=True))
+fail_case("moving credential consumption after runtime relay fails", lambda s: set_kamailio_config(s, remove_credentials(s["kamailio"]).replace("        route(APPLICATION_RUNTIME_RELAY);", "        route(APPLICATION_RUNTIME_RELAY);\n        consume_credentials();", 1), update_checksum=True))
+fail_case("consuming credentials in REGISTER fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('        if (!save("location", "0x04")) {', '        consume_credentials();\n\n        if (!save("location", "0x04")) {', 1), update_checksum=True))
+fail_case("adding FreeSWITCH auth retry fails", lambda s: set_kamailio_config(s, s["kamailio"] + "\n# 407 retry Authorization: downstream\n", update_checksum=True))
+fail_case("adding downstream credentials fails", lambda s: set_kamailio_config(s, s["kamailio"] + "\n$avp(auth_username) = \"freeswitch\";\n", update_checksum=True))
 fail_case("removing Record-Route fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("record_route();", "")))
 fail_case("removing loose routing fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("loose_route()", "route_not_found()")))
 fail_case("removing CANCEL handling fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('if ($rm == "CANCEL")', 'if ($rm == "NO_CANCEL")')))

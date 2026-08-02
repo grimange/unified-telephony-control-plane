@@ -13,6 +13,8 @@ cp "$ROOT/infrastructure/docker/freeswitch/config/dialplan/utcp.xml" "$TMP/dialp
 cp "$ROOT/infrastructure/docker/freeswitch/entrypoint" "$TMP/entrypoint"
 cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/switch.conf.xml" "$TMP/switch.xml"
 cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/event_socket.conf.xml" "$TMP/event_socket.xml"
+cp "$ROOT/scripts/freeswitch/startup-smoke-test" "$TMP/startup-smoke-test"
+cp "$ROOT/scripts/freeswitch/sip-invite-smoke.py" "$TMP/sip-invite-smoke.py"
 
 run_check() {
   UTCP_FREESWITCH_DOCKERFILE="$TMP/Dockerfile" \
@@ -22,6 +24,8 @@ run_check() {
   UTCP_FREESWITCH_ENTRYPOINT="$TMP/entrypoint" \
   UTCP_FREESWITCH_SWITCH_XML="$TMP/switch.xml" \
   UTCP_FREESWITCH_EVENT_SOCKET_XML="$TMP/event_socket.xml" \
+  UTCP_FREESWITCH_STARTUP_SMOKE="$TMP/startup-smoke-test" \
+  UTCP_FREESWITCH_SIP_PROBE="$TMP/sip-invite-smoke.py" \
   "$CHECK" >/dev/null
 }
 fail_case() {
@@ -37,6 +41,8 @@ restore() {
   cp "$ROOT/infrastructure/docker/freeswitch/entrypoint" "$TMP/entrypoint"
   cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/switch.conf.xml" "$TMP/switch.xml"
   cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/event_socket.conf.xml" "$TMP/event_socket.xml"
+  cp "$ROOT/scripts/freeswitch/startup-smoke-test" "$TMP/startup-smoke-test"
+  cp "$ROOT/scripts/freeswitch/sip-invite-smoke.py" "$TMP/sip-invite-smoke.py"
 }
 
 run_check
@@ -57,5 +63,11 @@ sed -i 's/9900/9901/g' "$TMP/dialplan.xml"; fail_case 'missing 9900'; restore
 sed -i '/application="echo"/d' "$TMP/dialplan.xml"; fail_case 'missing Echo'; restore
 sed -i '/application="answer"/d' "$TMP/dialplan.xml"; fail_case 'missing answer'; restore
 sed -i 's/listen-ip" value="127.0.0.1/listen-ip" value="0.0.0.0/' "$TMP/event_socket.xml"; fail_case 'public Event Socket'; restore
+sed -i 's/alias="false"/alias="true"/' "$TMP/profile.xml"; fail_case 'registered-endpoint domain aliasing'; restore
+sed -i '/scripts\/freeswitch\/sip-invite-smoke.py/d' "$TMP/startup-smoke-test"; fail_case 'missing real INVITE smoke'; restore
+sed -i '/Content-Type: application\/sdp/d' "$TMP/sip-invite-smoke.py"; fail_case 'missing SDP smoke offer'; restore
+sed -i '/SIP\/2.0 200/d' "$TMP/sip-invite-smoke.py"; fail_case 'missing 200 OK assertion'; restore
+sed -i '/show channels count/d' "$TMP/startup-smoke-test"; fail_case 'missing channel cleanup assertion'; restore
+printf '\nAuthorization: forbidden\n' >> "$TMP/sip-invite-smoke.py"; fail_case 'downstream auth header'; restore
 
 printf 'FreeSWITCH config mutation tests passed\n'

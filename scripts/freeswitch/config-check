@@ -15,8 +15,10 @@ modules_xml="${UTCP_FREESWITCH_MODULES_XML:-$ROOT/infrastructure/docker/freeswit
 switch_xml="${UTCP_FREESWITCH_SWITCH_XML:-$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/switch.conf.xml}"
 sofia_xml="${UTCP_FREESWITCH_SOFIA_XML:-$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/sofia.conf.xml}"
 event_socket_xml="${UTCP_FREESWITCH_EVENT_SOCKET_XML:-$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/event_socket.conf.xml}"
+startup_smoke="${UTCP_FREESWITCH_STARTUP_SMOKE:-$ROOT/scripts/freeswitch/startup-smoke-test}"
+sip_probe="${UTCP_FREESWITCH_SIP_PROBE:-$ROOT/scripts/freeswitch/sip-invite-smoke.py}"
 
-for file in "$dockerfile" "$freeswitch_xml" "$internal_xml" "$dialplan" "$entrypoint" "$healthcheck" "$modules_xml" "$switch_xml" "$sofia_xml" "$event_socket_xml"; do
+for file in "$dockerfile" "$freeswitch_xml" "$internal_xml" "$dialplan" "$entrypoint" "$healthcheck" "$modules_xml" "$switch_xml" "$sofia_xml" "$event_socket_xml" "$startup_smoke" "$sip_probe"; do
   [ -s "$file" ] || fail "required FreeSWITCH file is missing: $file"
 done
 
@@ -32,6 +34,8 @@ grep -Fq -- '-run /var/run/freeswitch' "$entrypoint" || fail "-run directory is 
 grep -Fq 'rtp-start-port" value="21000' "$switch_xml" || fail "explicit RTP start is missing"
 grep -Fq 'rtp-end-port" value="21099' "$switch_xml" || fail "explicit RTP end is missing"
 grep -Fq 'sip-port" value="5060' "$internal_xml" || fail "internal SIP listener is missing"
+grep -Fq '<domain name="all" alias="false" parse="false"/>' "$internal_xml" || fail "application-peer domain semantics are missing"
+if grep -Fq '<domain name="all" alias="true"' "$internal_xml"; then fail "registered-endpoint domain aliasing is forbidden"; fi
 grep -Fq 'inbound-codec-prefs" value="PCMU' "$internal_xml" || fail "minimal PCMU codec contract is missing"
 grep -Fq 'destination_number" expression="^9900$"' "$dialplan" || fail "9900 Echo fixture is missing"
 grep -Fq 'application="answer"' "$dialplan" || fail "Echo fixture must answer"
@@ -53,8 +57,24 @@ grep -Fq 'utcp_esl_password' "$event_socket_xml" || fail "Event Socket must use 
 grep -Fq 'exec-set' "$entrypoint" || fail "Event Socket secret expansion is missing"
 test -x "$healthcheck" || fail "healthcheck must be executable"
 if grep -Eiq 'ClueCon|listen-ip" value="(0\.0\.0\.0|::)' "$event_socket_xml"; then fail "unsafe Event Socket configuration"; fi
+if grep -Eiq 'accept-blind-auth|accept-blind-reg|407[[:space:]]+retry|Authorization:|Proxy-Authorization:|auth[_-](user(name)?|pass(word)?)' "$internal_xml" "$ROOT/infrastructure/kubernetes/base/platform/kamailio-configmap.yaml"; then fail "downstream or blind authentication is forbidden"; fi
 if grep -Fq 'tcpSocket' "$ROOT/infrastructure/kubernetes/components/freeswitch-instance/freeswitch-deployment.yaml"; then fail "TCP probes cannot target UDP SIP"; fi
 if grep -Fq -- '-c /etc/freeswitch' "$entrypoint" || grep -Fq -- '-nf' "$entrypoint"; then fail "invalid startup flags remain"; fi
+grep -Fq 'scripts/freeswitch/sip-invite-smoke.py' "$startup_smoke" || fail "startup smoke must execute the real SIP INVITE probe"
+grep -Fq 'docker exec' "$startup_smoke" || fail "startup smoke must inspect the running FreeSWITCH container"
+grep -Fq 'show channels' "$startup_smoke" || fail "startup smoke must verify the active channel"
+grep -Fq 'show channels count' "$startup_smoke" || fail "startup smoke must verify channel cleanup"
+grep -Fq 'INVITE ' "$sip_probe" || fail "SIP probe must send an INVITE"
+grep -Fq 'Content-Type: application/sdp' "$sip_probe" || fail "SIP probe must send SDP"
+grep -Fq 'remote_target' "$sip_probe" || fail "SIP probe must use the response Contact target"
+grep -Fq 'ACK ' "$sip_probe" || fail "SIP probe must send ACK"
+grep -Fq 'BYE ' "$sip_probe" || fail "SIP probe must send BYE"
+if grep -Eiq '^[[:space:]]*(Authorization|Proxy-Authorization):' "$sip_probe"; then fail "SIP probe must not send downstream digest credentials"; fi
+for status in 401 407 403; do
+  grep -Fq "SIP/2.0 $status" "$sip_probe" || fail "SIP probe must reject $status"
+done
+grep -Fq 'SIP/2.0 200' "$sip_probe" || fail "SIP probe must require 200 OK"
+python3 -m py_compile "$sip_probe" || fail "SIP probe must be valid Python"
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -191,6 +211,30 @@ if "route[MEDIA_OFFER]" not in kamailio or "route[MEDIA_ANSWER]" not in kamailio
     fail("generic media routes must remain present")
 if "REGISTER" not in kamailio or "route[WITHINDLG]" not in kamailio:
     fail("generic REGISTER and dialog routes must remain present")
+def block_after(config: str, marker: str) -> str:
+    start = config.find(marker)
+    if start < 0:
+        fail(f"Kamailio route block is missing: {marker}")
+    brace = config.find("{", start + len(marker))
+    depth = 0
+    for index in range(brace, len(config)):
+        if config[index] == "{":
+            depth += 1
+        elif config[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return config[brace + 1:index]
+    fail(f"Kamailio route block is unterminated: {marker}")
+application_block = block_after(kamailio, "route[APPLICATION_DIALOG]")
+register_block = block_after(kamailio, 'if ($rm == "REGISTER")')
+if application_block.count("consume_credentials()") != 1:
+    fail("authenticated application INVITE must consume credentials exactly once")
+if not (application_block.find('www_authorize("$fd", "kamailio_signaling_auth_view")') < application_block.find("consume_credentials()") < application_block.find("route(APPLICATION_RUNTIME_RELAY)")):
+    fail("credential consumption must follow authentication and precede runtime relay")
+if "consume_credentials()" in register_block:
+    fail("REGISTER must retain its existing authentication lifecycle")
+if re.search(r"accept-blind-auth|accept-blind-reg|407|Authorization:|Proxy-Authorization:|auth[_-](user(name)?|pass(word)?)", kamailio, re.I):
+    fail("downstream or blind authentication is forbidden in Kamailio")
 if any("ipBlock" in peer for policy in security_objects.values() if policy.get("kind") == "NetworkPolicy" for rule in (policy.get("spec") or {}).get("ingress", []) + (policy.get("spec") or {}).get("egress", []) for peer in rule.get("from", []) + rule.get("to", [])):
     fail("FreeSWITCH security validation must not permit ipBlock peers")
 

@@ -15,13 +15,14 @@ trap cleanup EXIT
 make image-build-freeswitch UTCP_FREESWITCH_IMAGE="$image" >/dev/null
 mkdir -p "$tmp/log" "$tmp/run" "$tmp/db"
 chown -R 1000:1000 "$tmp"
+esl_password=utcp_freeswitch_smoke_secret
 
 docker run -d --name "$container" \
   --user 1000:1000 \
   --read-only \
   --cap-drop ALL \
   --tmpfs /tmp:rw,noexec,nosuid,nodev \
-  -e UTCP_ESL_PASSWORD=utcp_freeswitch_smoke_secret \
+  -e UTCP_ESL_PASSWORD="$esl_password" \
   -v "$tmp/log:/var/log/freeswitch" \
   -v "$tmp/run:/var/run/freeswitch" \
   -v "$tmp/db:/var/lib/freeswitch" \
@@ -60,6 +61,45 @@ docker exec "$container" sh -eu -c '
   test -w /var/run/freeswitch
   test -w /var/lib/freeswitch/db
 '
+
+container_ip="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container")"
+[ -n "$container_ip" ] || { printf 'FreeSWITCH container IP is missing\n' >&2; exit 1; }
+sip_log="$tmp/sip-smoke.log"
+UTCP_SIP_SMOKE_HOLD_SECONDS=1 python3 scripts/freeswitch/sip-invite-smoke.py "$container_ip" >"$sip_log" 2>&1 &
+sip_pid=$!
+channel_deadline=$((SECONDS + 8))
+channel_seen=0
+while [ "$SECONDS" -lt "$channel_deadline" ]; do
+  channels="$(docker exec "$container" fs_cli -q -H 127.0.0.1 -P 8021 -p "$esl_password" -x "show channels" 2>/dev/null || true)"
+  if printf '%s\n' "$channels" | grep -Eq '9900|utcp-echo'; then
+    channel_seen=1
+    break
+  fi
+  sleep 0.2
+done
+if [ "$channel_seen" -ne 1 ]; then
+  cat "$sip_log" >&2
+  kill "$sip_pid" 2>/dev/null || true
+  wait "$sip_pid" 2>/dev/null || true
+  printf 'FreeSWITCH SIP smoke test did not reach extension 9900/Echo\n' >&2
+  exit 1
+fi
+wait "$sip_pid" || { cat "$sip_log" >&2; exit 1; }
+cat "$sip_log"
+cleanup_deadline=$((SECONDS + 8))
+final_channels=""
+while [ "$SECONDS" -lt "$cleanup_deadline" ]; do
+  final_channels="$(docker exec "$container" fs_cli -q -H 127.0.0.1 -P 8021 -p "$esl_password" -x "show channels count")"
+  if printf '%s\n' "$final_channels" | grep -Eq '(^|[^0-9])0 (session\(s\)|total\.)'; then
+    break
+  fi
+  sleep 0.2
+done
+printf '%s\n' "$final_channels" | grep -Eq '(^|[^0-9])0 (session\(s\)|total\.)' || {
+  printf '%s\n' "$final_channels" >&2
+  printf 'FreeSWITCH SIP smoke test left an active channel\n' >&2
+  exit 1
+}
 
 docker kill --signal TERM "$container" >/dev/null
 for _ in $(seq 1 15); do

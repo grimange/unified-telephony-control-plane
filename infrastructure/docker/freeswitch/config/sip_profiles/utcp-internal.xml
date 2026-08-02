@@ -3,7 +3,7 @@
   <gateways/>
 
   <domains>
-    <domain name="all" alias="true" parse="false"/>
+    <domain name="all" alias="false" parse="false"/>
   </domains>
 
   <settings>
