@@ -137,11 +137,13 @@ Examples include:
 * Adding metrics or alerts
 * Changing a retry classification
 * Restarting a local Pod
-* Creating a disposable local proof resource
+* Creating a disposable resource inside the repository-authorized local proof environment
 * Temporarily applying a reversible local failure condition
 * Deploying a local image and rolling it back
 
 Proceed once the authority, behavior, and acceptance criteria are clear.
+
+Reversible does not mean automatically authorized. A local mutation must still remain inside the task's declared scope, repository-defined topology, canonical lifecycle, and preservation requirements. Creating or replacing a cluster, registry, network, database, persistent volume, host-port mapping, certificate authority, or alternate deployment path is an environment-topology change and is governed by the rules below.
 
 ### Irreversible or externally consequential work
 
@@ -177,6 +179,86 @@ Do not treat every local proof as if it were an irreversible production change.
 * Do not add speculative abstraction, compatibility layers, or operational controls without a demonstrated need.
 
 A bounded task may include implementation, focused tests, documentation, and one scoped commit when explicitly requested.
+
+---
+
+## No improvised environments or alternate lifecycle
+
+When a repository-backed command, environment, or proof path is blocked, diagnose the blocker. Do not invent a new environment or bypass the canonical lifecycle merely to continue the task.
+
+Without explicit authorization in the current task and repository evidence supporting the target, do not:
+
+* Create a new Kubernetes or k3d cluster, registry, namespace topology, Compose project, network, or parallel runtime environment
+* Stop the canonical cluster and substitute a differently named cluster
+* Recreate, delete, or replace an existing cluster, registry, volume, database, or other stateful environment
+* Add alternate host ports, custom-port fallbacks, proxy paths, or hostname mappings
+* Deploy committed manifests directly when the canonical deployment target or verifier rejects them
+* Bypass repository preflight, configuration checks, Make targets, scripts, overlays, or safety assertions
+* Patch live Kubernetes objects or containers as a substitute for changing the canonical repository source
+* Use a temporary proof topology that changes the architecture being proved
+* Convert a diagnostic workaround into an undocumented deployment or management path
+
+The absence of a required capability in the canonical environment is evidence of a repository or environment gap. It is not permission to create a parallel solution.
+
+### Required response to a blocked canonical path
+
+When the canonical path cannot proceed:
+
+1. Stop before making an alternate topology or lifecycle mutation.
+2. Preserve the current environment unless an already-authorized recovery action is documented and in scope.
+3. Identify the exact failed command, rejected invariant, missing capability, and affected acceptance criterion.
+4. Determine whether the repository already defines one deterministic recovery or rebuild path.
+5. If that path is safe, reversible, explicitly in scope, and preserves required state, use only that path.
+6. Otherwise report the blocker and the smallest repository correction or operator decision required.
+
+Do not interpret broad instructions such as “complete the proof,” “recover the environment,” “use best judgment,” “fix blockers,” or “prioritize deterministic outcomes” as authorization to create a new cluster, bypass checks, delete state, or change topology.
+
+### Canonical-environment preference
+
+Prefer repairing or reproducibly rebuilding the canonical environment over creating a second near-duplicate environment.
+
+For local UTCP development:
+
+* `utcp-local` is the canonical cluster unless repository documentation explicitly establishes another named topology for the current phase.
+* A missing immutable k3d cluster capability, such as a required host-port publication, should normally be addressed in the canonical cluster-creation configuration and verified by rebuilding `utcp-local` through the repository lifecycle.
+* Rebuilding is permitted only when the current task explicitly authorizes it, repository evidence identifies the exact desired configuration, and preflight confirms that required state is reproducible or safely preserved.
+* A second cluster is permitted only when the architecture intentionally requires multiple simultaneous clusters and that topology, ownership, ports, lifecycle, and cleanup are documented in the repository before creation.
+* A temporary cluster must never silently become the canonical deployment target.
+
+### Repository checks are architectural constraints
+
+If a canonical verifier rejects a proposed topology or deployment path, treat that result as a blocking contract mismatch until repository evidence proves the verifier is stale or incorrect.
+
+Do not work around the rejection by invoking lower-level tools or applying manifests directly. Correct the canonical source, configuration, and verifier together when the intended architecture is established; otherwise stop and report the conflict.
+
+### Mutation preflight
+
+Before any authorized cluster rebuild, environment replacement, or stateful local-runtime mutation, record:
+
+* The canonical resource being changed
+* Why the current resource cannot satisfy the repository contract
+* The exact repository-backed target configuration and command
+* Existing state that may be lost, including volumes, secrets, generated certificates, database contents, evidence, and locally built images
+* What is reproducible, what must be preserved, and how recovery will be verified
+* Host-port, cluster-name, registry, context, namespace, and neighboring-project conflicts
+* The rollback or recreation path
+
+If any potentially irreplaceable state or target identity remains unclear, stop and report the proof gap. Do not create an alternate environment to avoid resolving it.
+
+### Scope-change stop condition
+
+Stop and report before proceeding when new evidence requires a material change to any of these:
+
+* Cluster or environment topology
+* Canonical cluster, context, namespace, registry, or deployment target
+* Host port or hostname ownership
+* Persistence or data-retention behavior
+* Security boundary or public exposure
+* Management or runtime authority
+* Repository deployment lifecycle
+* Explicit non-goals or preservation requirements
+
+The report must state the discovered fact, why the original path is blocked, the smallest deterministic correction, its impact, and whether operator authorization is required. Do not implement the scope change in the same run unless the current task already explicitly authorizes that exact class of change.
 
 ---
 
@@ -407,6 +489,8 @@ When browser proof is required, use Playwright through the real login page and n
 
 Do not automatically fail a task because execution differs from the ideal path.
 
+This flexibility applies to observed results and harmless execution details. It does not authorize changing the declared topology, canonical target, lifecycle, authority boundary, public exposure, or preservation requirements. Those are scope changes and must follow the stop condition above.
+
 Classify each divergence as one of:
 
 * Blocking correctness defect
@@ -420,6 +504,14 @@ Classify each divergence as one of:
 * Harmless timing difference
 
 Only a divergence that invalidates the task’s principal claim should normally block completion.
+
+The following normally invalidate a live-proof claim until explicitly resolved:
+
+* Proof executed in an undocumented replacement environment
+* Canonical deployment validation bypassed because it rejected the proof topology
+* A different cluster, registry, context, namespace, port publication, or overlay used without prior authorization
+* Direct manifest application or live patching used instead of the canonical deployment lifecycle
+* A proof environment that materially differs from the environment named by the acceptance criteria
 
 Examples:
 
@@ -460,6 +552,10 @@ Document meaningful divergences without expanding the task into unrelated repair
 * Record material unresolved proof gaps.
 * Do not convert optional follow-up work into a blocker.
 * Keep verification proportional to the implementation.
+* Verify the intended cluster, context, namespace, registry, overlay, host ports, and deployment target before runtime mutation.
+* Use explicit `--context` and namespace selection for Kubernetes inspection and proof commands when the global context may point elsewhere.
+* Treat canonical preflight and deployment checks as required evidence, not optional conveniences.
+* If a required check rejects the intended path, stop or correct the repository contract; do not continue through a lower-level bypass.
 
 A normal bounded implementation should usually prove:
 
@@ -698,7 +794,17 @@ or list and justify every path.
 
 ## Existing Environment Preservation
 
-State what was changed and what remained untouched. Do not repeat generic prohibition lists.
+State what was changed and what remained untouched. Include every cluster, registry, Compose project, database, volume, host-port binding, or other environment resource created, started, stopped, rebuilt, deleted, or bypassed. Do not repeat generic prohibition lists.
+
+## Improvisations and Scope Changes
+
+Write:
+
+```text
+None.
+```
+
+or list every deviation from the repository-defined command, topology, target environment, or lifecycle. For each deviation, state whether it was explicitly authorized, the repository evidence supporting it, and its effect on the principal claim. An unreported improvisation is a task failure.
 
 ## Recommended Next Step
 
