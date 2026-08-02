@@ -5,11 +5,19 @@ FROM ${FREESWITCH_BASE_IMAGE}
 
 COPY infrastructure/docker/freeswitch/config/ /etc/freeswitch/
 COPY infrastructure/docker/freeswitch/entrypoint /usr/local/bin/utcp-freeswitch-entrypoint
+COPY infrastructure/docker/freeswitch/healthcheck /usr/local/bin/utcp-freeswitch-healthcheck
 
-RUN chmod 0755 /usr/local/bin/utcp-freeswitch-entrypoint \
+RUN chmod 0755 /usr/local/bin/utcp-freeswitch-entrypoint /usr/local/bin/utcp-freeswitch-healthcheck \
     && test -s /etc/freeswitch/freeswitch.xml \
-    && test -s /etc/freeswitch/sip_profiles/internal.xml \
-    && test -s /etc/freeswitch/dialplan/default.xml
+    && test -s /etc/freeswitch/autoload_configs/modules.conf.xml \
+    && test -s /etc/freeswitch/autoload_configs/switch.conf.xml \
+    && test -s /etc/freeswitch/autoload_configs/sofia.conf.xml \
+    && test -s /etc/freeswitch/autoload_configs/event_socket.conf.xml \
+    && test -s /etc/freeswitch/sip_profiles/utcp-internal.xml \
+    && test -s /etc/freeswitch/dialplan/utcp.xml \
+    && for module in mod_console mod_commands mod_dialplan_xml mod_dptools mod_sofia mod_event_socket; do \
+         test -s "/usr/lib/freeswitch/mod/${module}.so"; \
+       done
 
 USER 1000:1000
 EXPOSE 5060/udp

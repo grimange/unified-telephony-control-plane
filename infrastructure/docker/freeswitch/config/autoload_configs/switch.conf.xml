@@ -1,0 +1,6 @@
+<configuration name="switch.conf" description="UTCP Core Configuration">
+  <settings>
+    <param name="rtp-start-port" value="21000"/>
+    <param name="rtp-end-port" value="21099"/>
+  </settings>
+</configuration>

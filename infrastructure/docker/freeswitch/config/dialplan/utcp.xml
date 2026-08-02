@@ -1,10 +1,9 @@
 <include>
-  <context name="default">
-    <extension name="utcp-echo-9900">
+  <context name="utcp">
+    <extension name="utcp-echo">
       <condition field="destination_number" expression="^9900$">
         <action application="answer"/>
         <action application="echo"/>
-        <action application="hangup"/>
       </condition>
     </extension>
   </context>

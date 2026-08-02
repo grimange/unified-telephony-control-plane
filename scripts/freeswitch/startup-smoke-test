@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+image="${UTCP_FREESWITCH_IMAGE:-utcp-freeswitch:dev}"
+container="utcp-freeswitch-startup-smoke-$$"
+tmp="$(mktemp -d)"
+cleanup() {
+  docker rm -f "$container" >/dev/null 2>&1 || true
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+make image-build-freeswitch UTCP_FREESWITCH_IMAGE="$image" >/dev/null
+mkdir -p "$tmp/log" "$tmp/run" "$tmp/db"
+chown -R 1000:1000 "$tmp"
+
+docker run -d --name "$container" \
+  --user 1000:1000 \
+  --read-only \
+  --cap-drop ALL \
+  --tmpfs /tmp:rw,noexec,nosuid,nodev \
+  -e UTCP_ESL_PASSWORD=utcp_freeswitch_smoke_secret \
+  -v "$tmp/log:/var/log/freeswitch" \
+  -v "$tmp/run:/var/run/freeswitch" \
+  -v "$tmp/db:/var/lib/freeswitch" \
+  "$image" >/dev/null
+
+deadline=$((SECONDS + 45))
+while :; do
+  logs="$(docker logs "$container" 2>&1 || true)"
+  if printf '%s\n' "$logs" | grep -Eiq 'Unknown option|parse error|markup outside of root|permission denied'; then
+    printf '%s\n' "$logs" >&2
+    exit 1
+  fi
+  if docker exec "$container" /usr/local/bin/utcp-freeswitch-healthcheck >/dev/null 2>&1; then
+    break
+  fi
+  if [ "$SECONDS" -ge "$deadline" ]; then
+    printf '%s\n' "$logs" >&2
+    exit 1
+  fi
+  sleep 1
+done
+
+docker exec "$container" sh -eu -c '
+  modules="$(fs_cli -q -H 127.0.0.1 -P 8021 -p "$UTCP_ESL_PASSWORD" -x "show modules")"
+  for module in mod_console mod_commands mod_dialplan_xml mod_dptools mod_sofia mod_event_socket; do
+    printf "%s\n" "$modules" | grep -q "$module"
+  done
+  profile="$(fs_cli -q -H 127.0.0.1 -P 8021 -p "$UTCP_ESL_PASSWORD" -x "sofia status")"
+  printf "%s\n" "$profile" | grep -E 'utcp-internal.*RUNNING'
+  printf "%s\n" "$profile" | grep -q 5060
+  fs_cli -q -H 127.0.0.1 -P 8021 -p "$UTCP_ESL_PASSWORD" -x "sofia status" | grep -q "utcp-internal"
+  grep -q 'rtp-start-port.*21000' /etc/freeswitch/autoload_configs/switch.conf.xml
+  grep -q 'rtp-end-port.*21099' /etc/freeswitch/autoload_configs/switch.conf.xml
+  grep -q 9900 /etc/freeswitch/dialplan/utcp.xml
+  test -w /var/log/freeswitch
+  test -w /var/run/freeswitch
+  test -w /var/lib/freeswitch/db
+'
+
+docker kill --signal TERM "$container" >/dev/null
+for _ in $(seq 1 15); do
+  if ! docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null | grep -q true; then
+    printf 'FreeSWITCH startup smoke test passed\n'
+    exit 0
+  fi
+  sleep 1
+done
+printf '%s\n' "$(docker logs "$container" 2>&1)" >&2
+exit 1

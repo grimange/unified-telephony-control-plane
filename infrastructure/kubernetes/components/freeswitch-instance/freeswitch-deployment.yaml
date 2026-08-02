@@ -29,12 +29,16 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
+        fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: freeswitch
           image: utcp-freeswitch
           imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: utcp-local-freeswitch-esl-credentials
           ports:
             - name: sip
               containerPort: 5060
@@ -55,18 +59,27 @@ spec:
             capabilities:
               drop:
                 - ALL
+          startupProbe:
+            exec:
+              command:
+                - /usr/local/bin/utcp-freeswitch-healthcheck
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 24
           readinessProbe:
-            tcpSocket:
-              port: sip
+            exec:
+              command:
+                - /usr/local/bin/utcp-freeswitch-healthcheck
             periodSeconds: 10
-            timeoutSeconds: 3
+            timeoutSeconds: 5
             failureThreshold: 6
           livenessProbe:
-            tcpSocket:
-              port: sip
+            exec:
+              command:
+                - /usr/local/bin/utcp-freeswitch-healthcheck
             initialDelaySeconds: 20
             periodSeconds: 20
-            timeoutSeconds: 3
+            timeoutSeconds: 5
           volumeMounts:
             - name: freeswitch-runtime
               mountPath: /var/lib/freeswitch

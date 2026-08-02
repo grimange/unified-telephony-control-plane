@@ -7,29 +7,54 @@ fail() { printf 'FreeSWITCH config check failed: %s\n' "$1" >&2; exit 1; }
 
 dockerfile="${UTCP_FREESWITCH_DOCKERFILE:-$ROOT/infrastructure/docker/freeswitch/Dockerfile}"
 freeswitch_xml="${UTCP_FREESWITCH_XML:-$ROOT/infrastructure/docker/freeswitch/config/freeswitch.xml}"
-internal_xml="${UTCP_FREESWITCH_INTERNAL_XML:-$ROOT/infrastructure/docker/freeswitch/config/sip_profiles/internal.xml}"
-dialplan="${UTCP_FREESWITCH_DIALPLAN:-$ROOT/infrastructure/docker/freeswitch/config/dialplan/default.xml}"
+internal_xml="${UTCP_FREESWITCH_INTERNAL_XML:-$ROOT/infrastructure/docker/freeswitch/config/sip_profiles/utcp-internal.xml}"
+dialplan="${UTCP_FREESWITCH_DIALPLAN:-$ROOT/infrastructure/docker/freeswitch/config/dialplan/utcp.xml}"
 entrypoint="${UTCP_FREESWITCH_ENTRYPOINT:-$ROOT/infrastructure/docker/freeswitch/entrypoint}"
+healthcheck="$ROOT/infrastructure/docker/freeswitch/healthcheck"
+modules_xml="${UTCP_FREESWITCH_MODULES_XML:-$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/modules.conf.xml}"
+switch_xml="${UTCP_FREESWITCH_SWITCH_XML:-$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/switch.conf.xml}"
+sofia_xml="${UTCP_FREESWITCH_SOFIA_XML:-$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/sofia.conf.xml}"
+event_socket_xml="${UTCP_FREESWITCH_EVENT_SOCKET_XML:-$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/event_socket.conf.xml}"
 
-for file in "$dockerfile" "$freeswitch_xml" "$internal_xml" "$dialplan" "$entrypoint"; do
+for file in "$dockerfile" "$freeswitch_xml" "$internal_xml" "$dialplan" "$entrypoint" "$healthcheck" "$modules_xml" "$switch_xml" "$sofia_xml" "$event_socket_xml"; do
   [ -s "$file" ] || fail "required FreeSWITCH file is missing: $file"
 done
 
 grep -Eq '^ARG FREESWITCH_BASE_IMAGE=.*@sha256:[0-9a-f]{64}$' "$dockerfile" || fail "image must be immutably pinned"
 grep -Fq 'USER 1000:1000' "$dockerfile" || fail "image must preserve runtime UID/GID 1000"
 grep -Fq '21000-21099/udp' "$dockerfile" || fail "image must expose the canonical RTP range"
-grep -Fq 'freeswitch' "$entrypoint" || fail "entrypoint must execute FreeSWITCH"
-grep -Fq 'rtp-start-port" value="21000' "$freeswitch_xml" || fail "explicit RTP start is missing"
-grep -Fq 'rtp-end-port" value="21099' "$freeswitch_xml" || fail "explicit RTP end is missing"
+grep -Eq '^exec (/usr/bin/)?freeswitch \\' "$entrypoint" || fail "entrypoint must exec FreeSWITCH"
+grep -Eq '^[[:space:]]+-c[[:space:]]*\\$' "$entrypoint" || fail "-c must be argument-less"
+grep -Fq -- '-conf /etc/freeswitch' "$entrypoint" || fail "-conf must point to the config directory"
+grep -Fq -- '-log /var/log/freeswitch' "$entrypoint" || fail "-log directory is missing"
+grep -Fq -- '-db /var/lib/freeswitch/db' "$entrypoint" || fail "-db directory is missing"
+grep -Fq -- '-run /var/run/freeswitch' "$entrypoint" || fail "-run directory is missing"
+grep -Fq 'rtp-start-port" value="21000' "$switch_xml" || fail "explicit RTP start is missing"
+grep -Fq 'rtp-end-port" value="21099' "$switch_xml" || fail "explicit RTP end is missing"
 grep -Fq 'sip-port" value="5060' "$internal_xml" || fail "internal SIP listener is missing"
 grep -Fq 'inbound-codec-prefs" value="PCMU' "$internal_xml" || fail "minimal PCMU codec contract is missing"
 grep -Fq 'destination_number" expression="^9900$"' "$dialplan" || fail "9900 Echo fixture is missing"
 grep -Fq 'application="answer"' "$dialplan" || fail "Echo fixture must answer"
 grep -Fq 'application="echo"' "$dialplan" || fail "Echo fixture must echo media"
-grep -Fq 'application="hangup"' "$dialplan" || fail "Echo fixture must hang up cleanly"
-if grep -Eiq 'event_socket|mod_event_socket|esl|conference|bridge|external|gateway' "$freeswitch_xml" "$internal_xml" "$dialplan"; then
-  fail "FreeSWITCH fixture contains an unnecessary management or future feature"
-fi
+grep -Fq '<document type="freeswitch/xml">' "$freeswitch_xml" || fail "official XML document root is missing"
+grep -Fq '<section name="configuration"' "$freeswitch_xml" || fail "configuration section is missing"
+grep -Fq '<section name="dialplan"' "$freeswitch_xml" || fail "dialplan section is missing"
+grep -Fq 'autoload_configs/*.xml' "$freeswitch_xml" || fail "autoload configuration include is missing"
+grep -Fq 'dialplan/*.xml' "$freeswitch_xml" || fail "dialplan include is missing"
+grep -Fq '<load module="mod_console"' "$modules_xml" || fail "mod_console is missing"
+grep -Fq '<load module="mod_commands"' "$modules_xml" || fail "mod_commands is missing"
+grep -Fq '<load module="mod_dialplan_xml"' "$modules_xml" || fail "mod_dialplan_xml is missing"
+grep -Fq '<load module="mod_dptools"' "$modules_xml" || fail "mod_dptools is missing"
+grep -Fq '<load module="mod_sofia"' "$modules_xml" || fail "mod_sofia is missing"
+grep -Fq '<load module="mod_event_socket"' "$modules_xml" || fail "mod_event_socket is missing"
+grep -Fq '../sip_profiles/*.xml' "$sofia_xml" || fail "normal Sofia profile include is missing"
+grep -Fq 'listen-ip" value="127.0.0.1' "$event_socket_xml" || fail "Event Socket must bind loopback"
+grep -Fq 'utcp_esl_password' "$event_socket_xml" || fail "Event Socket must use the injected secret"
+grep -Fq 'exec-set' "$entrypoint" || fail "Event Socket secret expansion is missing"
+test -x "$healthcheck" || fail "healthcheck must be executable"
+if grep -Eiq 'ClueCon|listen-ip" value="(0\.0\.0\.0|::)' "$event_socket_xml"; then fail "unsafe Event Socket configuration"; fi
+if grep -Fq 'tcpSocket' "$ROOT/infrastructure/kubernetes/components/freeswitch-instance/freeswitch-deployment.yaml"; then fail "TCP probes cannot target UDP SIP"; fi
+if grep -Fq -- '-c /etc/freeswitch' "$entrypoint" || grep -Fq -- '-nf' "$entrypoint"; then fail "invalid startup flags remain"; fi
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
@@ -110,15 +135,26 @@ pod_spec = template.get("spec") or {}
 if pod_spec.get("automountServiceAccountToken") is not False:
     fail("FreeSWITCH must not receive a Kubernetes API token")
 security_context = pod_spec.get("securityContext") or {}
-if security_context.get("runAsUser") != 1000 or security_context.get("runAsGroup") != 1000 or security_context.get("runAsNonRoot") is not True:
+if security_context.get("runAsUser") != 1000 or security_context.get("runAsGroup") != 1000 or security_context.get("fsGroup") != 1000 or security_context.get("runAsNonRoot") is not True:
     fail("FreeSWITCH must run non-root as UID/GID 1000")
 container = (pod_spec.get("containers") or [{}])[0]
 if not str(container.get("image", "")).endswith("/freeswitch:0.1.0-t3-s2c"):
     fail("FreeSWITCH image authority drifted")
 if (container.get("securityContext") or {}).get("readOnlyRootFilesystem") is not True:
     fail("FreeSWITCH root filesystem must be read-only")
-if not any(v.get("emptyDir") is not None for v in pod_spec.get("volumes") or []):
+volume_mounts = {mount.get("mountPath"): mount.get("name") for mount in container.get("volumeMounts") or []}
+for path in ("/var/log/freeswitch", "/var/run/freeswitch", "/var/lib/freeswitch"):
+    if path not in volume_mounts:
+        fail(f"FreeSWITCH writable path is not mounted: {path}")
+volume_names = {volume.get("name") for volume in pod_spec.get("volumes") or [] if volume.get("emptyDir") is not None}
+if not volume_names or any(volume_mounts[path] not in volume_names for path in ("/var/log/freeswitch", "/var/run/freeswitch", "/var/lib/freeswitch")):
     fail("FreeSWITCH writable state must use bounded emptyDir storage")
+if not (container.get("startupProbe") or {}).get("exec", {}).get("command") == ["/usr/local/bin/utcp-freeswitch-healthcheck"]:
+    fail("FreeSWITCH startup probe must use the executable healthcheck")
+if not (container.get("readinessProbe") or {}).get("exec", {}).get("command") == ["/usr/local/bin/utcp-freeswitch-healthcheck"]:
+    fail("FreeSWITCH readiness probe must use the executable healthcheck")
+if not (container.get("livenessProbe") or {}).get("exec", {}).get("command") == ["/usr/local/bin/utcp-freeswitch-healthcheck"]:
+    fail("FreeSWITCH liveness probe must use the executable healthcheck")
 
 fs_policy = security_objects.get("NetworkPolicy/utcp-runtime/allow-freeswitch-sip-from-kamailio")
 rtp_policy = security_objects.get("NetworkPolicy/utcp-platform/allow-rtpengine-media")
@@ -164,6 +200,8 @@ for doc in render:
             fail("public FreeSWITCH SIP exposure is forbidden")
     if "LoadBalancer" == (doc.get("spec") or {}).get("type") and "freeswitch" in str(doc).lower():
         fail("public FreeSWITCH exposure is forbidden")
+    if doc.get("kind") == "Service" and "8021" in str(doc.get("spec") or {}):
+        fail("Event Socket must not have a Kubernetes Service")
 
 print("FreeSWITCH config check passed")
 PY

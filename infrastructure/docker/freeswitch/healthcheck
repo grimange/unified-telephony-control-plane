@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+: "${UTCP_ESL_PASSWORD:?UTCP_ESL_PASSWORD is required}"
+fs_cli -q -H 127.0.0.1 -P 8021 -p "$UTCP_ESL_PASSWORD" -x status | grep -q 'UP'
+fs_cli -q -H 127.0.0.1 -P 8021 -p "$UTCP_ESL_PASSWORD" -x 'sofia status' | grep -E 'utcp-internal.*RUNNING'

@@ -1,4 +1,24 @@
 #!/bin/sh
 set -eu
 
-exec /usr/bin/freeswitch -nonat -nf -c /etc/freeswitch/freeswitch.xml
+mkdir -p \
+  /var/log/freeswitch \
+  /var/run/freeswitch \
+  /var/lib/freeswitch/db
+test -w /var/log/freeswitch
+test -w /var/run/freeswitch
+test -w /var/lib/freeswitch/db
+
+# FreeSWITCH expands this preprocessor command while assembling its config.
+: "${UTCP_ESL_PASSWORD:?UTCP_ESL_PASSWORD is required}"
+cat > /var/run/freeswitch/utcp-vars.xml <<'EOF'
+<X-PRE-PROCESS cmd="exec-set" data="utcp_esl_password=/usr/bin/env | /usr/bin/grep '^UTCP_ESL_PASSWORD=' | /usr/bin/cut -d= -f2-"/>
+EOF
+
+exec freeswitch \
+  -nonat \
+  -c \
+  -conf /etc/freeswitch \
+  -log /var/log/freeswitch \
+  -db /var/lib/freeswitch/db \
+  -run /var/run/freeswitch

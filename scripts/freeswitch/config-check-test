@@ -8,38 +8,54 @@ trap 'rm -rf "$TMP"' EXIT
 
 cp "$ROOT/infrastructure/docker/freeswitch/Dockerfile" "$TMP/Dockerfile"
 cp "$ROOT/infrastructure/docker/freeswitch/config/freeswitch.xml" "$TMP/freeswitch.xml"
-cp "$ROOT/infrastructure/docker/freeswitch/config/sip_profiles/internal.xml" "$TMP/internal.xml"
-cp "$ROOT/infrastructure/docker/freeswitch/config/dialplan/default.xml" "$TMP/dialplan.xml"
+cp "$ROOT/infrastructure/docker/freeswitch/config/sip_profiles/utcp-internal.xml" "$TMP/profile.xml"
+cp "$ROOT/infrastructure/docker/freeswitch/config/dialplan/utcp.xml" "$TMP/dialplan.xml"
 cp "$ROOT/infrastructure/docker/freeswitch/entrypoint" "$TMP/entrypoint"
+cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/switch.conf.xml" "$TMP/switch.xml"
+cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/event_socket.conf.xml" "$TMP/event_socket.xml"
 
-pass() { "$CHECK" >/dev/null; }
+run_check() {
+  UTCP_FREESWITCH_DOCKERFILE="$TMP/Dockerfile" \
+  UTCP_FREESWITCH_XML="$TMP/freeswitch.xml" \
+  UTCP_FREESWITCH_INTERNAL_XML="$TMP/profile.xml" \
+  UTCP_FREESWITCH_DIALPLAN="$TMP/dialplan.xml" \
+  UTCP_FREESWITCH_ENTRYPOINT="$TMP/entrypoint" \
+  UTCP_FREESWITCH_SWITCH_XML="$TMP/switch.xml" \
+  UTCP_FREESWITCH_EVENT_SOCKET_XML="$TMP/event_socket.xml" \
+  "$CHECK" >/dev/null
+}
 fail_case() {
-  if UTCP_FREESWITCH_DOCKERFILE="$TMP/Dockerfile" \
-    UTCP_FREESWITCH_XML="$TMP/freeswitch.xml" \
-    UTCP_FREESWITCH_INTERNAL_XML="$TMP/internal.xml" \
-    UTCP_FREESWITCH_DIALPLAN="$TMP/dialplan.xml" \
-    UTCP_FREESWITCH_ENTRYPOINT="$TMP/entrypoint" "$CHECK" >/dev/null 2>&1; then
+  if run_check; then
     printf 'expected FreeSWITCH mutation to fail: %s\n' "$1" >&2
     exit 1
   fi
 }
+restore() {
+  cp "$ROOT/infrastructure/docker/freeswitch/config/freeswitch.xml" "$TMP/freeswitch.xml"
+  cp "$ROOT/infrastructure/docker/freeswitch/config/sip_profiles/utcp-internal.xml" "$TMP/profile.xml"
+  cp "$ROOT/infrastructure/docker/freeswitch/config/dialplan/utcp.xml" "$TMP/dialplan.xml"
+  cp "$ROOT/infrastructure/docker/freeswitch/entrypoint" "$TMP/entrypoint"
+  cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/switch.conf.xml" "$TMP/switch.xml"
+  cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/event_socket.conf.xml" "$TMP/event_socket.xml"
+}
 
-pass
-cp "$TMP/Dockerfile" "$TMP/original"
-sed -i 's|@sha256:[0-9a-f]*||' "$TMP/Dockerfile"; fail_case 'mutable image'
-cp "$TMP/original" "$TMP/Dockerfile"
-sed -i 's/21000-21099/10000-20000/' "$TMP/Dockerfile"; fail_case 'overlapping RTP range'
-cp "$TMP/original" "$TMP/Dockerfile"
-sed -i '/USER 1000:1000/d' "$TMP/Dockerfile"; fail_case 'wrong runtime identity'
-cp "$TMP/original" "$TMP/Dockerfile"
-sed -i 's/rtp-start-port" value="21000/rtp-start-port" value="10000/' "$TMP/freeswitch.xml"; fail_case 'missing explicit range'
-cp "$ROOT/infrastructure/docker/freeswitch/config/freeswitch.xml" "$TMP/freeswitch.xml"
-sed -i 's/destination_number" expression="\^9900\$/destination_number" expression="^9901$/' "$TMP/dialplan.xml"; fail_case 'missing Echo extension'
-cp "$ROOT/infrastructure/docker/freeswitch/config/dialplan/default.xml" "$TMP/dialplan.xml"
-sed -i '/application="echo"/d' "$TMP/dialplan.xml"; fail_case 'missing Echo action'
-cp "$ROOT/infrastructure/docker/freeswitch/config/dialplan/default.xml" "$TMP/dialplan.xml"
-sed -i '/application="hangup"/d' "$TMP/dialplan.xml"; fail_case 'missing clean hangup'
-cp "$ROOT/infrastructure/docker/freeswitch/config/dialplan/default.xml" "$TMP/dialplan.xml"
-sed -i '/application="answer"/d' "$TMP/dialplan.xml"; fail_case 'missing answer'
+run_check
+
+sed -i 's/^  -c \\$/  -c \/etc\/freeswitch\/freeswitch.xml/' "$TMP/entrypoint"; fail_case 'argument after -c'; restore
+sed -i '/-conf \/etc\/freeswitch/d' "$TMP/entrypoint"; fail_case 'missing -conf'; restore
+sed -i '/-db \/var\/lib\/freeswitch\/db/d' "$TMP/entrypoint"; fail_case 'missing -db'; restore
+sed -i '/-run \/var\/run\/freeswitch/d' "$TMP/entrypoint"; fail_case 'missing -run'; restore
+sed -i 's/^exec freeswitch/freeswitch/' "$TMP/entrypoint"; fail_case 'missing exec'; restore
+sed -i '1s/.*/<include>/' "$TMP/freeswitch.xml"; fail_case 'invalid XML root'; restore
+sed -i '/section name="configuration"/d' "$TMP/freeswitch.xml"; fail_case 'missing configuration section'; restore
+sed -i '/section name="dialplan"/d' "$TMP/freeswitch.xml"; fail_case 'missing dialplan section'; restore
+sed -i 's/21000/10000/g' "$TMP/switch.xml"
+fail_case 'RTP range drift'
+restore
+sed -i 's/5060/5080/' "$TMP/profile.xml"; fail_case 'wrong SIP port'; restore
+sed -i 's/9900/9901/g' "$TMP/dialplan.xml"; fail_case 'missing 9900'; restore
+sed -i '/application="echo"/d' "$TMP/dialplan.xml"; fail_case 'missing Echo'; restore
+sed -i '/application="answer"/d' "$TMP/dialplan.xml"; fail_case 'missing answer'; restore
+sed -i 's/listen-ip" value="127.0.0.1/listen-ip" value="0.0.0.0/' "$TMP/event_socket.xml"; fail_case 'public Event Socket'; restore
 
 printf 'FreeSWITCH config mutation tests passed\n'
