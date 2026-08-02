@@ -607,3 +607,171 @@ source for the published range, plus `PROOF_HARNESS_DEFECT-I`. The peer choice
 is a security-policy decision — an `ipBlock` scoped to the node/cluster address
 range versus an unrestricted `from` on the media ports — and must not be
 silently widened.
+
+---
+
+# T3-S3B Live Run At `76d0bdd` — PRODUCT_DEFECT-25 Closed, Runtime Leg Mis-Advertised
+
+## Summary
+
+The ingress-policy correction works. External browser media now reaches
+rtpengine, ICE completes, and rtpengine relays the browser audio to Asterisk.
+Asterisk echoes it back correctly. The proof still fails because rtpengine
+advertises the **public** address on the **runtime-facing** leg, so Asterisk
+returns its RTP to its own loopback.
+
+**Verdict: `T3_S3B_EXTERNAL_BROWSER_MEDIA_PROOF_INCOMPLETE`.**
+**`PRODUCT_DEFECT-25` = closed. New `PRODUCT_DEFECT-26` blocks completion.**
+
+## PRODUCT_DEFECT-25 — Closed And Proven
+
+Live `allow-rtpengine-external-media` in `utcp-platform`:
+
+```text
+podSelector:  utcp.io/network-role=rtpengine-media   (selects 1 canonical Pod)
+policyTypes:  ['Ingress']            egress present: False
+ingress from: ABSENT (all sources)
+ingress port: UDP 40000-40099 (endPort 40099)
+ipBlock present: False
+```
+
+The policy exists only in the media-edge projection (the default `overlays/local`
+render contains 0 occurrences), and the internal `allow-rtpengine-media` remains
+present and unchanged (`2223`, `40000-40099` ×2, `2224`).
+
+Packet admission, previously 0:
+
+```text
+rtpengine browser leg:
+  Port 10.42.0.10:40020 <> 172.21.0.5:42000
+  in 180 p, 30844 b        out 2 p, 794 b
+
+[ice] ICE negotiated: peer for component 1 is 172.21.0.5:42000
+[ice] ICE negotiated: local interface 10.42.0.10
+```
+
+Inbound external media is greater than zero and ICE negotiates against the
+published edge. Asterisk's own pod-firewall REJECT counter stayed at **0**
+for the whole call.
+
+## PRODUCT_DEFECT-26 — Public Address Advertised On The Runtime Leg
+
+rtpengine runs with a single interface:
+
+```text
+--interface=internal/10.42.0.10!127.0.0.1
+```
+
+The `!ADDR` advertised address applies to every SDP rtpengine generates from
+that interface, including the offer sent to the application runtime. Captured
+on the Asterisk node during a live proof call:
+
+```text
+10.42.2.5 -> 10.42.1.11  [INVITE sip:9900@sip.utcp.local.test]  c=IN IP4 127.0.0.1
+10.42.2.5 -> 10.42.1.11  [INVITE sip:9900@sip.utcp.local.test]  m=audio 40090 RTP/AVP
+10.42.1.11 -> 10.42.2.5  [SIP/2.0 200 OK]                       c=IN IP4 10.42.1.11
+10.42.1.11 -> 10.42.2.5  [SIP/2.0 200 OK]                       m=audio 18886 RTP/AVP
+```
+
+Asterisk is instructed to send media to `127.0.0.1:40090` — its own loopback.
+Asterisk's answer correctly advertises its Pod IP, which is why the
+rtpengine→Asterisk direction works and the reverse does not:
+
+```text
+Asterisk pjsip show channelstats:
+  anonymous-00000001  ulaw  Receive Count 173   Transmit Count 173
+
+rtpengine runtime leg:
+  Port 10.42.0.10:40018 <> 10.42.1.11:10514   in 0 p, 0 b   out 179 p, 30788 b
+  Port 10.42.0.10:40019 <> 10.42.1.11:10515 (RTCP)  in 0 p   out 1 p
+```
+
+Asterisk receives 173 and transmits 173; rtpengine receives 0 of them. The
+prover therefore fails on inbound media only:
+
+```text
+"errors":["inbound RTP packet count did not increase; inbound RTP byte count
+ did not increase; received audio energy did not increase; received audio
+ energy was not positive; audio energy source is not
+ inbound-rtp.totalAudioEnergy"]
+```
+
+The runtime-facing leg must advertise the Pod IP while only the browser-facing
+leg advertises the public address. The rtpengine-native form is two named
+interfaces with per-leg direction selection, for example
+`--interface=internal/<POD_IP>` plus `--interface=external/<POD_IP>!127.0.0.1`,
+with the media adapter selecting direction per leg. That is a bounded
+implementation on the media projection and the ng offer/answer direction
+parameters, not a policy change.
+
+## Environment And Baseline
+
+Server-side dry-run admitted **46** objects, including `rtpengine-media` as
+`NodePort` with `externalTrafficPolicy: Local`, 100 contiguous UDP nodePorts
+`40000-40099`, `allow-rtpengine-external-media`, ConfigMap
+`utcp-media-edge-authority -> {UTCP_PUBLIC_MEDIA_ADDRESS: 127.0.0.1}`, the
+rtpengine `utcp.dev/media-edge=true` nodeSelector, and restricted Pod security
+contexts (`runAsNonRoot=True`, `allowPrivilegeEscalation=False`,
+`capabilities.drop=[ALL]`, `seccompProfile=RuntimeDefault`).
+
+Canonical `kubectl apply -k infrastructure/kubernetes/overlays/local-media-edge`
+succeeded with no load-restrictor override. rtpengine ran on the media-edge node
+with `imageID` digest `sha256:a92227ec…` equal to the published registry digest,
+0 restarts.
+
+Host publication was exactly 100 UDP mappings on `127.0.0.1:40000-40099`, with
+0 non-loopback UDP, 0 TCP inside the media range, and 0 published control,
+metrics, SIP, ESL or runtime-RTP ports.
+
+Natural host-browser login passed from `https://app.utcp.local.test` using the
+real login form with no injected state: session `200`, user `active`,
+`password_change_required=false`, active membership, 4 platform capabilities,
+catalog `c5.2026-07-15`, logout `200`, session afterwards `401`.
+
+## Not Executed
+
+Scenario B, the four bounded failure cases, and the containment sweep were not
+run. All of them depend on reciprocal browser media, which `PRODUCT_DEFECT-26`
+prevents.
+
+## Cleanup And Restoration
+
+The `utcp-mediaedge` proof cluster was deleted; 0 containers and 0 networks
+remain. The preserved kubeconfig and registry identity were restored and
+`utcp-local` was returned to service with a full k3d stop/start cycle (a plain
+`start` again left the serverlb `Exited` and k3s failing with
+`failed to find interface with specified node ip`).
+
+Restoration matches the recorded baseline exactly:
+
+```text
+pods                   35, all Ready
+tables                 41   (baseline 41)
+tenants                27   (baseline 27)
+runtime_nodes         110   (baseline 110)
+pending outbox          0   (baseline 0)
+active channels         0
+rtpengine allocations   0
+redis media keys        0
+kubectl diff -k overlays/local   exit 0 (zero drift)
+```
+
+Temporary Helm, the scratch cluster profile, and Playwright state were removed.
+No credential value appears in this document.
+
+## Status
+
+```text
+T3-S3A = Complete
+T3-S3B = blocked on PRODUCT_DEFECT-26
+T3-S3  = In Progress
+T3     = In Progress
+UTCP_PHASE=T1
+```
+
+## Recommended Next Step
+
+Bounded implementation: give rtpengine a runtime-facing interface that
+advertises the Pod IP and a browser-facing interface that advertises the public
+address, and select direction per leg in the media adapter. Then re-run host
+Scenario A and B, the failure cases, and containment.
