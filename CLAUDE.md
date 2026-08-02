@@ -314,26 +314,90 @@ Do not escalate ordinary implementation details into operator prerequisites.
 
 ---
 
-## Reversible versus irreversible work
+## Authorization is distinct from reversibility
 
-Do not treat every local proof like a destructive production operation.
+A change being reversible does not make it authorized.
 
-### Reversible repository or local-runtime work
+Repository and local-runtime actions must satisfy all three conditions:
+
+1. They are within the current task's explicit scope.
+2. They follow an existing repository-supported lifecycle.
+3. They do not materially alter the established topology, authority boundary, or environment identity.
+
+Examples of changes that remain material even when technically reversible:
+
+* Creating another k3d cluster or local registry
+* Replacing the canonical `utcp-local` environment
+* Changing host port publication, node count, or cluster topology
+* Creating a parallel Kubernetes deployment
+* Switching from the canonical Make target or script to direct lower-level application
+* Starting Docker Compose as a substitute for Kubernetes
+* Moving a proof to another cluster or runtime
+* Recreating stateful infrastructure or replacing persistent volumes
+* Introducing a second ingress, signaling, media, or runtime authority
+
+Do not perform these actions merely because they can later be undone.
+
+When a material environment or topology change is required, use exactly one of these paths:
+
+1. Follow an existing repository-defined and task-authorized lifecycle.
+2. Implement a bounded repository correction when the task explicitly authorizes that correction.
+3. Stop and report the repository gap, its effect, and the smallest deterministic correction needed.
+
+Do not improvise a parallel environment as a substitute for a blocked canonical lifecycle.
+
+---
+
+## Reversible, material, and irreversible work
+
+Classify a proposed mutation before performing it.
+
+### Ordinary reversible work
 
 Examples:
 
-* Changing a reconciler
+* Changing a bounded repository implementation
 * Correcting an adapter
-* Adding a state transition
-* Changing an internal listener
-* Adding metrics and alerts
-* Deploying a local image
-* Restarting a local Pod
-* Creating a disposable proof Conference
-* Applying a reversible local failure condition
-* Rolling back a local manifest
+* Adding a focused regression test
+* Deploying an already-supported local image through the canonical lifecycle
+* Restarting one local Pod
+* Creating a disposable application-domain proof resource through the canonical API
+* Applying a repository-documented reversible failure condition
+* Rolling back a workload using the established deployment mechanism
 
-Proceed when authority, behavior, and acceptance criteria are clear.
+Proceed when:
+
+* the task authorizes mutation;
+* authority, expected behavior, and acceptance criteria are clear;
+* the repository already supports the lifecycle being used; and
+* the action does not materially change environment topology or identity.
+
+### Material environment or topology work
+
+Examples:
+
+* Creating, deleting, or rebuilding a k3d cluster
+* Creating or replacing a registry
+* Adding host port mappings or changing load-balancer publication
+* Changing cluster node counts
+* Creating a parallel proof cluster
+* Moving the canonical deployment to another cluster or replacing `utcp-local`
+* Recreating stateful services or persistent volumes
+* Bypassing a canonical Make target or deployment script
+* Applying lower-level manifests because the canonical lifecycle rejects the intended topology
+* Starting another runtime as a substitute for an unavailable canonical runtime
+
+These actions require explicit task authorization or an already documented repository lifecycle that clearly covers the exact action. Technical reversibility is not sufficient authorization.
+
+If a required immutable cluster capability is absent—for example, a required k3d host-port publication—do not create a replacement or parallel cluster automatically. Instead:
+
+1. Confirm the capability is genuinely required.
+2. Confirm the canonical cluster cannot acquire it in place.
+3. Inventory non-reproducible state and preservation requirements.
+4. Identify the repository configuration that should own the capability.
+5. Determine whether the current task authorizes changing that configuration and rebuilding the canonical cluster.
+6. If authorized, use the canonical rebuild lifecycle.
+7. Otherwise, stop and report the bounded repository gap.
 
 ### Irreversible or externally consequential work
 
@@ -347,6 +411,7 @@ Examples:
 * Altering external trunks
 * Weakening production security
 * Affecting customer identities or traffic
+* Deleting non-reproducible state without a verified recovery path
 
 Require explicit authorization when repository contracts cannot safely resolve the choice.
 
@@ -551,6 +616,35 @@ Docker Compose must not:
 * Become a fallback when Kubernetes is unavailable
 * Compete with Kubernetes for runtime authority
 
+### Canonical local environment identity
+
+The canonical local Kubernetes environment is:
+
+```text
+cluster: utcp-local
+context: k3d-utcp-local
+registry host endpoint: 127.0.0.1:5001
+edge ownership: 127.0.0.1:80 and 127.0.0.1:443
+```
+
+Repository instructions and current committed configuration may define additional required port publications.
+
+Do not create another cluster such as `utcp-mediaedge`, `utcp-proof`, `utcp-test`, `utcp-recovery`, or `utcp-local-2` as a replacement, workaround, or temporary proof environment unless the current task explicitly authorizes a documented multi-cluster topology.
+
+A disposable application resource inside `utcp-local` is not equivalent to a disposable cluster. The latter is a material topology change.
+
+If `utcp-local` lacks an immutable k3d capability needed by the current roadmap—for example, required RTP UDP host-port publication—the preferred deterministic correction is:
+
+1. Update the repository-owned canonical cluster configuration.
+2. Verify that local state is reproducible or safely preserved.
+3. Rebuild `utcp-local` through the authorized canonical lifecycle.
+4. Redeploy through the normal repository commands.
+5. Verify restoration and the newly required capability.
+
+Do not create a second cluster to avoid correcting the canonical lifecycle.
+
+`apntalk-local` is a separate environment. Preserve it and keep it stopped while UTCP owns the standard local edge unless the operator explicitly requests otherwise.
+
 ### Kubernetes packaging
 
 Use:
@@ -691,6 +785,27 @@ Do not leave conflicting behavior active behind a fallback or gate unless a docu
 
 ---
 
+## No improvised execution paths
+
+A failure in the canonical lifecycle is evidence of a blocker or repository gap. It is not permission to invent a substitute lifecycle.
+
+If a canonical repository Make target or script rejects the intended topology, validates a different cluster profile, cannot deploy the required configuration, lacks a required immutable environment capability, or otherwise prevents valid proof, do not silently replace it with:
+
+* direct `kubectl apply` or direct Kustomize application;
+* ad hoc Helm commands or manually copied manifests;
+* an additional cluster or registry;
+* a Docker Compose substitute;
+* manually patched live resources; or
+* another lower-level execution path.
+
+First classify the failure as an implementation defect, repository automation gap, environment drift, unsupported topology, or incorrect task assumption. Then either correct it within the canonical repository lifecycle when the task explicitly authorizes that bounded implementation, or stop and report the blocker and smallest deterministic correction.
+
+Read-only lower-level diagnostics are allowed when they help establish the blocker. Diagnostic access must not become an alternate deployment or management path.
+
+Never describe an improvised environment as temporary or disposable to bypass this rule.
+
+---
+
 ## Implementation discipline
 
 * Use one canonical write authority for each state transition.
@@ -705,6 +820,13 @@ Do not leave conflicting behavior active behind a fallback or gate unless a docu
 * Remove conflicting authority after replacement is proven.
 * Do not redesign adjacent systems unless the bounded task requires it.
 * Do not add speculative provider-neutral abstractions without evidence.
+* Preserve the canonical environment identity unless the task explicitly authorizes changing it.
+* Do not create parallel infrastructure to work around missing canonical capability.
+* Treat a rejected canonical deployment path as a blocker or repository gap, not permission to bypass it.
+* Correct reproducible local-environment requirements in repository-owned configuration.
+* Prefer rebuilding the canonical reproducible environment over maintaining an undocumented replacement.
+* Pause before any material topology deviation that was not part of the task's stated plan.
+* Report newly discovered topology requirements before implementing them when they expand the task materially.
 
 ---
 
@@ -770,21 +892,54 @@ Do not require browser proof for backend-only implementation when focused automa
 
 Before changing the local runtime:
 
-* Confirm the active Kubernetes context.
+* Confirm the intended cluster name and Kubernetes context.
 * Confirm the namespace.
 * Confirm relevant workloads and repository image versions.
-* Confirm the intended change is reversible.
+* Confirm which repository command owns deployment.
+* Confirm the proposed action is within the current task's authorization.
+* Distinguish ordinary reversible workload mutation from material environment mutation.
 * Record only the baseline needed for the claim.
+* Inventory non-reproducible state before any cluster, registry, volume, or stateful-service recreation.
+* Confirm a repository-defined recovery path for any material environment change.
+* Confirm the change will not create a parallel authority or replacement environment.
 
 During live proof:
 
+* Use the canonical cluster and deployment lifecycle.
 * Change only the component needed by the proof.
 * Avoid creating unrelated failure conditions.
 * Preserve exact timestamps and authority identifiers when material.
 * Use canonical APIs and lifecycle paths for business resources.
 * Do not use direct SQL or PBX mutation to manufacture success.
+* Do not apply lower-level manifests as a substitute for a failed canonical deployment command.
+* Do not create a second cluster or registry to bypass missing capability in `utcp-local`.
 * Restore reversible failure conditions.
 * Finish with a healthy environment when feasible.
+
+### Mandatory pause conditions
+
+Stop live-runtime mutation and report before proceeding when:
+
+* The canonical cluster lacks a required immutable capability.
+* The canonical deployment command rejects the required topology.
+* Completion would require creating another cluster or registry.
+* Completion would require changing host port publication not already supported by repository configuration.
+* Completion would require deleting or recreating stateful infrastructure without a preservation assessment.
+* The task's requested environment cannot support the proof as currently defined.
+* A lower-level deployment path would bypass repository validation.
+* The proposed recovery would change environment identity or topology.
+* The current repository contract and required live topology conflict.
+
+A pause does not automatically require operator intervention when the resolution is derivable from repository evidence. It means the current run must not silently expand itself.
+
+Report:
+
+1. The exact discovered limitation.
+2. Why the canonical lifecycle cannot proceed.
+3. The smallest repository-backed correction.
+4. Whether existing state is reproducible.
+5. Whether the task already authorizes that correction.
+6. What remains unmodified.
 
 Do not expand every live proof into full-system acceptance.
 
@@ -793,6 +948,25 @@ Do not expand every live proof into full-system acceptance.
 ## Divergence classification
 
 Do not automatically fail a task because execution differed from the ideal sequence.
+
+### Material execution divergence
+
+A divergence from the planned execution path is material when it changes:
+
+* Cluster or registry identity
+* Host port ownership or publication
+* Node topology
+* Deployment mechanism
+* Persistent-state lifecycle
+* Runtime authority
+* Security boundary
+* Canonical management path
+
+Material divergence requires a pause unless the current task explicitly authorized the alternative.
+
+Do not classify a newly created cluster, alternate registry, direct-manifest deployment, or replacement runtime as a harmless environmental difference merely because the intended application code is unchanged.
+
+When the canonical path fails, diagnose and classify that failure. Do not continue through an improvised substitute and report the substitution only afterward.
 
 Classify divergences as:
 
@@ -816,7 +990,31 @@ Examples:
 * A missing supplementary event does not invalidate canonical cleanup when the new event path is independently proven.
 * An unrelated crash-loop caused by stale local node IPs is an environmental issue, not automatically an application defect.
 
+Environmental classification explains a failure; it does not authorize bypassing the canonical environment lifecycle.
+
 Document meaningful divergences without turning them into unrelated implementation work.
+
+---
+
+## Plan-change boundary
+
+Claude Code may make small implementation adjustments without pausing when they remain inside the task's established authority, files, lifecycle, and acceptance criteria.
+
+Claude Code must pause before performing a newly discovered action that materially changes the environment topology, canonical cluster or registry, host networking or port publication, deployment lifecycle, persistent-state handling, security boundary, canonical authority, or scope of proof.
+
+The pause report must be concise and decision-oriented. It must not produce a new broad audit. Use this format:
+
+```text
+Discovered limitation:
+Canonical path affected:
+Why the planned path cannot proceed:
+Proposed deterministic correction:
+State-preservation impact:
+Current task authorization:
+Mutation stopped at:
+```
+
+If the proposed correction is already explicitly authorized by the task and supported by a repository-defined lifecycle, proceed after recording the preflight evidence. If either condition is absent, stop and request direction or recommend a bounded follow-up.
 
 ---
 
@@ -845,6 +1043,8 @@ A normal bounded implementation should usually establish:
 6. No second management authority is introduced.
 7. Documentation is updated.
 8. Repository state is clean.
+9. The canonical environment and deployment lifecycle were preserved.
+10. No alternate cluster, registry, runtime, or lower-level deployment path was introduced.
 
 Do not create twenty or thirty completion conditions when a smaller set proves the contract.
 
@@ -1042,6 +1242,48 @@ Mention corrected intermediate failures separately when material.
 ## Divergences
 
 Classify meaningful divergences and state whether they invalidate the principal claim.
+
+## Environment and Topology Changes
+
+List every change involving:
+
+* Clusters
+* Registries
+* Host ports
+* Load balancers
+* Kubernetes contexts
+* Node topology
+* Persistent volumes
+* Deployment mechanisms
+* Parallel runtimes
+
+For every item, state whether it was repository-supported, explicitly authorized, restored, and whether it remains part of the canonical environment.
+
+If none occurred, write:
+
+```text
+None.
+```
+
+## Improvised or Non-Canonical Actions
+
+List every action that departed from the repository's canonical lifecycle, including failed attempts.
+
+For each action, state:
+
+* Why it was attempted
+* Whether it mutated state
+* What validation it bypassed
+* Whether it was reverted
+* Whether any residue remains
+
+If none occurred, write:
+
+```text
+None.
+```
+
+An improvised action must never be omitted merely because it was temporary, failed, reverted, or did not affect the final commit.
 
 ## Unresolved Proof Gaps
 
