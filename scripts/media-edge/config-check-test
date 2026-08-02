@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$BASH_SOURCE")/../.." && pwd)"
+CHECK="$ROOT/scripts/media-edge/config-check"
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
+cp "$ROOT/versions.env" "$tmpdir/versions.env"
+cp "$ROOT/infrastructure/k3d/cluster-media-edge.yaml" "$tmpdir/cluster.yaml"
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/rtpengine-media-service.yaml" "$tmpdir/service.yaml"
+cp "$ROOT/infrastructure/docker/rtpengine/entrypoint" "$tmpdir/entrypoint"
+
+run_check() {
+  UTCP_MEDIA_EDGE_VERSIONS="$tmpdir/versions.env" \
+    UTCP_MEDIA_EDGE_K3D_CONFIG="$tmpdir/cluster.yaml" \
+    UTCP_MEDIA_EDGE_SERVICE="$tmpdir/service.yaml" \
+    UTCP_MEDIA_EDGE_ENTRYPOINT="$tmpdir/entrypoint" \
+    "$CHECK" >/dev/null
+}
+
+expect_fail() {
+  local label="$1"
+  shift
+  if "$@" >/dev/null 2>&1; then
+    printf 'media-edge mutation unexpectedly passed: %s\n' "$label" >&2
+    exit 1
+  fi
+}
+
+run_check
+
+sed -i '/^UTCP_PUBLIC_MEDIA_ADDRESS=/d' "$tmpdir/versions.env"
+expect_fail "missing public-address authority" run_check
+cp "$ROOT/versions.env" "$tmpdir/versions.env"
+printf 'UTCP_PUBLIC_MEDIA_ADDRESS=192.0.2.10\n' >> "$tmpdir/versions.env"
+expect_fail "duplicate public-address authority" run_check
+cp "$ROOT/versions.env" "$tmpdir/versions.env"
+
+sed -i 's/advertised_address/127.0.0.1 advertised_address/' "$tmpdir/entrypoint"
+expect_fail "hard-coded advertised address" run_check
+cp "$ROOT/infrastructure/docker/rtpengine/entrypoint" "$tmpdir/entrypoint"
+sed -i 's/advertised_address="\$POD_IP"/advertised_address="127.0.0.1"/' "$tmpdir/entrypoint"
+expect_fail "Pod-IP-only projection" run_check
+cp "$ROOT/infrastructure/docker/rtpengine/entrypoint" "$tmpdir/entrypoint"
+
+sed -i '/- name: media-40099/,$d' "$tmpdir/service.yaml"
+expect_fail "missing NodePort entry" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/rtpengine-media-service.yaml" "$tmpdir/service.yaml"
+sed -i '0,/protocol: UDP/{s/protocol: UDP/protocol: TCP/}' "$tmpdir/service.yaml"
+expect_fail "TCP media publication" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/rtpengine-media-service.yaml" "$tmpdir/service.yaml"
+sed -i '0,/externalTrafficPolicy: Local/{s/externalTrafficPolicy: Local/externalTrafficPolicy: Cluster/}' "$tmpdir/service.yaml"
+expect_fail "non-local external traffic policy" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/rtpengine-media-service.yaml" "$tmpdir/service.yaml"
+sed -i '0,/nodePort: 40000/{s/nodePort: 40000/nodePort: 39999/}' "$tmpdir/service.yaml"
+expect_fail "port mismatch" run_check
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/rtpengine-media-service.yaml" "$tmpdir/service.yaml"
+sed -i 's/127.0.0.1:40000-40099:40000-40099\/udp/0.0.0.0:40000-40099:40000-40099\/udp/' "$tmpdir/cluster.yaml"
+expect_fail "wildcard host publication" run_check
+cp "$ROOT/infrastructure/k3d/cluster-media-edge.yaml" "$tmpdir/cluster.yaml"
+sed -i 's/utcp.dev\/media-edge=true/utcp.dev\/wrong=true/' "$tmpdir/cluster.yaml"
+expect_fail "node label mismatch" run_check
+cp "$ROOT/infrastructure/k3d/cluster-media-edge.yaml" "$tmpdir/cluster.yaml"
+
+cp "$ROOT/infrastructure/kubernetes/overlays/local-media-edge/kustomization.yaml" "$tmpdir/kustomization.yaml"
+sed -i '/rtpengine-media-service.yaml/d' "$tmpdir/kustomization.yaml"
+expect_fail "parity service removal" grep -q 'rtpengine-media-service' "$tmpdir/kustomization.yaml"
+
+printf 'media-edge config mutation checks passed\n'

@@ -1,0 +1,516 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: rtpengine-media
+  namespace: utcp-platform
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: rtpengine
+    utcp.dev/media-edge: "true"
+spec:
+  type: NodePort
+  externalTrafficPolicy: Local
+  selector:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: rtpengine
+  ports:
+    - name: media-40000
+      protocol: UDP
+      port: 40000
+      targetPort: 40000
+      nodePort: 40000
+    - name: media-40001
+      protocol: UDP
+      port: 40001
+      targetPort: 40001
+      nodePort: 40001
+    - name: media-40002
+      protocol: UDP
+      port: 40002
+      targetPort: 40002
+      nodePort: 40002
+    - name: media-40003
+      protocol: UDP
+      port: 40003
+      targetPort: 40003
+      nodePort: 40003
+    - name: media-40004
+      protocol: UDP
+      port: 40004
+      targetPort: 40004
+      nodePort: 40004
+    - name: media-40005
+      protocol: UDP
+      port: 40005
+      targetPort: 40005
+      nodePort: 40005
+    - name: media-40006
+      protocol: UDP
+      port: 40006
+      targetPort: 40006
+      nodePort: 40006
+    - name: media-40007
+      protocol: UDP
+      port: 40007
+      targetPort: 40007
+      nodePort: 40007
+    - name: media-40008
+      protocol: UDP
+      port: 40008
+      targetPort: 40008
+      nodePort: 40008
+    - name: media-40009
+      protocol: UDP
+      port: 40009
+      targetPort: 40009
+      nodePort: 40009
+    - name: media-40010
+      protocol: UDP
+      port: 40010
+      targetPort: 40010
+      nodePort: 40010
+    - name: media-40011
+      protocol: UDP
+      port: 40011
+      targetPort: 40011
+      nodePort: 40011
+    - name: media-40012
+      protocol: UDP
+      port: 40012
+      targetPort: 40012
+      nodePort: 40012
+    - name: media-40013
+      protocol: UDP
+      port: 40013
+      targetPort: 40013
+      nodePort: 40013
+    - name: media-40014
+      protocol: UDP
+      port: 40014
+      targetPort: 40014
+      nodePort: 40014
+    - name: media-40015
+      protocol: UDP
+      port: 40015
+      targetPort: 40015
+      nodePort: 40015
+    - name: media-40016
+      protocol: UDP
+      port: 40016
+      targetPort: 40016
+      nodePort: 40016
+    - name: media-40017
+      protocol: UDP
+      port: 40017
+      targetPort: 40017
+      nodePort: 40017
+    - name: media-40018
+      protocol: UDP
+      port: 40018
+      targetPort: 40018
+      nodePort: 40018
+    - name: media-40019
+      protocol: UDP
+      port: 40019
+      targetPort: 40019
+      nodePort: 40019
+    - name: media-40020
+      protocol: UDP
+      port: 40020
+      targetPort: 40020
+      nodePort: 40020
+    - name: media-40021
+      protocol: UDP
+      port: 40021
+      targetPort: 40021
+      nodePort: 40021
+    - name: media-40022
+      protocol: UDP
+      port: 40022
+      targetPort: 40022
+      nodePort: 40022
+    - name: media-40023
+      protocol: UDP
+      port: 40023
+      targetPort: 40023
+      nodePort: 40023
+    - name: media-40024
+      protocol: UDP
+      port: 40024
+      targetPort: 40024
+      nodePort: 40024
+    - name: media-40025
+      protocol: UDP
+      port: 40025
+      targetPort: 40025
+      nodePort: 40025
+    - name: media-40026
+      protocol: UDP
+      port: 40026
+      targetPort: 40026
+      nodePort: 40026
+    - name: media-40027
+      protocol: UDP
+      port: 40027
+      targetPort: 40027
+      nodePort: 40027
+    - name: media-40028
+      protocol: UDP
+      port: 40028
+      targetPort: 40028
+      nodePort: 40028
+    - name: media-40029
+      protocol: UDP
+      port: 40029
+      targetPort: 40029
+      nodePort: 40029
+    - name: media-40030
+      protocol: UDP
+      port: 40030
+      targetPort: 40030
+      nodePort: 40030
+    - name: media-40031
+      protocol: UDP
+      port: 40031
+      targetPort: 40031
+      nodePort: 40031
+    - name: media-40032
+      protocol: UDP
+      port: 40032
+      targetPort: 40032
+      nodePort: 40032
+    - name: media-40033
+      protocol: UDP
+      port: 40033
+      targetPort: 40033
+      nodePort: 40033
+    - name: media-40034
+      protocol: UDP
+      port: 40034
+      targetPort: 40034
+      nodePort: 40034
+    - name: media-40035
+      protocol: UDP
+      port: 40035
+      targetPort: 40035
+      nodePort: 40035
+    - name: media-40036
+      protocol: UDP
+      port: 40036
+      targetPort: 40036
+      nodePort: 40036
+    - name: media-40037
+      protocol: UDP
+      port: 40037
+      targetPort: 40037
+      nodePort: 40037
+    - name: media-40038
+      protocol: UDP
+      port: 40038
+      targetPort: 40038
+      nodePort: 40038
+    - name: media-40039
+      protocol: UDP
+      port: 40039
+      targetPort: 40039
+      nodePort: 40039
+    - name: media-40040
+      protocol: UDP
+      port: 40040
+      targetPort: 40040
+      nodePort: 40040
+    - name: media-40041
+      protocol: UDP
+      port: 40041
+      targetPort: 40041
+      nodePort: 40041
+    - name: media-40042
+      protocol: UDP
+      port: 40042
+      targetPort: 40042
+      nodePort: 40042
+    - name: media-40043
+      protocol: UDP
+      port: 40043
+      targetPort: 40043
+      nodePort: 40043
+    - name: media-40044
+      protocol: UDP
+      port: 40044
+      targetPort: 40044
+      nodePort: 40044
+    - name: media-40045
+      protocol: UDP
+      port: 40045
+      targetPort: 40045
+      nodePort: 40045
+    - name: media-40046
+      protocol: UDP
+      port: 40046
+      targetPort: 40046
+      nodePort: 40046
+    - name: media-40047
+      protocol: UDP
+      port: 40047
+      targetPort: 40047
+      nodePort: 40047
+    - name: media-40048
+      protocol: UDP
+      port: 40048
+      targetPort: 40048
+      nodePort: 40048
+    - name: media-40049
+      protocol: UDP
+      port: 40049
+      targetPort: 40049
+      nodePort: 40049
+    - name: media-40050
+      protocol: UDP
+      port: 40050
+      targetPort: 40050
+      nodePort: 40050
+    - name: media-40051
+      protocol: UDP
+      port: 40051
+      targetPort: 40051
+      nodePort: 40051
+    - name: media-40052
+      protocol: UDP
+      port: 40052
+      targetPort: 40052
+      nodePort: 40052
+    - name: media-40053
+      protocol: UDP
+      port: 40053
+      targetPort: 40053
+      nodePort: 40053
+    - name: media-40054
+      protocol: UDP
+      port: 40054
+      targetPort: 40054
+      nodePort: 40054
+    - name: media-40055
+      protocol: UDP
+      port: 40055
+      targetPort: 40055
+      nodePort: 40055
+    - name: media-40056
+      protocol: UDP
+      port: 40056
+      targetPort: 40056
+      nodePort: 40056
+    - name: media-40057
+      protocol: UDP
+      port: 40057
+      targetPort: 40057
+      nodePort: 40057
+    - name: media-40058
+      protocol: UDP
+      port: 40058
+      targetPort: 40058
+      nodePort: 40058
+    - name: media-40059
+      protocol: UDP
+      port: 40059
+      targetPort: 40059
+      nodePort: 40059
+    - name: media-40060
+      protocol: UDP
+      port: 40060
+      targetPort: 40060
+      nodePort: 40060
+    - name: media-40061
+      protocol: UDP
+      port: 40061
+      targetPort: 40061
+      nodePort: 40061
+    - name: media-40062
+      protocol: UDP
+      port: 40062
+      targetPort: 40062
+      nodePort: 40062
+    - name: media-40063
+      protocol: UDP
+      port: 40063
+      targetPort: 40063
+      nodePort: 40063
+    - name: media-40064
+      protocol: UDP
+      port: 40064
+      targetPort: 40064
+      nodePort: 40064
+    - name: media-40065
+      protocol: UDP
+      port: 40065
+      targetPort: 40065
+      nodePort: 40065
+    - name: media-40066
+      protocol: UDP
+      port: 40066
+      targetPort: 40066
+      nodePort: 40066
+    - name: media-40067
+      protocol: UDP
+      port: 40067
+      targetPort: 40067
+      nodePort: 40067
+    - name: media-40068
+      protocol: UDP
+      port: 40068
+      targetPort: 40068
+      nodePort: 40068
+    - name: media-40069
+      protocol: UDP
+      port: 40069
+      targetPort: 40069
+      nodePort: 40069
+    - name: media-40070
+      protocol: UDP
+      port: 40070
+      targetPort: 40070
+      nodePort: 40070
+    - name: media-40071
+      protocol: UDP
+      port: 40071
+      targetPort: 40071
+      nodePort: 40071
+    - name: media-40072
+      protocol: UDP
+      port: 40072
+      targetPort: 40072
+      nodePort: 40072
+    - name: media-40073
+      protocol: UDP
+      port: 40073
+      targetPort: 40073
+      nodePort: 40073
+    - name: media-40074
+      protocol: UDP
+      port: 40074
+      targetPort: 40074
+      nodePort: 40074
+    - name: media-40075
+      protocol: UDP
+      port: 40075
+      targetPort: 40075
+      nodePort: 40075
+    - name: media-40076
+      protocol: UDP
+      port: 40076
+      targetPort: 40076
+      nodePort: 40076
+    - name: media-40077
+      protocol: UDP
+      port: 40077
+      targetPort: 40077
+      nodePort: 40077
+    - name: media-40078
+      protocol: UDP
+      port: 40078
+      targetPort: 40078
+      nodePort: 40078
+    - name: media-40079
+      protocol: UDP
+      port: 40079
+      targetPort: 40079
+      nodePort: 40079
+    - name: media-40080
+      protocol: UDP
+      port: 40080
+      targetPort: 40080
+      nodePort: 40080
+    - name: media-40081
+      protocol: UDP
+      port: 40081
+      targetPort: 40081
+      nodePort: 40081
+    - name: media-40082
+      protocol: UDP
+      port: 40082
+      targetPort: 40082
+      nodePort: 40082
+    - name: media-40083
+      protocol: UDP
+      port: 40083
+      targetPort: 40083
+      nodePort: 40083
+    - name: media-40084
+      protocol: UDP
+      port: 40084
+      targetPort: 40084
+      nodePort: 40084
+    - name: media-40085
+      protocol: UDP
+      port: 40085
+      targetPort: 40085
+      nodePort: 40085
+    - name: media-40086
+      protocol: UDP
+      port: 40086
+      targetPort: 40086
+      nodePort: 40086
+    - name: media-40087
+      protocol: UDP
+      port: 40087
+      targetPort: 40087
+      nodePort: 40087
+    - name: media-40088
+      protocol: UDP
+      port: 40088
+      targetPort: 40088
+      nodePort: 40088
+    - name: media-40089
+      protocol: UDP
+      port: 40089
+      targetPort: 40089
+      nodePort: 40089
+    - name: media-40090
+      protocol: UDP
+      port: 40090
+      targetPort: 40090
+      nodePort: 40090
+    - name: media-40091
+      protocol: UDP
+      port: 40091
+      targetPort: 40091
+      nodePort: 40091
+    - name: media-40092
+      protocol: UDP
+      port: 40092
+      targetPort: 40092
+      nodePort: 40092
+    - name: media-40093
+      protocol: UDP
+      port: 40093
+      targetPort: 40093
+      nodePort: 40093
+    - name: media-40094
+      protocol: UDP
+      port: 40094
+      targetPort: 40094
+      nodePort: 40094
+    - name: media-40095
+      protocol: UDP
+      port: 40095
+      targetPort: 40095
+      nodePort: 40095
+    - name: media-40096
+      protocol: UDP
+      port: 40096
+      targetPort: 40096
+      nodePort: 40096
+    - name: media-40097
+      protocol: UDP
+      port: 40097
+      targetPort: 40097
+      nodePort: 40097
+    - name: media-40098
+      protocol: UDP
+      port: 40098
+      targetPort: 40098
+      nodePort: 40098
+    - name: media-40099
+      protocol: UDP
+      port: 40099
+      targetPort: 40099
+      nodePort: 40099

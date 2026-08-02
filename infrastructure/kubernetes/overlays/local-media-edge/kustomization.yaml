@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+generatorOptions:
+  disableNameSuffixHash: true
+resources:
+  - ../local
+  - rtpengine-media-service.yaml
+configMapGenerator:
+  - name: utcp-media-edge-authority
+    namespace: utcp-platform
+    envs:
+      - ../../../../versions.env
+patches:
+  - path: rtpengine-media-edge-patch.yaml
+images:
+  - name: utcp-rtpengine
+    newName: utcp-local-registry:5000/utcp/rtpengine
+    newTag: 0.1.0-k1-dev

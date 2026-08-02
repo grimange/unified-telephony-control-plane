@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rtpengine
+  namespace: utcp-platform
+spec:
+  template:
+    spec:
+      nodeSelector:
+        utcp.dev/media-edge: "true"
+      containers:
+        - name: rtpengine
+          env:
+            - name: UTCP_PUBLIC_MEDIA_ADDRESS
+              valueFrom:
+                configMapKeyRef:
+                  name: utcp-media-edge-authority
+                  key: UTCP_PUBLIC_MEDIA_ADDRESS

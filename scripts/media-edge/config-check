@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$BASH_SOURCE")/../.." && pwd)"
+VERSIONS_FILE="${UTCP_MEDIA_EDGE_VERSIONS:-$ROOT/versions.env}"
+K3D_CONFIG_FILE="${UTCP_MEDIA_EDGE_K3D_CONFIG:-$ROOT/infrastructure/k3d/cluster-media-edge.yaml}"
+SERVICE_FILE="${UTCP_MEDIA_EDGE_SERVICE:-$ROOT/infrastructure/kubernetes/overlays/local-media-edge/rtpengine-media-service.yaml}"
+ENTRYPOINT_FILE="${UTCP_MEDIA_EDGE_ENTRYPOINT:-$ROOT/infrastructure/docker/rtpengine/entrypoint}"
+fail() { printf 'media-edge config check failed: %s\n' "$1" >&2; exit 1; }
+for file in "$VERSIONS_FILE" "$K3D_CONFIG_FILE" "$SERVICE_FILE" "$ENTRYPOINT_FILE"; do
+  [ -s "$file" ] || fail "required file is missing: $file"
+done
+python3 - "$ROOT" "$VERSIONS_FILE" "$K3D_CONFIG_FILE" "$SERVICE_FILE" "$ENTRYPOINT_FILE" <<'PY'
+from pathlib import Path
+import re
+import subprocess
+import sys
+import yaml
+
+root = Path(sys.argv[1])
+versions_path = Path(sys.argv[2])
+k3d_path = Path(sys.argv[3])
+service_path = Path(sys.argv[4])
+entrypoint_path = Path(sys.argv[5])
+fail = lambda message: (_ for _ in ()).throw(SystemExit(f"media-edge config check failed: {message}"))
+
+def vals(path):
+    return dict(line.split("=", 1) for line in path.read_text().splitlines() if line and not line.startswith("#") and "=" in line)
+
+versions = versions_path
+raw = versions.read_text()
+v = vals(versions)
+if len(re.findall(r"^UTCP_PUBLIC_MEDIA_ADDRESS=", raw, re.M)) != 1 or v.get("UTCP_PUBLIC_MEDIA_ADDRESS") != "127.0.0.1":
+    fail("UTCP_PUBLIC_MEDIA_ADDRESS must be declared once as 127.0.0.1")
+if (v.get("RTPENGINE_MEDIA_PORT_MIN"), v.get("RTPENGINE_MEDIA_PORT_MAX")) != ("40000", "40099"):
+    fail("media range must remain the canonical RTPengine range")
+
+entry = entrypoint_path.read_text()
+if '--interface=' not in entry or 'advertised_address' not in entry or 'UTCP_PUBLIC_MEDIA_ADDRESS' not in entry:
+    fail("rtpengine advertised-address projection is missing")
+if '127.0.0.1' in entry:
+    fail("rtpengine entrypoint contains a duplicated public-address literal")
+
+service = next(yaml.safe_load_all(service_path.read_text()))
+spec = service.get("spec", {})
+if service.get("kind") != "Service" or service.get("metadata", {}).get("name") != "rtpengine-media":
+    fail("rtpengine-media Service is missing")
+if spec.get("type") != "NodePort" or spec.get("externalTrafficPolicy") != "Local":
+    fail("NodePort Service must use externalTrafficPolicy Local")
+if spec.get("selector") != {"app.kubernetes.io/part-of": "utcp", "app.kubernetes.io/component": "rtpengine"}:
+    fail("NodePort selector is not canonical")
+ports = spec.get("ports", [])
+if len(ports) != 100:
+    fail("NodePort Service must enumerate exactly 100 ports")
+expected = list(range(40000, 40100))
+actual = []
+for item in ports:
+    if item.get("protocol") != "UDP" or item.get("port") != item.get("targetPort") or item.get("port") != item.get("nodePort"):
+        fail("every media port must be UDP and port == targetPort == nodePort")
+    actual.append(item.get("port"))
+if actual != expected:
+    fail("NodePort entries must exactly equal 40000-40099")
+
+k3d = next(yaml.safe_load_all(k3d_path.read_text()))
+publication = [p for p in k3d.get("ports", []) if "40000-40099:40000-40099/udp" in str(p.get("port"))]
+if len(publication) != 1 or publication[0].get("nodeFilters") != ["server:0"]:
+    fail("k3d must publish UDP 40000-40099 on server:0")
+if any(str(p.get("port", "")).startswith(("0.0.0.0", "[::]")) for p in k3d.get("ports", [])):
+    fail("media publication must bind to 127.0.0.1")
+args = [str(x.get("arg")) for x in k3d.get("options", {}).get("k3s", {}).get("extraArgs", [])]
+if "--kube-apiserver-arg=service-node-port-range=30000-40099" not in args:
+    fail("k3d NodePort range extension is missing")
+labels = k3d.get("options", {}).get("k3s", {}).get("nodeLabels", [])
+if not any(x.get("label") == "utcp.dev/media-edge=true" and x.get("nodeFilters") == ["server:0"] for x in labels):
+    fail("media-edge node label is missing")
+
+def render(path):
+    p = subprocess.run(["kubectl", "kustomize", "--load-restrictor", "LoadRestrictionsNone", str(path)], cwd=root, text=True, capture_output=True)
+    if p.returncode:
+        fail(f"kustomize render failed: {p.stderr.strip()}")
+    return {f"{d.get('apiVersion')}/{d.get('kind')}/{d.get('metadata', {}).get('namespace')}/{d.get('metadata', {}).get('name')}": d for d in yaml.safe_load_all(p.stdout) if isinstance(d, dict)}
+
+local = render(root / "infrastructure/kubernetes/overlays/local")
+edge = render(root / "infrastructure/kubernetes/overlays/local-media-edge")
+if "v1/Service/utcp-platform/rtpengine-media" in local or any("UTCP_PUBLIC_MEDIA_ADDRESS" in str(d) for d in local.values()):
+    fail("canonical local overlay must remain internal-only")
+if "v1/Service/utcp-platform/rtpengine-media" not in edge:
+    fail("media-edge Service is absent from the rendered projection")
+for key, doc in edge.items():
+    if doc.get("kind") == "Service" and doc.get("spec", {}).get("clusterIP") == v.get("UTCP_PUBLIC_MEDIA_ADDRESS"):
+        fail("public media address must not equal a rendered Service ClusterIP")
+dep = edge.get("apps/v1/Deployment/utcp-platform/rtpengine")
+if not dep:
+    fail("rtpengine Deployment is absent from the media-edge render")
+pod = dep["spec"]["template"]["spec"]
+if pod.get("nodeSelector") != {"utcp.dev/media-edge": "true"}:
+    fail("rtpengine nodeSelector is not the media-edge label")
+env = next((x for x in pod["containers"][0].get("env", []) if x.get("name") == "UTCP_PUBLIC_MEDIA_ADDRESS"), None)
+if not env or env.get("valueFrom", {}).get("configMapKeyRef", {}).get("key") != "UTCP_PUBLIC_MEDIA_ADDRESS":
+    fail("public address is not projected from the canonical authority")
+allowed = {"v1/ConfigMap/utcp-platform/utcp-media-edge-authority", "v1/Service/utcp-platform/rtpengine-media", "apps/v1/Deployment/utcp-platform/rtpengine"}
+for key, value in local.items():
+    if key == "apps/v1/Deployment/utcp-platform/rtpengine":
+        continue
+    if edge.get(key) != value:
+        fail(f"unrelated local resource drift: {key}")
+if set(edge) - set(local) - allowed:
+    fail("media-edge render contains an unapproved resource")
+for key, doc in edge.items():
+    if doc.get("kind") == "Service" and doc.get("spec", {}).get("type") == "NodePort" and key != "v1/Service/utcp-platform/rtpengine-media":
+        fail(f"public media projection changed an unrelated NodePort Service: {key}")
+    if doc.get("kind") in {"Deployment", "StatefulSet", "DaemonSet"}:
+        pod_spec = doc.get("spec", {}).get("template", {}).get("spec", {})
+        if pod_spec.get("hostNetwork") or pod_spec.get("hostPID") or pod_spec.get("hostIPC"):
+            fail(f"host namespace is forbidden in media-edge projection: {key}")
+        if any("hostPort" in port for c in pod_spec.get("containers", []) for port in c.get("ports", [])):
+            fail(f"hostPort is forbidden in media-edge projection: {key}")
+        for c in pod_spec.get("containers", []):
+            image = c.get("image", "")
+            if not image or re.search(r"^utcp-[a-z0-9-]+(?::[^/]+)?$", image):
+                fail(f"unresolved image: {key}={image}")
+print("media-edge projection configured and internally consistent")
+print("external media reachability awaiting T3-S3B")
+PY

@@ -255,3 +255,26 @@ browser-reachable media; Kamailio INVITE route authority consuming the canonical
 RuntimeNode eligibility projection; multi-relay selection and failover;
 Record-Route/in-dialog handling; FreeSWITCH parity; external trunks and PSTN;
 active-call migration, which remains explicitly unsupported.
+
+## T3-S3A amendment — local external-media projection
+
+The T3-S3A implementation extends this decision with one provider-neutral
+external-media contract. `UTCP_PUBLIC_MEDIA_ADDRESS` in `versions.env` is the
+sole advertised-address authority, while `RTPENGINE_MEDIA_PORT_MIN` and
+`RTPENGINE_MEDIA_PORT_MAX` remain the sole media-range authority. The default
+`overlays/local` projection does not consume the public address and remains
+internal-only.
+
+The bounded local media-edge projection consumes the address `127.0.0.1`,
+publishes UDP `40000-40099` through a dedicated k3d profile and a 100-entry
+`rtpengine-media` NodePort Service with `externalTrafficPolicy: Local`, and
+pins rtpengine to the k3d server labelled `utcp.dev/media-edge=true`. The
+rtpengine process continues to bind its internal interface to its Pod IP and
+changes only the advertised half of the existing interface declaration. No
+control, metrics, SIP, runtime RTP, ESL, ARI, or AMI port is projected.
+
+This is a projection contract, not an external reachability proof. Cluster
+recreation and real host-browser UDP validation are deferred to T3-S3B. A
+future cloud projection may replace the local host publication with a cloud
+UDP load balancer or dedicated media node pool while retaining the same
+address and range authorities.

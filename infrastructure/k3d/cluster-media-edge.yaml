@@ -1,0 +1,42 @@
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: utcp-local
+servers: 1
+agents: 2
+image: docker.io/rancher/k3s:v1.35.3-k3s1
+kubeAPI:
+  hostIP: 127.0.0.1
+  hostPort: "6550"
+ports:
+  - port: 127.0.0.1:80:80
+    nodeFilters:
+      - loadbalancer
+  - port: 127.0.0.1:443:443
+    nodeFilters:
+      - loadbalancer
+  - port: 127.0.0.1:40000-40099:40000-40099/udp
+    nodeFilters:
+      - server:0
+registries:
+  create:
+    name: utcp-local-registry
+    host: 127.0.0.1
+    hostPort: "5001"
+    image: registry:3.0.0
+options:
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
+      - arg: --kube-apiserver-arg=service-node-port-range=30000-40099
+        nodeFilters:
+          - server:*
+    nodeLabels:
+      - label: utcp.dev/media-edge=true
+        nodeFilters:
+          - server:0
+  kubeconfig:
+    updateDefaultKubeconfig: false
+    switchCurrentContext: false

@@ -9,7 +9,8 @@ required_tools
 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
-k3d config migrate "$CLUSTER_CONFIG" "$tmp" >/dev/null
+selected_config="${K3D_CONFIG_FILE:-$CLUSTER_CONFIG}"
+k3d config migrate "$selected_config" "$tmp" >/dev/null
 
 check_contains() {
   local pattern="$1"
@@ -42,6 +43,13 @@ check_contains "arg: --disable=traefik" "packaged Traefik must be disabled"
 check_contains "port: ${UTCP_EDGE_HTTP_HOST}:${UTCP_EDGE_HTTP_HOST_PORT}:80" "K2 HTTP edge mapping must be ${UTCP_EDGE_HTTP_HOST}:${UTCP_EDGE_HTTP_HOST_PORT}->80"
 check_contains "port: ${UTCP_EDGE_HTTPS_HOST}:${UTCP_EDGE_HTTPS_HOST_PORT}:443" "K2 HTTPS edge mapping must be ${UTCP_EDGE_HTTPS_HOST}:${UTCP_EDGE_HTTPS_HOST_PORT}->443"
 check_contains "nodeFilters:" "K2 edge mappings must target the load balancer"
-check_absent "18080|18443|0\\.0\\.0\\.0:(6550|5001|80|443)|:5060|:5061|rtp|sip|sips|asterisk|freeswitch|kamailio|rtpengine|NodePort" "unapproved application, custom-port, or telephony exposure is prohibited"
+if [ "${K3D_MEDIA_EDGE_PROFILE:-0}" = "1" ]; then
+  check_contains "port: 127.0.0.1:40000-40099:40000-40099/udp" "media-edge profile must publish the canonical UDP range"
+  check_contains "arg: --kube-apiserver-arg=service-node-port-range=30000-40099" "media-edge profile must extend the NodePort range"
+  check_contains "label: utcp.dev/media-edge=true" "media-edge node label is required"
+  check_absent "0\\.0\\.0\\.0|\\[::\\]|:2223|:2224|:10000|:20000|:21000|:21099|:5060|:5061|hostNetwork|pod-cidr" "unapproved media-edge exposure is prohibited"
+else
+  check_absent "18080|18443|0\\.0\\.0\\.0:(6550|5001|80|443)|:5060|:5061|rtp|sip|sips|asterisk|freeswitch|kamailio|rtpengine|NodePort|40000-40099|service-node-port-range=30000-40099|utcp.dev/media-edge" "unapproved application, custom-port, or telephony exposure is prohibited"
+fi
 
 printf 'k3d config check passed\n'
