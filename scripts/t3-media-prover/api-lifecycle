@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$ROOT/scripts/simulator/lib"
+
+STATE_DIR="${1:-}"
+ACTION="${2:-}"
+[ -n "$STATE_DIR" ] || { printf 't3 media prover API lifecycle requires a state directory\n' >&2; exit 1; }
+[ "$ACTION" = setup ] || [ "$ACTION" = cleanup ] || { printf 't3 media prover API lifecycle action must be setup or cleanup\n' >&2; exit 1; }
+mkdir -p "$STATE_DIR"
+chmod 700 "$STATE_DIR"
+
+json_body_get() { sim_json_get "$1" <"$SIM_BODY_FILE"; }
+
+member_csrf() {
+  local cookie_jar="$1"
+  local csrf_json
+  csrf_json="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" "$SIM_BASE/api/v1/auth/csrf")"
+  printf '%s' "$csrf_json" | sim_json_get csrf_token
+}
+
+member_login() {
+  local email="$1" password="$2" tenant_id="$3" new_password="$4" cookie_jar="$5"
+  local csrf login_payload code change_payload tenant_payload
+  csrf="$(member_csrf "$cookie_jar")"
+  login_payload="$(php -r 'echo json_encode(["email"=>$argv[1],"password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$email" "$password")"
+  code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header 'Content-Type: application/json' --header "X-CSRF-TOKEN: $csrf" --data "$login_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/login")"
+  [ "$code" = 200 ] || { printf 'proof member login failed with HTTP %s\n' "$code" >&2; exit 1; }
+  csrf="$(member_csrf "$cookie_jar")"
+  change_payload="$(php -r 'echo json_encode(["current_password"=>$argv[1],"new_password"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$password" "$new_password")"
+  code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header 'Content-Type: application/json' --header "X-CSRF-TOKEN: $csrf" --data "$change_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/change-password")"
+  [ "$code" = 200 ] || { printf 'proof member password change failed with HTTP %s\n' "$code" >&2; exit 1; }
+  csrf="$(member_csrf "$cookie_jar")"
+  tenant_payload="$(php -r 'echo json_encode(["tenant_id"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$tenant_id")"
+  code="$("${sim_curl[@]}" --cookie "$cookie_jar" --cookie-jar "$cookie_jar" --header 'Content-Type: application/json' --header "X-CSRF-TOKEN: $csrf" --data "$tenant_payload" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/auth/tenant-context")"
+  [ "$code" = 200 ] || { printf 'proof member tenant selection failed with HTTP %s\n' "$code" >&2; exit 1; }
+}
+
+setup() {
+  sim_login
+  local suffix="t3media$(date +%s%N)" user_payload code user_id member_email temporary_password membership_payload
+  user_payload="$(php -r 'echo json_encode(["email"=>"t3-media-".$argv[1]."@utcp.local.test","display_name"=>"T3 media proof ".$argv[1]], JSON_UNESCAPED_SLASHES);' "$suffix")"
+  code="$(sim_api POST /api/v1/admin/users "$user_payload")"
+  [ "$code" = 201 ] || { printf 'proof user creation failed with HTTP %s\n' "$code" >&2; exit 1; }
+  user_id="$(json_body_get user.id)"
+  member_email="$(json_body_get user.email)"
+  temporary_password="$(json_body_get temporary_password)"
+  membership_payload="$(php -r 'echo json_encode(["user_id"=>$argv[1],"role_key"=>"tenant-member"], JSON_UNESCAPED_SLASHES);' "$user_id")"
+  code="$(sim_api POST /api/v1/admin/memberships "$membership_payload" --header "Idempotency-Key: t3-media-membership-$suffix")"
+  [ "$code" = 201 ] || { printf 'proof membership creation failed with HTTP %s\n' "$code" >&2; exit 1; }
+
+  local member_csrf session_id username realm secret new_password
+  MEMBER_COOKIE="$(mktemp)"
+  member_cookie="$MEMBER_COOKIE"
+  trap 'rm -f "${MEMBER_COOKIE:-}"; sim_cleanup' EXIT
+  new_password="T3Media$(openssl rand -hex 12)!"
+  member_login "$member_email" "$temporary_password" "$SIM_TENANT_ID" "$new_password" "$member_cookie"
+  member_csrf="$(member_csrf "$member_cookie")"
+  code="$("${sim_curl[@]}" --cookie "$member_cookie" --header 'Content-Type: application/json' --header "X-CSRF-TOKEN: $member_csrf" --request POST --header "Idempotency-Key: t3-media-session-$suffix" --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/telephony/sessions")"
+  [ "$code" = 201 ] || { printf 'proof telephony session creation failed with HTTP %s\n' "$code" >&2; exit 1; }
+  session_id="$(json_body_get telephony_session.id)"
+  code="$("${sim_curl[@]}" --cookie "$member_cookie" --header "X-CSRF-TOKEN: $member_csrf" --request POST --output "$SIM_BODY_FILE" --write-out '%{http_code}' "$SIM_BASE/api/v1/telephony/sessions/$session_id/signaling-credential")"
+  [ "$code" = 201 ] || { printf 'proof signaling credential issuance failed with HTTP %s\n' "$code" >&2; exit 1; }
+  username="$(json_body_get credential.username)"
+  realm="$(json_body_get credential.realm)"
+  secret="$(json_body_get credential.sip_secret)"
+  [ -n "$secret" ] || { printf 'proof signaling credential secret was empty\n' >&2; exit 1; }
+
+  umask 077
+  {
+    printf 'UTCP_T3_MEDIA_PROVER_LOGIN_EMAIL=%q\n' "$member_email"
+    printf 'UTCP_T3_MEDIA_PROVER_LOGIN_PASSWORD=%q\n' "$new_password"
+    printf 'UTCP_T3_MEDIA_PROVER_SIP_USERNAME=%q\n' "$username"
+    printf 'UTCP_T3_MEDIA_PROVER_SIP_PASSWORD=%q\n' "$secret"
+  } >"$STATE_DIR/credentials.env"
+  {
+    printf '%s\n' "$user_id"
+    printf '%s\n' "$session_id"
+  } >"$STATE_DIR/authority"
+  chmod 600 "$STATE_DIR/credentials.env" "$STATE_DIR/authority"
+  printf 'proof_api_setup=passed\n'
+}
+
+cleanup() {
+  [ -s "$STATE_DIR/authority" ] || exit 0
+  mapfile -t authority <"$STATE_DIR/authority"
+  local user_id="${authority[0]:-}" session_id="${authority[1]:-}" code
+  [ -n "$user_id" ] && [ -n "$session_id" ] || exit 0
+  sim_login
+  code="$(sim_api POST "/api/v1/admin/users/$user_id/telephony-sessions/$session_id/end" || true)"
+  [ "$code" = 200 ] || { printf 'proof session cleanup failed with HTTP %s\n' "$code" >&2; exit 1; }
+  code="$(sim_api PATCH "/api/v1/admin/users/$user_id" '{"status":"suspended"}' || true)"
+  [ "$code" = 200 ] || { printf 'proof user suspension failed with HTTP %s\n' "$code" >&2; exit 1; }
+  printf 'proof_api_cleanup=passed\n'
+}
+
+if [ "$ACTION" = setup ]; then setup; else cleanup; fi

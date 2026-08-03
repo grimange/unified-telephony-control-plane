@@ -14,12 +14,42 @@ expect_fail "$RUNNER" --execution-mode unsupported --scenario browser-originated
 if ! "$RUNNER" --execution-mode host --scenario browser-originated-bye --dry-run | grep -Fq 'kubernetes_resources=none'; then
   printf 'host dry-run did not prove Kubernetes resources are absent\n' >&2; exit 1
 fi
-if "$RUNNER" --execution-mode host --scenario browser-originated-bye >/dev/null 2>&1; then
-  printf 'host runner launched without credentials\n' >&2; exit 1
+if ! grep -Fq 'api-lifecycle' "$RUNNER"; then
+  printf 'host runner must use the canonical API lifecycle\n' >&2; exit 1
 fi
+result_dir="$tmp/results"
+mkdir -p "$result_dir"
+printf 'stale-result' >"$result_dir/host-browser-originated-bye.json"
+mkdir -p "$tmp/bin"
+cat >"$tmp/bin/node" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "$tmp/bin/node"
+if PATH="$tmp/bin:$PATH" UTCP_T3_MEDIA_PROVER_RESULT_DIR="$result_dir" "$RUNNER" --execution-mode host --scenario browser-originated-bye >/dev/null 2>&1; then
+  printf 'host runner unexpectedly passed after proof execution failure\n' >&2; exit 1
+fi
+if [ -e "$result_dir/host-browser-originated-bye.json" ]; then
+  printf 'host runner exposed a pre-seeded result after proof execution failure\n' >&2; exit 1
+fi
+cat >"$tmp/bin/node" <<'EOF'
+#!/usr/bin/env bash
+printf '{"scenario":"browser-originated-bye","current":true}\n' >"$UTCP_T3_MEDIA_PROVER_RESULT_PATH"
+EOF
+chmod +x "$tmp/bin/node"
+PATH="$tmp/bin:$PATH" UTCP_T3_MEDIA_PROVER_RESULT_DIR="$result_dir" "$RUNNER" --execution-mode host --scenario browser-originated-bye >/dev/null
+grep -Fq '"current":true' "$result_dir/host-browser-originated-bye.json" || {
+  printf 'host runner did not consume the current invocation result\n' >&2; exit 1;
+}
 cp "$RUNNER" "$tmp/run"
 sed -i 's#tools/t3-media-prover/prover.mjs#tools/t3-media-prover/other-prover.mjs#' "$tmp/run"
 if grep -Fq 'node "$ROOT/tools/t3-media-prover/prover.mjs"' "$tmp/run"; then
   printf 'shared prover mutation unexpectedly passed\n' >&2; exit 1
+fi
+cp "$RUNNER" "$tmp/run-cleanup"
+sed -i '/rm -f "\$result_file"/d' "$tmp/run-cleanup"
+check_cleanup_contract() { grep -Fq 'rm -f "$result_file"' "$1"; }
+if check_cleanup_contract "$tmp/run-cleanup"; then
+  printf 'host cleanup mutation unexpectedly passed\n' >&2; exit 1
 fi
 printf 'T3 media prover host mutation checks passed\n'

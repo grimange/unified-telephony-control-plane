@@ -35,20 +35,23 @@ esac
 [ "$SCENARIO" = "browser-originated-bye" ] || [ "$SCENARIO" = "runtime-originated-bye" ] || fail "scenario must be browser-originated-bye or runtime-originated-bye"
 
 if [ "$EXECUTION_MODE" = host ]; then
-  [ "$DRY_RUN" -eq 1 ] || {
-    require_env UTCP_T3_MEDIA_PROVER_LOGIN_EMAIL
-    require_env UTCP_T3_MEDIA_PROVER_LOGIN_PASSWORD
-    require_env UTCP_T3_MEDIA_PROVER_SIP_USERNAME
-    require_env UTCP_T3_MEDIA_PROVER_SIP_PASSWORD
-    [ -s "$ROOT/.runtime/tls/utcp-local-ca.crt" ] || fail "trusted local CA certificate is required at $ROOT/.runtime/tls/utcp-local-ca.crt"
-  }
-  command -v node >/dev/null 2>&1 || fail "node is required for host execution"
-  [ -f "$ROOT/tools/t3-media-prover/prover.mjs" ] || fail "shared browser prover is missing"
   mkdir -p "$RESULT_DIR"
   result_file="$RESULT_DIR/host-${SCENARIO}.json"
   state_dir="$(mktemp -d "$RESULT_DIR/host-state.XXXXXX")"
-  cleanup_host() { rm -rf "$state_dir"; }
+  cleanup_host() {
+    local status=$?
+    if [ "$DRY_RUN" -eq 0 ] && [ -s "$state_dir/authority" ]; then
+      "$ROOT/scripts/t3-media-prover/api-lifecycle" "$state_dir" cleanup || status=1
+    fi
+    rm -rf "$state_dir"
+    return "$status"
+  }
   trap cleanup_host EXIT INT TERM
+  rm -f "$result_file"
+  [ "$DRY_RUN" -eq 1 ] || [ -s "$ROOT/.runtime/identity/bootstrap.json" ] || fail "canonical identity bootstrap credentials are required at $ROOT/.runtime/identity/bootstrap.json"
+  [ "$DRY_RUN" -eq 1 ] || [ -s "$ROOT/.runtime/tls/utcp-local-ca.crt" ] || fail "trusted local CA certificate is required at $ROOT/.runtime/tls/utcp-local-ca.crt"
+  command -v node >/dev/null 2>&1 || fail "node is required for host execution"
+  [ -f "$ROOT/tools/t3-media-prover/prover.mjs" ] || fail "shared browser prover is missing"
   if [ "$DRY_RUN" -eq 1 ]; then
     printf 'execution_mode=host\nshared_prover=%s\napplication_url=%s\nsip_wss_url=%s\nkubernetes_resources=none\nresult_path=%s\ncleanup=installed\n' \
       "$ROOT/tools/t3-media-prover/prover.mjs" \
@@ -57,8 +60,17 @@ if [ "$EXECUTION_MODE" = host ]; then
       "$result_file"
     exit 0
   fi
+  "$ROOT/scripts/t3-media-prover/api-lifecycle" "$state_dir" setup
+  # The setup file is mode-600 and is removed by the exit trap after the prover and API cleanup.
+  set -a
+  . "$state_dir/credentials.env"
+  set +a
+  mkdir -p "$state_dir/home"
+  playwright_browsers_path="${PLAYWRIGHT_BROWSERS_PATH:-${HOME:-}/.cache/ms-playwright}"
   set +e
   env \
+    HOME="$state_dir/home" \
+    PLAYWRIGHT_BROWSERS_PATH="$playwright_browsers_path" \
     UTCP_T3_MEDIA_PROVER_EXECUTION_MODE=host \
     UTCP_T3_MEDIA_PROVER_SCENARIO="$SCENARIO" \
     UTCP_T3_MEDIA_PROVER_GATEWAY_SERVICE="${UTCP_T3_MEDIA_PROVER_GATEWAY_SERVICE:-127.0.0.1}" \
@@ -67,6 +79,7 @@ if [ "$EXECUTION_MODE" = host ]; then
     node "$ROOT/tools/t3-media-prover/prover.mjs"
   status=$?
   set -e
+  [ -s "$result_file" ] || { printf 'host proof did not produce a current result at %s\n' "$result_file" >&2; exit 1; }
   exit "$status"
 fi
 

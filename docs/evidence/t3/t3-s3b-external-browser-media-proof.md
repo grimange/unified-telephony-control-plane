@@ -852,3 +852,371 @@ edge, the loopback UDP range `127.0.0.1:40000-40099`, the
 server label. The alternate profile was removed from the repository so the
 external proof uses the same canonical cluster lifecycle as the baseline
 deployment.
+
+# Canonical Rebuild And Live Reproof Attempt
+
+Date: 2026-08-03
+
+The disposable `utcp-local` development environment was destroyed and
+recreated under the explicitly authorized clean-install condition. The
+canonical `make k3d-recreate-proof` lifecycle created one server, two agents,
+the `utcp-local-registry` at `127.0.0.1:5001`, TCP edge publications on ports
+80 and 443, and the complete `127.0.0.1:40000-40099/UDP` publication. The old
+application, runtime, PVC, and local-path state was intentionally not restored.
+`apntalk-local` remained stopped and untouched.
+
+The first fresh recreation exposed a verifier command-order defect: the
+repository emitted `kubectl --context ... -A get`, which the installed kubectl
+rejected. The verifier now emits `kubectl --context ... get ... -A`, with a
+focused regression check. A second verifier correction excludes the expected
+kube-system `svclb-traefik` ServiceLB pods from the unauthorized-workload
+check. The K4 observability configuration also now permits its declared
+rtpengine PodMonitor and avoids matching the legitimate alert threshold as a
+media-port declaration. The focused checks and `make check` pass after these
+corrections. K4 installation itself remains blocked by the external Grafana
+Helm repository timing out; no alternate deployment path was used.
+
+The canonical application lifecycle then completed from the empty database:
+`make k8s-apply` built and published the canonical images, ran migrations, and
+made the platform and runtime workloads ready. A second `make k8s-apply`
+completed idempotently. `make k8s-proof`, `make k8s-persistence-proof`, and
+`make identity-bootstrap-local` passed. Gateway, security, and k3d verification
+passed. The external media projection was applied through the repository-owned
+`make media-edge-apply` lifecycle, which rolled out rtpengine and declared the
+UDP media Service and its existing bounded NetworkPolicy.
+
+After the media projection was installed, `gateway-proof` required an explicit
+exception for the authorized `utcp-platform/rtpengine-media` NodePort. The
+verifier was narrowed to continue rejecting every other direct K1
+platform/data exposure.
+
+Live rtpengine inspection after that rollout showed the expected pinned
+version and distinct interfaces:
+
+```text
+--interface=runtime/10.42.0.29!10.42.0.29
+--interface=browser/10.42.0.29!127.0.0.1
+--port-min=40000 --port-max=40099
+```
+
+The first real host-mode browser proof used the normal application login flow
+and the repository Playwright prover. SIP signaling reached the application
+runtime, but the proof failed at its media assertion: inbound RTP packet and
+byte counters did not increase, and browser
+`inbound-rtp.totalAudioEnergy` was not positive. The sanitized prover result is
+kept only in ignored `.runtime` state. No successful Scenario A claim is made.
+Scenario B, the four bounded failure cases, and the live containment sweep
+were not completed after Scenario A exposed this remaining runtime media-path
+gap. The static containment and NetworkPolicy checks passed, but that does not
+substitute for the required live sweep.
+
+## Current Status After Rebuild
+
+```text
+canonical rebuild and fresh install = passed
+PRODUCT_DEFECT-26 repository implementation = passed
+PRODUCT_DEFECT-26 live interface inspection = passed
+T3-S3B Scenario A = failed: no inbound RTP/audio energy
+T3-S3B Scenario B = not proven
+T3-S3B bounded failure cases = not run to completion
+T3-S3B live containment sweep = not proven
+T3-S3B = blocked
+```
+
+The historical `utcp-mediaedge` incident remains recorded above; it was not
+created or adopted during this run. The canonical lifecycle and the clean
+rebuild are the only supported environment path.
+
+# T3-S3B Scenario A Diagnosis At `dddf688` — Media Path Proven End-To-End
+
+Date: 2026-08-03. Evidence-only diagnostic run. No repository implementation
+change, no commit, no cluster recreation, no manifest application, no live
+resource patch, no NetworkPolicy change.
+
+## Summary
+
+The reported Scenario A media failure **does not reproduce**. Two consecutive
+natural host-browser Scenario A runs against the deployed `dddf688` stack passed
+with reciprocal RTP and positive inbound audio energy. Every hop from the host
+loopback edge to Asterisk and back carries traffic.
+
+**`PRODUCT_DEFECT-26` is closed and live-proven.** The captured INVITE toward
+the application runtime now advertises the rtpengine Pod IP, and Asterisk's RTP
+returns to rtpengine instead of its own loopback.
+
+There is **no failed RTP hop**. The first-failed-hop question is answered
+negatively at every one of the twelve boundaries examined.
+
+## Baseline Environment
+
+```text
+cluster/context      utcp-local / k3d-utcp-local
+nodes                server-0 172.21.0.2, agent-0 172.21.0.3, agent-1 172.21.0.4, all Ready
+rtpengine Pod        10.42.0.29 on k3d-utcp-local-server-0, 0 restarts
+rtpengine image      utcp-local-registry:5000/utcp/rtpengine@sha256:32ee825d…
+asterisk-ari Pod     10.42.1.4 on k3d-utcp-local-agent-0
+kamailio Pod         10.42.0.6 on k3d-utcp-local-server-0
+rtpengine-media Svc  NodePort, externalTrafficPolicy Local, 100 UDP ports
+                     port == targetPort == nodePort for all of 40000-40099
+EndpointSlice        10.42.0.29 ready, node k3d-utcp-local-server-0, 100 ports
+host publication     100 UDP mappings 127.0.0.1:40000-40099 on the serverlb only;
+                     server-0, agent-0 and agent-1 publish nothing
+k3d serverlb         one nginx stream server per media port, single upstream
+                     k3d-utcp-local-server-0:<same port>
+apntalk-local        stopped, untouched
+utcp-mediaedge       absent
+registry             127.0.0.1:5001 only
+```
+
+Live rtpengine arguments:
+
+```text
+--listen-ng=10.42.0.29:2223
+--interface=runtime/10.42.0.29!10.42.0.29
+--interface=browser/10.42.0.29!127.0.0.1
+--port-min=40000 --port-max=40099
+```
+
+## Natural Proof Method
+
+Two disposable proof members, telephony sessions and signaling credentials were
+issued **through the canonical HTTP API only** — `/api/v1/auth/login`,
+`/api/v1/auth/tenant-context`, `/api/v1/admin/users`,
+`/api/v1/admin/memberships`, `/api/v1/telephony/sessions` and
+`/api/v1/telephony/sessions/{id}/signaling-credential`. No SQL, no Redis, no
+injected session. Both sessions were then ended through
+`/api/v1/telephony/sessions/{id}/end`; the Kamailio auth view returned to `0`
+rows, so no signaling credential remains live.
+
+The media proof itself is the unmodified repository lifecycle:
+
+```text
+./scripts/t3-media-prover/run --execution-mode host --scenario browser-originated-bye
+```
+
+## Scenario A Result — Two Consecutive Passes
+
+```text
+                       run 1                 run 2
+errors                 []                    []
+dtlsState              connected             connected
+localCandidateType     prflx                 prflx
+remoteCandidateType    host (loopback)       host (loopback)
+outboundRtpPackets     176 / 28160 b         177 / 28320 b
+inboundRtpPackets      175 / 28000 b         176 / 28160 b
+audioEnergy            0.11080               0.11031
+audioEnergySource      inbound-rtp.totalAudioEnergy
+packetsLost            1                     0
+byeDirection           browser               browser
+finalSipResult         SIP/2.0 200 OK        SIP/2.0 200 OK
+cleanupResult          signaling-closed      signaling-closed
+runner exit            0                     0
+```
+
+## Runtime-Facing SDP — PRODUCT_DEFECT-26 Closed
+
+Captured on the runtime-facing UDP `5060` leg (headers other than the SDP media
+lines were discarded before output):
+
+```text
+10.42.0.6:5060 -> 10.42.1.4:5060   INVITE sip:9900@sip.utcp.local.test SIP/2.0
+    m=audio 40014 RTP/AVP 111 63 9 0 8 13 110 126
+    c=IN IP4 10.42.0.29
+    a=rtcp:40015
+
+10.43.214.161:5060 -> 10.42.0.6:5060   SIP/2.0 200 OK
+    c=IN IP4 10.42.1.4
+    m=audio 12310 RTP/AVP 0 126
+```
+
+The runtime-facing connection address is the rtpengine **Pod IP**, not
+`127.0.0.1`. This is the exact line that carried `c=IN IP4 127.0.0.1` at
+`76d0bdd`.
+
+## Hop-By-Hop Packet Observation
+
+Bounded UDP flow counters in the `k3d-utcp-local-server-0` and
+`k3d-utcp-local-agent-0` network namespaces during run 1. Headers and sizes
+only; no payload retained.
+
+```text
+ 4  NodePort ingress at the node
+    eth0          172.21.0.5:46965 -> 172.21.0.2:40005   193 p   36787 b
+ 5  DNAT to the rtpengine Pod, client source preserved (externalTrafficPolicy Local)
+    cni0/veth     172.21.0.5:46965 -> 10.42.0.29:40005   193 p   36787 b
+ 7  rtpengine runtime leg outbound to Asterisk
+    flannel.1     10.42.0.29:40036 -> 10.42.1.4:18614    181 p   31132 b
+ 8  same flow observed arriving on the Asterisk node
+    veth (agent-0) 10.42.0.29:40036 -> 10.42.1.4:18614   181 p   31132 b
+ 9  Asterisk return RTP leaving its Pod
+    veth (agent-0) 10.42.1.4:18614 -> 10.42.0.29:40036   175 p   30100 b
+10  same flow arriving at the rtpengine Pod
+    veth (server-0) 10.42.1.4:18614 -> 10.42.0.29:40036  175 p   30100 b
+11  rtpengine browser leg outbound
+    veth          10.42.0.29:40005 -> 172.21.0.5:46965   183 p   34346 b
+    eth0          172.21.0.2:40005 -> 172.21.0.5:46965   183 p   34346 b
+```
+
+rtpengine's own final per-leg statistics for the same call:
+
+```text
+Port 10.42.0.29:40005 <>  172.21.0.5:46965          in 183 p, 31220 b   out 177 p, 33694 b
+Port 10.42.0.29:40036 <>   10.42.1.4:18614          in 175 p, 30100 b   out 181 p, 31132 b
+Port 10.42.0.29:40037 <>   10.42.1.4:18615 (RTCP)   in   0 p,     0 b   out   2 p,    88 b
+```
+
+The runtime leg inbound counter is **175**, not `0`. ICE negotiated against the
+published edge:
+
+```text
+[ice] ICE negotiated: peer for component 1 is 172.21.0.5:46965
+[ice] ICE negotiated: local interface 10.42.0.29
+```
+
+Kamailio recorded the full media lifecycle for the same `Call-ID`:
+
+```text
+kamailio_websocket_accepted        result=ok
+kamailio_application_dialog_challenge result=challenge  method=INVITE
+kamailio_application_dialog_media  result=media_offer   method=INVITE
+kamailio_application_dialog_media  result=media_answer  method=INVITE
+kamailio_application_dialog_media  result=media_delete  method=BYE
+```
+
+## Why The Previous Run Reported A Failure
+
+The previously reported Scenario A failure was **not produced by this deployed
+stack**. Three independent observations establish that no Scenario A call was
+executed after the media-edge rollout:
+
+1. rtpengine started `2026-08-03T00:23:30Z` with `0` restarts and, over the
+   whole diagnostic window, had received exactly **two** `offer` commands — both
+   from this run. `rtpengine_sessions_total` was `2`.
+2. The Kamailio Pod predates the rtpengine rollout, has `0` restarts, and its
+   entire log before this run contains **only startup lines** — no
+   `websocket_accepted`, no `challenge`, no media event.
+3. `.runtime/t3-media-prover/host-browser-originated-bye.json` still carried its
+   `2026-08-02` modification time and `durationMs 4858` immediately before this
+   run. The failure string quoted for the previous run is verbatim identical to
+   that stale file's contents.
+
+The prover writes its result file on failure as well as on success, so an
+executed-and-failed Scenario A would have rewritten that file. It did not.
+
+## Repository-Owned Gap Identified
+
+`scripts/t3-media-prover/run` removes the previous result only in the
+`kubernetes` branch (`rm -f "$RESULT_DIR/result.json"`). The `host` branch
+computes `host-${SCENARIO}.json` and never clears it, and there is no staleness
+guard. A result file written by an earlier cluster therefore survives a full
+canonical rebuild and can be read as if it were the current outcome. This is a
+`PROOF_HARNESS_DEFECT`, not a media-path defect.
+
+A second, larger gap: both execution modes `require_env` four credential values
+with no repository-owned lifecycle that issues them through the canonical API,
+so every Scenario A run depends on out-of-band provisioning.
+
+## Non-Blocking Observations
+
+- Kamailio logs one `PGRES_FATAL_ERROR` / `terminating connection due to
+  administrator command` pair per call, on the first database query of a worker
+  process. PostgreSQL itself logs no `FATAL` and no shutdown. Kamailio
+  reconnects, digest authentication succeeds, and the call completes. Pre-existing
+  and non-blocking; it did not affect either run.
+- `/metrics` exposes `rtpengine_ports*` and `rtpengine_interface_*` only under
+  `name="runtime"`. The `browser` interface has no series even though it
+  allocated and released port `40005`. Observability labelling gap only.
+
+## Status After This Diagnosis
+
+```text
+PRODUCT_DEFECT-26                      = closed, live-proven
+T3-S3B Scenario A                      = passed, reproduced twice
+T3-S3B Scenario B                      = not run in this diagnostic run
+T3-S3B bounded failure cases           = not run in this diagnostic run
+T3-S3B live containment sweep          = not run in this diagnostic run
+T3-S3B                                 = not complete; no longer blocked
+T3-S3 / T3                             = In Progress
+UTCP_PHASE=T1
+```
+
+Scenario B, the four bounded failure cases, and the live containment sweep
+remain unproven because this run was scoped to the Scenario A diagnosis. No
+completion claim is made for them.
+
+## Environment State After This Run
+
+```text
+rtpengine sessions own/foreign         0 / 0
+rtpengine ports used/free              0 / 100
+rtpengine restarts                     0
+new Pod restarts caused by this run    0
+kamailio_signaling_auth_view rows      0
+proof telephony sessions               2 created, 2 ended through the canonical API
+Kubernetes resources created           none
+Kubernetes resources modified          none
+```
+
+# Host Result Freshness And Canonical Proof Lifecycle At `dddf688`
+
+Date: 2026-08-03. Bounded harness correction and controlled live reproof.
+
+## Harness correction
+
+`scripts/t3-media-prover/run` now resolves and removes the host result before
+any host prerequisite, setup, browser, or proof execution can fail. A current
+result is required after the prover returns. The host runner now creates its
+proof identity through the existing authenticated HTTP API lifecycle, writes
+the four child-process credential values only to a mode-600 temporary file,
+and removes that state on exit. Cleanup ends the telephony session through the
+admin API and suspends the disposable proof user; no SQL, Redis, injected
+session, or hard-coded credential was used.
+
+The focused host mutation test passed for a pre-seeded result followed by a
+failed prover: the old result was absent. A controlled successful child then
+wrote and was consumed as the current result. Removing the cleanup line was
+detected by the mutation assertion. Existing Kubernetes-mode checks remained
+passing.
+
+## Controlled live results
+
+Scenario A was run once after the correction through the canonical host runner.
+It created a fresh result after the pre-run removal and completed normal API
+cleanup. Sanitized current values were:
+
+```text
+errors                 []
+dtlsState              connected
+peerConnectionState    closed
+outboundRtpPackets     179
+inboundRtpPackets      178
+inboundRtpBytes        28480
+audioEnergy             0.11224649268565433
+audioEnergySource       inbound-rtp.totalAudioEnergy
+byeDirection            browser
+finalSipResult          SIP/2.0 200 OK
+cleanupResult           signaling-closed
+runner API cleanup      passed
+```
+
+This is a current Scenario A pass and is consistent with the already proven
+PRODUCT_DEFECT-26 runtime-facing Pod advertisement and reciprocal media path.
+
+Scenario B was attempted through the same lifecycle. It reached the current
+runtime-hangup readiness marker, but the current result recorded:
+
+```text
+errors          timed out waiting for SIP message
+cleanupResult   failed-before-cleanup
+durationMs      125374
+```
+
+The runner's API cleanup completed after the attempt. Scenario B is therefore
+not a pass. The failure is a live proof gap in the runtime-originated hangup
+path; no media-topology or PRODUCT_DEFECT-26 change was made.
+
+The four bounded failure cases and the live containment sweep were not run to
+completion after Scenario B failed. Static media-edge, NetworkPolicy,
+default-overlay, and security checks remain passing, but they do not replace
+the required live sweep. `docs/roadmap/phase-status.md` was not changed and
+T3-S3B remains incomplete.
