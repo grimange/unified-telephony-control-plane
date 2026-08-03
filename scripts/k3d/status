@@ -56,7 +56,7 @@ else
   printf 'media_binding_missing=127.0.0.1:40000-40099->40000-40099/udp\n'
 fi
 
-if kube -A get pods,deployments 2>/dev/null | grep -iq traefik; then
+if kube get pods,deployments -A 2>/dev/null | grep -iq traefik; then
   printf 'traefik_absent=false\n'
 else
   printf 'traefik_absent=true\n'

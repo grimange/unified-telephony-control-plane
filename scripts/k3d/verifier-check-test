@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+if rg -n 'kube -A get' "$ROOT/scripts/k3d/verify" "$ROOT/scripts/k3d/status" >/dev/null; then
+  printf 'k3d verifier contains invalid pre-command -A placement\n' >&2
+  exit 1
+fi
+
+printf 'k3d verifier command-order regression check passed\n'
