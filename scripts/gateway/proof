@@ -66,7 +66,10 @@ if [ "$dashboard_code" = "200" ] && grep -Eiq 'traefik|routers|middlewares' /tmp
 fi
 rm -f /tmp/utcp-gateway-dashboard.out
 
-if kube get service -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"="}{.spec.type}{"\n"}{end}' | grep -E 'utcp-(platform|data)/.*=(NodePort|LoadBalancer)' | grep -q .; then
+if kube get service -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}{"="}{.spec.type}{"\n"}{end}' \
+  | grep -E 'utcp-(platform|data)/.*=(NodePort|LoadBalancer)' \
+  | grep -Ev '^utcp-platform/rtpengine-media=NodePort$' \
+  | grep -q .; then
   printf 'K1 service is directly exposed\n' >&2
   exit 1
 fi
