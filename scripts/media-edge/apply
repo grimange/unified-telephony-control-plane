@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+OVERLAY="${UTCP_MEDIA_EDGE_OVERLAY_DIR:-$ROOT/infrastructure/kubernetes/overlays/local-media-edge}"
+KUBECONFIG_PATH="${KUBECONFIG:-$ROOT/.runtime/kubeconfig/utcp-local.yaml}"
+KUBE_CONTEXT="${UTCP_KUBE_CONTEXT:-k3d-utcp-local}"
+
+command -v kubectl >/dev/null 2>&1 || { printf 'kubectl is required\n' >&2; exit 1; }
+[ -s "$KUBECONFIG_PATH" ] || { printf 'kubeconfig not found: %s\n' "$KUBECONFIG_PATH" >&2; exit 1; }
+[ -d "$OVERLAY" ] || { printf 'media-edge overlay not found: %s\n' "$OVERLAY" >&2; exit 1; }
+
+"$ROOT/scripts/media-edge/config-check"
+kubectl_cmd() { kubectl --kubeconfig "$KUBECONFIG_PATH" --context "$KUBE_CONTEXT" "$@"; }
+
+current_context="$(kubectl --kubeconfig "$KUBECONFIG_PATH" config current-context)"
+[ "$current_context" = "$KUBE_CONTEXT" ] || {
+  printf 'expected kubeconfig current context %s, got %s\n' "$KUBE_CONTEXT" "$current_context" >&2
+  exit 1
+}
+
+kubectl_cmd apply -k "$OVERLAY"
+kubectl_cmd -n utcp-platform rollout status deployment/rtpengine --timeout=180s
+kubectl_cmd -n utcp-platform wait --for=condition=Ready pod -l utcp.io/network-role=rtpengine-media --timeout=180s
+printf 'external media-edge overlay applied through canonical utcp-local lifecycle\n'

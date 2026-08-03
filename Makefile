@@ -78,7 +78,7 @@ test: api-test web-test ## Run backend and frontend tests.
 
 check: repository-hygiene media-config-check media-config-check-test media-edge-config-check media-edge-config-check-test media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test rtpengine-advertised-address-check freeswitch-config-check freeswitch-config-check-test freeswitch-overlay-check t3-media-prover-config-check t3-media-prover-config-check-test t3-media-prover-host-check security-config-check-test kamailio-signaling-config-check api-check web-lint web-typecheck ## Run repository, backend, frontend, media, security, and Kamailio signaling static checks.
 
-.PHONY: rtpengine-advertised-address-check media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test t3-media-prover-host-check t3-media-prover-host-check-test k3d-config-check-test k3d-verifier-check-test
+.PHONY: rtpengine-advertised-address-check media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test media-edge-apply t3-media-prover-host-check t3-media-prover-host-check-test k3d-config-check-test k3d-verifier-check-test
 
 k3d-config-check-test: ## Run canonical utcp-local RTP publication mutation checks.
 	@./scripts/k3d/config-check-test
@@ -101,6 +101,9 @@ media-edge-overlay-applicability-check: media-edge-config-check ## Validate plai
 
 media-edge-overlay-applicability-check-test: media-edge-overlay-applicability-check ## Run List-normalization applicability mutations.
 	@./scripts/media-edge/overlay-applicability-check-test
+
+media-edge-apply: ## Apply the external media-edge projection through canonical utcp-local lifecycle.
+	@./scripts/media-edge/apply
 
 rtpengine-advertised-address-check: ## Execute the shared rtpengine address validators.
 	@./scripts/media-edge/config-check
