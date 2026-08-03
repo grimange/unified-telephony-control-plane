@@ -8,4 +8,9 @@ if rg -n 'kube -A get' "$ROOT/scripts/k3d/verify" "$ROOT/scripts/k3d/status" >/d
   exit 1
 fi
 
+if ! rg -n "grep -Ev '\^kube-system\[\[:space:\]\]\+\.\*svclb-traefik'" "$ROOT/scripts/k3d/verify" >/dev/null; then
+  printf 'k3d verifier does not allow the K3s Traefik ServiceLB workload\n' >&2
+  exit 1
+fi
+
 printf 'k3d verifier command-order regression check passed\n'

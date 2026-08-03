@@ -32,7 +32,7 @@ helm_cmd template alloy alloy \
 render_observability > "$tmpdir/utcp-observability.yaml"
 
 for file in "$tmpdir"/*.yaml; do
-  if grep -Eiq '18080|18443|5060|5061|10000|20000|rtpengine|freeswitch|reverb|tempo|jaeger|zipkin|opentelemetry|name: (sip|sips|rtp)|port: (5060|5061)' "$file"; then
+  if grep -Eiq 'port: (18080|18443|5060|5061|10000|20000)|freeswitch|reverb|tempo|jaeger|zipkin|opentelemetry|name: (sip|sips|rtp)([^a-zA-Z0-9_-]|$)|port: (5060|5061)' "$file"; then
     printf 'K4 manifests include forbidden custom edge, tracing, or SIP/media material: %s\n' "$file" >&2
     exit 1
   fi

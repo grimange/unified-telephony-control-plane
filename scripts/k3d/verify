@@ -65,7 +65,7 @@ for ns in utcp-observability; do
   fi
 done
 
-if kube get pods,deployments,statefulsets,daemonsets,jobs,cronjobs -A --ignore-not-found --no-headers 2>/dev/null | grep -i traefik | grep -v 'traefik-system' | grep -q .; then
+if kube get pods,deployments,statefulsets,daemonsets,jobs,cronjobs -A --ignore-not-found --no-headers 2>/dev/null | grep -i traefik | grep -v 'traefik-system' | grep -Ev '^kube-system[[:space:]]+.*svclb-traefik' | grep -q .; then
   printf 'Traefik workload exists outside traefik-system\n' >&2
   exit 1
 fi
