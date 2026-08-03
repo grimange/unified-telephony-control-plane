@@ -67,18 +67,49 @@ if [ "$EXECUTION_MODE" = host ]; then
   set +a
   mkdir -p "$state_dir/home"
   playwright_browsers_path="${PLAYWRIGHT_BROWSERS_PATH:-${HOME:-}/.cache/ms-playwright}"
-  set +e
-  env \
-    HOME="$state_dir/home" \
-    PLAYWRIGHT_BROWSERS_PATH="$playwright_browsers_path" \
-    UTCP_T3_MEDIA_PROVER_EXECUTION_MODE=host \
-    UTCP_T3_MEDIA_PROVER_SCENARIO="$SCENARIO" \
-    UTCP_T3_MEDIA_PROVER_GATEWAY_SERVICE="${UTCP_T3_MEDIA_PROVER_GATEWAY_SERVICE:-127.0.0.1}" \
-    UTCP_T3_MEDIA_PROVER_CA_CERT="${UTCP_T3_MEDIA_PROVER_CA_CERT:-$ROOT/.runtime/tls/utcp-local-ca.crt}" \
-    UTCP_T3_MEDIA_PROVER_RESULT_PATH="$result_file" \
-    node "$ROOT/tools/t3-media-prover/prover.mjs"
-  status=$?
-  set -e
+  prover_env=(
+    HOME="$state_dir/home"
+    PLAYWRIGHT_BROWSERS_PATH="$playwright_browsers_path"
+    UTCP_T3_MEDIA_PROVER_EXECUTION_MODE=host
+    UTCP_T3_MEDIA_PROVER_SCENARIO="$SCENARIO"
+    UTCP_T3_MEDIA_PROVER_GATEWAY_SERVICE="${UTCP_T3_MEDIA_PROVER_GATEWAY_SERVICE:-127.0.0.1}"
+    UTCP_T3_MEDIA_PROVER_CA_CERT="${UTCP_T3_MEDIA_PROVER_CA_CERT:-$ROOT/.runtime/tls/utcp-local-ca.crt}"
+    UTCP_T3_MEDIA_PROVER_RESULT_PATH="$result_file"
+  )
+  runtime_marker_seen=0
+  runtime_control_failed=0
+  if [ "$SCENARIO" = runtime-originated-bye ]; then
+    "$ROOT/scripts/t3-media-prover/runtime-hangup" snapshot "$state_dir/runtime-channels"
+    fifo="$state_dir/prover.stdout"
+    mkfifo "$fifo"
+    env "${prover_env[@]}" node "$ROOT/tools/t3-media-prover/prover.mjs" >"$fifo" 2>&1 &
+    prover_pid=$!
+    while IFS= read -r line || [ -n "$line" ]; do
+      printf '%s\n' "$line"
+      if [ "$line" = UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP ] && [ "$runtime_marker_seen" -eq 0 ]; then
+        runtime_marker_seen=1
+        if ! "$ROOT/scripts/t3-media-prover/runtime-hangup" hangup "$state_dir/runtime-channels"; then
+          printf 'runtime hangup trigger was rejected for the current proof\n' >&2
+          runtime_control_failed=1
+          "$ROOT/scripts/t3-media-prover/runtime-hangup" cleanup "$state_dir/runtime-channels" || true
+          kill "$prover_pid" 2>/dev/null || true
+          break
+        fi
+      fi
+    done <"$fifo"
+    if [ "$runtime_control_failed" -eq 1 ]; then
+      wait "$prover_pid" 2>/dev/null || true
+      exit 1
+    fi
+    wait "$prover_pid" || status=$?
+    status="${status:-0}"
+    [ "$runtime_marker_seen" -eq 1 ] || { printf 'runtime hangup trigger marker was never reached\n' >&2; exit 1; }
+  else
+    set +e
+    env "${prover_env[@]}" node "$ROOT/tools/t3-media-prover/prover.mjs"
+    status=$?
+    set -e
+  fi
   [ -s "$result_file" ] || { printf 'host proof did not produce a current result at %s\n' "$result_file" >&2; exit 1; }
   exit "$status"
 fi

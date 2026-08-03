@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+KUBECONFIG_PATH="${KUBECONFIG:-$ROOT/.runtime/kubeconfig/utcp-local.yaml}"
+KUBE_CONTEXT="${UTCP_KUBE_CONTEXT:-k3d-utcp-local}"
+RUNTIME_FAMILY="${UTCP_T3_MEDIA_PROVER_RUNTIME_FAMILY:-asterisk}"
+RUNTIME_NAMESPACE="${UTCP_T3_MEDIA_PROVER_RUNTIME_NAMESPACE:-utcp-runtime}"
+
+fail() { printf 't3 runtime hangup failed: %s\n' "$1" >&2; exit 1; }
+
+[ "$#" -ge 2 ] || fail 'usage: runtime-hangup snapshot|hangup|cleanup state-file'
+ACTION="$1"
+STATE_FILE="$2"
+SELECTED_FILE="${STATE_FILE}.selected"
+mkdir -p "$(dirname "$STATE_FILE")"
+umask 077
+
+kube() {
+  kubectl --kubeconfig "$KUBECONFIG_PATH" --context "$KUBE_CONTEXT" "$@"
+}
+
+runtime_cli() {
+  case "$RUNTIME_FAMILY" in
+    asterisk)
+      kube -n "$RUNTIME_NAMESPACE" exec deploy/asterisk-ari -- \
+        /usr/sbin/asterisk -C /tmp/utcp-asterisk/asterisk.conf -rx "$1"
+      ;;
+    freeswitch)
+      [ -n "${UTCP_ESL_PASSWORD:-}" ] || fail 'UTCP_ESL_PASSWORD is required for the supported FreeSWITCH ESL transport'
+      kube -n "$RUNTIME_NAMESPACE" exec deploy/freeswitch -- \
+        fs_cli -q -H 127.0.0.1 -P 8021 -p "$UTCP_ESL_PASSWORD" -x "$1"
+      ;;
+    *)
+      fail "unsupported runtime family $RUNTIME_FAMILY"
+      ;;
+  esac
+}
+
+snapshot() {
+  case "$RUNTIME_FAMILY" in
+    asterisk) runtime_cli 'core show channels concise' ;;
+    freeswitch) runtime_cli 'show channels' ;;
+    *) fail "unsupported runtime family $RUNTIME_FAMILY" ;;
+  esac
+}
+
+select_asterisk_channel() {
+  local before="$1" after="$2" candidates count
+  candidates="$(awk -F'!' '
+    NR == FNR { seen[$1] = 1; next }
+    !seen[$1] && $2 == "from-kamailio" && $3 == "9900" && $5 == "Up" && $6 == "Echo" { print $1 }
+  ' "$before" "$after")"
+  count="$(printf '%s\n' "$candidates" | sed '/^$/d' | wc -l | tr -d ' ')"
+  case "$count" in
+    0) fail 'no new correlated proof channel was found after the readiness marker' ;;
+    1) printf '%s\n' "$candidates" >"$SELECTED_FILE"; chmod 600 "$SELECTED_FILE"; printf 'runtime_hangup_selected_channel=%s\n' "$candidates" ;;
+    *) fail "ambiguous correlated proof channels: $count" ;;
+  esac
+}
+
+select_freeswitch_channel() {
+  local before="$1" after="$2" candidates count
+  # `show channels` is CSV-like and the first field is the channel UUID.  The
+  # proof dialplan is the only supported candidate scope for this actor.
+  candidates="$(awk -F',' '
+    NR == FNR { seen[$1] = 1; next }
+    !seen[$1] && $0 ~ /9900/ && $0 ~ /CS_EXECUTE/ { print $1 }
+  ' "$before" "$after" | sed '/^$/d')"
+  count="$(printf '%s\n' "$candidates" | sed '/^$/d' | wc -l | tr -d ' ')"
+  case "$count" in
+    0) fail 'no new correlated proof channel was found after the readiness marker' ;;
+    1) printf '%s\n' "$candidates" >"$SELECTED_FILE"; chmod 600 "$SELECTED_FILE"; printf 'runtime_hangup_selected_channel=%s\n' "$candidates" ;;
+    *) fail "ambiguous correlated proof channels: $count" ;;
+  esac
+}
+
+hangup_asterisk() {
+  local channel="$1" response
+  response="$(runtime_cli "channel request hangup $channel")" || fail "runtime control rejected hangup for the selected proof channel"
+  printf '%s\n' "$response"
+  printf '%s\n' "$response" | grep -Fq "Requested Hangup on channel '$channel'" || \
+    fail 'runtime control did not confirm the selected proof channel hangup'
+}
+
+hangup_freeswitch() {
+  local uuid="$1" response
+  response="$(runtime_cli "uuid_kill $uuid")" || fail 'FreeSWITCH ESL rejected uuid_kill for the selected proof channel'
+  printf '%s\n' "$response"
+}
+
+hangup_selected() {
+  local channel
+  channel="$(sed -n '1p' "$SELECTED_FILE" 2>/dev/null || true)"
+  [ -n "$channel" ] || fail 'no owned proof channel is available for runtime hangup'
+  case "$RUNTIME_FAMILY" in
+    asterisk) hangup_asterisk "$channel" ;;
+    freeswitch) hangup_freeswitch "$channel" ;;
+    *) fail "unsupported runtime family $RUNTIME_FAMILY" ;;
+  esac
+}
+
+case "$ACTION" in
+  snapshot)
+    rm -f "$SELECTED_FILE"
+    snapshot >"$STATE_FILE"
+    chmod 600 "$STATE_FILE"
+    ;;
+  hangup)
+    [ -s "$STATE_FILE" ] || fail 'pre-run runtime channel snapshot is missing'
+    after_file="${STATE_FILE}.after"
+    snapshot >"$after_file"
+    case "$RUNTIME_FAMILY" in
+      asterisk) select_asterisk_channel "$STATE_FILE" "$after_file" ;;
+      freeswitch) select_freeswitch_channel "$STATE_FILE" "$after_file" ;;
+      *) fail "unsupported runtime family $RUNTIME_FAMILY" ;;
+    esac
+    rm -f "$after_file"
+    hangup_selected
+    ;;
+  cleanup)
+    [ -s "$SELECTED_FILE" ] || exit 0
+    hangup_selected
+    ;;
+  *) fail "unknown action $ACTION" ;;
+esac

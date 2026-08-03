@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUNNER="$ROOT/scripts/t3-media-prover/run"
+PROVER="$ROOT/tools/t3-media-prover/prover.mjs"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -16,6 +17,59 @@ if ! "$RUNNER" --execution-mode host --scenario browser-originated-bye --dry-run
 fi
 if ! grep -Fq 'api-lifecycle' "$RUNNER"; then
   printf 'host runner must use the canonical API lifecycle\n' >&2; exit 1
+fi
+grep -Fq 'runtime-hangup' "$RUNNER" || { printf 'runtime scenario must invoke the runner-owned hangup actor\n' >&2; exit 1; }
+grep -Fq 'UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP' "$RUNNER" || { printf 'runner must consume the exact runtime readiness marker\n' >&2; exit 1; }
+tmp_runtime="$tmp/runtime"
+mkdir -p "$tmp_runtime/bin" "$tmp_runtime/state"
+snapshot_count="$tmp_runtime/state/snapshot-count"
+cat >"$tmp_runtime/bin/kubectl" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$*" == *"core show channels concise"* ]]; then
+  count=0
+  if [ -f "${SNAPSHOT_COUNT_FILE:?}" ]; then count=$(cat "$SNAPSHOT_COUNT_FILE"); fi
+  count=$((count + 1))
+  printf '%s\n' "$count" >"$SNAPSHOT_COUNT_FILE"
+  if [ "$count" -eq 1 ]; then printf '%s\n' "$RUNTIME_BEFORE"; else printf '%s\n' "$RUNTIME_AFTER"; fi
+  exit 0
+fi
+if [[ "$*" == *"channel request hangup"* ]]; then
+  printf "Requested Hangup on channel 'PJSIP/proof-0001'\n"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$tmp_runtime/bin/kubectl"
+before='PJSIP/old-0001!from-kamailio!9900!3!Up!Echo!!!!!3!1!!old'
+after="$before"$'\n''PJSIP/proof-0001!from-kamailio!9900!3!Up!Echo!!!!!3!2!!proof'
+rm -f "$snapshot_count"
+RUNTIME_BEFORE="$before" RUNTIME_AFTER="$after" SNAPSHOT_COUNT_FILE="$snapshot_count" PATH="$tmp_runtime/bin:$PATH" \
+  UTCP_T3_MEDIA_PROVER_RUNTIME_FAMILY=asterisk KUBECONFIG=/tmp/kube \
+  "$ROOT/scripts/t3-media-prover/runtime-hangup" snapshot "$tmp_runtime/state/channels"
+RUNTIME_BEFORE="$before" RUNTIME_AFTER="$after" SNAPSHOT_COUNT_FILE="$snapshot_count" PATH="$tmp_runtime/bin:$PATH" \
+  UTCP_T3_MEDIA_PROVER_RUNTIME_FAMILY=asterisk KUBECONFIG=/tmp/kube \
+  "$ROOT/scripts/t3-media-prover/runtime-hangup" hangup "$tmp_runtime/state/channels" >/dev/null
+grep -Fq 'PJSIP/proof-0001' "$tmp_runtime/state/channels.selected" || { printf 'current proof channel was not selected\n' >&2; exit 1; }
+zero_after="$before"
+rm -f "$snapshot_count"
+if RUNTIME_BEFORE="$before" RUNTIME_AFTER="$zero_after" SNAPSHOT_COUNT_FILE="$snapshot_count" PATH="$tmp_runtime/bin:$PATH" \
+  "$ROOT/scripts/t3-media-prover/runtime-hangup" hangup "$tmp_runtime/state/channels" >/dev/null 2>&1; then
+  printf 'zero candidate mutation unexpectedly passed\n' >&2; exit 1
+fi
+ambiguous_after="$after"$'\n''PJSIP/proof-0002!from-kamailio!9900!3!Up!Echo!!!!!3!3!!proof'
+rm -f "$snapshot_count"
+if RUNTIME_BEFORE="$before" RUNTIME_AFTER="$ambiguous_after" SNAPSHOT_COUNT_FILE="$snapshot_count" PATH="$tmp_runtime/bin:$PATH" \
+  "$ROOT/scripts/t3-media-prover/runtime-hangup" hangup "$tmp_runtime/state/channels" >/dev/null 2>&1; then
+  printf 'ambiguous candidate mutation unexpectedly passed\n' >&2; exit 1
+fi
+if grep -Fq 'runtime-hangup' "$PROVER"; then
+  printf 'provider runtime control leaked into browser prover\n' >&2; exit 1
+fi
+if ! grep -Fq 'if [ "$SCENARIO" = runtime-originated-bye ]; then' "$RUNNER"; then
+  printf 'runtime hangup actor is not scoped to Scenario B\n' >&2; exit 1
+fi
+if grep -Fq 'if [ "$SCENARIO" = browser-originated-bye ]; then' "$RUNNER"; then
+  printf 'browser-originated-bye mutation unexpectedly enabled runtime hangup\n' >&2; exit 1
 fi
 result_dir="$tmp/results"
 mkdir -p "$result_dir"

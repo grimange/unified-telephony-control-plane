@@ -375,6 +375,79 @@ T3 = In Progress
 UTCP_PHASE=T1
 ```
 
+# Runner-Owned Runtime Hangup Correction — 2026-08-03
+
+The bounded correction is implemented in `scripts/t3-media-prover/run` and
+`scripts/t3-media-prover/runtime-hangup`. For `runtime-originated-bye` only,
+the host runner snapshots the supported runtime before starting the browser
+prover, streams prover stdout, consumes the exact
+`UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP` marker once, and invokes the
+runtime-family transport automatically. The browser prover remains provider
+neutral. Asterisk uses the existing explicit-context Kubernetes exec path and
+`channel request hangup`; FreeSWITCH uses the existing loopback ESL
+`uuid_kill` transport. Selection is a before/after delta scoped to the
+proof endpoint (`from-kamailio`, `9900`, `Up`, `Echo`), with distinct zero and
+ambiguous-candidate failures. Baseline channels are stored separately from
+the selected owned channel, so failure cleanup cannot act on a pre-existing
+channel.
+
+Focused tests cover marker scope, single-trigger guarding, missing-marker
+failure, zero/ambiguous/current-proof channel selection, provider-neutral
+browser code, result freshness, API cleanup, and Kubernetes-mode preservation.
+`make check` passed after the correction.
+
+## Controlled live regression
+
+The canonical host lifecycle created the disposable proof identity, tenant
+context, signaling credentials, and session through the normal authenticated
+HTTP API flow; it performed API cleanup on every run. No cookies, injected
+sessions, direct SQL, Redis state, or manual PBX command was used.
+
+An initial Scenario B attempt failed before the readiness marker at browser
+`PeerConnection connected` readiness (`timed out waiting for PeerConnection
+connected`, `durationMs=46984`). The runner then reported that the marker was
+not reached and API cleanup passed; no runtime hangup was attempted. This was
+not accepted as a Scenario B result.
+
+A controlled retry passed:
+
+```text
+scenario                         runtime-originated-bye
+marker                           observed exactly once
+selected current-proof channel   PJSIP/anonymous-00000009
+runtime action                   channel request hangup (automatic)
+ICE / DTLS                       complete / connected
+RTP outbound / inbound           175 / 175 packets; 28000 / 28000 bytes
+inbound audio energy             0.10907418307530405
+bye direction                    runtime
+final SIP result                 200 OK
+cleanup result                   signaling-closed
+proof_api_cleanup                passed
+```
+
+The pre-existing Asterisk channel set was five immediately before this retry
+and five after it; the selected channel was the exactly-one new delta. The
+pre-existing channels were not selected or terminated.
+
+Scenario A was then run unchanged and passed through the canonical lifecycle:
+
+```text
+scenario                         browser-originated-bye
+RTP outbound / inbound           175 / 174 packets; 28000 / 27840 bytes
+inbound audio energy             0.1090194999733286
+bye direction                    browser
+final SIP result                 SIP/2.0 200 OK
+cleanup result                   signaling-closed
+proof_api_cleanup                passed
+runtime hangup actor             not activated
+```
+
+The current run proves the runner correction and both signaling/media
+regressions. The four bounded failure cases and the containment sweep were
+not run under this bounded task, so T3-S3B remains incomplete and phase status
+was not changed. The first failed Scenario B attempt also left no accepted
+current result and is retained above as a failed attempt rather than evidence.
+
 No general remote-internet or cloud readiness is claimed. External browser media
 readiness is **not** claimed.
 
@@ -1220,3 +1293,181 @@ completion after Scenario B failed. Static media-edge, NetworkPolicy,
 default-overlay, and security checks remain passing, but they do not replace
 the required live sweep. `docs/roadmap/phase-status.md` was not changed and
 T3-S3B remains incomplete.
+
+# T3-S3B Scenario B Diagnosis At `894f1d1` — No Runtime Hangup Trigger Exists
+
+Date: 2026-08-03. Evidence-only diagnostic run. No repository implementation
+change, no commit, no cluster/registry/overlay/NetworkPolicy/media-topology
+change, no SQL or Redis mutation, no hangup stimulus issued.
+
+## Summary
+
+Scenario B does not fail in the media plane, in Asterisk, in Kamailio, or in the
+browser. It fails at the **second** lifecycle boundary: after the prover emits
+its readiness marker, **nothing in the repository ever triggers the
+runtime-originated hangup**, so the browser waits out the full
+`runtimeByeWaitMs` window and throws.
+
+`scripts/t3-media-prover/run` never reads
+`UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP` in either execution mode. The
+only repository references to that marker are `prover.mjs` (which emits it) and
+`scripts/t3-media-prover/config-check` (which asserts it is emitted exactly
+once, after the media assertions, only for `runtime-originated-bye`). No
+consumer exists.
+
+## Scenario B Expected Lifecycle And Awaited Transition
+
+```text
+prover: INVITE 9900 → 401 → INVITE(auth) → 200 OK → ACK
+prover: ICE connected → PeerConnection connected → assertMediaCounters
+prover: document.body.dataset.utcpMediaReady = 'runtime-originated-bye'
+prover: stdout UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP
+  ⟵ AN EXTERNAL ACTOR MUST NOW HANG UP THE RUNTIME CHANNEL
+runtime: BYE toward the browser through the Kamailio alias corridor
+prover: 200 OK, byeDirection='runtime', finalSipResult='200 OK'
+runner: canonical API cleanup
+```
+
+The awaited message is exactly `prover.mjs:249`:
+
+```js
+const bye = await waitForMessage(
+  messages,
+  (message) => /^BYE\s/i.test(message) && message.includes(callId),
+  cfg.runtimeByeWaitMs,
+  messageCursor);
+```
+
+Timeout and matching rules: `runtimeByeWaitMs` defaults to `120000` ms
+(`UTCP_T3_MEDIA_PROVER_RUNTIME_BYE_WAIT_MS`); there is no retry. `messageCursor`
+is created at `prover.mjs:150` before the WebSocket handler and only advances
+past consumed messages, so every inbound SIP message from WS open onward is
+retained and scanned — there is no subscription window. `byeDirection` is set to
+the literal `'runtime'` and `finalSipResult` to the literal `'200 OK'` only
+*after* the BYE is matched, which is why both were empty in the reported result.
+
+## Controlled Correlation Window
+
+One canonical run, `./scripts/t3-media-prover/run --execution-mode host
+--scenario runtime-originated-bye`. No stale result existed (the result
+directory was empty). Credentials were newly provisioned and cleaned up by the
+runner's own canonical API lifecycle.
+
+```text
+01:51:50.198  baseline: 3 pre-existing Up channels, rtpengine own sessions 2
+01:51:53.257  runner start; proof_api_setup=passed
+01:51:57.580  Kamailio 10.42.0.6 → Asterisk 10.42.1.4   INVITE sip:9900@…  CSeq: 2 INVITE
+01:51:57.581  Asterisk → Kamailio                        100 Trying         CSeq: 2 INVITE
+01:51:57.581  Asterisk → Kamailio                        200 OK             CSeq: 2 INVITE
+01:51:57.676  Kamailio → Asterisk                        ACK                CSeq: 2 ACK
+01:51:58±     prover stdout: UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP  (exactly once)
+01:52:00      Asterisk active channels 3 → 4
+01:52:00 … 01:54:17   active channels constant at 4
+01:51:57 … 01:54:32   runtime-facing SIP: ZERO further messages, ZERO BYE
+01:54:00      prover throws 'timed out waiting for SIP message'  durationMs 126568
+01:54:03.717  proof_api_cleanup=passed; runner exit 1
+```
+
+`126568 ms` = ~6.5 s of setup, signalling and media assertion, plus exactly the
+`120000 ms` runtime-BYE window.
+
+## Boundary-By-Boundary Result
+
+```text
+ 1 readiness marker reached          PASSED   marker on stdout exactly once, after media assertions
+ 2 runtime hangup trigger issued     FAILED   no trigger in the repository; none observed
+ 3 trigger reaches the runtime       UNPROVED not reached
+ 4 runtime accepts/rejects trigger   UNPROVED not reached
+ 5 Asterisk generates the BYE        UNPROVED not reached; 0 BYE in 155 s of capture
+ 6 Kamailio receives the BYE         UNPROVED not reached; no media_delete logged
+ 7 Kamailio forwards the BYE         UNPROVED not reached
+ 8 browser receives the BYE          UNPROVED not reached
+ 9 browser answers 200 OK            UNPROVED not reached
+10 harness recognises the event      UNPROVED not reached
+11 byeDirection/finalSipResult set   FAILED   both empty; set only after the BYE match
+12 result finalised before timeout   FAILED   126568 ms, errors=['timed out waiting for SIP message']
+13 API cleanup completes             PASSED   proof_api_cleanup=passed
+```
+
+Kamailio logged `websocket_accepted → challenge → media_offer → media_answer`
+for this `Call-ID` and **no `media_delete`**, which only executes on a BYE.
+Asterisk logged nothing beyond one pre-existing `No SIP authenticator
+registered` warning.
+
+## Hypotheses
+
+```text
+CONFIRMED  no runtime hangup trigger exists in the proof lifecycle
+           scripts/t3-media-prover/run has no marker consumer in either mode;
+           the marker's only other references are config-check assertions.
+           Historical Scenario B passes were externally stimulated by hand:
+           docs/evidence/t3/t3-s2c-freeswitch-runtime-parity-live-proof.md
+           records the literal command fs_cli -H 127.0.0.1 -P 8021 -x
+           'uuid_kill <uuid>', with durationMs 6401 — about one second after
+           the marker. T3-S2B recorded durationMs 6029 the same way.
+
+REJECTED   harness subscribed too late / marker precedes listener readiness
+           messageCursor exists from before WS handler installation and never
+           skips; any BYE at any time would have been matched.
+REJECTED   overly restrictive matcher (method/status/dialog/ordering)
+           the same predicate matched live against both Asterisk (T3-S2B) and
+           FreeSWITCH (T3-S2C); and no BYE was emitted at all to match.
+REJECTED   Asterisk generated a different transaction
+           155 s of runtime-facing capture contains exactly INVITE/100/200/ACK.
+REJECTED   Kamailio filtered or misrouted the BYE
+           no BYE reached Kamailio; no media_delete; nothing to filter.
+REJECTED   dialog identifier or tag mismatch
+           the dialog established normally and media flowed; no in-dialog
+           request was ever generated by either side.
+REJECTED   cleanup/timeout race with result finalisation
+           the prover wrote its result, then the runner's API cleanup passed.
+REJECTED   unjustifiably short timeout
+           120 s versus a ~1 s historical marker-to-BYE latency. A timeout
+           increase would not change the outcome and is not supported.
+```
+
+## Abandoned-Dialog Residue — Separate Bounded Finding
+
+A timed-out Scenario B leaves the dialog permanently established. The prover
+closes its WebSocket without a BYE, and nothing reaps the result:
+
+```text
+before this run   3 Up channels (all 9900@from-kamailio Echo), rtpengine own sessions 2, ports used 6
+after this run    4 Up channels,                                rtpengine own sessions 3, ports used 9
+                  rtpengine ports free 91 of 100
+```
+
+`infrastructure/docker/asterisk/config/rtp.conf` declares only `rtpstart`/
+`rtpend` — no `rtptimeout` or `rtpholdtimeout` — and
+`infrastructure/docker/asterisk/config/pjsip.conf` declares no session timers.
+Each abandoned attempt consumes one channel and three media ports, so the
+100-port pool tolerates roughly thirty more before exhaustion. This is
+independent of the missing trigger and would still occur on any Scenario B
+failure.
+
+## Correction To An Earlier Note In This Document
+
+The earlier Scenario A diagnosis recorded that `/metrics` exposes
+`rtpengine_ports*` only under `name="runtime"`. That observation was taken while
+the pool was idle. With sessions active the endpoint emits `name="runtime"`,
+`name="browser"` and `name="default"` series. There is no observability gap.
+
+## Scenario A And PRODUCT_DEFECT-26 Regression Status
+
+Not re-run in this diagnostic. The Scenario B attempt independently re-exercised
+the same corridor up to and including media: authenticated INVITE, `200 OK`,
+ACK, ICE, DTLS and `assertMediaCounters(before, after)` all passed before the
+readiness marker was emitted, so the PRODUCT_DEFECT-26 media path remained
+correct throughout.
+
+## Status After This Diagnosis
+
+```text
+T3-S3B Scenario A                      = passed (previous run, unchanged)
+T3-S3B Scenario B                      = not proven; blocked at boundary 2
+T3-S3B bounded failure cases           = not run
+T3-S3B live containment sweep          = not run
+T3-S3B                                 = not complete
+T3-S3 / T3                             = In Progress
+UTCP_PHASE=T1
+```

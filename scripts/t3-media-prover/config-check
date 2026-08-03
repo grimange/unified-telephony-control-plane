@@ -377,6 +377,12 @@ if "browser-originated-bye" not in runner or "runtime-originated-bye" not in run
     fail("runner must fail closed and explicitly supply both committed scenarios")
 if 'EXECUTION_MODE="${UTCP_T3_MEDIA_PROVER_EXECUTION_MODE:-kubernetes}"' not in runner:
     fail("Kubernetes must remain the default prover execution mode")
+if 'scripts/t3-media-prover/runtime-hangup' not in runner:
+    fail("host Scenario B must use the runner-owned runtime hangup actor")
+if 'UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP' not in runner:
+    fail("host Scenario B must consume the exact runtime readiness marker")
+if 'if [ "$SCENARIO" = runtime-originated-bye ]; then' not in runner:
+    fail("runtime hangup actor must be scoped to runtime-originated-bye")
 if 'kubernetes|host' not in runner or '--execution-mode' not in runner:
     fail("prover must support exactly kubernetes and host execution modes")
 if 'node "$ROOT/tools/t3-media-prover/prover.mjs"' not in runner:
