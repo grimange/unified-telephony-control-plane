@@ -26,6 +26,40 @@ final class TelephonyDomainTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_reference_dialer_bootstrap_returns_only_authenticated_tenant_context(): void
+    {
+        [$admin, $member, $tenantId, $nodeId] = $this->fixture('reference-dialer-bootstrap');
+        $conference = $this->openConference($admin, $tenantId, $nodeId, 'reference-dialer-bootstrap');
+
+        $this->getJson('/api/v1/reference-dialer/bootstrap')->assertForbidden();
+
+        $this->actingAs($member)->withSession($this->tenantSession($tenantId))
+            ->getJson('/api/v1/reference-dialer/bootstrap')
+            ->assertOk()
+            ->assertJsonPath('application', 'reference-dialer')
+            ->assertJsonPath('tenant_id', $tenantId)
+            ->assertJsonPath('telephony_session', null)
+            ->assertJsonPath('signaling', null)
+            ->assertJsonPath('conferences.0.id', $conference['id']);
+
+        $session = $this->actingAs($member)->withSession($this->tenantSession($tenantId))
+            ->postJson('/api/v1/telephony/sessions', [], ['Idempotency-Key' => 'reference-dialer-session'])
+            ->assertCreated()
+            ->json('telephony_session');
+        $this->actingAs($member)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/telephony/sessions/{$session['id']}/signaling-credential")
+            ->assertCreated();
+
+        $this->actingAs($member)->withSession($this->tenantSession($tenantId))
+            ->getJson('/api/v1/reference-dialer/bootstrap')
+            ->assertOk()
+            ->assertJsonPath('telephony_session.id', $session['id'])
+            ->assertJsonPath('telephony_session.status', 'active')
+            ->assertJsonPath('signaling.credential.username', 'ts-'.str_replace('-', '', $session['id']))
+            ->assertJsonPath('signaling.registration.desired_state', 'eligible')
+            ->assertJsonPath('conferences.0.id', $conference['id']);
+    }
+
     public function test_admin_creates_open_conference_member_session_and_participation_lifecycle_through_runtime_path(): void
     {
         [$admin, $member, $tenantId, $nodeId] = $this->fixture();

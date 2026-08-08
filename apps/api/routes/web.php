@@ -11,6 +11,7 @@ use App\Http\Controllers\Identity\AuthController;
 use App\Http\Controllers\RuntimeRegistry\AdminRuntimeNodeController;
 use App\Http\Controllers\TelephonyDomain\AdminConferenceController;
 use App\Http\Controllers\TelephonyDomain\ConferenceController;
+use App\Http\Controllers\TelephonyDomain\ReferenceDialerController;
 use App\Http\Controllers\TelephonyDomain\TelephonySessionController;
 use Illuminate\Support\Facades\Route;
 
@@ -88,6 +89,7 @@ Route::prefix('api/v1/admin')->middleware(['identity.session'])->group(function 
 });
 
 Route::prefix('api/v1')->middleware(['identity.session'])->group(function (): void {
+    Route::get('/reference-dialer/bootstrap', [ReferenceDialerController::class, 'bootstrap']);
     Route::post('/telephony/sessions', [TelephonySessionController::class, 'store']);
     Route::get('/telephony/sessions/current', [TelephonySessionController::class, 'current']);
     Route::post('/telephony/sessions/{telephonySession}/end', [TelephonySessionController::class, 'end']);
