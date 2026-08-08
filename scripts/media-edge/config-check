@@ -46,7 +46,7 @@ versions = versions_path
 raw = versions.read_text()
 v = vals(versions)
 if len(re.findall(r"^UTCP_PUBLIC_MEDIA_ADDRESS=", raw, re.M)) != 1 or v.get("UTCP_PUBLIC_MEDIA_ADDRESS") != "127.0.0.1":
-    fail("UTCP_PUBLIC_MEDIA_ADDRESS must be declared once as 127.0.0.1")
+    fail(f"UTCP_PUBLIC_MEDIA_ADDRESS rejected: expected canonical 127.0.0.1, got {v.get('UTCP_PUBLIC_MEDIA_ADDRESS')!r}")
 if (v.get("RTPENGINE_MEDIA_PORT_MIN"), v.get("RTPENGINE_MEDIA_PORT_MAX")) != ("40000", "40099"):
     fail("media range must remain the canonical RTPengine range")
 

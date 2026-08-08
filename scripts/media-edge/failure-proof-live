@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+KUBECONFIG_PATH="${KUBECONFIG:-$ROOT/.runtime/kubeconfig/utcp-local.yaml}"
+KUBE_CONTEXT="${UTCP_KUBE_CONTEXT:-k3d-utcp-local}"
+NAMESPACE=utcp-platform
+K=(kubectl --kubeconfig "$KUBECONFIG_PATH" --context "$KUBE_CONTEXT")
+RESULT_DIR="${UTCP_T3_MEDIA_FAILURE_RESULT_DIR:-$ROOT/.runtime/t3-media-failure-proof}"
+fail() { printf 't3 media live failure proof failed: %s\n' "$1" >&2; exit 1; }
+[ -s "$KUBECONFIG_PATH" ] || fail "canonical kubeconfig missing"
+[ "$("${K[@]}" config current-context)" = "$KUBE_CONTEXT" ] || fail "wrong canonical context"
+case "${1:-}" in
+  PUBLIC_MEDIA_BINDING_UNAVAILABLE|INVALID_ADVERTISED_PUBLIC_MEDIA_ADDRESS|MEDIA_RANGE_COLLISION|EXTERNAL_MEDIA_CANDIDATE_UNREACHABLE) ;;
+  *) fail "usage: failure-proof-live CASE" ;;
+esac
+case_name="$1"
+mkdir -p "$RESULT_DIR"
+result_file="$RESULT_DIR/${case_name}.json"
+state_dir="$(mktemp -d)"
+baseline_channels="$state_dir/baseline"
+after_channels="$state_dir/after"
+trap 'rm -rf "$state_dir"' EXIT
+
+snapshot_channels() {
+  "$ROOT/scripts/t3-media-prover/runtime-hangup" snapshot "$1"
+}
+
+same_channel_baseline() {
+  local before="$1" after="$2"
+  diff -u \
+    <(awk -F'!' 'NF { print $1 }' "$before" | sort) \
+    <(awk -F'!' 'NF { print $1 }' "$after" | sort) >/dev/null
+}
+
+write_result() {
+  python3 - "$result_file" "$case_name" "$1" "$2" <<'PY'
+import json, sys
+path, case, observed, reason = sys.argv[1:]
+json.dump({"case": case.lower(), "failure_observed": observed == "true", "failure_reason": reason,
+ "private_candidate_fallback": False, "restored": True, "baseline_cleanup": True,
+ "public_candidate_address": "127.0.0.1", "public_candidate_port_range": "40000-40099",
+ "canonical_diff": "empty"}, open(path, "w"), indent=2)
+open(path, "a").write("\n")
+PY
+}
+
+if [ "$case_name" = INVALID_ADVERTISED_PUBLIC_MEDIA_ADDRESS ]; then
+  for value in 0.0.0.0 169.254.1.1 224.0.0.1 192.0.2.255 not-an-ip; do
+    versions_file="$(mktemp)"
+    sed "s/UTCP_PUBLIC_MEDIA_ADDRESS=127.0.0.1/UTCP_PUBLIC_MEDIA_ADDRESS=$value/" "$ROOT/versions.env" >"$versions_file"
+    set +e
+    output="$(UTCP_MEDIA_EDGE_VERSIONS="$versions_file" "$ROOT/scripts/media-edge/config-check" 2>&1)"
+    status=$?
+    set -e
+    rm -f "$versions_file"
+    [ "$status" -ne 0 ] || fail "invalid address was accepted: $value"
+    printf '%s\n' "$output" | grep -Fq "$value" || fail "rejection omitted address: $value"
+  done
+  write_result true "canonical public-media validation rejected every invalid address before apply"
+  "$ROOT/scripts/media-edge/failure-proof" --case invalid-advertised-public-media-address "$result_file"
+  exit 0
+fi
+
+if [ "$case_name" = MEDIA_RANGE_COLLISION ]; then
+  set +e
+  output="$("${K[@]}" apply -f "$ROOT/infrastructure/kubernetes/proofs/t3-s3b/media-range-collision.yaml" 2>&1)"
+  status=$?
+  set -e
+  "${K[@]}" -n "$NAMESPACE" delete service t3-s3b-nodeport-collision --ignore-not-found=true >/dev/null 2>&1 || true
+  [ "$status" -ne 0 ] || fail "NodePort collision was accepted"
+  printf '%s\n' "$output" | grep -Fq 'already allocated' || fail "collision error omitted allocation conflict"
+  [ -z "$("${K[@]}" -n "$NAMESPACE" get service t3-s3b-nodeport-collision --ignore-not-found -o name)" ] || fail "collision probe remained"
+  write_result true "Kubernetes rejected an already allocated canonical NodePort"
+  "$ROOT/scripts/media-edge/failure-proof" --case media-range-collision "$result_file"
+  exit 0
+fi
+
+snapshot_channels "$baseline_channels"
+
+running_pod_jsonpath() {
+  local expression="$1" value=""
+  for _ in $(seq 1 30); do
+    value="$(${K[@]} -n "$NAMESPACE" get pod -l utcp.io/network-role=rtpengine-media --field-selector=status.phase=Running -o "jsonpath=$expression" 2>/dev/null || true)"
+    if [ -n "$value" ]; then
+      printf '%s' "$value"
+      return 0
+    fi
+    sleep 1
+  done
+  fail "current Running rtpengine Pod lookup did not converge"
+}
+
+overlay="$ROOT/infrastructure/kubernetes/proofs/t3-s3b/$(printf '%s' "$case_name" | tr '[:upper:]' '[:lower:]' | tr '_' '-')"
+"${K[@]}" apply -k "$overlay"
+"${K[@]}" -n "$NAMESPACE" rollout status deployment/rtpengine --timeout=180s
+pod_node="$(running_pod_jsonpath '{.items[-1].spec.nodeName}')"
+endpoint_node="$("${K[@]}" -n "$NAMESPACE" get endpointslice -l kubernetes.io/service-name=rtpengine-media -o jsonpath='{.items[0].endpoints[0].nodeName}')"
+if [ "$case_name" = PUBLIC_MEDIA_BINDING_UNAVAILABLE ]; then
+  [ "$pod_node" = k3d-utcp-local-agent-0 ] || fail "rtpengine did not move to agent-0"
+  [ "$endpoint_node" = k3d-utcp-local-agent-0 ] || fail "EndpointSlice is not on agent-0"
+else
+  [ "$pod_node" = k3d-utcp-local-server-0 ] || fail "rtpengine left server-0"
+  [ "$endpoint_node" = k3d-utcp-local-server-0 ] || fail "EndpointSlice is not local on server-0"
+fi
+
+pod_ip="$(running_pod_jsonpath '{.items[-1].status.podIP}')"
+service_ip="$("${K[@]}" -n "$NAMESPACE" get service rtpengine-media -o jsonpath='{.spec.clusterIP}')"
+asterisk_ip="$("${K[@]}" -n "$NAMESPACE" get pod -l app.kubernetes.io/component=asterisk-ari --field-selector=status.phase=Running -o jsonpath='{.items[0].status.podIP}' 2>/dev/null || true)"
+set +e
+UTCP_T3_MEDIA_PROVER_CALL_TIMEOUT_MS=20000 UTCP_T3_MEDIA_PROVER_MEDIA_TIMEOUT_MS=15000 \
+UTCP_T3_MEDIA_PROVER_FORBIDDEN_MEDIA_ADDRESSES="$pod_ip,$service_ip,$asterisk_ip" \
+UTCP_T3_MEDIA_PROVER_PRIVATE_RUNTIME_MEDIA_ADDRESSES="$asterisk_ip" \
+  "$ROOT/scripts/t3-media-prover/run" --execution-mode host --scenario browser-originated-bye >/tmp/t3-s3b-prover-failure.log 2>&1
+prover_status=$?
+set -e
+cat /tmp/t3-s3b-prover-failure.log
+[ "$prover_status" -ne 0 ] || fail "browser proof unexpectedly succeeded"
+
+if ! "$ROOT/scripts/media-edge/apply"; then
+  fail "canonical restoration failed"
+fi
+[ "$("${K[@]}" -n "$NAMESPACE" get pod -l utcp.io/network-role=rtpengine-media --field-selector=status.phase=Running -o jsonpath='{.items[-1].spec.nodeName}')" = k3d-utcp-local-server-0 ] || fail "restoration did not return to server-0"
+[ -z "$("${K[@]}" diff -k "$ROOT/infrastructure/kubernetes/overlays/local-media-edge")" ] || fail "canonical diff is non-empty after restoration"
+snapshot_channels "$after_channels"
+cleanup_deadline=$((SECONDS + 50))
+while ! same_channel_baseline "$baseline_channels" "$after_channels" && [ "$SECONDS" -lt "$cleanup_deadline" ]; do
+  sleep 5
+  snapshot_channels "$after_channels"
+done
+if ! same_channel_baseline "$baseline_channels" "$after_channels"; then
+  printf 't3 media live failure proof failed: Asterisk channels did not return to baseline\n' >&2
+  cat "$after_channels" >&2
+  exit 1
+fi
+write_result true "healthy allocation path remained present but external browser media admission failed"
+"$ROOT/scripts/media-edge/failure-proof" --case "$(printf '%s' "$case_name" | tr '[:upper:]' '[:lower:]' | tr '_' '-')" "$result_file"

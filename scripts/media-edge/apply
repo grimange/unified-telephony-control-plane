@@ -21,5 +21,13 @@ current_context="$(kubectl --kubeconfig "$KUBECONFIG_PATH" config current-contex
 
 kubectl_cmd apply -k "$OVERLAY"
 kubectl_cmd -n utcp-platform rollout status deployment/rtpengine --timeout=180s
-kubectl_cmd -n utcp-platform wait --for=condition=Ready pod -l utcp.io/network-role=rtpengine-media --timeout=180s
+ready=0
+for _ in $(seq 1 30); do
+  ready="$(kubectl_cmd -n utcp-platform get deployment rtpengine -o jsonpath='{.status.availableReplicas}' 2>/dev/null || true)"
+  if [ "$ready" = 1 ]; then
+    break
+  fi
+  sleep 1
+done
+[ "$ready" = 1 ] || { printf 'rtpengine did not expose one available replica after rollout\n' >&2; exit 1; }
 printf 'external media-edge overlay applied through canonical utcp-local lifecycle\n'

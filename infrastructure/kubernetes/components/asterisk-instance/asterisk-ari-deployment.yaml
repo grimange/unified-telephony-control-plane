@@ -63,9 +63,10 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 12
           readinessProbe:
-            exec: null
-            tcpSocket:
-              port: ari
+            exec:
+              command:
+                - /usr/local/bin/utcp-asterisk-readiness
+            tcpSocket: null
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 3

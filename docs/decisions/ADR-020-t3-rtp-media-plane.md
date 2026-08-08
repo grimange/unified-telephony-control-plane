@@ -297,3 +297,22 @@ recreation and real host-browser UDP validation are deferred to T3-S3B. A
 future cloud projection may replace the local host publication with a cloud
 UDP load balancer or dedicated media node pool while retaining the same
 address and range authorities.
+
+## T3-S3B closure status — 2026-08-08
+
+The canonical `utcp-local` deployment now uses the Asterisk exec readiness
+contract and bounded RTP abandonment timeouts. The committed host-browser
+prover explicitly requires the configured external media address, UDP
+`40000-40099`, and no Pod, Service, or private-runtime candidate fallback.
+The final live evidence proves fresh browser-originated and runtime-originated
+BYE scenarios, all four defined negative cases, automatic restoration and
+cleanup, and the containment surface while media is allocated. T3-S3B and T3
+are closed by this evidence; `UTCP_PHASE=T1` remains unchanged under the
+repository's phase-marker contract.
+
+The four negative cases are distinguished by their canonical seams: invalid
+advertised addresses fail before apply; NodePort collisions are rejected by
+Kubernetes allocation; public binding loss leaves a healthy rtpengine on the
+wrong node with no local endpoint; and candidate unreachability preserves the
+healthy local endpoint and allocation while removing only external RTP
+admission. Each case restored to zero canonical diff and baseline resources.

@@ -116,6 +116,19 @@ final class AsteriskTwoNodeTopologyTest extends TestCase
         }
     }
 
+    public function test_asterisk_rtp_configuration_reclaims_abandoned_media_with_bounded_timeouts(): void
+    {
+        $path = dirname(base_path(), 2).'/infrastructure/docker/asterisk/config/rtp.conf';
+        $config = (string) file_get_contents($path);
+
+        $this->assertMatchesRegularExpression('/^rtp_timeout=30$/m', $config);
+        $this->assertMatchesRegularExpression('/^rtp_timeout_hold=30$/m', $config);
+        $pjsip = file_get_contents(dirname(base_path(), 2).'/infrastructure/docker/asterisk/config/pjsip.conf');
+        $this->assertMatchesRegularExpression('/^rtp_timeout=30$/m', $pjsip);
+        $this->assertMatchesRegularExpression('/^rtp_timeout_hold=30$/m', $pjsip);
+        $this->assertLessThanOrEqual(60, 30, 'abandoned media timeout must remain bounded');
+    }
+
     /**
      * @param  list<string>  $command
      */
@@ -216,8 +229,8 @@ PY], $root);
         $this->assertSame(5, $startup['timeoutSeconds'] ?? null);
         $this->assertSame(12, $startup['failureThreshold'] ?? null);
 
-        $this->assertSame('ari', $readiness['tcpSocket']['port'] ?? null);
-        $this->assertNull($readiness['exec'] ?? null);
+        $this->assertSame(self::STARTUP_COMMAND, $readiness['exec']['command'] ?? null);
+        $this->assertNull($readiness['tcpSocket'] ?? null);
         $this->assertArrayNotHasKey('httpGet', $readiness);
         $this->assertSame(15, $readiness['periodSeconds'] ?? null);
         $this->assertSame(5, $readiness['timeoutSeconds'] ?? null);

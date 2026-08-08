@@ -48,7 +48,7 @@ snapshot() {
 select_asterisk_channel() {
   local before="$1" after="$2" candidates count
   candidates="$(awk -F'!' '
-    NR == FNR { seen[$1] = 1; next }
+    FILENAME == ARGV[1] { seen[$1] = 1; next }
     !seen[$1] && $2 == "from-kamailio" && $3 == "9900" && $5 == "Up" && $6 == "Echo" { print $1 }
   ' "$before" "$after")"
   count="$(printf '%s\n' "$candidates" | sed '/^$/d' | wc -l | tr -d ' ')"
@@ -64,7 +64,7 @@ select_freeswitch_channel() {
   # `show channels` is CSV-like and the first field is the channel UUID.  The
   # proof dialplan is the only supported candidate scope for this actor.
   candidates="$(awk -F',' '
-    NR == FNR { seen[$1] = 1; next }
+    FILENAME == ARGV[1] { seen[$1] = 1; next }
     !seen[$1] && $0 ~ /9900/ && $0 ~ /CS_EXECUTE/ { print $1 }
   ' "$before" "$after" | sed '/^$/d')"
   count="$(printf '%s\n' "$candidates" | sed '/^$/d' | wc -l | tr -d ' ')"
@@ -107,7 +107,7 @@ case "$ACTION" in
     chmod 600 "$STATE_FILE"
     ;;
   hangup)
-    [ -s "$STATE_FILE" ] || fail 'pre-run runtime channel snapshot is missing'
+    [ -f "$STATE_FILE" ] || fail 'pre-run runtime channel snapshot is missing'
     after_file="${STATE_FILE}.after"
     snapshot >"$after_file"
     case "$RUNTIME_FAMILY" in

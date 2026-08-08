@@ -43,6 +43,7 @@ if [ "$EXECUTION_MODE" = host ]; then
     if [ "$DRY_RUN" -eq 0 ] && [ -s "$state_dir/authority" ]; then
       "$ROOT/scripts/t3-media-prover/api-lifecycle" "$state_dir" cleanup || status=1
     fi
+    rm -f "$RESULT_DIR/active-media.json"
     rm -rf "$state_dir"
     return "$status"
   }
@@ -74,6 +75,10 @@ if [ "$EXECUTION_MODE" = host ]; then
     UTCP_T3_MEDIA_PROVER_SCENARIO="$SCENARIO"
     UTCP_T3_MEDIA_PROVER_GATEWAY_SERVICE="${UTCP_T3_MEDIA_PROVER_GATEWAY_SERVICE:-127.0.0.1}"
     UTCP_T3_MEDIA_PROVER_CA_CERT="${UTCP_T3_MEDIA_PROVER_CA_CERT:-$ROOT/.runtime/tls/utcp-local-ca.crt}"
+    UTCP_T3_MEDIA_PROVER_PUBLIC_MEDIA_ADDRESS="${UTCP_T3_MEDIA_PROVER_PUBLIC_MEDIA_ADDRESS:-127.0.0.1}"
+    UTCP_T3_MEDIA_PROVER_FORBIDDEN_MEDIA_ADDRESSES="${UTCP_T3_MEDIA_PROVER_FORBIDDEN_MEDIA_ADDRESSES:-}"
+    UTCP_T3_MEDIA_PROVER_PRIVATE_RUNTIME_MEDIA_ADDRESSES="${UTCP_T3_MEDIA_PROVER_PRIVATE_RUNTIME_MEDIA_ADDRESSES:-}"
+    UTCP_T3_MEDIA_PROVER_ACTIVE_MARKER_PATH="$RESULT_DIR/active-media.json"
     UTCP_T3_MEDIA_PROVER_RESULT_PATH="$result_file"
   )
   runtime_marker_seen=0
@@ -88,6 +93,10 @@ if [ "$EXECUTION_MODE" = host ]; then
       printf '%s\n' "$line"
       if [ "$line" = UTCP_T3_MEDIA_PROVER_READY_FOR_RUNTIME_HANGUP ] && [ "$runtime_marker_seen" -eq 0 ]; then
         runtime_marker_seen=1
+        printf '%s\n' '{"active":true,"source":"current-runtime-originated-media-session"}' >"$RESULT_DIR/active-media.json"
+        if [ "${UTCP_T3_MEDIA_PROVER_CONTAINMENT_SWEEP:-0}" = 1 ]; then
+          "$ROOT/scripts/media-edge/containment-sweep" --live
+        fi
         if ! "$ROOT/scripts/t3-media-prover/runtime-hangup" hangup "$state_dir/runtime-channels"; then
           printf 'runtime hangup trigger was rejected for the current proof\n' >&2
           runtime_control_failed=1

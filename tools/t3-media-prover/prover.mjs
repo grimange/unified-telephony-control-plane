@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { assertExternalMediaCandidate, parseAddressList } from './media-assertions.mjs';
 
 const execFile = promisify(execFileCallback);
 
@@ -15,6 +16,9 @@ const REQUIRED_RESULT_FIELDS = [
   'iceConnectionState',
   'iceGatheringState',
   'selectedCandidatePair',
+  'externalMediaAddress',
+  'externalMediaPort',
+  'externalCandidateAssertions',
   'localCandidateType',
   'localCandidateAddressClass',
   'remoteCandidateType',
@@ -50,6 +54,10 @@ const config = {
   mediaTimeoutMs: Number(env('UTCP_T3_MEDIA_PROVER_MEDIA_TIMEOUT_MS', '45000')),
   runtimeByeWaitMs: Number(env('UTCP_T3_MEDIA_PROVER_RUNTIME_BYE_WAIT_MS', '120000')),
   resultPath: env('UTCP_T3_MEDIA_PROVER_RESULT_PATH', '/proof/results/result.json'),
+  publicMediaAddress: env('UTCP_T3_MEDIA_PROVER_PUBLIC_MEDIA_ADDRESS', '127.0.0.1'),
+  forbiddenMediaAddresses: parseAddressList(env('UTCP_T3_MEDIA_PROVER_FORBIDDEN_MEDIA_ADDRESSES', '')),
+  privateRuntimeMediaAddresses: parseAddressList(env('UTCP_T3_MEDIA_PROVER_PRIVATE_RUNTIME_MEDIA_ADDRESSES', '')),
+  activeMarkerPath: env('UTCP_T3_MEDIA_PROVER_ACTIVE_MARKER_PATH', ''),
 };
 
 const started = Date.now();
@@ -101,6 +109,9 @@ try {
       'iceConnectionState',
       'iceGatheringState',
       'selectedCandidatePair',
+      'externalMediaAddress',
+      'externalMediaPort',
+      'externalCandidateAssertions',
       'localCandidateType',
       'localCandidateAddressClass',
       'remoteCandidateType',
@@ -269,6 +280,8 @@ try {
       localCandidateAddressClass: addressClass(selectedPair.localAddress || ''),
       remoteCandidateType: selectedPair.remoteCandidateType || 'unknown',
       remoteCandidateAddressClass: addressClass(selectedPair.remoteAddress || ''),
+      externalMediaAddress: selectedPair.remoteAddress || '',
+      externalMediaPort: selectedPair.remotePort || 0,
       dtlsState: after.dtlsState || pc.connectionState,
       peerConnectionState: pc.connectionState,
       outboundRtpPackets: after.outboundPackets,
@@ -284,6 +297,13 @@ try {
       cleanupResult: 'signaling-closed',
       durationMs: Date.now() - startedAt,
     };
+    output.externalCandidateAssertions = assertExternalMediaCandidate({
+      address: output.externalMediaAddress,
+      port: output.externalMediaPort,
+      configuredAddress: cfg.publicMediaAddress,
+      forbiddenAddresses: cfg.forbiddenMediaAddresses,
+      privateRuntimeAddresses: cfg.privateRuntimeMediaAddresses,
+    });
     for (const field of requiredResultFields) {
       if (output[field] === undefined || output[field] === null || output[field] === '') {
         throw new Error(`missing structured result field ${field}`);
@@ -380,6 +400,7 @@ try {
           localAddress: local.address || local.ip || '',
           remoteCandidateType: remote.candidateType,
           remoteAddress: remote.address || remote.ip || '',
+          remotePort: remote.port || 0,
         };
       }
       return aggregate;
@@ -476,6 +497,15 @@ try {
       if (!address) return 'unknown';
       return 'public-or-other';
     }
+    function assertExternalMediaCandidate({ address, port, configuredAddress, forbiddenAddresses, privateRuntimeAddresses }) {
+      const failures = [];
+      if (address !== configuredAddress) failures.push(`selected media address ${address || '<missing>'} is not configured public address ${configuredAddress}`);
+      if (!Number.isInteger(port) || port < 40000 || port > 40099) failures.push(`selected media port ${port || '<missing>'} is outside UDP 40000-40099`);
+      if (forbiddenAddresses.includes(address)) failures.push(`selected media address ${address} is a forbidden Pod or Service address`);
+      if (privateRuntimeAddresses.includes(address)) failures.push(`selected media address ${address} is a private runtime media address`);
+      if (failures.length > 0) throw new Error(failures.join('; '));
+      return { address, port, portRange: '40000-40099', fallback: false };
+    }
     function sleep(ms) {
       return new Promise((resolve) => setTimeout(resolve, ms));
     }
@@ -483,6 +513,16 @@ try {
 
   Object.assign(result, proof, { durationMs: Date.now() - started });
   assertStructuredResult(result);
+  if (config.activeMarkerPath) {
+    await fs.mkdir(path.dirname(config.activeMarkerPath), { recursive: true });
+    await fs.writeFile(config.activeMarkerPath, JSON.stringify({
+      active: true,
+      scenario: result.scenario,
+      callId: result.callId,
+      externalMediaAddress: result.externalMediaAddress,
+      externalMediaPort: result.externalMediaPort,
+    }));
+  }
   await writeResult(config.resultPath, result);
   console.log(`T3_MEDIA_PROVER_RESULT_JSON=${JSON.stringify(result)}`);
   process.exitCode = 0;
@@ -494,6 +534,7 @@ try {
   console.log(`T3_MEDIA_PROVER_RESULT_JSON=${JSON.stringify(result)}`);
   process.exitCode = 1;
 } finally {
+  if (config.activeMarkerPath) await fs.rm(config.activeMarkerPath, { force: true }).catch(() => {});
   if (page) await page.close().catch(() => {});
   if (browser) await browser.close().catch(() => {});
   if (nssDatabasePath) await fs.rm(nssDatabasePath, { recursive: true, force: true }).catch(() => {});
@@ -554,6 +595,9 @@ function redactConfigForBrowser(raw) {
     extension: raw.extension,
     sipUsername: raw.sipUsername,
     sipPassword: raw.sipPassword,
+    publicMediaAddress: raw.publicMediaAddress,
+    forbiddenMediaAddresses: raw.forbiddenMediaAddresses,
+    privateRuntimeMediaAddresses: raw.privateRuntimeMediaAddresses,
     callTimeoutMs: raw.callTimeoutMs,
     mediaTimeoutMs: raw.mediaTimeoutMs,
     runtimeByeWaitMs: raw.runtimeByeWaitMs,
@@ -584,6 +628,9 @@ function assertStructuredResult(output) {
   }
   if (output.audioEnergySource !== 'inbound-rtp.totalAudioEnergy') {
     throw new Error('structured result audio energy source is invalid');
+  }
+  if (output.externalCandidateAssertions?.fallback !== false) {
+    throw new Error('external candidate assertion must prove fallback=false');
   }
 }
 

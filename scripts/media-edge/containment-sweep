@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Check the canonical rendered media edge and, optionally, a live allocation."""
+import json
+import subprocess
+import sys
+import re
+from pathlib import Path
+import yaml
+
+ROOT = Path(__file__).resolve().parents[2]
+KUBECONFIG = Path(__import__('os').environ.get('KUBECONFIG', str(ROOT / '.runtime/kubeconfig/utcp-local.yaml')))
+KUBE_CONTEXT = __import__('os').environ.get('UTCP_KUBE_CONTEXT', 'k3d-utcp-local')
+
+def fail(message):
+    print(f"t3 containment sweep failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+def inspect(text):
+    documents = [doc for doc in yaml.safe_load_all(text) if isinstance(doc, dict)]
+    if any(doc.get("spec", {}).get("hostNetwork") is True for doc in documents):
+        fail("hostNetwork is present")
+    if any("hostPort" in str(doc.get("spec", {})) for doc in documents):
+        fail("hostPort is present")
+    nodeports = [doc for doc in documents if doc.get("kind") == "Service" and doc.get("spec", {}).get("type") == "NodePort"]
+    media = [doc for doc in nodeports if doc.get("metadata", {}).get("name") == "rtpengine-media"]
+    if len(media) != 1:
+        fail("canonical rtpengine media NodePort is absent or duplicated")
+    ports = media[0]["spec"].get("ports", [])
+    if len(ports) != 100 or {port.get("nodePort") for port in ports} != set(range(40000, 40100)) or any(port.get("protocol") != "UDP" for port in ports):
+        fail("external publication is not exactly UDP 40000-40099")
+    unexpected = [doc.get("metadata", {}).get("name") for doc in nodeports if doc not in media]
+    if unexpected:
+        fail(f"unexpected public NodePort Services: {unexpected}")
+
+def live_inspect():
+    def kubectl(*args):
+        return json.loads(subprocess.check_output(["kubectl", "--kubeconfig", str(KUBECONFIG), "--context", KUBE_CONTEXT, *args], text=True, cwd=ROOT))
+
+    services = kubectl("get", "services", "-A", "-o", "json").get("items", [])
+    public_services = []
+    for service in services:
+        spec = service.get("spec", {})
+        if spec.get("type") != "NodePort":
+            continue
+        name = f"{service.get('metadata', {}).get('namespace')}/{service.get('metadata', {}).get('name')}"
+        public_services.append(name)
+        if name != "utcp-platform/rtpengine-media":
+            fail(f"unexpected live NodePort Service: {name}")
+        ports = spec.get("ports", [])
+        if len(ports) != 100 or {port.get("nodePort") for port in ports} != set(range(40000, 40100)) or any(port.get("protocol") != "UDP" for port in ports):
+            fail("live rtpengine media publication is not exactly UDP 40000-40099")
+
+    pods = kubectl("get", "pods", "-A", "-o", "json").get("items", [])
+    for pod in pods:
+        spec = pod.get("spec", {})
+        pod_name = pod.get("metadata", {}).get("name", "")
+        pod_namespace = pod.get("metadata", {}).get("namespace", "")
+        if spec.get("hostNetwork") is True:
+            fail(f"live hostNetwork pod: {pod_namespace}/{pod_name}")
+        for container in spec.get("containers", []) + spec.get("initContainers", []):
+            host_ports = [port.get("hostPort") for port in container.get("ports", []) if "hostPort" in port]
+            if host_ports and not (pod_namespace == "kube-system" and pod_name.startswith("svclb-traefik-") and set(host_ports) <= {80, 443}):
+                fail(f"live hostPort pod: {pod_namespace}/{pod_name}")
+
+    docker_ports = subprocess.check_output(
+        ["docker", "ps", "--filter", "name=k3d-utcp-local", "--format", "{{.Names}}\t{{.Ports}}"],
+        text=True,
+        cwd=ROOT,
+    )
+    forbidden = re.compile(r"(?:^|[,:])(?:5060|5061|8021|8088|10000-20000|21000-21099)(?:-|/|,|$)")
+    if any(forbidden.search(line) for line in docker_ports.splitlines()):
+        fail("live cluster container exposes a prohibited control or private RTP port")
+
+    if public_services != ["utcp-platform/rtpengine-media"]:
+        fail("live public service inventory is incomplete")
+
+def main():
+    if len(sys.argv) == 2 and sys.argv[1] == "--self-test":
+        base = "kind: Service\nmetadata:\n  name: rtpengine-media\nspec:\n  type: NodePort\n  ports:\n" + "".join(f"  - protocol: UDP\n    nodePort: {port}\n" for port in range(40000, 40100))
+        inspect(base)
+        try:
+            inspect(base.replace("type: NodePort", "type: NodePort\n  hostPort: 8021"))
+        except SystemExit:
+            print("t3_media_containment_harness_self_test=ok")
+            return 0
+        fail("prohibited listener mutation was not rejected")
+    if len(sys.argv) == 2 and sys.argv[1] == "--live":
+        marker = Path(".runtime/t3-media-prover/active-media.json")
+        if not marker.is_file():
+            fail("live sweep requires a current active-media marker from a genuine session")
+        try:
+            payload = json.loads(marker.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            fail(f"invalid active-media marker: {exc}")
+        if payload.get("active") is not True:
+            fail("active-media marker does not prove an allocated session")
+        rendered = subprocess.check_output(["kubectl", "kustomize", str(ROOT / "infrastructure/kubernetes/overlays/local-media-edge")], text=True, cwd=ROOT)
+        inspect(rendered)
+        live_inspect()
+        print("t3_media_containment=passed external_udp=40000-40099 controls=not_public private_rtp=not_public")
+        return 0
+    rendered = subprocess.check_output(["kubectl", "kustomize", str(ROOT / "infrastructure/kubernetes/overlays/local-media-edge")], text=True, cwd=ROOT)
+    inspect(rendered)
+    print("t3_media_containment_static=ok")
+
+if __name__ == "__main__":
+    main()

@@ -95,10 +95,10 @@ def validate_probe_contract(deployment: dict[str, Any]) -> None:
     if startup_probe.get("failureThreshold") != 12:
         raise ValidationError(f"{name} startup probe initialization tolerance changed")
 
-    if readiness_probe.get("tcpSocket", {}).get("port") != "ari":
-        raise ValidationError(f"{name} readiness probe must check the ARI port")
-    if readiness_probe.get("exec") is not None or "httpGet" in readiness_probe:
-        raise ValidationError(f"{name} readiness probe must remain ARI TCP-only")
+    if readiness_probe.get("exec", {}).get("command") != STARTUP_COMMAND:
+        raise ValidationError(f"{name} readiness probe must use the canonical Asterisk readiness contract")
+    if readiness_probe.get("tcpSocket") is not None or "httpGet" in readiness_probe:
+        raise ValidationError(f"{name} readiness probe must use the exec readiness contract")
     if readiness_probe.get("timeoutSeconds") != 5 or readiness_probe.get("periodSeconds") != 15:
         raise ValidationError(f"{name} readiness probe timing changed")
 

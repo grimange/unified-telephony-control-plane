@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Validate deterministic T3-S3B failure results and restoration evidence."""
+import json
+import sys
+from pathlib import Path
+
+CASES = {
+    "public-media-binding-unavailable": "public_media_binding_unavailable",
+    "invalid-advertised-public-media-address": "invalid_advertised_public_media_address",
+    "media-range-collision": "media_range_collision",
+    "external-media-candidate-unreachable": "external_media_candidate_unreachable",
+}
+
+REQUIRED = {"case", "failure_observed", "failure_reason", "private_candidate_fallback", "restored", "baseline_cleanup"}
+
+def fail(message):
+    print(f"t3 media failure proof failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+def validate(payload, expected=None):
+    missing = REQUIRED - set(payload)
+    if missing:
+        fail(f"result missing fields: {', '.join(sorted(missing))}")
+    if expected and payload["case"] != expected:
+        fail(f"expected case {expected}, got {payload['case']}")
+    if not payload["failure_observed"]:
+        fail("expected observable failure was absent")
+    if payload["private_candidate_fallback"]:
+        fail("private media candidate fallback was observed")
+    if not payload["restored"]:
+        fail("canonical configuration restoration was not proven")
+    if not payload["baseline_cleanup"]:
+        fail("channel/media baseline cleanup was not proven")
+
+def main():
+    if len(sys.argv) == 2 and sys.argv[1] == "--self-test":
+        good = {"case": CASES["public-media-binding-unavailable"], "failure_observed": True, "failure_reason": "binding unavailable", "private_candidate_fallback": False, "restored": True, "baseline_cleanup": True}
+        validate(good)
+        mutations = [
+            ("absent failure", {**good, "failure_observed": False}),
+            ("private fallback", {**good, "private_candidate_fallback": True}),
+            ("restore failure", {**good, "restored": False}),
+            ("residual allocation", {**good, "baseline_cleanup": False}),
+        ]
+        for label, mutated in mutations:
+            try:
+                validate(mutated)
+            except SystemExit:
+                continue
+            fail(f"self-test mutation passed: {label}")
+        print("t3_media_failure_harness_self_test=ok")
+        return 0
+    if len(sys.argv) not in (3, 4) or sys.argv[1] != "--case":
+        fail("usage: failure-proof --self-test | --case CASE [RESULT.json]")
+    case = CASES.get(sys.argv[2])
+    if not case:
+        fail(f"unknown case {sys.argv[2]}")
+    result_path = Path(sys.argv[3] if len(sys.argv) == 4 else "")
+    if not result_path.is_file():
+        fail("a current case result JSON is required; no live failure is claimed")
+    try:
+        payload = json.loads(result_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"invalid result JSON: {exc}")
+    validate(payload, case)
+    print(f"t3_media_failure_case={case} failure=observed fallback=absent restored=yes cleanup=baseline")
+
+if __name__ == "__main__":
+    main()

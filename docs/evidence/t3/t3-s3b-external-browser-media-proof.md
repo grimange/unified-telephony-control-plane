@@ -1,14 +1,15 @@
-# T3-S3B External Browser Media Edge — Projection Proven, Advertisement Blocked
+# T3-S3B External Browser Media Edge — Failure and Containment Proof Closed
 
-Date: 2026-08-02
+Date: 2026-08-08
 
 Starting commit: `20f8daa` (`feat(t3): add external media edge projection`)
 
 Phase marker: `UTCP_PHASE=T1`
 
-Verdict: `T3_S3B_EXTERNAL_BROWSER_MEDIA_PROOF_INCOMPLETE`
+Verdict: `T3_S3B_NEGATIVE_CASES_AND_RESTORATION_PROOF_PASSED`
 
-Remaining seam: **rtpengine advertised address**
+Closure: external media failure, no-fallback, restoration, cleanup, and
+containment contracts are proven against canonical `utcp-local`.
 
 ## Summary
 
@@ -42,6 +43,62 @@ make k3d-config-check                       pass
 make t3-media-prover-config-check / -test   pass
 make check                                  pass
 ```
+
+## T3-S3B Negative-Case and Restoration Closure — 2026-08-08
+
+The final bounded closure run used only `utcp-local` with context
+`k3d-utcp-local` and repository kubeconfig `.runtime/kubeconfig/utcp-local.yaml`.
+The four committed failure artifacts all reported `failure_observed=true`,
+`private_candidate_fallback=false`, `restored=true`, `baseline_cleanup=true`,
+candidate address `127.0.0.1`, candidate range `40000-40099`, and an empty
+canonical Kustomize diff.
+
+| Case | Live result |
+|---|---|
+| `PUBLIC_MEDIA_BINDING_UNAVAILABLE` | Healthy rtpengine moved to `k3d-utcp-local-agent-0`; the Ready EndpointSlice followed it, leaving no eligible local endpoint on `server-0`; media allocation and the external candidate remained valid, but browser ICE/media failed with no private fallback. Canonical apply restored `server-0` and cleanup returned to baseline automatically. |
+| `INVALID_ADVERTISED_PUBLIC_MEDIA_ADDRESS` | `0.0.0.0`, link-local, multicast, documentation-broadcast, and malformed inputs were rejected by canonical validation before Kubernetes apply; live configuration remained unchanged. |
+| `MEDIA_RANGE_COLLISION` | The proof Service requesting already-owned UDP NodePorts `40000` and `40099` was rejected by Kubernetes allocation; the probe did not remain and the canonical 100-port Service stayed intact. |
+| `EXTERNAL_MEDIA_CANDIDATE_UNREACHABLE` | The exact nonmatching ingress peer was applied to the existing external-media NetworkPolicy. rtpengine stayed Ready on `server-0` with a local Ready endpoint and successful allocation, while browser ICE/media failed and no private fallback occurred. Canonical apply restored the policy and baseline. |
+
+Fresh post-restoration Scenario A used browser-originated BYE with candidate
+`127.0.0.1:40085`, reciprocal RTP `179/179` packets, positive inbound audio
+energy `0.1119`, final SIP `200 OK`, and no fallback. Scenario B used
+runtime-originated BYE with candidate `127.0.0.1:40042`, reciprocal RTP
+`179/179` packets, positive inbound audio energy `0.1119`, final SIP `200 OK`,
+and no fallback. The live containment sweep ran during Scenario B and passed:
+only UDP `40000-40099` was externally published; control, metrics, private RTP,
+ARI, AMI, ESL, unintended host networking, host ports, and extra NodePort
+Services were not exposed.
+
+The final baseline was Asterisk active channels `0`, rtpengine own/foreign
+sessions `0/0`, browser/runtime/default used ports `0/0/0`, and free capacity
+`100/100/100`. rtpengine was `1/1 Ready` on `k3d-utcp-local-server-0` with a
+Ready/local EndpointSlice, and `kubectl diff -k
+infrastructure/kubernetes/overlays/local-media-edge` was empty. `make test`
+passed with 403 backend tests (6 skipped, 3567 assertions) and 135 frontend
+tests; `make check`, focused harness tests, candidate assertions, and
+`git diff --check` passed. T3-S3B and T3 are closed; `UTCP_PHASE=T1` remains
+unchanged.
+
+## 2026-08-08 bounded closure attempt
+
+The repository correction in this attempt is intentionally recorded as
+incomplete. `AsteriskTwoNodeTopologyTest`, `make test`, and `make check` pass.
+The Asterisk topology validator now checks the canonical exec readiness command,
+and `rtp_timeout=30` plus `rtp_timeout_hold=30` protect abandoned media.
+
+Current canonical `utcp-local` live results:
+
+| Proof | Result |
+|---|---|
+| Scenario A, browser BYE | Passed; external candidate `127.0.0.1:40025`, UDP range and fallback assertions passed, final SIP `200 OK`. |
+| Scenario B, runtime BYE | Passed; external candidate `127.0.0.1:40050`, UDP range and fallback assertions passed, containment sweep ran while allocated, final SIP `200 OK`. |
+| Containment | Passed; only UDP `40000-40099` is the media NodePort surface; live inventory found no prohibited control, metrics, private RTP, ARI/AMI/ESL, or unintended host exposure. Canonical Traefik `80/443` service-load-balancer host ports were recognized as the existing HTTP edge. |
+| Four negative cases | Not live-proven. The committed `scripts/media-edge/failure-proof` contract and self-test cover all four case names and mutation failures, but no canonical case-specific mutation lifecycle is currently available for public binding loss, invalid advertised address, media-range collision, or unreachable candidate. |
+
+The first unresolved acceptance obligation is therefore the live negative-case
+mutation seam. T3-S3B remains incomplete and T3 must not be closed from this
+evidence alone.
 
 ## Tool Versions
 

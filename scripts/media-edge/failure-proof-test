@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Offline contract tests for the committed T3-S3B failure mutations."""
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import yaml
+
+ROOT = Path(__file__).resolve().parents[2]
+CANONICAL = ROOT / "infrastructure/kubernetes/overlays/local-media-edge"
+PROOFS = ROOT / "infrastructure/kubernetes/proofs/t3-s3b"
+
+def fail(message):
+    print(f"t3 media failure proof test failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+generic = subprocess.run([str(ROOT / "scripts/media-edge/failure-proof"), "--self-test"],
+                         cwd=ROOT, text=True, capture_output=True)
+if generic.returncode:
+    fail(generic.stderr.strip() or "generic failure result contract self-test failed")
+
+def render(path):
+    result = subprocess.run(["kubectl", "kustomize", str(path)], cwd=ROOT,
+                            text=True, capture_output=True)
+    if result.returncode:
+        fail(result.stderr.strip())
+    return {f"{d.get('apiVersion')}/{d.get('kind')}/{d.get('metadata', {}).get('namespace')}/{d.get('metadata', {}).get('name')}": d
+            for d in yaml.safe_load_all(result.stdout) if isinstance(d, dict)}
+
+canonical = render(CANONICAL)
+binding = render(PROOTS := PROOFS / "public-media-binding-unavailable")
+unreachable = render(PROOFS / "external-media-candidate-unreachable")
+dep_key = "apps/v1/Deployment/utcp-platform/rtpengine"
+policy_key = "networking.k8s.io/v1/NetworkPolicy/utcp-platform/allow-rtpengine-external-media"
+service_key = "v1/Service/utcp-platform/rtpengine-media"
+config_key = "v1/ConfigMap/utcp-platform/utcp-media-edge-authority"
+
+if set(binding) != set(canonical) or set(unreachable) != set(canonical):
+    fail("failure overlay changed the rendered resource set")
+for key, value in canonical.items():
+    if key not in {dep_key} and binding[key] != value:
+        fail(f"binding overlay changed unrelated resource: {key}")
+    if key not in {policy_key} and unreachable[key] != value:
+        fail(f"unreachable overlay changed unrelated resource: {key}")
+if binding[dep_key]["spec"]["template"]["spec"].get("nodeSelector") != {"kubernetes.io/hostname": "k3d-utcp-local-agent-0"}:
+    fail("binding overlay does not select agent-0")
+if unreachable[policy_key]["spec"]["ingress"][0].get("from") != [{"podSelector": {"matchLabels": {"utcp.dev/t3-s3b-proof-only": "unreachable"}}}]:
+    fail("unreachable overlay does not add the exact nonmatching peer")
+for result in (binding, unreachable):
+    service = result[service_key]
+    if service != canonical[service_key] or result[config_key] != canonical[config_key]:
+        fail("failure overlay changed Service or public-media ConfigMap")
+
+collision = yaml.safe_load((PROOFS / "media-range-collision.yaml").read_text())
+if collision["kind"] != "Service" or collision["metadata"]["name"] != "t3-s3b-nodeport-collision":
+    fail("collision probe is not uniquely named")
+ports = collision["spec"]["ports"]
+if [p.get("nodePort") for p in ports] != [40000, 40099] or any(p.get("protocol") != "UDP" for p in ports):
+    fail("collision probe must cover both canonical UDP boundaries")
+if collision["spec"].get("type") != "NodePort":
+    fail("collision probe must be a NodePort Service")
+
+if "status.availableReplicas" not in (ROOT / "scripts/media-edge/apply").read_text():
+    fail("canonical media-edge apply does not assert one available replica after rollout")
+if "running_pod_jsonpath" not in (ROOT / "scripts/media-edge/failure-proof-live").read_text():
+    fail("live failure proof does not retry current Running-Pod observation")
+
+versions = (ROOT / "versions.env").read_text()
+invalid = ("0.0.0.0", "169.254.1.1", "224.0.0.1", "192.0.2.255", "not-an-ip")
+for value in invalid:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "versions.env"
+        path.write_text(versions.replace("UTCP_PUBLIC_MEDIA_ADDRESS=127.0.0.1", f"UTCP_PUBLIC_MEDIA_ADDRESS={value}"))
+        env = dict(__import__("os").environ, UTCP_MEDIA_EDGE_VERSIONS=str(path))
+        result = subprocess.run([str(ROOT / "scripts/media-edge/config-check")], cwd=ROOT, env=env,
+                                text=True, capture_output=True)
+        if result.returncode == 0 or value not in result.stderr:
+            fail(f"invalid advertised address was not rejected diagnostically: {value}")
+
+print("t3_media_failure_overlay_tests=ok")
