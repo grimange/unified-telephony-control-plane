@@ -18,6 +18,7 @@ import NotFoundView from '../views/NotFoundView.vue'
 import RuntimeNodesView from '../views/RuntimeNodesView.vue'
 import RuntimeOperationsView from '../views/RuntimeOperationsView.vue'
 import RuntimeReconciliationsView from '../views/RuntimeReconciliationsView.vue'
+import ReferenceDialerView from '../views/ReferenceDialerView.vue'
 import TenantsView from '../views/TenantsView.vue'
 import UserDetailView from '../views/UserDetailView.vue'
 import UsersView from '../views/UsersView.vue'
@@ -44,6 +45,7 @@ export const routes = [
     meta: { requiresAuth: true },
     children: [
       { path: 'dashboard', name: 'dashboard', component: DashboardView, meta: { requiresAuth: true, title: 'Dashboard' } },
+      { path: 'dialer', name: 'reference-dialer', component: ReferenceDialerView, meta: { requiresAuth: true, title: 'Reference dialer', capability: 'telephony.sessions.view_own', requiresActiveTenant: true } },
       { path: 'admin/tenants', name: 'admin-tenants', component: TenantsView, meta: { requiresAuth: true, title: 'Tenants', capability: 'platform.tenants.view' } },
       { path: 'admin/memberships', name: 'admin-memberships', component: MembershipsView, meta: { requiresAuth: true, title: 'Memberships', capability: 'tenant.memberships.view' } },
       { path: 'admin/audit-records', name: 'admin-audit-records', component: AuditRecordsView, meta: { requiresAuth: true, title: 'Audit records', capability: 'tenant.memberships.manage', requiresActiveTenant: true } },

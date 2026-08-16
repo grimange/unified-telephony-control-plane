@@ -40,12 +40,13 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
             $this->catalog->eventType('event_listener_degraded') => 'events_degraded',
             $this->catalog->eventType('event_listener_recovered') => 'ready',
             $this->catalog->eventType('authentication_failed') => 'degraded',
-            default => 'degraded',
+            default => 'unknown',
         };
 
         $observationType = match ($this->eventType) {
             $this->catalog->eventType('connection_opened'),
             $this->catalog->eventType('connection_closed') => 'runtime.connection.observed',
+            $this->catalog->eventType('authentication_failed') => 'runtime.connection.observed',
             $this->catalog->eventType('runtime_info_observed') => 'runtime.readiness.observed',
             $this->catalog->eventType('event_listener_degraded'),
             $this->catalog->eventType('event_listener_recovered') => 'runtime.event_stream.observed',
@@ -66,8 +67,26 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
                 'runtime_family' => $this->catalog->runtimeFamily(),
                 'failure_class' => is_string($payload['failure_class'] ?? null) ? $payload['failure_class'] : null,
                 'ari_event_type' => is_string($payload['ari_event_type'] ?? null) ? $payload['ari_event_type'] : null,
+                'capabilities' => $this->capabilities($payload),
             ],
         ]];
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return list<string>|null
+     */
+    private function capabilities(array $payload): ?array
+    {
+        if (! array_key_exists('capabilities', $payload)) {
+            return null;
+        }
+
+        $capabilities = array_filter($payload['capabilities'] ?? [], 'is_string');
+        $capabilities = array_values(array_unique(array_filter($capabilities, static fn (string $value): bool => $value !== '')));
+        sort($capabilities);
+
+        return $capabilities;
     }
 
     private function isConferenceEvent(): bool
@@ -90,6 +109,22 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
     {
         $bridgeId = is_string($payload['bridge_id'] ?? null) ? $payload['bridge_id'] : null;
         $conferenceId = $this->suffixForPrefix($bridgeId, (string) config('asterisk_ari.conference.bridge_id_prefix', 'utcp-conf-'));
+        $channelId = is_string($payload['channel_id'] ?? null) ? $payload['channel_id'] : null;
+        $participantId = $this->suffixForPrefix($channelId, (string) config('asterisk_ari.conference.participant_channel_id_prefix', 'utcp-part-'));
+        $participant = null;
+
+        if ($conferenceId === null && $channelId !== null) {
+            $participantQuery = DB::table('conference_participants')
+                ->where('tenant_id', (string) $receipt->tenant_id);
+            if ($participantId !== null) {
+                $participantQuery->where('id', $participantId);
+            } else {
+                $participantQuery->where('runtime_channel_id', $channelId);
+            }
+            $participant = $participantQuery->first();
+            $conferenceId = $participant !== null ? (string) $participant->conference_id : null;
+        }
+
         if ($conferenceId === null) {
             return [];
         }
@@ -141,17 +176,19 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
             ]];
         }
 
-        $channelId = is_string($payload['channel_id'] ?? null) ? $payload['channel_id'] : null;
-        $participantId = $this->suffixForPrefix($channelId, (string) config('asterisk_ari.conference.participant_channel_id_prefix', 'utcp-part-'));
-        if ($participantId === null) {
+        if ($participant === null) {
+            if ($participantId === null || $channelId === null) {
+                return [];
+            }
+
+            $participant = DB::table('conference_participants')
+                ->where('id', $participantId)
+                ->where('tenant_id', (string) $receipt->tenant_id)
+                ->where('conference_id', (string) $conference->id)
+                ->first();
+        } elseif ((string) $participant->conference_id !== (string) $conference->id) {
             return [];
         }
-
-        $participant = DB::table('conference_participants')
-            ->where('id', $participantId)
-            ->where('tenant_id', (string) $receipt->tenant_id)
-            ->where('conference_id', (string) $conference->id)
-            ->first();
         if ($participant === null) {
             return [];
         }

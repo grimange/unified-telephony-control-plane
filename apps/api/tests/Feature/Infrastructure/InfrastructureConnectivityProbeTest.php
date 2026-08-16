@@ -193,6 +193,13 @@ final class InfrastructureConnectivityProbeTest extends TestCase
 
 final class ProbeFakeKubernetesWorkloadClient implements KubernetesWorkloadClient
 {
+    public function inspectResource(string $kind, string $name): ?array
+    {
+        unset($kind, $name);
+
+        return null;
+    }
+
     /** @var list<array{0:string,1:string}> */
     public array $getCalls = [];
 
@@ -244,5 +251,35 @@ final class ProbeFakeKubernetesWorkloadClient implements KubernetesWorkloadClien
         }
 
         return $this->pods;
+    }
+
+    public function applySecret(array $desired, string $runtimeNodeSlug): array
+    {
+        throw KubernetesWorkloadClientException::unavailable();
+    }
+
+    public function applyDeployment(array $desired, string $runtimeNodeSlug): array
+    {
+        throw KubernetesWorkloadClientException::unavailable();
+    }
+
+    public function applyService(array $desired, string $runtimeNodeSlug): array
+    {
+        throw KubernetesWorkloadClientException::unavailable();
+    }
+
+    public function deleteSecret(string $name, string $runtimeNodeSlug): bool
+    {
+        throw KubernetesWorkloadClientException::unavailable();
+    }
+
+    public function deleteDeployment(string $name, string $runtimeNodeSlug): bool
+    {
+        throw KubernetesWorkloadClientException::unavailable();
+    }
+
+    public function deleteService(string $name, string $runtimeNodeSlug): bool
+    {
+        throw KubernetesWorkloadClientException::unavailable();
     }
 }

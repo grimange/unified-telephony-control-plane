@@ -29,6 +29,7 @@ resources:
   - runtime
   - ../../base/migration
   - ../../base/platform
+  - ../../components/runtime-fencing
 images:
   - name: postgres
     newName: postgres

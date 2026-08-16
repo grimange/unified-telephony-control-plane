@@ -43,6 +43,9 @@ final class SimulatorRuntimeNodeReconciler implements Reconciler
                 ? ReconciliationResult::converged(300)
                 : ReconciliationResult::waiting('runtime_node_disabled', 300);
         }
+        if ($node->desired_state === 'retired') {
+            return ReconciliationResult::converged(300);
+        }
 
         $lastOperation = $target->last_operation_id === null ? null : DB::table('runtime_operations')->where('id', $target->last_operation_id)->first();
         if ($lastOperation !== null && $lastOperation->status === 'terminal_failed') {

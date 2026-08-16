@@ -385,10 +385,12 @@ for rejected_audience in [
 role = objects[('Role', 'utcp-runtime', 'utcp-runtime-fencer')]
 rules = role.get('rules') or []
 expected_rules = [
-    {'apiGroups': ['apps'], 'resources': ['deployments'], 'verbs': ['get', 'list']},
+    {'apiGroups': ['apps'], 'resources': ['deployments'], 'verbs': ['get', 'list', 'create', 'patch', 'delete']},
     {'apiGroups': ['apps'], 'resources': ['replicasets'], 'verbs': ['get', 'list']},
     {'apiGroups': ['apps'], 'resources': ['deployments/scale'], 'verbs': ['get', 'patch']},
     {'apiGroups': [''], 'resources': ['pods'], 'verbs': ['get', 'list']},
+    {'apiGroups': [''], 'resources': ['services'], 'verbs': ['get', 'create', 'patch', 'delete']},
+    {'apiGroups': [''], 'resources': ['secrets'], 'verbs': ['get', 'create', 'patch', 'delete']},
 ]
 if rules != expected_rules:
     fail('runtime fence Role is not the exact least-privilege rule set')

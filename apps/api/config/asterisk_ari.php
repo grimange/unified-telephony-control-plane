@@ -6,6 +6,7 @@ return [
     'adapter_key' => 'asterisk-ari',
     'listener_kind' => 'asterisk-ari-events',
     'credential_type' => 'ari-basic',
+    'managed_image' => env('UTCP_MANAGED_ASTERISK_IMAGE'),
     'defaults' => [
         'application_name' => env('UTCP_ASTERISK_ARI_APPLICATION', 'utcp-t0-observation'),
         'connect_timeout_ms' => (int) env('UTCP_ASTERISK_ARI_CONNECT_TIMEOUT_MS', 2000),

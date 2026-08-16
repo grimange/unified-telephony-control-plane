@@ -50,6 +50,11 @@ final class ConferenceParticipantReconciler implements Reconciler
                 return ReconciliationResult::waiting('conference_not_open_for_participant_ensure', 120);
             }
 
+            if ((string) ($participant->admission_reason ?? '') === 'self_admission'
+                && ! is_string($participant->runtime_channel_id ?? null)) {
+                return ReconciliationResult::waiting('conference_participant_awaiting_inbound_signaling_leg', 30);
+            }
+
             $inspection = $this->inspections->inspect((string) $participant->tenant_id, $runtimeNodeId, (string) $conference->id, (string) $participant->id);
             if ($inspection->status === 'unavailable' || $inspection->status === 'failed') {
                 return ReconciliationResult::waiting('conference_participant_runtime_inspection_unavailable', 30);

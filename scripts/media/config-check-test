@@ -202,6 +202,28 @@ elif mutation == "runtime-wide-peer":
     docs[0]["spec"]["egress"][0]["to"][0].pop("podSelector", None)
 elif mutation == "runtime-ipblock":
     docs[0]["spec"]["egress"][0]["to"] = [{"ipBlock": {"cidr": "10.42.0.0/16"}}]
+elif mutation == "runtime-static-node-pin":
+    for rule in docs[0]["spec"].get("ingress") or []:
+        for peer in rule.get("from") or []:
+            labels = (peer.get("podSelector") or {}).get("matchLabels") or {}
+            if labels.get("utcp.io/network-role") == "asterisk-ari":
+                labels["utcp.dev/runtime-node"] = "local-asterisk-ari"
+    for rule in docs[0]["spec"].get("egress") or []:
+        for peer in rule.get("to") or []:
+            labels = (peer.get("podSelector") or {}).get("matchLabels") or {}
+            if labels.get("utcp.io/network-role") == "asterisk-ari":
+                labels["utcp.dev/runtime-node"] = "local-asterisk-ari"
+elif mutation == "runtime-missing-identity-label":
+    for rule in docs[0]["spec"].get("ingress") or []:
+        for peer in rule.get("from") or []:
+            labels = (peer.get("podSelector") or {}).get("matchLabels") or {}
+            if labels.get("utcp.io/network-role") == "asterisk-ari":
+                labels.pop("app.kubernetes.io/component", None)
+    for rule in docs[0]["spec"].get("egress") or []:
+        for peer in rule.get("to") or []:
+            labels = (peer.get("podSelector") or {}).get("matchLabels") or {}
+            if labels.get("utcp.io/network-role") == "asterisk-ari":
+                labels.pop("app.kubernetes.io/component", None)
 else:
     raise SystemExit(f"unknown mutation: {mutation}")
 
@@ -237,6 +259,8 @@ corridor_missing_ingress="$(copy_security corridor-missing-ingress)"
 corridor_wrong_ingress="$(copy_security corridor-wrong-ingress)"
 corridor_wide_peer="$(copy_security corridor-wide-peer)"
 corridor_ipblock="$(copy_security corridor-ipblock)"
+corridor_static_node_pin="$(copy_security corridor-static-node-pin)"
+corridor_missing_identity_label="$(copy_security corridor-missing-identity-label)"
 
 cp "$SOURCE_DOCKERFILE" "$corrected"
 sed 's/+0\./+0~/g' "$SOURCE_DOCKERFILE" >"$tilde"
@@ -270,6 +294,8 @@ mutate_yaml "$corridor_missing_ingress/runtime/allow-asterisk-sip-from-kamailio.
 mutate_yaml "$corridor_wrong_ingress/runtime/allow-asterisk-sip-from-kamailio.yaml" wrong-runtime-ingress-range
 mutate_yaml "$corridor_wide_peer/platform/allow-rtpengine-media.yaml" runtime-wide-peer
 mutate_yaml "$corridor_ipblock/platform/allow-rtpengine-media.yaml" runtime-ipblock
+mutate_yaml "$corridor_static_node_pin/platform/allow-rtpengine-media.yaml" runtime-static-node-pin
+mutate_yaml "$corridor_missing_identity_label/platform/allow-rtpengine-media.yaml" runtime-missing-identity-label
 
 pass_case "corrected Dockerfile" "$corrected"
 fail_case "tilde package separator" "$tilde" "uses '+0~'; expected convention is +0.mr26.0.1.19"
@@ -299,5 +325,7 @@ fail_case "missing runtime-to-rtpengine ingress rejected" "$corrected" "runtime 
 fail_case "wrong runtime-to-rtpengine destination range rejected" "$corrected" "runtime ingress must accept rtpengine on runtime range" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$corridor_wrong_ingress"
 fail_case "wide runtime peer rejected" "$corrected" "rtpengine egress must target the runtime RTP listener range" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$corridor_wide_peer"
 fail_case "media ipBlock rejected" "$corrected" "rtpengine egress must target the runtime RTP listener range" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$corridor_ipblock"
+fail_case "static RuntimeNode pin rejected" "$corrected" "rtpengine egress must target the runtime RTP listener range" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$corridor_static_node_pin"
+fail_case "missing canonical Asterisk identity rejected" "$corrected" "rtpengine egress must target the runtime RTP listener range" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$corridor_missing_identity_label"
 
 printf 'media config check regression tests passed\n'

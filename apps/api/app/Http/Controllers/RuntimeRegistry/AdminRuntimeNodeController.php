@@ -72,6 +72,10 @@ final class AdminRuntimeNodeController extends Controller
         ]);
 
         try {
+            if (array_key_exists('runtime_family', $data) || array_key_exists('adapter_key', $data) || array_key_exists('labels', $data)) {
+                $registry->assertManualMutationAllowed($tenantId, $runtimeNode);
+            }
+
             return response()->json($registry->updateNode($request, $tenantId, $runtimeNode, $data));
         } catch (InvalidArgumentException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
@@ -94,6 +98,19 @@ final class AdminRuntimeNodeController extends Controller
         }
     }
 
+    public function decommission(Request $request, string $runtimeNode, AuthorizationService $authorization, RuntimeRegistryService $registry): JsonResponse
+    {
+        $tenantId = $this->tenantId($request);
+        $authorization->requireTenant($request->user()->id, $tenantId, 'runtime.nodes.manage');
+        $data = $request->validate(['reason' => ['nullable', 'string', 'max:512']]);
+
+        try {
+            return response()->json($registry->requestDecommission($request, $tenantId, $runtimeNode, $this->idempotencyKey($request), $data['reason'] ?? null), 202);
+        } catch (InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+    }
+
     public function addEndpoint(Request $request, string $runtimeNode, AuthorizationService $authorization, RuntimeRegistryService $registry): JsonResponse
     {
         $tenantId = $this->tenantId($request);
@@ -101,6 +118,8 @@ final class AdminRuntimeNodeController extends Controller
         $data = $request->validate($this->endpointRules());
 
         try {
+            $registry->assertManualMutationAllowed($tenantId, $runtimeNode);
+
             return response()->json($registry->addEndpoint($request, $tenantId, $runtimeNode, $data), 201);
         } catch (InvalidArgumentException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
@@ -114,6 +133,8 @@ final class AdminRuntimeNodeController extends Controller
         $data = $request->validate($this->endpointRules(false));
 
         try {
+            $registry->assertManualMutationAllowed($tenantId, $runtimeNode);
+
             return response()->json($registry->updateEndpoint($request, $tenantId, $runtimeNode, $endpoint, $data));
         } catch (InvalidArgumentException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
@@ -124,7 +145,12 @@ final class AdminRuntimeNodeController extends Controller
     {
         $tenantId = $this->tenantId($request);
         $authorization->requireTenant($request->user()->id, $tenantId, 'runtime.nodes.manage');
-        $registry->removeEndpoint($request, $tenantId, $runtimeNode, $endpoint);
+        try {
+            $registry->assertManualMutationAllowed($tenantId, $runtimeNode);
+            $registry->removeEndpoint($request, $tenantId, $runtimeNode, $endpoint);
+        } catch (InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
 
         return response()->json(['message' => 'endpoint_removed']);
     }
@@ -136,6 +162,8 @@ final class AdminRuntimeNodeController extends Controller
         $data = $request->validate(['capabilities' => ['required', 'array'], 'capabilities.*' => ['string', 'max:120']]);
 
         try {
+            $registry->assertManualMutationAllowed($tenantId, $runtimeNode);
+
             return response()->json($registry->setCapabilities($request, $tenantId, $runtimeNode, $data['capabilities']));
         } catch (InvalidArgumentException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
@@ -149,6 +177,8 @@ final class AdminRuntimeNodeController extends Controller
         $data = $request->validate($this->credentialRules());
 
         try {
+            $registry->assertManualMutationAllowed($tenantId, $runtimeNode);
+
             return response()->json($registry->createCredential($request, $tenantId, $runtimeNode, $data, $this->idempotencyKey($request)), 201);
         } catch (InvalidArgumentException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
@@ -162,6 +192,8 @@ final class AdminRuntimeNodeController extends Controller
         $data = $request->validate($this->credentialRules());
 
         try {
+            $registry->assertManualMutationAllowed($tenantId, $runtimeNode);
+
             return response()->json($registry->rotateCredential($request, $tenantId, $runtimeNode, $credential, $data, $this->idempotencyKey($request)));
         } catch (InvalidArgumentException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
@@ -174,6 +206,8 @@ final class AdminRuntimeNodeController extends Controller
         $authorization->requireTenant($request->user()->id, $tenantId, 'runtime.credentials.rotate');
 
         try {
+            $registry->assertManualMutationAllowed($tenantId, $runtimeNode);
+
             return response()->json($registry->retireCredential($request, $tenantId, $runtimeNode, $credential));
         } catch (InvalidArgumentException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
@@ -196,13 +230,14 @@ final class AdminRuntimeNodeController extends Controller
         }
     }
 
-    public function putAdapterConfiguration(Request $request, string $runtimeNode, AuthorizationService $authorization, AdapterConfigurationRegistry $adapters): JsonResponse
+    public function putAdapterConfiguration(Request $request, string $runtimeNode, AuthorizationService $authorization, AdapterConfigurationRegistry $adapters, RuntimeRegistryService $registry): JsonResponse
     {
         $tenantId = $this->tenantId($request);
         $authorization->requireTenant($request->user()->id, $tenantId, 'runtime.nodes.manage');
 
         try {
             $node = $this->runtimeNode($tenantId, $runtimeNode);
+            $registry->assertManualMutationAllowed($tenantId, $runtimeNode);
             $context = IdentityContext::fromRequest($request, $tenantId);
             $handler = $adapters->forNode($node);
             $validated = $handler->validate($node, $request->all(), $context);

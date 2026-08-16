@@ -129,6 +129,10 @@ final class CommandWorker
 
     private function resolveAdapter(object $operation, RuntimeOperationHandler $handler): RuntimeAdapter|FailureClass|null
     {
+        if ($handler instanceof RunsWithoutRuntimeAdapter) {
+            return null;
+        }
+
         if ($operation->runtime_node_id === null) {
             return null;
         }

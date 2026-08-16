@@ -18,8 +18,12 @@ use App\RuntimeEngine\Commands\RuntimeAdapterRegistry;
 use App\RuntimeEngine\Commands\RuntimeOperationHandlerRegistry;
 use App\RuntimeEngine\Events\EventNormalizerRegistry;
 use App\RuntimeEngine\Reconciliation\ReconcilerRegistry;
+use App\RuntimeEngine\Reconciliation\RuntimeNodeDrainCoordinator;
 use App\RuntimeEngine\Reconciliation\RuntimeNodeReconciler;
+use App\RuntimeProvisioning\ManagedAsteriskDeprovisioningOperationHandler;
+use App\RuntimeProvisioning\ManagedAsteriskProvisioningOperationHandler;
 use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationRegistry;
+use App\RuntimeRegistry\RuntimeNodeDecommissionOperationHandler;
 use App\Simulator\Commands\SimulatorApplyConfigurationHandler;
 use App\Simulator\Commands\SimulatorRuntimeAdapter;
 use App\Simulator\Events\SimulatorEventNormalizer;
@@ -61,6 +65,9 @@ class AppServiceProvider extends ServiceProvider
             new ConferenceOperationHandler((string) config('telephony_domain.operation_types.verify_conference_absent'), (string) config('telephony_domain.runtime_capabilities.conference_lifecycle')),
             $app->make(RuntimeFenceOperationHandler::class),
             $app->make(RuntimeNodeRestoreOperationHandler::class),
+            $app->make(RuntimeNodeDecommissionOperationHandler::class),
+            $app->make(ManagedAsteriskProvisioningOperationHandler::class),
+            $app->make(ManagedAsteriskDeprovisioningOperationHandler::class),
         ]));
         $this->app->singleton(EventNormalizerRegistry::class, function ($app): EventNormalizerRegistry {
             $catalog = $app->make(SimulatorCatalog::class);
@@ -104,6 +111,7 @@ class AppServiceProvider extends ServiceProvider
                 $app->make(AsteriskRuntimeNodeReconciler::class),
                 $app->make(SimulatorRuntimeNodeReconciler::class),
             ]),
+            $app->make(RuntimeNodeDrainCoordinator::class),
             $app->make(ConferenceReconciler::class),
             $app->make(ConferenceParticipantReconciler::class),
             $app->make(SignalingRegistrationReconciler::class),

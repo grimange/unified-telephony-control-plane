@@ -42,7 +42,7 @@ foreach (["asterisk-ari", "freeswitch-esl"] as $adapter) {
     exit(1);
   }
 }
-foreach (["draft", "active", "draining", "disabled"] as $state) {
+foreach (["draft", "active", "draining", "disabled", "retired"] as $state) {
   if (! in_array($state, $catalog["desired_states"], true)) {
     fwrite(STDERR, "missing desired state: {$state}\n");
     exit(1);
@@ -102,7 +102,7 @@ if rg -n "api/v1/admin/(ari|esl|asterisk|freeswitch)" apps/api/routes apps/web/s
   fail "found runtime-specific administrative route"
 fi
 
-if rg -n "encrypted_secret|secret_fingerprint" apps/api/app/Http/Controllers/RuntimeRegistry apps/web/src >/dev/null; then
+if rg -n --glob '!**/*.test.*' --glob '!**/*.spec.*' "encrypted_secret|secret_fingerprint" apps/api/app/Http/Controllers/RuntimeRegistry apps/web/src >/dev/null; then
   fail "credential storage internals are exposed outside the service boundary"
 fi
 

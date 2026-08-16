@@ -40,6 +40,7 @@ final class TelephonyDomainTest extends TestCase
             ->assertJsonPath('tenant_id', $tenantId)
             ->assertJsonPath('telephony_session', null)
             ->assertJsonPath('signaling', null)
+            ->assertJsonPath('participation', null)
             ->assertJsonPath('conferences.0.id', $conference['id']);
 
         $session = $this->actingAs($member)->withSession($this->tenantSession($tenantId))
@@ -58,6 +59,78 @@ final class TelephonyDomainTest extends TestCase
             ->assertJsonPath('signaling.credential.username', 'ts-'.str_replace('-', '', $session['id']))
             ->assertJsonPath('signaling.registration.desired_state', 'eligible')
             ->assertJsonPath('conferences.0.id', $conference['id']);
+    }
+
+    public function test_recoverable_participation_is_discovered_and_expires_at_the_domain_deadline(): void
+    {
+        [$admin, $member, $tenantId, $nodeId] = $this->fixture('rh1-recovery');
+        $conference = $this->openConference($admin, $tenantId, $nodeId, 'rh1-recovery');
+        DB::table('runtime_node_endpoints')->insert([
+            'id' => IdentityIds::new(),
+            'runtime_node_id' => $nodeId,
+            'purpose' => 'sip',
+            'transport' => 'udp',
+            'host' => 'asterisk.rh1.internal',
+            'port' => 5060,
+            'enabled' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $session = $this->actingAs($member)->withSession($this->tenantSession($tenantId))
+            ->postJson('/api/v1/telephony/sessions')
+            ->assertCreated()->json('telephony_session');
+        $participant = $this->actingAs($member)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/conferences/{$conference['id']}/participants/self")
+            ->assertCreated()->json('participant');
+
+        DB::table('conference_participants')->where('id', $participant['id'])->update([
+            'runtime_channel_lost_at' => now()->subSeconds(30),
+        ]);
+        $this->actingAs($member)->withSession($this->tenantSession($tenantId))
+            ->getJson('/api/v1/reference-dialer/bootstrap')
+            ->assertOk()
+            ->assertJsonPath('participation.participant_id', $participant['id'])
+            ->assertJsonPath('participation.conference_id', $conference['id'])
+            ->assertJsonPath('participation.recoverable', true);
+
+        DB::table('conference_participants')->where('id', $participant['id'])->update([
+            'runtime_channel_lost_at' => now()->subSeconds(TelephonyDomainService::RECOVERABLE_PARTICIPATION_GRACE_SECONDS + 1),
+        ]);
+        $this->actingAs($member)->withSession($this->tenantSession($tenantId))
+            ->getJson('/api/v1/reference-dialer/bootstrap')
+            ->assertOk()
+            ->assertJsonPath('participation.recoverable', false);
+
+        $this->assertSame(1, app(TelephonyDomainService::class)->expireRecoverableParticipants());
+        $this->assertSame('removed', DB::table('conference_participants')->where('id', $participant['id'])->value('desired_state'));
+        $this->assertSame('active', DB::table('telephony_sessions')->where('id', $session['id'])->value('status'));
+    }
+
+    public function test_explicit_leave_removes_recovery_intent_immediately(): void
+    {
+        [$admin, $member, $tenantId, $nodeId] = $this->fixture('rh1-explicit-leave');
+        $conference = $this->openConference($admin, $tenantId, $nodeId, 'rh1-explicit-leave');
+        $session = $this->actingAs($member)->withSession($this->tenantSession($tenantId))
+            ->postJson('/api/v1/telephony/sessions')
+            ->assertCreated()->json('telephony_session');
+        $participant = $this->actingAs($member)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/conferences/{$conference['id']}/participants/self")
+            ->assertCreated()->json('participant');
+
+        DB::table('conference_participants')->where('id', $participant['id'])->update([
+            'runtime_channel_lost_at' => now()->subSeconds(30),
+        ]);
+
+        $this->actingAs($member)->withSession($this->tenantSession($tenantId))
+            ->deleteJson("/api/v1/conferences/{$conference['id']}/participants/self")
+            ->assertOk();
+
+        $this->assertSame('removed', DB::table('conference_participants')->where('id', $participant['id'])->value('desired_state'));
+        $this->assertNull($this->actingAs($member)->withSession($this->tenantSession($tenantId))
+            ->getJson('/api/v1/reference-dialer/bootstrap')
+            ->assertOk()
+            ->json('participation'));
+        $this->assertSame('active', DB::table('telephony_sessions')->where('id', $session['id'])->value('status'));
     }
 
     public function test_admin_creates_open_conference_member_session_and_participation_lifecycle_through_runtime_path(): void
@@ -93,20 +166,24 @@ final class TelephonyDomainTest extends TestCase
             ->assertJsonPath('telephony_session.status', 'active')
             ->json('telephony_session');
 
-        $participant = $this->actingAs($member)->withSession($this->tenantSession($tenantId))
+        $admission = $this->actingAs($member)->withSession($this->tenantSession($tenantId))
             ->postJson("/api/v1/conferences/{$conference['id']}/participants/self", [], ['Idempotency-Key' => 'join-key'])
             ->assertCreated()
             ->assertJsonPath('participant.desired_state', 'admitted')
-            ->json('participant');
+            ->json();
+        $participant = $admission['participant'];
+        $this->assertSame('sip:conf-'.$participant['id'].'@sip.utcp.local.test', $admission['signaling_destination']);
 
         $duplicate = $this->actingAs($member)->withSession($this->tenantSession($tenantId))
             ->postJson("/api/v1/conferences/{$conference['id']}/participants/self", [], ['Idempotency-Key' => 'join-key'])
             ->assertCreated()
+            ->assertJsonPath('signaling_destination', 'sip:conf-'.$participant['id'].'@sip.utcp.local.test')
             ->json('participant');
         $this->assertSame($participant['id'], $duplicate['id']);
 
         $this->runParticipantRuntime($participant['id']);
-        $this->assertSame('joined', DB::table('conference_participants')->where('id', $participant['id'])->value('observed_state'));
+        $this->assertSame('unobserved', DB::table('conference_participants')->where('id', $participant['id'])->value('observed_state'));
+        $this->assertNull(DB::table('conference_participants')->where('id', $participant['id'])->value('runtime_channel_id'));
 
         $this->actingAs($member)->withSession($this->tenantSession($tenantId))
             ->postJson("/api/v1/telephony/sessions/{$session['id']}/end")
@@ -149,6 +226,39 @@ final class TelephonyDomainTest extends TestCase
             'target_type' => 'conference',
             'target_id' => $conference['id'],
             'status' => 'converged',
+        ]);
+    }
+
+    public function test_draining_runtime_is_cordoned_while_existing_work_remains_bound(): void
+    {
+        [$admin, , $tenantId, $nodeA] = $this->fixture('rnm-drain-cordon');
+        $nodeB = $this->runtimeNode($tenantId, 'rnm-drain-cordon-b');
+        $existing = $this->openConference($admin, $tenantId, $nodeA, 'rnm-drain-existing');
+
+        $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/admin/runtime-nodes/{$nodeA}/desired-state", ['desired_state' => 'draining'])
+            ->assertOk()
+            ->assertJsonPath('runtime_node.desired_state', 'draining');
+
+        $newConference = $this->openConferenceWithoutRequestedRuntime($admin, $tenantId, 'rnm-drain-new');
+        $this->assertSame($nodeB, $newConference['runtime_node_id']);
+        $this->assertSame($nodeA, DB::table('conferences')->where('id', $existing['id'])->value('runtime_node_id'));
+        $this->assertDatabaseHas('conference_runtime_bindings', [
+            'conference_id' => $existing['id'],
+            'runtime_node_id' => $nodeA,
+            'status' => 'active',
+        ]);
+
+        $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/admin/runtime-nodes/{$nodeB}/desired-state", ['desired_state' => 'disabled'])
+            ->assertOk();
+
+        $blocked = $this->openConferenceWithoutRequestedRuntime($admin, $tenantId, 'rnm-drain-no-capacity');
+        $this->assertNull($blocked['runtime_node_id']);
+        $this->assertDatabaseMissing('conference_runtime_bindings', [
+            'conference_id' => $blocked['id'],
+            'runtime_node_id' => $nodeA,
+            'status' => 'active',
         ]);
     }
 
@@ -336,6 +446,14 @@ final class TelephonyDomainTest extends TestCase
         $this->assertNotEmpty($issued['sip_secret']);
         $this->assertSame('wss://sip.utcp.local.test/ws', $issued['wss_uri']);
         $this->assertMatchesRegularExpression('/\Ats-[0-9a-f]{32}\z/', $issued['username']);
+        $issuedAt = Carbon::parse($issued['issued_at']);
+        $expiresAt = Carbon::parse($issued['expires_at']);
+        $this->assertStringContainsString('T', $issued['issued_at']);
+        $this->assertStringEndsWith('Z', $issued['issued_at']);
+        $this->assertStringContainsString('T', $issued['expires_at']);
+        $this->assertStringEndsWith('Z', $issued['expires_at']);
+        $this->assertTrue($expiresAt->greaterThan($issuedAt));
+        $this->assertEquals(120, $issuedAt->diffInSeconds($expiresAt));
 
         $row = DB::table('telephony_signaling_credentials')->where('telephony_session_id', $session['id'])->first();
         $this->assertNotNull($row);
@@ -2211,6 +2329,28 @@ final class TelephonyDomainTest extends TestCase
                 'slug' => $slug,
                 'display_name' => 'T5 Rebind '.$slug,
                 'runtime_node_id' => $nodeId,
+            ])
+            ->assertCreated()
+            ->json('conference');
+
+        return $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson("/api/v1/admin/conferences/{$conference['id']}/desired-state", ['desired_state' => 'open'])
+            ->assertOk()
+            ->json('conference');
+    }
+
+    /**
+     * Open a conference without selecting a requested runtime node so that the
+     * canonical placement policy is exercised at the open transition.
+     *
+     * @return array<string, mixed>
+     */
+    private function openConferenceWithoutRequestedRuntime(User $admin, string $tenantId, string $slug): array
+    {
+        $conference = $this->actingAs($admin)->withSession($this->tenantSession($tenantId))
+            ->postJson('/api/v1/admin/conferences', [
+                'slug' => $slug,
+                'display_name' => 'RNM-1 '.$slug,
             ])
             ->assertCreated()
             ->json('conference');

@@ -89,6 +89,20 @@ final class RuntimeRegistryCatalog
         }
     }
 
+    /**
+     * @return list<string>
+     */
+    public function supportedCapabilities(string $adapterKey): array
+    {
+        $adapter = config("runtime_registry.adapter_keys.$adapterKey");
+
+        if (! is_array($adapter)) {
+            throw new InvalidArgumentException('Invalid runtime adapter.');
+        }
+
+        return $this->stringList($adapter['supported_capabilities'] ?? []);
+    }
+
     public function assertDesiredState(string $state): void
     {
         if (! in_array($state, config('runtime_registry.desired_states', []), true)) {
@@ -102,8 +116,10 @@ final class RuntimeRegistryCatalog
         $allowed = [
             'draft' => ['active', 'disabled'],
             'active' => ['draining', 'disabled'],
-            'draining' => ['active', 'disabled'],
-            'disabled' => ['draft', 'active'],
+            'draining' => ['active', 'drained', 'disabled'],
+            'drained' => ['active', 'retired'],
+            'disabled' => ['draft', 'active', 'retired'],
+            'retired' => [],
         ];
 
         if ($from === $to) {

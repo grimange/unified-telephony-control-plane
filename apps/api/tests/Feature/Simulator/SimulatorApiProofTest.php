@@ -84,6 +84,69 @@ final class SimulatorApiProofTest extends TestCase
         $this->assertStringNotContainsString('api/v1/admin/esl', $routes);
     }
 
+    public function test_retired_simulator_node_rejects_adapter_configuration_without_mutation(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin('retired-simulator-admin@utcp.local.test', 'retired-simulator');
+        $session = ['user_session_version' => 1, 'active_tenant_id' => $tenantId];
+        $node = $this->actingAs($admin)->withSession($session)
+            ->postJson('/api/v1/admin/runtime-nodes', $this->nodePayload(), ['Idempotency-Key' => 'retired-simulator-node-create'])
+            ->assertCreated()
+            ->json('runtime_node');
+
+        $this->actingAs($admin)->withSession($session)
+            ->putJson("/api/v1/admin/runtime-nodes/{$node['id']}/adapter-configuration", [
+                'scenario_key' => 'steady-ready',
+                'scenario_version' => 1,
+                'seed' => 'before-retirement',
+                'parameters' => ['max_delay_seconds' => 0],
+            ])
+            ->assertOk();
+        $this->actingAs($admin)->withSession($session)
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'disabled'])
+            ->assertOk();
+        $this->actingAs($admin)->withSession($session)
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'retired'])
+            ->assertOk();
+
+        $beforeNode = DB::table('runtime_nodes')->where('id', $node['id'])->first();
+        $beforeProfile = DB::table('simulator_profiles')->where('runtime_node_id', $node['id'])->first();
+        $auditCount = DB::table('control_plane_audit_records')
+            ->where('subject_id', $node['id'])
+            ->where('action', 'runtime_node.simulator_configuration_changed')
+            ->count();
+        $outboxCount = DB::table('control_plane_outbox_messages')
+            ->where('aggregate_id', $node['id'])
+            ->where('event_type', 'runtime_node.simulator_configuration_changed')
+            ->count();
+
+        $this->actingAs($admin)->withSession($session)
+            ->putJson("/api/v1/admin/runtime-nodes/{$node['id']}/adapter-configuration", [
+                'scenario_key' => 'terminal-failure',
+                'scenario_version' => 1,
+                'seed' => 'after-retirement',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Retired runtime nodes are read-only historical records.');
+
+        $afterNode = DB::table('runtime_nodes')->where('id', $node['id'])->first();
+        $afterProfile = DB::table('simulator_profiles')->where('runtime_node_id', $node['id'])->first();
+        $this->assertSame('retired', $afterNode->desired_state);
+        $this->assertSame((int) $beforeNode->configuration_version, (int) $afterNode->configuration_version);
+        $this->assertSame($beforeNode->updated_at, $afterNode->updated_at);
+        $this->assertSame($beforeProfile->scenario_key, $afterProfile->scenario_key);
+        $this->assertSame($beforeProfile->seed, $afterProfile->seed);
+        $this->assertSame($beforeProfile->parameters, $afterProfile->parameters);
+        $this->assertSame((int) $beforeProfile->configuration_generation, (int) $afterProfile->configuration_generation);
+        $this->assertSame($auditCount, DB::table('control_plane_audit_records')
+            ->where('subject_id', $node['id'])
+            ->where('action', 'runtime_node.simulator_configuration_changed')
+            ->count());
+        $this->assertSame($outboxCount, DB::table('control_plane_outbox_messages')
+            ->where('aggregate_id', $node['id'])
+            ->where('event_type', 'runtime_node.simulator_configuration_changed')
+            ->count());
+    }
+
     /**
      * @return array{0: User, 1: string}
      */

@@ -68,8 +68,21 @@ def validate_reverb_allowed_origin(label: str, rendered_objects: dict[str, Any])
         fail(f"{label} REVERB_ALLOWED_ORIGIN must be a host-only Reverb origin pattern")
 
 
+def validate_managed_asterisk_image(label: str, rendered_objects: dict[str, Any]) -> None:
+    config = rendered_objects.get("ConfigMap/utcp-platform/utcp-application-config")
+    image = ((config or {}).get("data") or {}).get("UTCP_MANAGED_ASTERISK_IMAGE")
+    if not image:
+        fail(f"{label} application ConfigMap must define UTCP_MANAGED_ASTERISK_IMAGE")
+    if "/" not in image or (":" not in image.rsplit("/", 1)[-1] and "@sha256:" not in image):
+        fail(f"{label} UTCP_MANAGED_ASTERISK_IMAGE must be a qualified image with an explicit tag or digest")
+    if any(character.isspace() for character in image):
+        fail(f"{label} UTCP_MANAGED_ASTERISK_IMAGE must not contain whitespace")
+
+
 validate_reverb_allowed_origin("local", local_objects)
 validate_reverb_allowed_origin("platform", platform_objects)
+validate_managed_asterisk_image("local", local_objects)
+validate_managed_asterisk_image("platform", platform_objects)
 
 REVERB_SECRET = "utcp-local-reverb-credentials"
 REVERB_CONFIG_KEYS = {"REVERB_HOST", "REVERB_PORT", "REVERB_SCHEME"}

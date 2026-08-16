@@ -1341,7 +1341,7 @@ describe('C1 App shell', () => {
     const wrapper = await mountApp('/admin/runtime-nodes')
 
     expect(wrapper.text()).toContain('Proof Runtime')
-    expect(wrapper.text()).toContain('observed unobserved')
+    expect(wrapper.text()).toContain('Creating')
     expect(wrapper.text()).toContain('Live updates connecting')
     const runtimeHeading = wrapper.find('.section-heading')
     expect(runtimeHeading.exists()).toBe(true)
@@ -1383,8 +1383,10 @@ describe('C1 App shell', () => {
     await wrapper.findAll('button').find((button) => button.text() === 'Details')?.trigger('click')
     await flushPromises()
 
+    await wrapper.findAll('button').find((button) => button.text() === 'Register Existing Runtime')?.trigger('click')
+    await nextTick()
+
     expect(wrapper.text()).toContain('Secrets are write-only')
-    expect(wrapper.text()).toContain('Simulator')
     expect(wrapper.text()).toContain('Asterisk ARI')
     expect(wrapper.text()).toContain('Event stream')
     expect(wrapper.text()).toContain('Runtime observation')
@@ -1434,7 +1436,7 @@ describe('C1 App shell', () => {
       call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/adapter-configuration') ||
       call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/runtime-evidence') ||
       call.url.endsWith('/api/v1/admin/runtime-nodes/runtime-1/history?limit=10'),
-    )).toHaveLength(detailCallCountAfterFirstOpen)
+    )).toHaveLength(detailCallCountAfterFirstOpen + 3)
   })
 
   it('renders Conference operations with bounded list, detail, and participant request budgets', async () => {

@@ -54,11 +54,11 @@ return [
         ],
     ],
 
-    'desired_states' => ['draft', 'active', 'draining', 'disabled'],
+    'desired_states' => ['draft', 'active', 'draining', 'drained', 'disabled', 'retired'],
     'observed_states' => ['unobserved', 'unknown'],
 
-    'endpoint_purposes' => ['control', 'events', 'health'],
-    'endpoint_transports' => ['http', 'https', 'tcp', 'tls', 'ws', 'wss'],
+    'endpoint_purposes' => ['control', 'events', 'health', 'sip'],
+    'endpoint_transports' => ['http', 'https', 'tcp', 'tls', 'udp', 'ws', 'wss'],
     'endpoint_tls_modes' => ['disabled', 'opportunistic', 'required', 'verify'],
 
     'runtime_capabilities' => [

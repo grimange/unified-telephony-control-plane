@@ -92,8 +92,8 @@ return new class extends Migration
             DB::statement("ALTER TABLE runtime_nodes ADD CONSTRAINT runtime_nodes_observed_state_check CHECK (observed_state IN ('unobserved', 'unknown'))");
             DB::statement("ALTER TABLE runtime_nodes ADD CONSTRAINT runtime_nodes_runtime_family_check CHECK (runtime_family IN ('asterisk', 'freeswitch'))");
             DB::statement("ALTER TABLE runtime_nodes ADD CONSTRAINT runtime_nodes_adapter_key_check CHECK (adapter_key IN ('asterisk-ari', 'freeswitch-esl'))");
-            DB::statement("ALTER TABLE runtime_node_endpoints ADD CONSTRAINT runtime_node_endpoints_purpose_check CHECK (purpose IN ('control', 'events', 'health'))");
-            DB::statement("ALTER TABLE runtime_node_endpoints ADD CONSTRAINT runtime_node_endpoints_transport_check CHECK (transport IN ('http', 'https', 'tcp', 'tls', 'ws', 'wss'))");
+            DB::statement("ALTER TABLE runtime_node_endpoints ADD CONSTRAINT runtime_node_endpoints_purpose_check CHECK (purpose IN ('control', 'events', 'health', 'sip'))");
+            DB::statement("ALTER TABLE runtime_node_endpoints ADD CONSTRAINT runtime_node_endpoints_transport_check CHECK (transport IN ('http', 'https', 'tcp', 'tls', 'udp', 'ws', 'wss'))");
             DB::statement("ALTER TABLE runtime_node_endpoints ADD CONSTRAINT runtime_node_endpoints_tls_mode_check CHECK (tls_mode IN ('disabled', 'opportunistic', 'required', 'verify'))");
             DB::statement('ALTER TABLE runtime_node_endpoints ADD CONSTRAINT runtime_node_endpoints_port_check CHECK (port BETWEEN 1 AND 65535)');
             DB::statement("ALTER TABLE runtime_node_credentials ADD CONSTRAINT runtime_node_credentials_status_check CHECK (status IN ('active', 'retired'))");

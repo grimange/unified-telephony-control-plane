@@ -21,6 +21,14 @@ final class RuntimeEvidenceService
         $operation = $reconciliation?->last_operation_id === null ? null : DB::table('runtime_operations')->where('id', $reconciliation->last_operation_id)->first();
         $lastSuccess = DB::table('runtime_operations')->where('runtime_node_id', $runtimeNodeId)->where('operation_type', 'runtime.node.inspect')->where('status', 'succeeded')->max('completed_at');
         $lastFailure = DB::table('runtime_operations')->where('runtime_node_id', $runtimeNodeId)->where('operation_type', 'runtime.node.inspect')->whereIn('status', ['terminal_failed', 'retry_scheduled'])->orderByDesc('updated_at')->first();
+        $drain = DB::table('runtime_node_drains')->where('tenant_id', $tenantId)->where('runtime_node_id', $runtimeNodeId)->first();
+        $decommission = DB::table('runtime_operations')
+            ->where('tenant_id', $tenantId)
+            ->where('runtime_node_id', $runtimeNodeId)
+            ->where('operation_type', (string) config('telephony_domain.operation_types.runtime_node_decommission', 'runtime.node.decommission'))
+            ->orderByDesc('created_at')
+            ->first();
+        $capabilityEvidence = $this->capabilityEvidence($tenantId, $runtimeNodeId, $node);
 
         return [
             'desired_state' => $node->desired_state,
@@ -54,7 +62,93 @@ final class RuntimeEvidenceService
                 'last_failure_at' => $lastFailure?->updated_at,
                 'failure_class' => $this->safe((string) ($lastFailure?->last_failure_class ?? '')),
             ],
+            'capabilities' => $capabilityEvidence,
+            'drain' => $drain === null ? null : [
+                'drain_state' => $drain->status,
+                'initial_work' => (int) $drain->initial_work,
+                'remaining_work' => (int) $drain->remaining_work,
+                'started_at' => $drain->started_at,
+                'last_evaluated_at' => $drain->last_evaluated_at,
+                'deadline_at' => $drain->deadline_at,
+                'completed_at' => $drain->completed_at,
+                'timed_out' => $drain->timed_out_at !== null,
+                'timed_out_at' => $drain->timed_out_at,
+                'failure_class' => $this->safe((string) ($drain->failure_class ?? '')),
+                'failure_code' => $this->safe((string) ($drain->failure_code ?? '')),
+            ],
+            'decommission' => $decommission === null ? null : [
+                'operation_id' => $decommission->id,
+                'status' => $decommission->status,
+                'started_at' => $decommission->started_at,
+                'completed_at' => $decommission->completed_at,
+                'failure_class' => $this->safe((string) ($decommission->last_failure_class ?? '')),
+                'failure_code' => $this->safe((string) ($decommission->last_failure_code ?? '')),
+                'failure_message' => $this->message((string) ($decommission->last_failure_class ?? ''), (string) ($decommission->last_failure_code ?? '')),
+            ],
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function capabilityEvidence(string $tenantId, string $runtimeNodeId, object $node): array
+    {
+        $snapshot = DB::table('runtime_node_observed_capability_snapshots')
+            ->where('tenant_id', $tenantId)
+            ->where('runtime_node_id', $runtimeNodeId)
+            ->first();
+        $declared = DB::table('runtime_node_capabilities')
+            ->where('runtime_node_id', $runtimeNodeId)
+            ->orderBy('capability_key')
+            ->pluck('capability_key')
+            ->map(fn (mixed $value): string => (string) $value)
+            ->all();
+
+        if ($snapshot === null) {
+            return [
+                'declared' => $declared,
+                'observed' => null,
+                'declared_not_observed' => [],
+                'observed_not_declared' => [],
+                'observed_at' => null,
+                'freshness' => 'unknown',
+                'source' => null,
+                'configuration_generation' => null,
+            ];
+        }
+
+        $observed = DB::table('runtime_node_observed_capabilities')
+            ->where('tenant_id', $tenantId)
+            ->where('runtime_node_id', $runtimeNodeId)
+            ->where('snapshot_id', $snapshot->id)
+            ->orderBy('capability_key')
+            ->pluck('capability_key')
+            ->map(fn (mixed $value): string => (string) $value)
+            ->all();
+
+        return [
+            'declared' => $declared,
+            'observed' => $observed,
+            'declared_not_observed' => array_values(array_diff($declared, $observed)),
+            'observed_not_declared' => array_values(array_diff($observed, $declared)),
+            'observed_at' => $snapshot->observed_at,
+            'freshness' => $this->capabilityFreshness($node, $snapshot->observed_at),
+            'source' => $this->safe((string) ($snapshot->adapter_key ?? '')),
+            'source_observation_id' => $snapshot->source_observation_id,
+            'configuration_generation' => $snapshot->configuration_version === null ? null : (int) $snapshot->configuration_version,
+        ];
+    }
+
+    private function capabilityFreshness(object $node, ?string $observedAt): string
+    {
+        if (! in_array((string) $node->observed_state, ['ready', 'degraded', 'connecting'], true) || $observedAt === null) {
+            return 'stale';
+        }
+
+        return Carbon::parse($observedAt)
+            ->isAfter(now()->subSeconds((int) config('runtime_engine.stale_observation_seconds', 300)))
+            ? 'fresh'
+            : 'stale';
     }
 
     private function freshness(?string $expiresAt): ?string

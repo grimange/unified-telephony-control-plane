@@ -8,6 +8,7 @@ use App\Http\Controllers\Identity\AdminRoleController;
 use App\Http\Controllers\Identity\AdminTenantController;
 use App\Http\Controllers\Identity\AdminUserController;
 use App\Http\Controllers\Identity\AuthController;
+use App\Http\Controllers\RuntimeProvisioning\AdminRuntimeProvisioningController;
 use App\Http\Controllers\RuntimeRegistry\AdminRuntimeNodeController;
 use App\Http\Controllers\TelephonyDomain\AdminConferenceController;
 use App\Http\Controllers\TelephonyDomain\ConferenceController;
@@ -62,11 +63,16 @@ Route::prefix('api/v1/admin')->middleware(['identity.session'])->group(function 
     Route::get('/audit-records/{auditRecord}', [AdminAuditRecordController::class, 'show']);
 
     Route::get('/runtime-node-catalog', [AdminRuntimeNodeController::class, 'catalog']);
+    Route::get('/deployment-targets', [AdminRuntimeProvisioningController::class, 'targets']);
+    Route::get('/deployment-targets/{deploymentTarget}', [AdminRuntimeProvisioningController::class, 'target']);
+    Route::post('/runtime-provisioning', [AdminRuntimeProvisioningController::class, 'store']);
+    Route::get('/runtime-provisioning/{runtimeProvisioning}', [AdminRuntimeProvisioningController::class, 'show']);
     Route::get('/runtime-nodes', [AdminRuntimeNodeController::class, 'index']);
     Route::post('/runtime-nodes', [AdminRuntimeNodeController::class, 'store']);
     Route::get('/runtime-nodes/{runtimeNode}', [AdminRuntimeNodeController::class, 'show']);
     Route::patch('/runtime-nodes/{runtimeNode}', [AdminRuntimeNodeController::class, 'update']);
     Route::post('/runtime-nodes/{runtimeNode}/desired-state', [AdminRuntimeNodeController::class, 'desiredState']);
+    Route::post('/runtime-nodes/{runtimeNode}/decommission', [AdminRuntimeNodeController::class, 'decommission']);
     Route::post('/runtime-nodes/{runtimeNode}/endpoints', [AdminRuntimeNodeController::class, 'addEndpoint']);
     Route::patch('/runtime-nodes/{runtimeNode}/endpoints/{endpoint}', [AdminRuntimeNodeController::class, 'updateEndpoint']);
     Route::delete('/runtime-nodes/{runtimeNode}/endpoints/{endpoint}', [AdminRuntimeNodeController::class, 'removeEndpoint']);

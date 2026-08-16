@@ -277,6 +277,16 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
             ]);
         }
 
+        if ((string) ($participant->admission_reason ?? '') === 'self_admission') {
+            return $this->completed('runtime_operation.asterisk_conference_participant_awaiting_inbound', $operation, [
+                'conference_id' => (string) $conference->id,
+                'conference_participant_id' => (string) $participant->id,
+                'configuration_generation' => (int) $conference->configuration_generation,
+                'runtime_reference_present' => false,
+                'awaiting_inbound_signaling_leg' => true,
+            ]);
+        }
+
         $result = $this->client->ensureParticipantChannel(
             (string) $node->tenant_id,
             (string) $node->id,

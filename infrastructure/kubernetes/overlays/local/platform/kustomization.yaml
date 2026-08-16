@@ -22,6 +22,7 @@ secretGenerator:
       - local-reverb-credentials.properties
 resources:
   - ../../../base/platform
+  - ../../../components/runtime-fencing
 images:
   - name: utcp-api
     newName: utcp-local-registry:5000/utcp/api

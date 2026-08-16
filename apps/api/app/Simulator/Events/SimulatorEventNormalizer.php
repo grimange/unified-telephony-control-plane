@@ -99,7 +99,25 @@ final class SimulatorEventNormalizer implements EventNormalizer
                 'adapter_key' => $this->adapterKey(),
                 'event_type' => $this->eventType,
                 'scenario_key' => is_string($payload['scenario_key'] ?? null) ? $payload['scenario_key'] : null,
+                'capabilities' => $this->capabilities($payload),
             ],
         ]];
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return list<string>|null
+     */
+    private function capabilities(array $payload): ?array
+    {
+        if ($this->eventType !== $this->catalog->eventType('capabilities_observed')) {
+            return null;
+        }
+
+        $capabilities = array_filter($payload['capabilities'] ?? [], 'is_string');
+        $capabilities = array_values(array_unique(array_filter($capabilities, static fn (string $value): bool => $value !== '')));
+        sort($capabilities);
+
+        return $capabilities;
     }
 }

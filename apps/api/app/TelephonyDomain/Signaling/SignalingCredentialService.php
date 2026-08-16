@@ -174,8 +174,8 @@ final class SignalingCredentialService
                     'algorithm' => self::ALGORITHM,
                     'sip_secret' => $secret,
                     'wss_uri' => (string) config('telephony_signaling.wss_uri', 'wss://sip.utcp.local.test/ws'),
-                    'issued_at' => (string) $now,
-                    'expires_at' => (string) $expiresAt,
+                    'issued_at' => $now->toISOString(),
+                    'expires_at' => $expiresAt->toISOString(),
                 ],
             ];
         });

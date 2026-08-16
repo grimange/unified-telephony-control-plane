@@ -29,6 +29,15 @@ export function hasCapability(session: IdentitySession | null, capability: strin
 
 export const navigationEntries: NavigationEntry[] = [
   { route: '/dashboard', label: 'Dashboard', group: 'overview', exact: true },
+  {
+    route: '/dialer',
+    label: 'Reference dialer',
+    group: 'overview',
+    exact: true,
+    requiresActiveTenant: true,
+    isVisible: (session) =>
+      ['telephony.sessions.view_own', 'telephony.signaling.view_own'].every((capability) => hasCapability(session, capability)),
+  },
   { route: '/admin/tenants', label: 'Tenants', group: 'access-tenancy', exact: true, requiredCapability: 'platform.tenants.view' },
   {
     route: '/admin/users',

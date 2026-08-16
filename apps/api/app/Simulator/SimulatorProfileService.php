@@ -158,6 +158,9 @@ final class SimulatorProfileService
 
         DB::transaction(function () use ($context, $tenantId, $runtimeNodeId, $scenario, $version, $seed, $parameters): void {
             $node = $this->simulatorNode($tenantId, $runtimeNodeId, true);
+            if ((string) $node->desired_state === 'retired') {
+                throw new InvalidArgumentException('Retired runtime nodes are read-only historical records.');
+            }
             $generation = ((int) $node->configuration_version) + 1;
 
             DB::table('runtime_nodes')->where('id', $runtimeNodeId)->update([

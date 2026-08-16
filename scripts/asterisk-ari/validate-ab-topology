@@ -313,8 +313,15 @@ def validate_two_node_overlay(items: list[dict[str, Any]], registrations: dict[s
     rendered_names = {(item.get("kind"), item.get("metadata", {}).get("namespace"), item.get("metadata", {}).get("name")) for item in items}
     if len(rendered_names) != len(items):
         raise ValidationError("staged overlay contains a duplicate Kubernetes object identity")
-    if any(item.get("metadata", {}).get("name") == "utcp-runtime-fence-worker" for item in items):
-        raise ValidationError("staged A/B overlay must not activate the runtime-fencing worker")
+    fencer_workers = [
+        item for item in items
+        if item.get("kind") == "Deployment"
+        and item.get("metadata", {}).get("name") == "utcp-runtime-fence-worker"
+    ]
+    if len(fencer_workers) > 1:
+        raise ValidationError("staged overlay contains duplicate runtime-fencing workers")
+    if fencer_workers and fencer_workers[0].get("spec", {}).get("template", {}).get("spec", {}).get("serviceAccountName") != "utcp-runtime-fencer":
+        raise ValidationError("runtime-fencing worker must use the dedicated infrastructure ServiceAccount")
 
 
 def validate_uniqueness(registrations: dict[str, dict[str, Any]]) -> None:

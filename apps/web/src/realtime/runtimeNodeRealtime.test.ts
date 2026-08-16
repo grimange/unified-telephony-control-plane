@@ -348,8 +348,8 @@ describe('runtimeNodeRealtime', () => {
     echo.emitRuntimeNodeNotification('tenant.tenant-1.runtime-nodes', notification({ occurred_at: '2026-07-23T01:02:01.000000Z' }))
     await flushAsync()
 
-    expect(activeSubscription.refreshList).toHaveBeenCalledTimes(4)
-    expect(activeSubscription.refreshNodeDetails).toHaveBeenCalledTimes(3)
+    expect(activeSubscription.refreshList).toHaveBeenCalledTimes(3)
+    expect(activeSubscription.refreshNodeDetails).toHaveBeenCalledTimes(2)
   })
 
   it('marks stale while disconnected and clears stale only after canonical resynchronization succeeds', async () => {

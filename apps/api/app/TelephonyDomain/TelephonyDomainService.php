@@ -23,6 +23,8 @@ use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 final class TelephonyDomainService
 {
+    public const RECOVERABLE_PARTICIPATION_GRACE_SECONDS = 120;
+
     private const FAILOVER_STATE_PENDING_NO_CAPACITY = 'pending_no_capacity';
 
     private const FAILOVER_REASON_NO_REPLACEMENT_AVAILABLE = 'no_replacement_available';
@@ -70,6 +72,127 @@ final class TelephonyDomainService
             ->first();
 
         return $row === null ? null : $this->serializeSession($row);
+    }
+
+    /** @return array<string, mixed>|null */
+    public function currentParticipation(string $tenantId, string $userId): ?array
+    {
+        $participant = DB::table('conference_participants')
+            ->join('conferences', 'conferences.id', '=', 'conference_participants.conference_id')
+            ->join('telephony_sessions', 'telephony_sessions.id', '=', 'conference_participants.telephony_session_id')
+            ->where('conference_participants.tenant_id', $tenantId)
+            ->where('conference_participants.user_id', $userId)
+            ->where('conference_participants.desired_state', 'admitted')
+            ->where('conference_participants.admission_reason', 'self_admission')
+            ->orderByDesc('conference_participants.created_at')
+            ->select('conference_participants.*', 'conferences.desired_state as conference_desired_state', 'telephony_sessions.status as session_status', 'telephony_sessions.expires_at as session_expires_at')
+            ->first();
+
+        if ($participant === null) {
+            return null;
+        }
+
+        $lostAt = $participant->runtime_channel_lost_at === null ? null : Carbon::parse($participant->runtime_channel_lost_at);
+        $recoverableUntil = $lostAt?->copy()->addSeconds(self::RECOVERABLE_PARTICIPATION_GRACE_SECONDS);
+        $recoverable = $this->isRecoverableParticipation($participant, $tenantId, now());
+
+        return [
+            'participant_id' => (string) $participant->id,
+            'conference_id' => (string) $participant->conference_id,
+            'state' => $participant->runtime_channel_id !== null ? 'active' : ($lostAt === null ? 'awaiting_runtime' : ($recoverable ? 'recoverable' : 'expired')),
+            'recoverable' => $recoverable,
+            'recoverable_until' => $recoverableUntil?->toISOString(),
+        ];
+    }
+
+    public function expireRecoverableParticipants(int $limit = 100): int
+    {
+        $expired = 0;
+        $cutoff = now()->subSeconds(self::RECOVERABLE_PARTICIPATION_GRACE_SECONDS);
+        $ids = DB::table('conference_participants')
+            ->where('desired_state', 'admitted')
+            ->where('admission_reason', 'self_admission')
+            ->whereNull('runtime_channel_id')
+            ->whereNotNull('runtime_channel_lost_at')
+            ->where('runtime_channel_lost_at', '<', $cutoff)
+            ->orderBy('runtime_channel_lost_at')
+            ->limit($limit)
+            ->pluck('id');
+
+        foreach ($ids as $id) {
+            DB::transaction(function () use ($id, &$expired): void {
+                $participant = DB::table('conference_participants')->where('id', $id)->lockForUpdate()->first();
+                if ($participant === null || ! $this->isGraceExpired($participant, now())) {
+                    return;
+                }
+
+                DB::table('conference_participants')->where('id', $id)->update([
+                    'desired_state' => 'removed',
+                    'updated_at' => now(),
+                ]);
+                $conference = DB::table('conferences')->where('id', $participant->conference_id)->first();
+                $tenantId = (string) $participant->tenant_id;
+                $this->reconciliation->wakeTarget($tenantId, 'conference_participant', (string) $id, $this->participantDesiredGeneration($conference, 'removed'));
+                $context = ExecutionContext::system(reason: 'conference participation recovery grace expired', tenantId: $tenantId, origin: 'telephony-domain');
+                $this->audit->append($context, 'conference_participant.removed', 'conference_participant', (string) $id, [
+                    'reason' => 'recovery_grace_expired',
+                    'conference_id' => $participant->conference_id,
+                ]);
+                $this->outbox->append(EventEnvelope::forAggregate('conference_participant.removed', 1, 'conference_participant', (string) $id, [
+                    'tenant_id' => $tenantId,
+                    'conference_participant_id' => (string) $id,
+                    'conference_id' => (string) $participant->conference_id,
+                    'reason' => 'recovery_grace_expired',
+                ], $context));
+                $expired++;
+            });
+        }
+
+        return $expired;
+    }
+
+    private function isRecoverableParticipation(object $participant, string $tenantId, Carbon $now): bool
+    {
+        if ($participant->runtime_channel_id !== null || $participant->runtime_channel_lost_at === null || $participant->conference_desired_state !== 'open' || $participant->session_status !== 'active' || Carbon::parse($participant->session_expires_at)->lessThanOrEqualTo($now)) {
+            return false;
+        }
+        if ($now->greaterThan(Carbon::parse($participant->runtime_channel_lost_at)->addSeconds(self::RECOVERABLE_PARTICIPATION_GRACE_SECONDS))) {
+            return false;
+        }
+
+        return DB::table('conference_runtime_bindings')
+            ->join('conferences', function ($join): void {
+                $join->on('conferences.id', '=', 'conference_runtime_bindings.conference_id')
+                    ->on('conferences.tenant_id', '=', 'conference_runtime_bindings.tenant_id');
+            })
+            ->join('runtime_nodes', function ($join): void {
+                $join->on('runtime_nodes.id', '=', 'conference_runtime_bindings.runtime_node_id')
+                    ->whereColumn('runtime_nodes.tenant_id', 'conference_runtime_bindings.tenant_id');
+            })
+            ->where('conference_runtime_bindings.conference_id', $participant->conference_id)
+            ->where('conference_runtime_bindings.tenant_id', $tenantId)
+            ->where('conference_runtime_bindings.status', 'active')
+            ->whereColumn('conference_runtime_bindings.runtime_node_id', 'conferences.runtime_node_id')
+            ->where('runtime_nodes.desired_state', 'active')
+            ->where('runtime_nodes.observed_state', 'ready')
+            ->whereExists(function ($query): void {
+                $query->selectRaw('1')
+                    ->from('runtime_node_endpoints')
+                    ->whereColumn('runtime_node_endpoints.runtime_node_id', 'runtime_nodes.id')
+                    ->where('runtime_node_endpoints.purpose', 'sip')
+                    ->where('runtime_node_endpoints.transport', 'udp')
+                    ->where('runtime_node_endpoints.enabled', true);
+            })
+            ->exists();
+    }
+
+    private function isGraceExpired(object $participant, Carbon $now): bool
+    {
+        return $participant->desired_state === 'admitted'
+            && $participant->admission_reason === 'self_admission'
+            && $participant->runtime_channel_id === null
+            && $participant->runtime_channel_lost_at !== null
+            && $now->greaterThan(Carbon::parse($participant->runtime_channel_lost_at)->addSeconds(self::RECOVERABLE_PARTICIPATION_GRACE_SECONDS));
     }
 
     /**
@@ -449,7 +572,13 @@ final class TelephonyDomainService
             }
 
             $requiredCapabilities = $this->conferenceRuntimeCapabilities();
-            $replacementDesiredStates = $this->normalizedStates($options['replacement_desired_states'] ?? null) ?? ['active', 'draining'];
+            $replacementDesiredStates = array_values(array_diff(
+                $this->normalizedStates($options['replacement_desired_states'] ?? null) ?? ['active'],
+                ['draining', 'retired'],
+            ));
+            if ($replacementDesiredStates === []) {
+                return ['status' => 'noop', 'reason' => 'no_eligible_replacement_runtime'];
+            }
             $replacementRuntimeNodeId = $this->selectRuntimeNodeForConference(
                 $tenantId,
                 $requiredCapabilities,
@@ -1179,7 +1308,10 @@ final class TelephonyDomainService
                 ->where('desired_state', 'admitted')
                 ->first();
             if ($existing !== null) {
-                return ['participant' => $this->serializeParticipant($existing)];
+                return [
+                    'participant' => $this->serializeParticipant($existing),
+                    'signaling_destination' => $this->conferenceParticipantSignalingDestination((string) $existing->id),
+                ];
             }
 
             $id = TelephonyDomainIds::new();
@@ -1202,7 +1334,10 @@ final class TelephonyDomainService
                 'role' => $role,
             ]);
 
-            return ['participant' => $this->serializeParticipant(DB::table('conference_participants')->where('id', $id)->first())];
+            return [
+                'participant' => $this->serializeParticipant(DB::table('conference_participants')->where('id', $id)->first()),
+                'signaling_destination' => $this->conferenceParticipantSignalingDestination($id),
+            ];
         });
 
         if ($key !== null) {
@@ -1210,6 +1345,14 @@ final class TelephonyDomainService
         }
 
         return $result;
+    }
+
+    private function conferenceParticipantSignalingDestination(string $participantId): string
+    {
+        $realm = config('telephony_signaling.realm');
+        abort_unless(is_string($realm) && trim($realm) !== '', 500, 'Telephony signaling realm is not configured.');
+
+        return 'sip:conf-'.$participantId.'@'.$realm;
     }
 
     /**
@@ -1385,7 +1528,7 @@ final class TelephonyDomainService
      * @param  list<string>  $capabilities
      * @param  list<string>  $desiredStates
      */
-    private function assertRuntimeNodeEligibleForConferenceRebind(string $tenantId, string $runtimeNodeId, array $capabilities, array $desiredStates = ['active', 'draining'], ?string $conferenceId = null): void
+    private function assertRuntimeNodeEligibleForConferenceRebind(string $tenantId, string $runtimeNodeId, array $capabilities, array $desiredStates = ['active'], ?string $conferenceId = null): void
     {
         $this->selectRuntimeNodeForConference(
             $tenantId,
@@ -1404,7 +1547,7 @@ final class TelephonyDomainService
         string $tenantId,
         string|array $capabilities,
         ?string $excludeRuntimeNodeId = null,
-        array $desiredStates = ['active', 'draining'],
+        array $desiredStates = ['active'],
         ?string $conferenceId = null,
         ?string $requestedRuntimeNodeId = null,
         bool $returnNullWhenUnavailable = false,

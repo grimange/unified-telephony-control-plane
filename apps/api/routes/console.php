@@ -317,6 +317,8 @@ Artisan::command('runtime-engine:command-worker {--once : Process one batch and 
             excludeOperationTypes: [
                 (string) config('telephony_domain.operation_types.runtime_fence'),
                 (string) config('telephony_domain.operation_types.runtime_node_restore'),
+                (string) config('telephony_domain.operation_types.runtime_node_provision'),
+                (string) config('telephony_domain.operation_types.runtime_node_deprovision'),
             ],
         );
         if (! $this->option('once')) {
@@ -336,6 +338,8 @@ Artisan::command('runtime-engine:infrastructure-worker {--once : Process one inf
             includeOperationTypes: [
                 (string) config('telephony_domain.operation_types.runtime_fence'),
                 (string) config('telephony_domain.operation_types.runtime_node_restore'),
+                (string) config('telephony_domain.operation_types.runtime_node_provision'),
+                (string) config('telephony_domain.operation_types.runtime_node_deprovision'),
             ],
         );
         if (! $this->option('once')) {
@@ -774,6 +778,12 @@ Artisan::command('telephony-domain:expire-sessions', function (TelephonyDomainSe
     return 0;
 })->purpose('Expire due control-plane telephony sessions and request participant reconciliation.');
 
+Artisan::command('telephony-domain:expire-recoverable-participants', function (TelephonyDomainService $domain): int {
+    $this->line('telephony_domain_recoverable_participants_expired='.$domain->expireRecoverableParticipants());
+
+    return 0;
+})->purpose('Expire abandoned self-admission participation after its canonical recovery grace.');
+
 Artisan::command('telephony-domain:ensure-targets', function (ReconciliationRepository $repository): int {
     $count = 0;
     if (Schema::hasTable('conferences')) {
@@ -941,6 +951,7 @@ Schedule::command('simulator:ensure-targets')->everyMinute()->withoutOverlapping
 Schedule::command('simulator:event-source --once')->everyMinute()->withoutOverlapping();
 Schedule::command('asterisk-ari:ensure-targets')->everyMinute()->withoutOverlapping();
 Schedule::command('telephony-domain:expire-sessions')->everyMinute()->withoutOverlapping();
+Schedule::command('telephony-domain:expire-recoverable-participants')->everyMinute()->withoutOverlapping();
 Schedule::command('telephony-domain:ensure-targets')->everyMinute()->withoutOverlapping();
 Schedule::command('telephony-domain:failover-coordinator --once')->everyMinute()->withoutOverlapping();
 Schedule::command('telephony-domain:retire-closed-bindings --once')->everyMinute()->withoutOverlapping();

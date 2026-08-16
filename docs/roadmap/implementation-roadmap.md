@@ -41,7 +41,8 @@ T0  Asterisk ARI adapter
 T1  Kamailio SIP-over-WSS signaling
 T2  Asterisk conference execution
 T3  rtpengine browser media
-V0  Natural login, SIP registration, and conference admission
+V0  Natural login, SIP registration, and conference admission        [complete]
+RT-1 Realtime control-plane UI notifications                         [in progress: RT-1A complete]
 T4  FreeSWITCH ESL adapter parity
 T5  Multi-runtime convergence, failover, and recovery
 C6  Call lifecycle and normalized call-control domain          [extended scope, not yet started]
@@ -266,6 +267,152 @@ The first user-facing telephony milestone (see "First User-Facing Vertical Slice
 
 **V0-REF-DIALER-BOOTSTRAP (2026-08-08):** The first proposed bounded V0 packet is implemented and evidenced in [`docs/evidence/v0/reference-dialer-bootstrap.md`](../evidence/v0/reference-dialer-bootstrap.md). The authenticated `GET /api/v1/reference-dialer/bootstrap` read model reuses the existing identity, tenant, telephony-session, signaling-metadata, and conference authorities. It is read-only and does not claim SIP registration, conference admission, or full V0 completion.
 
+**V0-REF-DIALER-SIP-REGISTER (2026-08-08):** The proposed second bounded packet is implemented in the authenticated `/dialer` route and documented in [`docs/evidence/v0/reference-dialer-sip-register.md`](../evidence/v0/reference-dialer-sip-register.md). The minimal UI consumes the bootstrap contract, reuses the existing telephony-session and one-time signaling-credential APIs, and drives `REGISTERED` from the SIP.js registrar event on the canonical WSS URI. Natural-login Playwright proof and runtime registration corroboration remain pending; conference admission and full V0 remain incomplete.
+
+**V0 natural live proof (2026-08-09): SIP registration corridor PROVEN end to end; V0 blocked only on conference admission.** The natural-login proof pending above is now complete and closes the registration half of the V0 slice. A tenant-member persona logged in naturally, navigated to `/dialer` via the Primary navigation, and the real browser SIP stack opened `wss://sip.utcp.local.test/ws` (HTTPRoute `sip-wss` → `kamailio:8080`) and completed `REGISTER → 401 Digest → authenticated REGISTER → 200 OK`, `expires=120`, identity `ts-<telephony-session>`. Runtime corroboration came through the canonical `signaling_registration_observations` projection written by `kamailio-registration-observer`: `observed_state=registered`, `kamailio.registration.accepted`, matching tenant/session/identity/expiry, and the only registered row of 47. Stability was proven across a natural refresh cycle (`accepted → refreshed`, contact RUID unchanged, one identity row, no failure class), and exit converged to `expired` with zero registered rows. **The remaining blocker is that conference admission does not exist in the client under proof**: `apps/web/src/signaling/referenceDialerSignaling.ts` uses only sip.js `Registerer` with no `Inviter` or INVITE path, and `apps/web/src/views/ReferenceDialerView.vue` shows `bootstrap.conferences` as a count with zero action controls. The canonical admission authority already exists and is routed (`POST /api/v1/conferences/{conference}/participants/self` → `ConferenceController::joinSelf` → `TelephonyDomainService::admitSelf`), so the next V0 packet is bounded frontend work: a conference entry control wired to the existing seam plus a browser INVITE into the conference, followed by runtime conference-binding corroboration. Non-blocking observations: `tenant-admin` lacks `telephony.sessions.view_own` so administrators cannot reach the dialer, and the conference count includes closed conferences. Evidence: `docs/evidence/v0/v0-natural-login-sip-registration-and-conference-admission-live-proof.md`.
+
+**V0-REF-DIALER-CONFERENCE-ADMISSION (2026-08-14):** The bounded conference-admission packet closing the blocker above is implemented and tested in `/dialer` and documented in [`docs/evidence/v0/reference-client-conference-admission-implementation.md`](../evidence/v0/reference-client-conference-admission-implementation.md).
+
+**V0 narrow natural conference-admission live reproof (2026-08-15): admission corridor PROVEN; V0 blocked on reference-client call-lifecycle convergence.** Against canonical `utcp-local`, with the working tree deployed through the canonical lifecycle, the whole corridor passed naturally in one member session: `REGISTERED` → exactly one joinable conference shown (closed conferences withheld and independently refused 422 by the backend) → Join → `POST participants/self` 201 with `signaling_destination` `sip:9900@sip.utcp.local.test` → browser `INVITE` to exactly that Request-URI from the already registered `UserAgent` → 401 → authenticated INVITE → `200 OK` → ACK → `SessionState.Established` → Kamailio `media_offer`/`media_answer` → canonical ARI corroboration (`participant_channel_in_bridge`, `healthy_present`) with `conference.participant.ensure` succeeded and reconciliation converged → bidirectional browser RTP over the external media edge → "Connected" UI → natural Leave → `BYE`/`200 OK` + `DELETE participants/self` → participant `removed`/`left`, runtime channel `healthy_absent`, member still `REGISTERED`. **Blocker — PRODUCT_DEFECT-30:** a runtime-initiated BYE (RTP timeout, conference close, drain, operator removal) leaves a false "Connected" UI and an orphaned admitted participant, because `ReferenceDialerView.vue::updateCallState` only converges from `leaving` and the remote-termination path never calls the canonical leave. **PRODUCT_DEFECT-31:** a failed INVITE strands the view at "Joining…" with the participant already admitted. **OBSERVATION-1:** the one-time signaling credential has a 120 s TTL and is issued only on mount, so the dialer silently stops authenticating after ~2 minutes while still showing "REGISTERED". Architectural note: the reference `signaling_destination` is a constant echo-fixture extension on the SIP-facing Asterisk while the conference bridge lives on a different, ARI-only RuntimeNode, so the browser leg is not yet the conference leg. The next V0 packet is bounded frontend work in `ReferenceDialerView.vue` and `referenceDialerSignaling.ts`. Evidence: `docs/evidence/v0/v0-natural-conference-admission-live-reproof.md`.
+
+**V0-REF-DIALER-CALL-LIFECYCLE (2026-08-15):** The bounded lifecycle-convergence packet (remote-termination convergence, failed-establishment compensation, automatic credential renewal) is implemented and unit-tested in `referenceDialerSignaling.ts` and `ReferenceDialerView.vue`.
+
+**V0 narrow call-lifecycle natural live reproof (2026-08-15): failed-establishment handler PROVEN; V0 blocked on an unbounded credential-renewal loop.** **PRODUCT_DEFECT-32 (blocking):** `SignalingCredentialService::issueOwn()` returns a timezone-naive `expires_at` (`(string) $expiresAt` → `"2026-08-14 20:32:31"`); V8 `Date.parse` treats it as local time, so on a UTC+8 host `scheduleCredentialRenewal()` computes a zero delay and reschedules itself unchanged — **7 415 credentials, 5 436 REGISTERs and 3 406 audit records from one page mount at ~23/s**. Only the POST response is naive (the read endpoint returns `+00`), and the unit tests use their own fixtures plus fake timers, which is why this is live-only. The resulting natural INVITE failure **proved the DEFECT-31 fix**: participant canonically compensated, no false Connected, no indefinite "Joining…" — though **PRODUCT_DEFECT-33** leaves the Join control permanently `disabled` afterwards, so "retry possible" is unmet. **PROOF_GAP-1:** DEFECT-30 could not be exercised — the canonical `POST /telephony/sessions/{id}/end` released the participant but produced no BYE toward the browser's `9900` echo leg, so the call panel stayed "Connected" while registration truth correctly converged to failed; closing that path is RT-1, not V0. Cleanup idempotence passed (one logical release per attempt, 0 remove operations required). Next V0 packet: fix the credential `expires_at` serialisation (and add a client-side delay floor), then re-run only PROOF B–E. Evidence: `docs/evidence/v0/v0-call-lifecycle-natural-live-reproof.md`.
+
+**V0-REF-DIALER-CREDENTIAL-RENEWAL (2026-08-15):** The bounded fix packet is implemented and unit-tested — explicit UTC ISO-8601 serialisation in `SignalingCredentialService::issueOwn()`, a guarded renewal scheduler that refuses a non-positive or non-finite delay and asserts the replacement expiry advances, a retryable `attention` state, and a typed-404 leave that converges.
+
+**V0 narrow credential-renewal and recovery natural live reproof (2026-08-15): PASSED; PRODUCT_DEFECT-32 CLOSED.** With the browser still in Asia/Manila, the one-time credential response now carries explicit UTC ISO-8601 and parses correctly. Renewal fired at 21:32:24.018Z against a predicted 21:32:23.942Z (**76 ms deviation, 90.032 s after issue**) after 78 s of measured quiescence. Cadence over 271 s on one mounted page: **4 credentials (one per ~90 s, each expiry strictly advancing), 8 REGISTERs, 26 SIP frames, 4 audit records** — versus 3 406 / 5 436 / 13 620 in 149 s before. Crossing the original expiry without remount kept exactly one registered row, a stable contact RUID and a truthful REGISTERED UI, and **a Join 71 s after the original expiry reached `200 OK` → Established → Connected, eliminating the 120-second authentication cliff**. Leave regressed cleanly and cleanup stayed idempotent (one release, one succeeded remove operation, reconciliation converged). PRODUCT_DEFECT-33 and OBSERVATION-3 were not naturally exercised — no failure was manufactured — and remain covered by focused tests with the structural fixes confirmed statically. PROOF_GAP-1 stays unresolved by design. Next: **V0-A — Reference Client Lifecycle Invariant & Authority Audit**; V0 does not close before it. Evidence: `docs/evidence/v0/v0-credential-renewal-and-recovery-live-reproof.md`.
+
+**V0-A — Reference Client Lifecycle Invariant & Authority Audit (2026-08-15): PASSED. V0 is COMPLETE.** Evidence-only and repository-first; no source, topology, runtime configuration, or TTL was touched and no live mutation was needed. Credential authority is an explicit contract (ADR-019: one active session → exactly one active short-lived credential); registration execution is solely Kamailio/`usrloc` with UTCP setting desired state only and the reconciler waiting on bounded contact expiry (≤120 s); admission revalidates authority under lock with the INVITE strictly downstream; compensation, attempt-id fencing and single-flight cleanup are implemented, test-proven (24/24) and live-observed. Credential TTL classified **IMPLICIT BUT SAFE CURRENT CONFIGURATION**; participant-release 404 normalization classified **BRITTLE BUT NON-BLOCKING**; neither blocks V0. **PROOF_GAP-1 closes as classification B without implementation** — ADR-017 and `authority-boundaries.md:54` both state that a `TelephonySession` "does not represent SIP registration, a media path, a call, microphone access, or a runtime channel", the schema holds no dialog object and the operation catalogue holds no dialog operation, so session end is contractually not a call-termination command; it converges everything it owns, and the reference client's surviving `9900` echo leg is reclaimed by Asterisk `rtp_timeout=30` or by the member's own Leave. No material contradiction remains. Next milestone: **RT-1**. Evidence: `docs/evidence/v0/v0-a-reference-client-lifecycle-invariant-and-authority-audit.md`. *(V0-A's lifecycle findings stand, but its V0 closure is superseded by V0-B below.)*
+
+**V0-B — Browser Conference-Leg Authority & Correlation Audit (2026-08-15): `REQUIRES_ARCHITECTURE_CLARIFICATION`. V0 reopened.** The authoritative V0 contract is **ACTUAL BROWSER CONFERENCE LEG** — the initial implementation plan states the slice as one chain through "Asterisk conference and bridge execution → Media through rtpengine → Observed call legs and conference membership", and V0's own phase row requires "proof that the T3 internal application-dialog route uses canonical Conference RuntimeNode eligibility". **That is unmet: the browser SIP leg and the admitted participant leg share no identifier, channel, bridge, runtime node, or audio.** `signaling_destination` is the constant `sip:9900@{realm}`, a **T3-S2A media fixture** (`Answer(); Echo(); Hangup()`) — the committed base `from-kamailio` context rejects every destination, so no browser-reachable conference entry exists at all. Kamailio hardcodes one `$du` to `application-runtime-sip` and consumes zero control-plane state; the SIP-facing runtime is chosen by a static Kubernetes label, not by conference placement. The conference's bound RuntimeNode cannot receive SIP: `endpoint_purposes` has no `sip` value and RNP provisioning exposes only `ari` 8088. The admitted participant is a silent `Local/participant@utcp-conference-proof` proof channel with no linkage to the browser's PJSIP channel, so the member's microphone reaches an echo test. **The fixed 9900 route may remain as an independent connectivity test but must not be returned by canonical conference admission**, with no gate or fallback preserving the conflict. Four authorities are unresolved (conference signaling address; RuntimeNode SIP identity; the Kamailio route authority ADR-020 already defers to V0; inbound-channel→participant correlation), so the next step is an ADR amendment, not implementation. Evidence: `docs/evidence/v0/v0-b-browser-conference-leg-authority-and-correlation-audit.md`.
+
+**V0-C — Conference SIP Routing Architecture Contract (2026-08-15): `COMPLETED`.** Documentation-only. The accepted topology — Browser → Kamailio → the conference's canonically bound RuntimeNode → inbound PJSIP channel → admitted participant → conference bridge — is recorded as **ADR-022**, with amendments appended to ADR-017/019/020 and a conference-signaling section added to `docs/architecture/authority-boundaries.md`. Admission returns `sip:conf-<participantId>@<realm>` from the existing `admitParticipant` (following ADR-019's accepted `ts-<sessionId>` user-part convention, so **no token authority is needed**); RuntimeNodes gain a `sip` endpoint purpose plus `udp` transport in the canonical endpoint registry, provisioned automatically by RNP as ClusterIP-only and reachable only from Kamailio; Kamailio consumes a sanitized `kamailio_conference_route_view` through its own least-privilege role via `sqlops.so`, so **no generation or fencing machinery is required — a view cannot go stale** — and a miss fails closed with no fallback to the static `selected-application-runtime`. The `9900` fixture and the static selection label are retained for T3 connectivity proof only; `Local/participant@utcp-conference-proof` remains for synthetic participants only. One nullable `conference_participants.runtime_channel_id` is the sole schema addition. Six bounded Codex packets V0-C1..V0-C6 are specified with exact files, dependencies, and acceptance criteria. Next: **V0-C1**. Evidence: `docs/evidence/v0/v0-c-conference-sip-routing-architecture-contract.md`.
+
+**V0-C5 closure and V0-C6 live proof (2026-08-15): `FOUND_BLOCKER`.** C1–C4 were deployed through canonical targets and verified by content; migrations landed `conference_participants.runtime_channel_id` and `kamailio_conference_route_view` with SELECT granted only to `utcp_kamailio_auth_reader`. **V0-C5 COMPLETE** — on the deployed config `conf-*` dispatches exclusively to `CONFERENCE_RUNTIME_RELAY` with 0 references to the static application runtime, and `APPLICATION_RUNTIME_RELAY` has 0 references to the projection. **V0-C1/C2/C3 LIVE-PROVEN** — a managed node provisioned through `POST /api/v1/admin/runtime-provisioning` came up active/ready in ~25 s with the canonical `sip/udp/5060` endpoint and a ClusterIP-only Service; `participants/self` returned `sip:conf-<participantId>@<realm>`; and the authenticated INVITE was relayed to the conference's bound node (proven transitively — no `CONFERENCE_RUNTIME_RELAY` failure branch fired, and only the managed node saw the dialog). **BLOCKER — V0-C4**: Asterisk replied `403 Forbidden` with no channel and no Stasis entry, because `dialplan show conf-<uuid>@from-kamailio` resolves to the catch-all `_.` → `Hangup(21)`. The committed pattern `_conf-.` is evaluated as `_CONF-.` where `N` is the digit class `[2-9]`, so it can never match literal `conf…`. Bounded fix in `infrastructure/docker/asterisk/config/extensions.conf:14`; acceptance test is that `dialplan show conf-<uuid>@from-kamailio` resolves to the conference extension. Next: **BOUNDED V0-C4 DIALPLAN FIX**, then re-run V0-C6 only. Evidence: `docs/evidence/v0/v0-c5-c6-canonical-browser-conference-leg-live-proof.md`.
+
+**V0-C6 narrow Asterisk-entry-onward reproof (2026-08-15): `FOUND_BLOCKER`; the dialplan fix is LIVE-PROVEN.** With `_[c]o[n]f-.` deployed to the bound RuntimeNode, the running Asterisk resolver returns the conference rule for `conf-<uuid>@from-kamailio` (9900 still resolves to the T3 Echo fixture, so **V0-C5 remains COMPLETE**), the authenticated INVITE reached `200 OK` from the bound node, and the **real inbound `PJSIP/anonymous-00000000` channel entered `Stasis(utcp-t0-observation,conf-<participantId>)`** with no synthetic Local channel; the UI reached Connected. **BLOCKER**: `runtime_channel_id` stayed null and the conference bridge kept 0 members, so the browser channel never became the participant leg; Asterisk reclaimed the unbridged channel at 30 s and the client converged cleanly. Isolated by elimination to `AsteriskConferenceParticipantBinder::bind()`'s guard — the StasisStart receipt, the listener dispatch, the deployed binder/ARI client, the absence of any exception log, and a read-only reproduction of the full join predicate are all positive, leaving only `admissionReference($event['args'])` returning null. Next: **BOUNDED V0-C4 BINDER FIX** (`AsteriskConferenceParticipantBinder::admissionReference()` / the `$event` shape from `AsteriskAriEventListener::ingestAriEvent()`), then re-run V0-C6 only. Evidence: `docs/evidence/v0/v0-c6-conference-leg-reproof-asterisk-entry-onward.md`.
+
+**V0-C6 binder-onward reproof (2026-08-15): `FOUND_BLOCKER`; the binder fix is LIVE-PROVEN and the decisive invariant HOLDS.** With the binder/listener packet deployed and content-verified in the running pods, a natural Join produced a real inbound `PJSIP/anonymous-00000001` channel in `Stasis(utcp-t0-observation,conf-<participantId>)` on the bound node, no synthetic Local channel, UI Connected, and — decisively — **browser channel `1786760286.1` == `conference_participants.runtime_channel_id` == member of `utcp-conf-68c7d252-…` (bridge Chans 1)**. **BLOCKER — media**: the browser sent 446 packets and received 2; Asterisk got no audio and reclaimed the bridged channel at 30 s. Repository defect (not staleness): `infrastructure/kubernetes/security/platform/allow-rtpengine-media.yaml` hardcodes `utcp.dev/runtime-node: local-asterisk-ari` in both the ingress (line 35) and egress (line 75) podSelectors, so rtpengine can exchange RTP only with the base node and never with a managed RuntimeNode — the same pin V0-C4 removed from the sibling signaling policy. Fix both selectors, then `make security-apply` (NetworkPolicies are not applied by `make k8s-apply`). Also recorded: `runtime_channel_id` is **cleared** on StasisEnd by contract; cleanup stayed bounded; bridge-recreation churn is DEFERRED / NON-BLOCKING. Next: **BOUNDED V0 FIX — rtpengine media policy RuntimeNode pin**, then re-run V0-C6 only. Evidence: `docs/evidence/v0/v0-c6-binder-onward-conference-leg-reproof.md`.
+
+**V0-C6 final conference media and natural Leave live proof (2026-08-15): `PASSED`. V0 is COMPLETE.** The corrected media policy was applied through canonical `make security-apply` (NetworkPolicies applied; the run then exits on `missing required K2 tool: helm` at the Gateway stage — ENVIRONMENT, non-blocking, verified live). `security-apply` re-applies the K1 base and reverts the external media edge, so `make media-edge-apply` must follow it — after that the corrected policy and `browser/POD!127.0.0.1` were both verified simultaneously. The full chain then passed: REGISTERED → Join → `sip:conf-<participantId>@realm` → 200 OK from the bound node → **browser PJSIP channel `1786762054.4` == `runtime_channel_id` == member of `utcp-conf-68c7d252-…`** → **Asterisk received 6 972 RTP packets on that bridged channel**, no `rtp_check_timeout` across a **148-second** call → participant observed **`joined`** → UI Connected → natural Leave → BYE → channel terminated, participant `removed`/`left`, bridge emptied, `runtime_channel_id` cleared, UI Ready, cleanup idempotent. Browser inbound RTP 0 is expected for a single-participant mixing bridge. C5 preserved (`9900` → T3 Echo; `conf-*` → canonical projection; no static fallback). Bridge-recreation churn remains DEFERRED / NON-BLOCKING. Next milestone: **RT-1**. Evidence: `docs/evidence/v0/v0-c6-conference-media-and-leave-live-proof.md`.
+
+**RT-1A — RuntimeNode realtime natural browser live proof (2026-08-15): `PASSED`. RT-1A LIVE PROVEN / COMPLETE.** Both decisive properties hold live. **Notification → refetch**: with the mutation driven from a separate page so the observing page acted only on the notification, a `runtime_node.desired_state_changed` event for the exact node arrived on `private-tenant.{tenantId}.runtime-nodes` and the browser refetched the canonical API **1 ms later**, then rendered the API result; the outbox row (aggregate_id == mutated node) dispatched automatically at attempt 1 with no manual flush, and the payload carries only invalidation metadata — no RuntimeNode aggregate, no sensitive data. **Reconnect → canonical resync**: scaling Reverb to 0 left the API available and a canonical mutation still succeeded (proving Reverb does not gate mutation) while the browser received **0** notifications and went provably stale; on restore the client resubscribed and immediately refetched, catching up to canonical state — *missed notification ≠ permanent stale UI*. Refresh recovery and a bounded 403 tenant-channel authorization probe also passed; the outage-time outbox row reached `dispatched` rather than retrying, so the pending-retry branch remains automated-test covered. V0 unchanged. Next: **RESILIENCE / HARDENING — browser + telephony recovery contract**; RT-1 resource coverage is deliberately not expanded yet. Evidence: `docs/evidence/rt1/rt-1a-runtime-node-realtime-natural-browser-live-proof.md`.
+
+**RH-0 — Browser + Telephony Recovery / Conference Auto-Rejoin Contract (2026-08-15): `COMPLETED`.** Architecture/evidence only. The recovery model is mostly already present: `desired_state ∈ {admitted, removed}` is durable participation intent while `runtime_channel_id`/`observed_state` are disposable observation; only `removeParticipant` and `removeParticipantsForSession` ever set `removed`, so explicit Leave is the single intent cutoff; `Binder::clear()` nulls only the channel and is channel-scoped (late StasisEnd cannot damage a replacement leg); `bind()` is first-writer-wins; the reconciler already parks self-admission participants at `conference_participant_awaiting_inbound_signaling_leg`; and `admitParticipant`'s reuse branch already returns the same participant and destination — the auto-rejoin primitive. **Gaps**: the client destroys intent on unexpected loss and on unmount (only Leave may release); no loss timestamp to bound grace; no recovery discovery on bootstrap; no grace expiration owner. **Contract**: 120 s grace derived from the committed `contact_max_expires_seconds`/`credential_lifetime_seconds` as a plain domain constant (no env gate), expired by a sweep beside the existing `expire-sessions` schedule; discovery via one bounded bootstrap field; the replacement leg reuses the exact V0 `conf-*` corridor so binding changes are followed automatically; **one nullable `conference_participants.runtime_channel_lost_at`** is the only schema change. Reverb is not required for correctness. Slices: **RH-1** recoverable participation + grace + expiration, **RH-2** browser recovery + replacement leg (live proof), **RH-3** slow-network/adversarial hardening. Next: **RH-1**. Evidence: `docs/evidence/rh/rh-0-browser-telephony-recovery-contract.md`.
+
+**V0-C4 dialplan pattern fix (2026-08-15): IMPLEMENTED AND TESTED in the repository; narrow V0-C6 reproof pending.** The invalid `_conf-.` extension was replaced with `_[c]o[n]f-.`, which Asterisk resolves as the literal `conf-` namespace followed by the participant destination suffix. A real resolver check proves canonical UUID destinations enter `utcp-t0-observation`, `9900` retains the T3 Echo route, and unrelated destinations remain on the `_.` rejection path. No C1/C2/C3 authority or runtime routing was changed. Evidence: `docs/evidence/v0/v0-c4-asterisk-conference-entry-pattern-fix.md`.
+
+**V0-C4 participant binder admission-reference recovery (2026-08-15): IMPLEMENTED AND TESTED; narrow V0-C6 reproof pending.** The raw ARI `StasisStart` argument is now preserved through the sanitized WebSocket event, normalized once by `AsteriskAriEventListener`, and consumed by the binder as a canonical `channel_id`/`application_args` input. Focused tests prove that `conf-<participantId>` binds the exact inbound channel, persists `runtime_channel_id`, and invokes the existing bridge attachment with that same channel; repeated delivery is idempotent and malformed, unknown, or conflicting references fail closed. No C1/C2/C3/C5 authority changed. Evidence: `docs/evidence/v0/v0-c4-participant-binder-admission-reference-recovery.md`. Next: **NARROW V0-C6 BINDER-ONWARD NATURAL LIVE REPROOF** only.
+
+**V0-C6 RTPengine managed RuntimeNode media NetworkPolicy (2026-08-15): IMPLEMENTED AND TESTED; narrow media-and-Leave natural reproof pending.** The browser conference-leg proof isolated the remaining media failure to both Asterisk peers in `allow-rtpengine-media` being pinned to `utcp.dev/runtime-node: local-asterisk-ari`. The policy now selects the canonical Asterisk component/network-role labels, so historical base and managed RuntimeNodes qualify without broadening namespace, port, or public exposure boundaries. Focused security/media checks reject the old static pin, missing canonical labels, widened peers, and changed media ranges. No browser/live proof, live policy apply, application source, timeout, bridge, signaling, Kamailio, or RT-1 change was made. Evidence: `docs/evidence/v0/v0-c6-rtpengine-managed-runtime-media-policy-fix.md`. V0 remains in progress and RT-1 remains Planned/not implemented.
+
+### RT-1 — Realtime Control-Plane UI Notifications — In Progress
+
+RT-1 is placed immediately after V0 and before the next substantial adapter
+milestone. It is a cross-cutting Admin UI milestone under the existing UI-D
+track and not a replacement for UI-D. **V0 closed on 2026-08-15 with the V0-C6 final conference media and
+natural Leave live proof, so RT-1 is now the next control-plane milestone.** V0-A resolved PROOF_GAP-1 as an
+explicit architectural boundary rather than a defect: ending a telephony session
+is contractually not a call-termination command, and everything session end owns
+converges through identified authorities. What remains is UI freshness — an open
+reference-dialer tab cannot learn that control-plane state changed — which is
+exactly RT-1's scope. RT-1 must remain a notification path over canonical
+committed state (outbox → Reverb → browser notification → canonical API
+refetch); it must not become the telephony-session or SIP-dialog termination
+authority.
+
+Laravel Reverb is a transient realtime notification/invalidation transport,
+never state authority. PostgreSQL, existing UTCP domain/application services,
+and existing projection and reconciliation authorities remain canonical.
+
+The required flow is canonical transaction commit, existing domain event or
+durable outbox seam where required, Laravel Reverb, authenticated
+tenant-scoped browser notification, and canonical API refetch. The command
+boundary is REST/application API for commands and canonical reads; Reverb is
+asynchronous change notification.
+
+Create, drain, retire, deprovision, and future lifecycle commands continue to
+work when Reverb is unavailable. API reads and backend processing continue;
+only immediate browser updates degrade. Automatic reconnect is followed by
+canonical API resynchronization because delivery is transient and missed
+events are not replay authority. No manual reconciliation or projection
+command is introduced.
+
+The first implementation is limited to Runtime Nodes and runtime management:
+
+- RuntimeNode lifecycle and state changes.
+- Runtime operation status and progress.
+- Readiness and observed-state projection changes.
+- Drain progression.
+- Retirement.
+- Managed deprovision progress and completion.
+
+The implementation sequence is: confirm the authenticated internal Reverb
+transport contract and no-command-dependency rule; produce post-commit
+RuntimeNode notifications through the existing event/outbox relationship;
+subscribe from Vue after normal login and tenant resolution and refetch
+canonical RuntimeNode APIs; add bounded reconnect/resync; then prove the
+natural Admin browser flow with real login, an actual lifecycle change, no
+page refresh, and outage/reconnect resynchronization.
+
+Channels are authenticated and tenant-scoped through the normal application
+session, tenant membership, and existing capability authorization. RuntimeNode
+access uses the existing capability architecture, such as runtime.nodes.view;
+Reverb introduces no separate permission system or special role names. A
+browser must never receive another tenant's events. The exact channel string
+remains implementation work.
+
+Notifications are minimal change signals, conceptually an aggregate identifier
+and version, not RuntimeNode state. The browser refetches sanitized canonical
+API resources. Credentials, Kubernetes Secret data, kubeconfig, tokens,
+lease/fencing secrets, raw stack traces, and unnecessary Kubernetes details
+must not be broadcast. Coalescing/debouncing should avoid an event storm.
+
+RT-1 preserves the authorities of RuntimeProvisioningService,
+RuntimeRegistryService, RNM, the runtime operation framework,
+ProjectionService/runtime observation, and the
+telephony-infrastructure-worker. Reverb observes their committed changes and
+does not replace provisioning, registry, lifecycle, operation, observed-state,
+or Kubernetes mutation authority. The Runtime Nodes UI remains a projection of
+canonical API state and does not gain a second frontend lifecycle state machine.
+
+RT-1 acceptance requires tenant isolation, REST/API command and read authority,
+notification-only payloads with no secrets, automatic list/detail updates for
+provisioning/readiness/drain/retirement/deprovision, commands and backend
+processing surviving Reverb outage, automatic reconnect followed by canonical
+resync, no manual reconciliation/projection path, and natural browser proof.
+RT-1 is In Progress. RT-1A is implemented and repository-tested; its natural
+browser proof remains pending.
+
+Conference, participant, trunk, and session event families may later reuse the
+same transport and refetch pattern. Illustrative event names do not establish
+concrete event classes or schemas here. The reserved events.utcp.local.test
+hostname remains behind the established edge policy: Reverb is
+internal/ClusterIP behind Gateway/Traefik, with no NodePort, LoadBalancer, or
+direct-host exposure.
+
+#### RT-1A — RuntimeNode Realtime Control-Plane UI Notifications — Implemented / Tested
+
+RT-1A completes the first RuntimeNode vertical slice using the existing
+`control_plane_outbox_messages` transactional outbox, dispatcher, Reverb event,
+tenant channel, and RuntimeNode Vue subscription. Operator mutations already
+append RuntimeNode outbox intent through `RuntimeRegistryService`; this slice
+also appends notification intent when canonical observed-state projection and
+stale-state derivation change RuntimeNode state. These rows are committed or
+rolled back with the canonical database transaction and remain retryable when
+transport delivery fails.
+
+The browser receives bounded RuntimeNode invalidation metadata only and
+refetches the canonical RuntimeNode API. Same-turn duplicate notifications are
+coalesced, and reconnect performs canonical list/detail resynchronization.
+Channel authorization remains session-, tenant-, and `runtime.nodes.view`-
+based. No Reverb command path, feature gate, per-node allowlist, or V0
+telephony authority was introduced. Next: narrow natural Admin browser proof
+with real login, a canonical RuntimeNode mutation, notification/refetch, and
+reconnect recovery. Evidence:
+`docs/evidence/rt-1/rt-1a-runtime-node-realtime-notification-vertical-slice.md`.
+
 ### T4 - FreeSWITCH ESL Adapter Parity — Planned
 
 Objective: prove the same registration, call-control, bridge, conference, and observation contracts work against a second execution runtime (`FreeSwitchEslClient`, `FreeSwitchCommandAdapter`, `FreeSwitchEventListener`, `FreeSwitchEventNormalizer`, `FreeSwitchHealthInspector`). Critical proof: the same login page, telephony-session API, SIP registration path, conference-admission API, frontend state machine, and normalized domain events; only adapter selection and runtime execution differ. Completion criteria: both nodes register independently; unsupported capabilities are reported explicitly; Kamailio can route to either runtime; V0 behavior reproduces against FreeSWITCH; no FreeSWITCH-specific branch in application-facing services.
@@ -334,3 +481,307 @@ Phases may be split into smaller implementation corridors, but must not be reord
 **T3-S3B failure and containment closure attempt (2026-08-08):** The repository now validates canonical Asterisk exec readiness, bounded abandoned-media timeouts, explicit external candidate identity/port/fallback assertions, deterministic failure-result contracts, and live containment inventory. `make test` and `make check` pass; Scenario A and Scenario B pass on `utcp-local`, and containment passes during an allocated Scenario B session. T3-S3B remains incomplete until the four defined live negative cases are created and proven through the canonical lifecycle with restoration and baseline cleanup.
 
 **T3-S3B negative cases and restoration closure (2026-08-08):** The four committed failure lifecycles are now live-proven against canonical `utcp-local`: invalid advertised public-media addresses reject before Kubernetes mutation; explicit NodePort allocation collides on `40000`/`40099`; public media binding loss moves healthy rtpengine to `agent-0` with no eligible local endpoint on `server-0`; and the external-candidate-unreachable overlay removes only external RTP admission while preserving the healthy local endpoint and media allocation. Every case produced the intended failure, rejected private fallback, restored through the canonical lifecycle, and returned Asterisk channels and rtpengine sessions/used ports to baseline with zero Kustomize drift. Fresh Scenario A and B regressions passed with explicit forbidden-address inputs; live containment passed during an allocated session; `make test`, `make check`, and focused proof checks passed. T3-S3B and T3 are complete; `UTCP_PHASE=T1` remains unchanged. The next roadmap milestone is the planned V0 reference dialer.
+
+## RNM — Runtime Node Management Completion
+
+RNM completes the operator-visible RuntimeNode lifecycle using the canonical C2
+registry, C3 reconciliation engine, runtime adapters, and T5 failure/recovery
+foundation. C2 remains the registry authority defined by ADR-015; RNM is the
+cross-cutting lifecycle completion milestone.
+
+The intended lifecycle is:
+
+```text
+DRAFT → ACTIVE → DRAINING → DRAINED → RETIRED
+```
+
+with failure/manual exclusion remaining separate:
+
+```text
+ACTIVE → DISABLED → ACTIVE
+```
+
+Desired lifecycle and observed health remain orthogonal.
+
+### RNM-1 — Lifecycle contract and honest drain semantics — Complete
+
+Implemented terminal soft retirement with zero-active-binding protection,
+retired exclusion from operational paths, active-only new placement, existing
+work preservation on draining nodes, identity mutation guards, minimal UI
+compatibility, and documentation alignment. Evidence:
+[`docs/evidence/rnm/rnm-1-runtime-lifecycle-contract.md`](../evidence/rnm/rnm-1-runtime-lifecycle-contract.md).
+
+### RNM-2 — Drain coordinator and completion detection — Complete
+
+Implemented active-work accounting from durable conference bindings, automatic
+progress evaluation through the existing reconciliation scheduler,
+zero-work-produced `DRAINED`, timeout classification, cancellation,
+idempotent completion, RuntimeNode evidence projection, and minimal truthful
+Admin UI state/progress presentation. Evidence:
+[`docs/evidence/rnm/rnm-2-runtime-node-drain-coordinator.md`](../evidence/rnm/rnm-2-runtime-node-drain-coordinator.md).
+
+### RNM-3 — Decommission orchestration — Complete
+
+Decommission is an explicit, durable `runtime.node.decommission` operation
+available only for `DRAINED` nodes with zero active canonical bindings. The
+system-owned completion path retires all UTCP-held active credentials, removes
+remaining runtime-management enrollment, and transitions the node to terminal
+soft-retirement while preserving history. Stale operations cannot override
+reactivation, and planned decommission does not reuse failure fencing or claim
+physical destruction of externally managed infrastructure. Evidence:
+[`docs/evidence/rnm/rnm-3-runtime-node-decommission.md`](../evidence/rnm/rnm-3-runtime-node-decommission.md).
+
+### RNM-4 — Observed capability projection — Complete
+
+Observed capability snapshots now flow from normalized runtime evidence through
+`ProjectionService` into a durable projection separate from the declared
+`RuntimeRegistryService` capability set. RuntimeNode evidence exposes observed
+freshness, provenance, and derived declared-versus-observed drift without
+mutating administrator intent. The deterministic simulator now emits a complete
+intrinsic capability snapshot during its normal inspect lifecycle, closing the
+live producer gap without copying declared capabilities. Evidence:
+[`docs/evidence/rnm/rnm-4-observed-capability-projection.md`](../evidence/rnm/rnm-4-observed-capability-projection.md).
+
+### RNM-5 — Natural RuntimeNode Admin UI — Complete
+
+The canonical Admin UI now provides a coherent RuntimeNode list/detail
+workflow: externally-managed node registration, safe metadata and placement
+editing, endpoint add/edit/remove, write-only credential lifecycle, declared
+capability editing, observed capability/drift evidence, human-readable health
+and drain/decommission status, state-aware lifecycle actions, and loadable
+history. Kubernetes/Docker implementation details remain outside normal UI
+operation.
+
+The canonical fixture gap and all three acceptance defects from the first
+natural browser run are closed. A deterministic-simulator RuntimeNode was
+created and driven through create → configure → activate → ready → drain →
+drained → reactivate → drain → decommission → retired entirely from the real
+Admin UI after a natural login. Family/adapter selection is catalog-driven,
+credential rotation succeeds with the existing credential type, and explicit
+Refresh/detail reopening forces current evidence so row and expanded detail
+agree without a full browser reload. Focused frontend tests, full frontend
+checks, `make test`, `make check`, canonical deployment, and fresh natural
+browser proof all passed. The follow-on simulator producer proof now shows the
+same UI moving from unknown capability evidence to a fresh intrinsic snapshot
+and deterministic declared/observed drift, again through normal reconciliation
+and refresh.
+Evidence:
+[`docs/evidence/rnm/rnm-5-natural-runtime-node-admin-ui.md`](../evidence/rnm/rnm-5-natural-runtime-node-admin-ui.md).
+
+### RNM-6 — Full lifecycle browser/live proof — Complete
+
+The complete planned lifecycle was proven live on `utcp-local` through the
+canonical Admin UI after a natural login: create → configure → declared
+capabilities → activate → automatic `READY` → automatic observed-capability
+snapshot with visible declared/observed drift → drain held open by a real
+runtime binding (`remaining_work 1`) with a live cordon proof
+(`pending_no_capacity` for new work) → system-produced `DRAINED` → reactivate →
+`READY` → final drain → decommission → `RETIRED`, with credential retirement,
+retained historical evidence, and cursor history pagination. `DRAINED` and
+`RETIRED` were produced by the coordinator and the decommission operation, never
+asserted by the operator.
+
+The first run failed one required criterion: `RETIRED` was not read-only at the
+canonical API authority, because `assertNodeNotRetired()` was not called from
+`updateNode()`. A bounded fix added that guard, and a narrow post-fix live
+reproof closed the gap: `PATCH /api/v1/admin/runtime-nodes/{id}` on a retired
+node now returns `422 Retired runtime nodes are read-only historical records`
+with zero persisted mutation, no new `runtime_node.updated` audit, and no
+side-effect operation; all eight terminal mutation probes are refused and
+historical evidence remains readable. The defect history is preserved rather
+than rewritten. Evidence:
+[`docs/evidence/rnm/rnm-6-full-runtime-node-lifecycle-live-proof.md`](../evidence/rnm/rnm-6-full-runtime-node-lifecycle-live-proof.md).
+
+RNM-6 is therefore complete. RNM — Runtime Node Management Completion — was
+subsequently **challenged by the RNM-A adversarial acceptance audit**, which
+proved two reachable retired-node authority defects (adapter configuration
+writable on a RETIRED node; `disabled → retired` stranding an unrevocable active
+credential), both sharing the Stage 17 root pattern of per-writer terminality
+enforcement. Bounded fixes were applied and the two exact attacks were replayed
+live against the fixed deployment: both now return `422` with zero persisted
+mutation, and `disabled → retired` retires every active UTCP-held credential
+inside the same transaction. **RNM-A passed and RNM closure stands: RNM —
+Runtime Node Management Completion — is COMPLETE.** Managed runtime provisioning
+remains future RNP work. See
+[`docs/evidence/rnm/rnm-a-runtime-node-management-adversarial-audit.md`](../evidence/rnm/rnm-a-runtime-node-management-adversarial-audit.md).
+
+## RNP — Managed Runtime Provisioning
+
+RNP-1 is implemented: the Admin API and RuntimeProvisioningService persist a
+tenant-scoped local_kubernetes deployment target and durable Asterisk
+provisioning intent, creating the linked canonical DRAFT RuntimeNode.
+Idempotency, transactionality, tenant isolation, audit, and outbox behavior are
+covered by focused tests. RNP-1 performs no Kubernetes resource writes. **RNP-2
+— Kubernetes Resource Writer and Scoped RBAC is complete.** The existing
+HttpKubernetesWorkloadClient provides an ownership-safe, namespace-bounded
+writer for Secret, Deployment, and Service resources. Option 1 promotes the
+existing `utcp-runtime-fencer` / `telephony-infrastructure-worker` boundary as
+the single fencing plus provisioning identity; the canonical local overlay
+activates it and the live namespace-scoped allow/deny matrix passed. No
+managed Asterisk workload is created by RNP-2; provisioning and lifecycle
+management remain separate internal responsibilities, and all managed and
+external onboarding paths continue to converge on RuntimeNode. Evidence:
+`docs/evidence/rnp/rnp-2-kubernetes-resource-writer-and-rbac.md`.
+
+**RNP-3 — Managed Asterisk Provisioning Operation: Complete in the repository.**
+Accepted RNP-1 intent now creates one idempotent `runtime.node.provision`
+operation. The infrastructure worker executes it through
+`RunsWithoutRuntimeAdapter`, generates the checked-in Asterisk workload
+contract, converges Secret, Deployment, and Service resources through RNP-2,
+registers the credential, endpoints, catalog capabilities, adapter profile, and
+Kubernetes workload identity through canonical services, and activates the
+DRAFT RuntimeNode only after configuration is complete. Credential reuse,
+partial retry, ownership conflict handling, activation ordering, and secret
+non-exposure are focused tested. Readiness remains the existing Asterisk
+reconciliation and projection authority; no live managed-runtime lifecycle
+proof is claimed. RNP overall remains in progress. Evidence:
+`docs/evidence/rnp/rnp-3-managed-asterisk-provisioning-operation.md`.
+
+**RNP-4 — Managed Runtime Deprovisioning: Complete in the repository.** A
+managed RuntimeNode reaching canonical `RETIRED` through either RNM terminal
+corridor automatically schedules one idempotent `runtime.node.deprovision`
+operation. The infrastructure worker revalidates `RETIRED`, proves the
+canonical RNP provisioning relationship, preflights ownership for the exact
+RNP-3 Deployment, Service, and Secret names, and deletes owned resources in
+Deployment → Service → Secret order through the RNP-2 writer. Absence and
+partial deletion retries converge; an ownership conflict deletes nothing.
+External/adopted retired nodes are preserved, RuntimeNode history and
+RuntimeRegistry credential metadata remain untouched, and no Kubernetes
+authority was expanded. Focused RNM, RNP-2, RNP-3, and RNP-4 tests pass; no
+live managed-runtime lifecycle proof is claimed. RNP overall remains in
+progress. Evidence:
+`docs/evidence/rnp/rnp-4-managed-runtime-deprovisioning.md`.
+
+**RNP-5 — Managed Runtime Admin UI: Complete in the repository.** The existing
+Runtime Nodes Admin surface now offers one Add Runtime entry point with Managed
+Runtime and Register Existing Runtime paths. Managed onboarding supports the
+canonical Asterisk adapter and deployment targets returned by the API, presents
+a business-intent review, and submits exactly one canonical RNP provisioning
+request. Managed/external status and provisioning/deprovisioning progress are
+read-only projections of the canonical RuntimeNode/RNP relationship and
+operation evidence; RNM remains the lifecycle authority. No credentials, raw
+Kubernetes details, or competing retry/deprovision controls are exposed.
+Focused frontend/API coverage, the RNP-1 through RNP-4 regressions, and the
+repository checks are required evidence for this phase; no natural managed
+runtime browser or live lifecycle proof is claimed. RNP overall remains in
+progress. Evidence:
+`docs/evidence/rnp/rnp-5-managed-runtime-admin-ui.md`.
+
+**RNP-6 — Natural Managed Runtime Lifecycle Live Proof: Complete. RNP is
+Complete.** RNP-6 is one composed evidence chain: first natural live run
+(FOUND_BLOCKER) → bounded fixes for PRODUCT_DEFECT-27/-28 → narrow live reproof
+(PASSED, 2026-08-09). The reproof established the five items the repairs
+affect, through a natural browser session against canonical `utcp-local`:
+the managed Deployment carries the configured qualified image
+`utcp-local-registry:5000/utcp/asterisk-ari:0.1.0-k1-dev` (worker reads
+`UTCP_MANAGED_ASTERISK_IMAGE` from `utcp-application-config`) and pulls
+successfully with no `ImagePullBackOff` or `ErrImagePull`; the managed
+Asterisk workload reaches Deployment Available/Pod Running/Container Ready
+with 0 restarts and no probe failures; the existing Asterisk
+reconciler → observation → ProjectionService authority converges naturally to
+`observed_state = ready` and sustains it across eleven consecutive samples
+while reconciliation reports `converged`; the Runtime Nodes UI renders
+`Provisioning: Ready`; and the retired historical fixture renders
+`Infrastructure: Deprovisioned`. Provisioning succeeded on attempt 1 with no
+drift and no repair. The readiness fixture
+`rnp6-readiness-reproof-20260809` is retained ACTIVE/READY as live evidence;
+the already-proven RNM drain/decommission/deprovision path was deliberately
+not rerun on it. No code or topology changes were made during the reproof.
+Historical detail of the first run follows and is intentionally preserved.
+
+The consolidated live acceptance run drove the entire
+managed-runtime chain through the real Admin UI against canonical
+`utcp-local`, from natural login to historical retention. Proven live: one UI
+submission yields exactly one provisioning request, one RuntimeNode, and one
+`runtime.node.provision` operation with no manual Start/Apply/Reconcile step;
+the infrastructure worker automatically creates exactly one Secret,
+Deployment, and Service with correct `part-of`/`runtime-node` ownership and no
+extra resources; credential, endpoints, capabilities, adapter configuration,
+and Kubernetes workload identity are derived automatically and every one
+precedes activation; the API ServiceAccount still holds no infrastructure
+mutation authority; RNM Drain and Decommission produce `draining → drained →
+retired` through the canonical coordinator; exactly one
+`runtime.node.deprovision` operation is scheduled automatically from the
+provisioning relationship and removes all three resources; the historical
+RuntimeNode, endpoints, capabilities, adapter configuration, and retired
+credential metadata are retained; and no credential plaintext appears in the
+UI, API, operations, audit, or outbox. Two defects block completion.
+PRODUCT_DEFECT-27 (blocking): `ManagedAsteriskProvisioningOperationHandler`
+writes the Deployment with the unqualified image `utcp-asterisk-ari`; because
+RNP-3 writes through the Kubernetes API the overlay Kustomize image transform
+never applies, the reference resolves to Docker Hub, and the Pod stays in
+`ImagePullBackOff`, so the managed runtime can never reach
+`observed_state = ready`. PRODUCT_DEFECT-28: `RuntimeNodesView.vue` compares
+runtime-operation status against `completed`, which the backend never emits
+(canonical terminal status is `succeeded`), mislabelling a succeeded provision
+as `Requested` and a succeeded deprovision as `Deprovisioning`. The next RNP
+packet implemented both bounded fixes: managed Asterisk now uses the required
+qualified image from canonical application configuration, and the Admin UI
+uses the canonical operation-status union. Focused backend/frontend and
+configuration checks pass, and the narrow live reproof summarised above has
+since closed both defects. Evidence:
+`docs/evidence/rnp/rnp-6-natural-managed-runtime-lifecycle-live-proof.md`.
+
+**RNP-U2 — Operator Experience & Managed Authority Hardening: Complete and
+accepted by natural live reproof (2026-08-09).** The narrow reproof passed all
+eight required items against canonical `utcp-local` through a natural browser
+session: name-only managed creation (1 control, 3 clicks, 0 technical
+decisions), automatic resolution of the single runtime type and single
+deployment target, managed detail with 0 mutation controls and 0 inputs, all
+four Admin mutation corridors rejected 422 with canonical state unchanged, a
+non-retired external node retaining its full editing surface, human-facing
+primary status with canonical detail preserved under Advanced diagnostics,
+truthful management-aware retirement confirmation, and duplicate-identity 422
+validation with no orphan data and no Server Error. Two bounded status-label
+inconsistencies in adjacent states are deferred polish. Evidence:
+`docs/evidence/rnp/rnp-u2-operator-experience-streamlining.md`.
+
+The implementation record, retained: the normal managed path
+is name-first, collapses the current single Asterisk and single location
+choices, derives slug server-side, returns useful 422 duplicate validation,
+and removes redundant review navigation. The canonical RNP provisioning
+relationship blocks manual mutation of generated managed configuration at the
+Admin API boundary while preserving internal provisioning and external
+RuntimeNode mutation. The UI presents one human-facing status, keeps technical
+data under Advanced diagnostics, and uses management-aware retirement
+confirmation. Evidence:
+`docs/evidence/rnp/rnp-u2-operator-experience-streamlining.md`.
+@@ -276,0 +277,2 @@
+
+**V0 reference-client call-lifecycle convergence implementation (2026-08-15): IMPLEMENTED AND TESTED; narrow natural lifecycle reproof pending.** PRODUCT_DEFECT-30 and PRODUCT_DEFECT-31 are corrected in the bounded reference client, and OBSERVATION-1 is addressed through automatic renewal of the finite signaling credential on the existing SIP.js UserAgent/Registerer. Focused tests cover terminal remote termination, failed INVITE compensation, idempotent participant release, navigation teardown, renewal success/failure, and registration continuity. No Reverb/RT-1 implementation or backend participant-reconciliation redesign was introduced. Evidence: [`docs/evidence/v0/reference-client-call-lifecycle-convergence-implementation.md`](../evidence/v0/reference-client-call-lifecycle-convergence-implementation.md). V0 remains in progress pending narrow natural lifecycle reproof.
+
+**V0 credential renewal and reference-client recovery fix (2026-08-15): IMPLEMENTED AND TESTED; narrow credential/retry natural reproof pending.** PRODUCT_DEFECT-32 is corrected at the API boundary with explicit UTC ISO-8601 issuance timestamps and a bounded fail-closed renewal scheduler that rejects invalid, expired, or non-advancing credential lifecycles. PRODUCT_DEFECT-33 is corrected by making the existing `Needs attention` state retryable without remounting, while preserving attempt identity protection. OBSERVATION-3 is handled at the frontend API-client boundary by normalizing only the typed 404 already-absent participant result as converged cleanup; unexpected release errors remain visible. Shared single-flight cleanup, the existing signaling credential authority, and the SIP.js UserAgent/Registerer are preserved. No Reverb/RT-1 implementation, PROOF_GAP-1 workaround, or backend reconciler redesign was introduced. Evidence: [`docs/evidence/v0/reference-client-credential-renewal-and-recovery-implementation.md`](../evidence/v0/reference-client-credential-renewal-and-recovery-implementation.md). V0 remains in progress pending narrow natural reproof, followed by the V0-A lifecycle authority audit.
+**RH-1 — Canonical recoverable participation, recovery grace, discovery, and automatic expiration (2026-08-15): IMPLEMENTED AND TESTED; RH-2 browser recovery remains pending.** The server-side recovery foundation records runtime_channel_lost_at only for the exact current runtime channel, clears it on successful replacement binding, exposes authenticated bounded participation discovery through the existing reference-dialer bootstrap, and expires abandoned admitted self-admission participation automatically after the exact 120-second domain grace. desired_state remains the sole participation-intent authority; explicit removal defeats recovery. No browser auto-rejoin, V0, RT-1A, Reverb, recovery token, or second lifecycle authority was introduced. Evidence: docs/evidence/rh/rh-1-canonical-recoverable-participation.md.
+
+**RH-2 — Browser refresh/network recovery and automatic replacement conference leg (2026-08-15): IMPLEMENTED AND TESTED; natural browser proof pending.** Unexpected SIP termination, network lifecycle signals, refresh/navigation teardown, and component unmount now preserve canonical participation and enter browser `Recovering`; only explicit Leave invokes the existing participant removal authority. Bootstrap participation remains the server decision, active old runtime channels block premature replacement, surviving established dialogs are reused, and eligible recovery reuses the same participant through `participants/self` before inviting the server-returned `conf-*` destination. Single-flight recovery, attempt fencing, explicit-Leave cancellation, and preservation of new-Join compensation are covered by focused frontend/signaling tests. No RH-1 backend, schema, V0, RT-1A, Reverb, browser-persistence, or feature-gate change was introduced. Evidence: `docs/evidence/rh/rh-2-browser-network-auto-rejoin-implementation.md`. Next: narrow natural browser refresh/interruption/auto-rejoin proof; RH-3 remains not implemented.
+
+**RH-2 — Natural browser interruption/refresh/auto-rejoin live proof (2026-08-15): `FOUND BLOCKER`.** Evidence-only, no source changed. The recovery corridor is proven correct through the replacement INVITE: refresh issued **0 DELETE** and preserved `admitted`; bootstrap withheld recovery while the old channel was bound (`state:"active"`), then granted it at `runtime_channel_lost_at + 120 s` exactly; the client re-admitted the **same** participant on the **same** `conf-*` destination and placed **one** logical INVITE with no second Join click and no duplicate/storm behaviour. **Blocker (IMPLEMENTATION)**: the replacement channel is never bound — it stayed Up in Stasis with `runtime_channel_id` null and no bridge membership while the UI read Connected, and the RH-1 grace sweep then removed the participant against a live channel. The `stasis_start` receipt exists and the listener dispatched it with no rejection logged, so `AsteriskConferenceParticipantBinder::bind()` returned `false` on a transiently-false predicate (the RuntimeNode's next `observed_at` landed after the event) and **nothing retries** — `ConferenceParticipantReconciler` waits for a *new* inbound leg instead of adopting the live unbound one. Secondary non-blocking finding: Leave taken while the view is `recovering` strands the view in `recovering`, hiding the conference list and Join until remount. Scenarios 2–5 not run (each would have measured the same defect); grace expiration and explicit-Leave cutoff were observed naturally and matched RH-1 exactly. V0 and RT-1A unchanged; the 120 s grace and `rtp_timeout` unmodified; environment left clean. Evidence: `docs/evidence/rh/rh-2-browser-network-auto-rejoin-live-proof.md`. Next: bounded implementation closing the replacement-leg binding gap, then a narrow RH-2 reproof.
+
+**RH-2 — Final natural browser interruption/refresh/auto-rejoin live reproof (2026-08-15): `FOUND BLOCKER`.** Evidence-only, no source changed. **All five scenarios passed and the RH-2B retry path was live exercised** (`RETRYABLE → queued retry → same live channel → BOUND`, the retry itself writing `runtime_channel_id` and attaching the bridge at 06:30:18; a second execution proved the liveness branch stops the ladder when the channel is gone). Refresh: 0 DELETE, recovery withheld while the old channel was bound then granted at loss + 120 s exactly, same participant on the same `conf-*` destination, one logical INVITE, bound + bridged; Connected was withheld for four seconds while the SIP dialog was Established but unbound. Brief interruption: same dialog, 0 admissions, 0 INVITEs. Dialog loss: one replacement, bound and bridged. Leave-while-Recovering: exactly one DELETE, UI returns to Ready **with the conference list and Join restored** (previous stranded-`recovering` defect closed) and no later auto-rejoin. Grace expiry: deadline disables recovery before the sweep, sweep converges with `reason: recovery_grace_expired`, return after expiry does not auto-rejoin. No storms. **Two blocking defects remain, outside the scenario scripts.** (1) A **runtime-initiated BYE on an established leg leaves the browser on Connected indefinitely** with no recovery attempt until participation silently expires — observed twice with the BYE captured on the wire, against a control where a Join-established leg recovered correctly; most consistent with the `hasEstablishedConference()` survival short-circuit in `beginRecovery()`, root cause not fully isolated. (2) `AsteriskAriEventNormalizer` maps **every unrecognised ARI event** to a `runtime_node` observation with `observed_state='degraded'`, which `ProjectionService` writes to the canonical node (124 degraded vs 158 ready in 40 minutes, including from `StasisStart` itself); since `isRecoverableParticipation()` requires `ready`, `currentParticipation()` reports **`expired` inside the grace**, and the client aborted an already-established replacement leg and never retried — the same transient behind the previous RH-2 blocker. Non-blocking: the Recovering banner can persist alongside a working Connected/Leave. Divergence: `make k8s-apply` reverts the media edge and `make media-edge-apply` was not re-run immediately, costing the first proof window (DEPLOYMENT, self-inflicted, corrected); all reported results come from the corrected environment. V0 and RT-1A unchanged; grace and `rtp_timeout` unmodified; environment left clean. Evidence: `docs/evidence/rh/rh-2-browser-network-auto-rejoin-live-reproof.md`. Next: bounded RH-2 fix for both defects, then a narrow reproof of those two corridors only.
+
+**RH-2B — Replacement-leg binding retry and canonical Connected gating (2026-08-15): IMPLEMENTED AND TESTED; natural proof pending.** The existing StasisStart binder now classifies transient readiness/observation misses separately from terminal rejection and schedules bounded retry for the same live channel, RuntimeNode, and participant reference. Recovery remains Recovering after SIP establishment until canonical bootstrap confirms the same participant is active/bound; explicit Leave from Recovering cancels and fences the attempt and restores Ready controls. The change preserves the reconciler boundary, RH-1 grace, V0, RT-1A, and all telephony authorities. Evidence: `docs/evidence/rh/rh-2b-replacement-leg-binding-retry-connected-gating.md`. Next: narrow RH-2 Scenarios 1–5 natural browser proof; RH-3 remains not implemented.
+
+**RH-2C — Canonical ARI Runtime Observation Authority (2026-08-15): IMPLEMENTED AND TESTED; browser proof not required.** The generic Asterisk ARI normalizer fallback now retains unknown/call traffic as non-readiness evidence instead of manufacturing `runtime_node` `degraded` state. Projection preserves capability snapshots while restricting canonical RuntimeNode readiness mutation to explicit readiness/connection observations; explicit authentication failure remains a real degraded health signal. Focused tests cover StasisStart, unknown traffic, projection preservation, capability freshness, and explicit health degradation. No binder retry, browser recovery, RH-1 grace, V0, RT-1A, or runtime-BYE changes were introduced. Evidence: `docs/evidence/rh/rh-2c-ari-runtime-observation-authority.md`. RH-2 remains blocked only on the separate runtime-initiated BYE client diagnosis; RH-3 remains not implemented.
+
+**RH-2D — Runtime-initiated BYE client lifecycle diagnosis (2026-08-15): `ROOT CAUSE ISOLATED`.** Evidence only, no source changed. **`hasEstablishedConference()` is not the defect** — the signaling client clears `inviter` and `inviteEstablished` before emitting the terminal callback, and a live discriminator confirmed it returns `false` in the stuck state: a natural offline→online transition reached `beginRecovery()` and recovered normally (1 admission, 1 INVITE, Connected) while the UI had been frozen on a false Connected for 97 s. **Root cause: the view fences call-state callbacks on `conferenceAttempt` (`ReferenceDialerView.vue:173`) but the id stamped on them is the signaling client's separate `inviteAttempt` (`referenceDialerSignaling.ts:47`).** `beginRecovery()` increments the view counter on every entry (`:285`) including the six paths that never invite — notably the 2-second polling branch — so after any recovery the view counter runs ahead and the live leg's `terminated` callback is discarded, `beginRecovery()` at `:192` is never invoked, and `conferenceState` (an independently held ref) stays `'connected'` forever. One live session captured both cases: a Join leg (counters 1/1) received a runtime BYE and recovered correctly; the resulting recovery leg (counters 3/2) received a runtime BYE and produced 0 admissions and 0 INVITEs. Backend authority was correct throughout (`admitted`, channel NULL, loss stamped, bootstrap recoverable for exactly 120 s, node `ready` with RH-2C in effect). The defect is not intrinsic to recovered legs — a Join leg is equally affected once any recovery has run on the page. **Test gap:** every `terminated` assertion in `ReferenceDialerView.test.ts` passes `attemptId === undefined`, skipping the guard entirely. Non-blocking and separately caused: the Recovering banner persists beside Connected because `:280-282`/`:181` set `conferenceState` without restoring `state`. Fix seam: single ownership of the attempt identity. Evidence: `docs/evidence/rh/rh-2d-runtime-bye-client-lifecycle-diagnosis.md`. Next: bounded RH-2D client fix.
+
+**RH-2D — Final runtime-BYE natural live reproof (2026-08-15): `PASSED`. RH-2 is COMPLETE / LIVE PROVEN.** Evidence-only, no source changed. The deployed bundle was content-verified to carry the RH-2D fence (the SIP session generation is adopted from the `inviting` callback and compared on its own, no longer against `conferenceAttempt`). Drift was produced through the ordinary recovery corridor — one refresh drove ~14 non-inviting `beginRecovery()` polling entries, leaving the live leg on signaling attempt **1** while `conferenceAttempt` reached ≈15. The drifted recovery leg was then terminated by Asterisk's own `rtp_check_timeout` policy (**rx BYE @08:33:11.401**, answered 200 OK), and **the callback was accepted despite the drift**: the UI left Connected at 08:33:12, entered Recovering, issued **0 DELETE**, and completed canonical recovery — loss stamped 08:33:14, `admitted` preserved, bootstrap recoverable until 08:35:14 (loss + 120 s exactly), 1 admission, **same** participant, 1 logical INVITE, replacement channel `1786782795.27` bound and bridged by 08:33:21, Connected 08:33:24. Connected gating preserved (Established at 08:33:15.871 held the UI at Recovering until the canonical bind); the Recovering banner is absent after recovery with the outer state consistent. No storms; the only DELETE was the final cleanup Leave. The pre-fix build left the identical situation on Connected for 97 s with 0 admissions and 0 INVITEs. Divergence: the leg carried media, so one canonical `kubectl rollout restart deployment/rtpengine` interrupted the media relay to let the runtime apply its own timeout — no configuration changed, media edge re-verified, no SIP injected, no database touched. Environment left clean. Evidence: `docs/evidence/rh/rh-2d-runtime-bye-natural-live-reproof.md`. **Next: RH-3 adversarial / slow-network resilience hardening.**
+
+**RH-3A — Adversarial / slow-network resilience contract (2026-08-15): `COMPLETED`.** Repository-backed contract audit, no source changed. Timing inventory taken from committed configuration and deployed SIP.js `^0.21.2`. Gaps found: the web API client has **no timeout/abort/retry** and no recovery-path error classification; constant 2 s polling costs ≈60 canonical requests per broken client per grace; **no WSS reconnection exists** (`reconnectionAttempts: 0`, `attemptReconnection()` never called, and `onDisconnect` only reports failure when not registered, so a drop while registered is swallowed); `ensureRegistered()` resolves on REGISTER *send* rather than on 200 OK; no connectivity debounce; terminal classification limited to 401; and multi-tab ownership is undefined (one session and one participation per user, orphan sweep covers only removed participants in closed conferences) — explicitly deferred as a separate contract. Contract established across the partial-reachability matrix, API retryability, REGISTER/INVITE bounds, canonical-binding UX, flapping, repeated loss, sustained degradation, API/worker/Reverb restarts and browser suspension, mapped onto the existing UI states with no redesign. Derivations: the recovery ladder reuses the committed binder ladder verbatim (`[1,2,3,5,8,10,…]` s, cap 10 s, ±20 % jitter) — ≈15 requests instead of ≈60 while still catching an `rtp_timeout=30 s` loss within ≤10 s; INVITE/REGISTER stay on SIP.js Timer B/F (32 s); with the API unreachable the browser issues **no** INVITE and never trusts a cached `recoverable_until`; an established call survives an API restart with no canonical Leave; Reverb never gates recovery. Four new client constants only (`RECOVERY_RETRY_DELAYS_MS`, `RECOVERY_RETRY_JITTER_RATIO`, `RECOVERY_REQUEST_TIMEOUT_MS = 10_000`, `CONNECTIVITY_DEBOUNCE_MS = 1_000`), all code constants, no env gates. **NO SCHEMA CHANGE.** Slices: RH-3B (cadence/timeout/classification/offline), RH-3C (reconnection/registration confirmation/terminal states), RH-3D (adversarial live proof). Evidence: `docs/evidence/rh/rh-3a-adversarial-slow-network-resilience-contract.md`. Next: **RH-3B**.
+
+
+**RH-2D — Signaling attempt authority / runtime-BYE recovery fix (2026-08-15): IMPLEMENTED AND TESTED; narrow natural runtime-BYE proof pending.** The view now fences SIP session callbacks against the signaling-owned invite attempt, while retaining `conferenceAttempt` solely for orchestration fencing. Non-inviting recovery passes cannot invalidate the active SIP session identity, and stale callbacks from superseded dialogs remain rejected. Recovery success also restores the normal outer registered presentation so Connected is not shown with a Recovering banner. Evidence: `docs/evidence/rh/rh-2d-signaling-attempt-authority-runtime-bye-fix.md`.
+
+**RH-3B — Recovery cadence, request timeout, error classification, offline suspension, and connectivity debounce (2026-08-15): IMPLEMENTED / TESTED; browser proof not performed.** The reference dialer recovery coordinator now uses the bounded 1/2/3/5/8/10-second retry ladder with ±20% jitter and a 10-second cap, recovery-scoped API timeout/abort handling, explicit retry/terminal HTTP classification, offline suspension, and one-second online-event debounce. Existing SIP dialogs remain authoritative during API outage; absent dialogs wait for canonical bootstrap before admission or INVITE. No backend/schema/telephony changes were introduced. Evidence: `docs/evidence/rh/rh-3b-recovery-cadence-api-failure-resilience.md`.
+
+**RH-3C — SIP/WSS transport reconnection and registration confirmation (2026-08-15): IMPLEMENTED / TESTED; RH-3D browser proof pending.** `referenceDialerSignaling` now invalidates registration on real WSS transport loss, owns a bounded single-flight SIP.js reconnect ladder, suppresses reconnect while offline, and waits for `RegistererState.Registered` rather than treating REGISTER transmission as confirmation. Authentication rejection receives one fresh-credential retry; repeated rejection is terminal. Normal Join and RH recovery share the confirmed-registration gate, while existing dialogs remain authoritative during transport recovery. No backend/schema/telephony/V0/RT-1A/RH-1/RH-2 authority changed. Evidence: `docs/evidence/rh/rh-3c-sip-wss-reconnection-registration-confirmation.md`. Next: RH-3D adversarial / slow-network natural browser live proof.
+
+
+**RH-3D — Adversarial / slow-network natural browser live proof (2026-08-15): `FOUND BLOCKER`.** Evidence-only, no source or constant changed. Live-proven: WSS loss invalidates registration truth and reconnection is automatic with **one corridor** (attempts at +0.92 s and +2.13 s, matching ladder steps 1 s / 2 s within ±20 % jitter); REGISTER send is never treated as success — after 401/401 the client made **exactly one** fresh-credential retry and reached 200 OK; the established dialog, its runtime channel and bridge membership survived the transport loss unchanged; a 39 s API outage left the call alive with **0 DELETE**, 0 INVITE and a clean resync; four offline/online transitions in 12 s produced **one** API request (the scheduled credential renewal) and no reconnect, admission, INVITE or DELETE; dead-dialog recovery ran three times with one admission, the same participant, one logical INVITE, bind + bridge, and Connected never shown before canonical binding; a 78 s media-plane outage kept work ladder-paced at the 10 s cap with 1 admission / 1 INVITE / 0 DELETE and converged to Ready after the canonical sweep; and with the transport down bootstrap returned 200 in 21 consecutive samples with **0** INVITEs. **Two client defects isolated.** (1) A rejected recovery INVITE (`488`) ends replacement attempts for the rest of the grace — SIP.js resolves `invite()` on send, so a later non-2xx never throws inside `beginRecovery()`, `awaitingRecoveryBinding` stays latched, and the awaiting-binding branch (`ReferenceDialerView.vue:347-359`) has no path that issues another INVITE; recovery failed even though the impairment cleared 67 s before expiry. (2) With no participation, a transport loss is never repaired — no WebSocket constructs across an 82 s idle outage, then 2×401 with **no** credential retry and the UI stuck on "SIP registration failed" for 100+ s. Proof gaps: the 10 s `AbortController` branch was not reached (an earlier Kamailio restart destroyed in-dialog routing so no recovery began), and contact-expiry / browser-suspension were not exercised. Environment left clean; no storms anywhere (0 DELETEs for the whole proof). Evidence: `docs/evidence/rh/rh-3d-adversarial-slow-network-natural-live-proof.md`. Next: bounded RH-3E fix for the two defects, then a narrow reproof of those corridors only.
+**RH-3E — Rejected recovery INVITE re-entry and idle signaling repair (2026-08-15): IMPLEMENTED / TESTED; narrow natural live reproof pending.** The current recovery INVITE now owns an explicit signaling-attempt binding wait; only that attempt's terminal SIP failure releases the wait and re-enters the existing canonical recovery coordinator, preserving the admitted participant and RH-3B retry ladder. A SIP-established leg whose canonical binding is merely delayed remains in Recovering and cannot trigger a second INVITE. Idle transport loss now remains retryable when participation is absent: signaling emits `connecting`, preserves the existing RH-3C reconnect/registration single-flight, and resets the one-fresh-credential allowance at the independent transport/registration episode boundary rather than on every REGISTER success. Focused signaling and view tests cover 488 re-entry, stale callback fencing, no duplicate while alive, idle reconnect, same-episode auth exhaustion, and fresh retry allowance in a later episode. No backend, schema, resilience constants, or telephony authority changed. Evidence: [`docs/evidence/rh/rh-3e-rejected-recovery-invite-and-idle-signaling-repair.md`](../evidence/rh/rh-3e-rejected-recovery-invite-and-idle-signaling-repair.md). Next: RH-3E narrow natural live reproof.
+
+**RH-3E — Narrow natural live reproof (2026-08-15): `PASSED WITH NARROW PROOF GAP`. RH-3 is COMPLETE / LIVE PROVEN.** Evidence-only, no source or constant changed; the deployed bundle was content-verified to carry the `awaitingRecoveryBindingAttemptId` fence. **Corridor 1**: a recovery INVITE rejected with `488 Media Relay Unavailable` now releases its binding wait — where RH-3D produced exactly one INVITE and then waited out the grace, RH-3E produced **17 further attempts**, all reusing the same participant with 201 admissions and **0 DELETEs**, and the first attempt after the media plane was restored reached **200 OK**, bound channel B and bridged (bridgechans 0→1) with the UI going Recovering → Connected; the INVITE delta during the binding wait was **0**, so binding latency was not turned into SIP failure. **Corridor 2**: an idle WSS loss with `participation = null` is now repaired automatically — close 1006, reconnect attempts at +0.83 s and +1.89 s (ladder 1 s / 2 s ±20 %, one corridor), REGISTER 401/401, **exactly one** fresh credential, then 200 OK — **2.80 s total, no user action**, participation still null and 0 admissions/INVITEs/DELETEs, versus RH-3D leaving the same state unrepaired for 100+ s. Narrow gaps: the RH-3B 10 s HTTP timeout remains repository-only, and a second *rejecting* auth episode did not arise naturally (inducing one would require prohibited credential/auth tampering). One non-blocking deviation: the post-488 retry cadence is a flat ~2.45 s and does not escalate to the ladder's 3/5/8/10 s steps because `recoveryRetryIndex` resets on each cycle reaching the admission — bounded by the 120 s grace, not a storm. Environment left clean. Evidence: `docs/evidence/rh/rh-3e-narrow-natural-live-reproof.md`. **RH-3 COMPLETE / LIVE PROVEN — the RH resilience track is closed.**
+**RH-3F — Recovery retry escalation preservation (2026-08-15): IMPLEMENTED / TESTED; narrow natural retry-cadence reproof pending.** The retry index now belongs to the unresolved recovery episode rather than the intermediate admission request. Rejected replacement INVITEs advance the existing RH-3B ladder; binding-only polling does not advance it; successful canonical binding, explicit Leave, terminal canonical state, and a new episode reset it. No backend/schema/signaling or new resilience constants changed. Evidence: `docs/evidence/rh/rh-3f-recovery-retry-escalation-preservation.md`. Next: RH-3F narrow retry-cadence live reproof.
+**RH-3 — REGISTER final-response settlement fix (2026-08-16): IMPLEMENTED / TESTED; narrow natural live reproof pending.** The reference signaling registration operation now settles from SIP.js final-response delegates as well as the existing Registerer state and lifecycle cancellation paths. Same-state accepted and rejected REGISTER outcomes no longer strand `registrationPromise`, and the existing credential renewal/auth-retry lifecycle can continue. No backend/schema/telephony changes or RH-3B/RH-3C/RH-3F behavior changes. Evidence: [`docs/evidence/rh/rh-3-registration-final-response-settlement-fix.md`](../evidence/rh/rh-3-registration-final-response-settlement-fix.md). Next: one narrow natural-browser reproof across two renewal cycles and one bounded recovery corridor.
+
+**RH-3 — Pre-freeze simplification cleanup (2026-08-16): COMPLETE / LIVE PROVEN / SIMPLIFICATION COMPLETE / FROZEN.** The five accepted local cleanups are complete: recovery-binding cleanup and identical Ready transitions are centralized, the recovery retry maximum is derived from the existing ladder, two dead/redundant writes are removed, and failed INVITEs clear the established latch. Attempt identities, registration settlement, retry lifecycles, timing, canonical binding, and RH-3F cadence are unchanged. Focused and full automated verification passed; browser proof was not required. Evidence: [`docs/evidence/rh/rh-3-pre-freeze-simplification-cleanup.md`](../evidence/rh/rh-3-pre-freeze-simplification-cleanup.md). **Freeze RH-3; do not perform another RH audit.**

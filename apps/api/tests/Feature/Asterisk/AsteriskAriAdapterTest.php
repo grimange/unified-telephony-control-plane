@@ -591,18 +591,22 @@ final class AsteriskAriAdapterTest extends TestCase
         [$activeTenant, $activeNode] = $this->runtimeNode();
         [$drainingTenant, $drainingNode] = $this->runtimeNode();
         [$disabledTenant, $disabledNode] = $this->runtimeNode();
+        [$retiredTenant, $retiredNode] = $this->runtimeNode();
         $this->configureAriNode($activeTenant, $activeNode);
         $this->configureAriNode($drainingTenant, $drainingNode);
         $this->configureAriNode($disabledTenant, $disabledNode);
+        $this->configureAriNode($retiredTenant, $retiredNode);
 
         DB::table('runtime_nodes')->where('id', $drainingNode)->update(['desired_state' => 'draining']);
         DB::table('runtime_nodes')->where('id', $disabledNode)->update(['desired_state' => 'disabled']);
+        DB::table('runtime_nodes')->where('id', $retiredNode)->update(['desired_state' => 'retired']);
 
         $eligible = $this->eligibleNodeIds();
 
         $this->assertContains($activeNode, $eligible);
         $this->assertContains($drainingNode, $eligible);
         $this->assertNotContains($disabledNode, $eligible);
+        $this->assertNotContains($retiredNode, $eligible);
     }
 
     public function test_disabled_node_with_actionable_restore_operation_is_listener_eligible(): void
@@ -749,9 +753,9 @@ final class AsteriskAriAdapterTest extends TestCase
         ]);
 
         $this->assertCount(1, $observations);
-        $this->assertSame('runtime_node', $observations[0]['subject_type'], 'an unknown Asterisk event must never be attributed to a conference or participant');
+        $this->assertSame('runtime_node', $observations[0]['subject_type'], 'an unknown Asterisk event remains generic runtime evidence, not conference or participant state');
         $this->assertSame($nodeId, $observations[0]['subject_id']);
-        $this->assertSame('degraded', $observations[0]['observed_state'], 'an unrecognized event is conservatively treated as a degraded observation, not a crash or a silent drop');
+        $this->assertSame('unknown', $observations[0]['observed_state'], 'an unrecognized event must not manufacture RuntimeNode degradation');
         $this->assertArrayNotHasKey('password', $observations[0]['payload']);
 
         // The projection pathway only ever writes runtime_nodes.observed_state / observed_at / observed_configuration_version
@@ -760,6 +764,7 @@ final class AsteriskAriAdapterTest extends TestCase
         // unknown event structurally cannot reach C5 conference or participant state.
         $projection = new ProjectionService;
         $tenantId = DB::table('runtime_nodes')->where('id', $nodeId)->value('tenant_id');
+        DB::table('runtime_nodes')->where('id', $nodeId)->update(['observed_state' => 'ready']);
         $receipts = new RuntimeEventReceiptRepository;
         $epochId = $receipts->openEpoch($tenantId, $nodeId, $catalog->adapterKey(), 'test-worker');
         $ingested = $receipts->ingest($tenantId, $nodeId, $catalog->adapterKey(), $epochId, null, $catalog->eventType('unknown_event_observed'), 1, [
@@ -775,7 +780,7 @@ final class AsteriskAriAdapterTest extends TestCase
 
         $this->assertSame($beforeDesiredState, DB::table('runtime_nodes')->where('id', $nodeId)->value('desired_state'), 'desired_state must never be mutated by observation projection');
         $this->assertSame(0, DB::table('conferences')->count(), 'no conference row may be created or touched by an Asterisk runtime_node observation');
-        $this->assertSame('degraded', DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_state'));
+        $this->assertSame('ready', DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_state'), 'generic capability evidence must not mutate RuntimeNode readiness');
 
         // Supported receipt processing continues after an unknown event: a normal readiness observation still projects cleanly.
         $readyNormalizer = new AsteriskAriEventNormalizer($catalog, $catalog->eventType('runtime_info_observed'));
@@ -785,6 +790,70 @@ final class AsteriskAriAdapterTest extends TestCase
         ]);
         $projection->apply($receipt, $readyObservations);
         $this->assertSame('ready', DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_state'), 'processing must continue normally after an unknown event was safely observed');
+    }
+
+    public function test_stasis_start_is_retained_as_generic_evidence_without_runtime_readiness_authority(): void
+    {
+        [, $nodeId] = $this->runtimeNode();
+        DB::table('runtime_nodes')->where('id', $nodeId)->update(['observed_state' => 'ready']);
+        $catalog = new AsteriskCatalog;
+        $normalizer = new AsteriskAriEventNormalizer($catalog, $catalog->eventType('stasis_start'));
+
+        $observations = $normalizer->normalize((object) [
+            'runtime_node_id' => $nodeId,
+        ], [
+            'configuration_generation' => 3,
+            'occurred_at' => now()->toISOString(),
+            'ari_event_type' => 'StasisStart',
+            'channel_id' => '1786760286.1',
+        ]);
+
+        $this->assertCount(1, $observations);
+        $this->assertSame('runtime.capability.observed', $observations[0]['observation_type']);
+        $this->assertSame('unknown', $observations[0]['observed_state']);
+        $this->assertSame('StasisStart', $observations[0]['payload']['ari_event_type']);
+
+        $tenantId = DB::table('runtime_nodes')->where('id', $nodeId)->value('tenant_id');
+        $receipts = new RuntimeEventReceiptRepository;
+        $epochId = $receipts->openEpoch($tenantId, $nodeId, $catalog->adapterKey(), 'stasis-normalizer-test');
+        $ingested = $receipts->ingest(
+            $tenantId,
+            $nodeId,
+            $catalog->adapterKey(),
+            $epochId,
+            null,
+            $catalog->eventType('stasis_start'),
+            1,
+            [
+                'configuration_generation' => 3,
+                'occurred_at' => now()->toISOString(),
+                'ari_event_type' => 'StasisStart',
+                'channel_id' => '1786760286.1',
+            ],
+        );
+        $receipt = DB::table('runtime_event_receipts')->where('id', $ingested['id'])->first();
+        (new ProjectionService)->apply($receipt, $observations);
+
+        $this->assertSame('ready', DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_state'));
+    }
+
+    public function test_explicit_authentication_failure_retains_real_degraded_runtime_health_semantics(): void
+    {
+        [, $nodeId] = $this->runtimeNode();
+        $catalog = new AsteriskCatalog;
+        $normalizer = new AsteriskAriEventNormalizer($catalog, $catalog->eventType('authentication_failed'));
+
+        $observations = $normalizer->normalize((object) [
+            'runtime_node_id' => $nodeId,
+        ], [
+            'configuration_generation' => 3,
+            'occurred_at' => now()->toISOString(),
+            'failure_class' => 'authentication_failed',
+        ]);
+
+        $this->assertCount(1, $observations);
+        $this->assertSame('degraded', $observations[0]['observed_state']);
+        $this->assertSame('runtime.connection.observed', $observations[0]['observation_type']);
     }
 
     public function test_asterisk_bridge_and_channel_events_normalize_to_conference_observations_only_for_owned_runtime_references(): void
@@ -1372,10 +1441,15 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertSame(0xA, $pong['opcode']);
         $this->assertSame('server-ping', $pong['payload']);
 
-        fwrite($remote, $this->serverFrame(0x1, json_encode(['type' => 'BridgeCreated', 'timestamp' => '2026-07-21T00:00:00Z'], JSON_THROW_ON_ERROR)));
+        fwrite($remote, $this->serverFrame(0x1, json_encode([
+            'type' => 'StasisStart',
+            'timestamp' => '2026-07-21T00:00:00Z',
+            'args' => ['conf-67d30af9-1234-4abc-8def-0123456789ab'],
+        ], JSON_THROW_ON_ERROR)));
         $message = $client->readWebSocketMessage($local);
         $this->assertSame('event', $message['type']);
-        $this->assertSame('BridgeCreated', $message['event']['type']);
+        $this->assertSame('StasisStart', $message['event']['type']);
+        $this->assertSame(['conf-67d30af9-1234-4abc-8def-0123456789ab'], $message['event']['args']);
 
         fwrite($remote, $this->serverFrame(0x8, ''));
         $this->expectException(AsteriskAriException::class);
@@ -2073,7 +2147,7 @@ final class AsteriskAriAdapterTest extends TestCase
     {
         return DB::table('runtime_nodes')
             ->where('tenant_id', $tenantId)
-            ->whereIn('desired_state', ['active', 'draining'])
+            ->where('desired_state', 'active')
             ->where('observed_state', 'ready')
             ->whereExists(function ($query): void {
                 $query->selectRaw('1')

@@ -20,6 +20,9 @@ if rg -in "chan_local" infrastructure/docker/asterisk; then
   fail "Local channel support is core-resident in supported Asterisk versions; do not configure chan_local as a loadable module"
 fi
 grep -q "\[utcp-conference-proof\]" infrastructure/docker/asterisk/config/extensions.conf || fail "missing internal proof dialplan context"
+grep -q "exten => _\[c\]o\[n\]f-.,1" infrastructure/docker/asterisk/config/extensions.conf || fail "canonical conference dialplan must use literal conf- pattern semantics"
+grep -q "Stasis(utcp-t0-observation,\${EXTEN})" infrastructure/docker/asterisk/config/extensions.conf || fail "canonical conference dialplan must enter the existing Stasis application"
+grep -q "exten => _\.,1" infrastructure/docker/asterisk/config/extensions.conf || fail "from-kamailio catch-all rejection must remain"
 grep -q "Local/participant@utcp-conference-proof/n" apps/api/config/asterisk_ari.php || fail "proof Local channel must disable optimization for stable runtime recovery evidence"
 test -x infrastructure/docker/asterisk/readiness || fail "missing executable Asterisk readiness script"
 grep -q "COPY infrastructure/docker/asterisk/readiness /usr/local/bin/utcp-asterisk-readiness" infrastructure/docker/asterisk/Dockerfile || fail "Asterisk readiness script is not copied into the image"

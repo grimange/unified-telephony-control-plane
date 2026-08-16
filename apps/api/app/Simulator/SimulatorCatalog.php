@@ -17,6 +17,22 @@ final class SimulatorCatalog
     }
 
     /**
+     * The simulator reports the capabilities supported by its registered
+     * adapter, independently of any RuntimeNode declared capability set.
+     *
+     * @return list<string>
+     */
+    public function supportedCapabilities(): array
+    {
+        $adapter = config('runtime_registry.adapter_keys.'.$this->adapterKey().'.supported_capabilities');
+        $capabilities = is_array($adapter) ? array_values(array_filter($adapter, 'is_string')) : [];
+        $capabilities = array_values(array_unique($capabilities));
+        sort($capabilities);
+
+        return $capabilities;
+    }
+
+    /**
      * @return list<string>
      */
     public function scenarios(): array

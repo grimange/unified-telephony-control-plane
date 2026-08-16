@@ -100,8 +100,8 @@ if rg -n "SimulatorRuntimeAdapter|simulator-deterministic" apps/api/app/RuntimeA
   fail "Asterisk path contains simulator fallback"
 fi
 
-if rg -n "ConfBridge|PJSIP|pjsip|chan_pjsip|rtp|rtpengine|SIP|WebRTC|trunk|PSTN" apps/api/app/RuntimeAdapters/Asterisk infrastructure/kubernetes/base/runtime infrastructure/docker/asterisk; then
-  fail "Asterisk ARI corridor contains forbidden SIP/media/trunk execution surface"
+if rg -n "ConfBridge|PJSIP|pjsip|chan_pjsip|rtp|rtpengine|SIP|WebRTC|trunk|PSTN" apps/api/app/RuntimeAdapters/Asterisk infrastructure/kubernetes/base/runtime; then
+  fail "Asterisk ARI adapter/runtime manifests contain forbidden SIP/media/trunk execution surface"
 fi
 
 if rg -n "api_key=|username=.*password|password=.*@" apps/api/app/RuntimeAdapters/Asterisk infrastructure/kubernetes; then

@@ -228,6 +228,26 @@ final class AsteriskAriEventListener
             $payload['channel_name'] = is_string($channel['name'] ?? null) ? $channel['name'] : null;
         }
 
+        if ($type === 'StasisStart') {
+            $normalized = $this->normalizeStasisStart($event);
+            $result = app(AsteriskConferenceParticipantBinder::class)->bind($node, $normalized);
+            if ($result === AsteriskConferenceParticipantBindResult::RETRYABLE) {
+                $reference = $normalized['application_args'][0] ?? null;
+                if (is_string($reference)) {
+                    AsteriskConferenceParticipantBindingRetryJob::dispatch(
+                        (string) $node->tenant_id,
+                        (string) $node->id,
+                        $normalized['channel_id'],
+                        $reference,
+                    )->delay(now()->addSecond());
+                }
+            }
+        }
+
+        if ($type === 'StasisEnd') {
+            app(AsteriskConferenceParticipantBinder::class)->clear($node, $payload['channel_id'] ?? null);
+        }
+
         $this->ingest(
             $node,
             $epochId,
@@ -236,6 +256,23 @@ final class AsteriskAriEventListener
             $payload,
         );
         $this->wakeConferenceRecoveryFromAriEvent($node, $type, $payload);
+    }
+
+    /**
+     * Translate the sanitized ARI event into the binder's single canonical input shape.
+     *
+     * @param  array<string, mixed>  $event
+     * @return array{channel_id:string, application_args:list<string>}
+     */
+    private function normalizeStasisStart(array $event): array
+    {
+        $channel = is_array($event['channel'] ?? null) ? $event['channel'] : [];
+        $args = is_array($event['args'] ?? null) ? $event['args'] : [];
+
+        return [
+            'channel_id' => is_string($channel['id'] ?? null) ? trim($channel['id']) : '',
+            'application_args' => array_values(array_filter($args, 'is_string')),
+        ];
     }
 
     private function maxEventsPerCycle(): int
@@ -404,7 +441,9 @@ final class AsteriskAriEventListener
                     return;
                 }
 
-                $channelId = $this->client->participantChannelId((string) $participant->id);
+                $channelId = is_string($participant->runtime_channel_id ?? null) && trim($participant->runtime_channel_id) !== ''
+                    ? trim($participant->runtime_channel_id)
+                    : $this->client->participantChannelId((string) $participant->id);
                 $participantStillDesired = (string) $conference->desired_state === 'open' && (string) $participant->desired_state === 'admitted';
                 $participantInBridge = (bool) ($participantSummary['participant_any_channel_in_bridge'] ?? $participantSummary['participant_channel_in_bridge'] ?? false);
 
@@ -471,20 +510,26 @@ final class AsteriskAriEventListener
         }
 
         $channelId = is_string($payload['channel_id'] ?? null) ? $payload['channel_id'] : null;
-        $participantId = $this->suffixForPrefix($channelId, (string) config('asterisk_ari.conference.participant_channel_id_prefix', 'utcp-part-'));
-        if ($participantId === null) {
-            return;
-        }
-
-        $participant = DB::table('conference_participants')
+        $participantQuery = DB::table('conference_participants')
             ->join('conferences', 'conferences.id', '=', 'conference_participants.conference_id')
             ->join('conference_runtime_bindings', 'conference_runtime_bindings.conference_id', '=', 'conference_participants.conference_id')
-            ->where('conference_participants.id', $participantId)
             ->where('conference_participants.tenant_id', (string) $node->tenant_id)
             ->where('conferences.tenant_id', (string) $node->tenant_id)
             ->where('conference_runtime_bindings.tenant_id', (string) $node->tenant_id)
             ->where('conference_runtime_bindings.runtime_node_id', (string) $node->id)
-            ->where('conference_runtime_bindings.status', 'active')
+            ->where('conference_runtime_bindings.status', 'active');
+
+        $participantId = $this->suffixForPrefix($channelId, (string) config('asterisk_ari.conference.participant_channel_id_prefix', 'utcp-part-'));
+        if ($participantId !== null) {
+            $participantQuery->where('conference_participants.id', $participantId);
+        } elseif ($channelId !== null) {
+            $participantQuery->where('conference_participants.runtime_channel_id', $channelId);
+        } else {
+            return;
+        }
+
+        $participant = $participantQuery
+            ->where('conference_participants.tenant_id', (string) $node->tenant_id)
             ->select([
                 'conference_participants.id',
                 'conference_participants.tenant_id',

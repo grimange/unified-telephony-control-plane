@@ -2,6 +2,9 @@
 
 namespace App\RuntimeEngine\Projection;
 
+use App\ControlPlane\Messaging\EventEnvelope;
+use App\ControlPlane\Messaging\OutboxRepository;
+use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\PayloadSafety;
 use App\ControlPlane\Shared\StableJson;
 use App\RuntimeEngine\EngineIds;
@@ -10,6 +13,8 @@ use Illuminate\Support\Facades\DB;
 
 final class ProjectionService
 {
+    public function __construct(private readonly OutboxRepository $outbox = new OutboxRepository) {}
+
     /**
      * @param  list<array<string, mixed>>  $observations
      */
@@ -39,16 +44,41 @@ final class ProjectionService
                     'updated_at' => now(),
                 ]);
 
-                if ($observation['subject_type'] === 'runtime_node' && $observation['subject_id'] === $receipt->runtime_node_id) {
+                if ($this->isRuntimeNodeReadinessObservation($observation, $receipt)) {
+                    $runtimeNode = DB::table('runtime_nodes')
+                        ->where('id', $receipt->runtime_node_id)
+                        ->lockForUpdate()
+                        ->first();
+                    if ($runtimeNode === null) {
+                        continue;
+                    }
+
+                    $nextObservedState = (string) $observation['observed_state'];
+                    $nextConfigurationVersion = $observation['configuration_version'] ?? null;
+                    $observedStateChanged = (string) $runtimeNode->observed_state !== $nextObservedState
+                        || (string) ($runtimeNode->observed_configuration_version ?? '') !== (string) ($nextConfigurationVersion ?? '');
+
                     DB::table('runtime_nodes')->where('id', $receipt->runtime_node_id)->update([
-                        'observed_state' => $observation['observed_state'],
+                        'observed_state' => $nextObservedState,
                         'observed_at' => $observation['observed_at'] ?? now(),
                         'last_evidence_source' => $receipt->id,
                         'last_observation_id' => $observationId,
-                        'observed_configuration_version' => $observation['configuration_version'] ?? null,
+                        'observed_configuration_version' => $nextConfigurationVersion,
                         'updated_at' => now(),
                     ]);
                     if ($inserted === 1) {
+                        if ($observedStateChanged) {
+                            $this->emitRuntimeNodeNotification(
+                                (string) $receipt->tenant_id,
+                                (string) $receipt->runtime_node_id,
+                                'runtime_node.observed_state_changed',
+                                [
+                                    'observed_state' => $nextObservedState,
+                                    'configuration_version' => $nextConfigurationVersion,
+                                    'source_observation_id' => $observationId,
+                                ],
+                            );
+                        }
                         $this->wakeBoundConferenceRecoveryTargets((string) $receipt->tenant_id, (string) $receipt->runtime_node_id);
                     }
                 }
@@ -65,6 +95,10 @@ final class ProjectionService
                     $this->projectSignalingRegistrationObservation($receipt, $observation, $observationId, $tenantId);
                 }
 
+                if ($inserted === 1 && $observation['observation_type'] === 'runtime.capability.observed' && $observation['subject_type'] === 'runtime_node') {
+                    $this->projectObservedCapabilities($receipt, $observation, $observationId, $tenantId);
+                }
+
                 $this->advanceCheckpoint(
                     'runtime-event-normalizer',
                     ($receipt->event_source_id ?? $receipt->runtime_node_id).':'.$receipt->connection_epoch_id,
@@ -75,6 +109,102 @@ final class ProjectionService
                 );
             }
         });
+    }
+
+    /**
+     * Capability snapshots are runtime evidence, not RuntimeNode readiness.
+     * Only observations with an explicit readiness/connection authority may
+     * mutate the canonical observed state used by placement and recovery.
+     *
+     * @param  array<string, mixed>  $observation
+     */
+    private function isRuntimeNodeReadinessObservation(array $observation, object $receipt): bool
+    {
+        return $observation['subject_type'] === 'runtime_node'
+            && $observation['subject_id'] === $receipt->runtime_node_id
+            && $observation['observation_type'] !== 'runtime.capability.observed';
+    }
+
+    /**
+     * Capability observations are complete snapshots. The snapshot metadata row
+     * preserves the distinction between no evidence and an authoritative empty set.
+     *
+     * @param  array<string, mixed>  $observation
+     */
+    private function projectObservedCapabilities(object $receipt, array $observation, string $observationId, string $tenantId): void
+    {
+        $nodeId = (string) $receipt->runtime_node_id;
+        $observedAt = $observation['observed_at'] ?? now();
+        $payload = is_array($observation['payload'] ?? null) ? $observation['payload'] : [];
+        if (! is_array($payload['capabilities'] ?? null)) {
+            return;
+        }
+        $capabilities = array_filter($payload['capabilities'] ?? [], 'is_string');
+        $capabilities = array_values(array_unique(array_filter($capabilities, static fn (string $value): bool => preg_match('/^[a-z0-9][a-z0-9._-]{0,119}$/', $value) === 1)));
+        sort($capabilities);
+
+        $current = DB::table('runtime_node_observed_capability_snapshots')
+            ->where('tenant_id', $tenantId)
+            ->where('runtime_node_id', $nodeId)
+            ->lockForUpdate()
+            ->first();
+        if ($current !== null && $this->observationIsOlder($observedAt, $observationId, $current)) {
+            return;
+        }
+
+        $snapshot = [
+            'id' => $observationId,
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $nodeId,
+            'observed_at' => $observedAt,
+            'source_observation_id' => $observationId,
+            'configuration_version' => $observation['configuration_version'] ?? null,
+            'adapter_key' => is_string($payload['adapter_key'] ?? null) ? $payload['adapter_key'] : null,
+            'capability_count' => count($capabilities),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ];
+
+        if ($current === null) {
+            DB::table('runtime_node_observed_capability_snapshots')->insert($snapshot);
+        } else {
+            DB::table('runtime_node_observed_capabilities')->where('snapshot_id', $current->id)->delete();
+            DB::table('runtime_node_observed_capability_snapshots')->where('id', $current->id)->update([
+                ...$snapshot,
+                'id' => $current->id,
+                'created_at' => $current->created_at,
+            ]);
+            $snapshotId = (string) $current->id;
+        }
+        if ($current === null) {
+            $snapshotId = $observationId;
+        }
+
+        foreach ($capabilities as $capability) {
+            DB::table('runtime_node_observed_capabilities')->insert([
+                'id' => EngineIds::new(),
+                'tenant_id' => $tenantId,
+                'runtime_node_id' => $nodeId,
+                'capability_key' => $capability,
+                'observed_at' => $observedAt,
+                'snapshot_id' => $snapshotId,
+                'source_observation_id' => $observationId,
+                'configuration_version' => $observation['configuration_version'] ?? null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+    }
+
+    private function observationIsOlder(mixed $observedAt, string $observationId, object $current): bool
+    {
+        $incoming = strtotime((string) $observedAt);
+        $existing = strtotime((string) $current->observed_at);
+        if ($incoming !== $existing) {
+            return $incoming < $existing;
+        }
+
+        return strcmp($observationId, (string) $current->source_observation_id) <= 0;
     }
 
     private function wakeBoundConferenceRecoveryTargets(string $tenantId, string $runtimeNodeId): void
@@ -495,13 +625,50 @@ final class ProjectionService
 
     public function markStale(int $staleSeconds): int
     {
-        return DB::table('runtime_nodes')
-            ->whereIn('observed_state', ['ready', 'degraded', 'connecting'])
-            ->whereNotNull('observed_at')
-            ->where('observed_at', '<', now()->subSeconds($staleSeconds))
-            ->update([
-                'observed_state' => 'stale',
-                'updated_at' => now(),
-            ]);
+        return DB::transaction(function () use ($staleSeconds): int {
+            $nodes = DB::table('runtime_nodes')
+                ->whereIn('observed_state', ['ready', 'degraded', 'connecting'])
+                ->whereNotNull('observed_at')
+                ->where('observed_at', '<', now()->subSeconds($staleSeconds))
+                ->lockForUpdate()
+                ->get(['id', 'tenant_id']);
+
+            foreach ($nodes as $node) {
+                DB::table('runtime_nodes')->where('id', $node->id)->update([
+                    'observed_state' => 'stale',
+                    'updated_at' => now(),
+                ]);
+                $this->emitRuntimeNodeNotification(
+                    (string) $node->tenant_id,
+                    (string) $node->id,
+                    'runtime_node.observed_state_changed',
+                    ['observed_state' => 'stale', 'reason' => 'stale_observation_timeout'],
+                );
+            }
+
+            return $nodes->count();
+        });
+    }
+
+    /**
+     * Append invalidation intent in the same transaction as the canonical node change.
+     * The outbox bridge owns transport delivery; this service does not broadcast directly.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    private function emitRuntimeNodeNotification(string $tenantId, string $runtimeNodeId, string $eventType, array $payload): void
+    {
+        $this->outbox->append(EventEnvelope::forAggregate(
+            $eventType,
+            1,
+            'runtime_node',
+            $runtimeNodeId,
+            $payload,
+            ExecutionContext::system(
+                reason: 'runtime node observed state projected',
+                tenantId: $tenantId,
+                origin: 'runtime-projection',
+            ),
+        ));
     }
 }

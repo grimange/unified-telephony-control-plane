@@ -15,6 +15,9 @@ use App\RuntimeAdapters\Asterisk\AsteriskAriEventNormalizer;
 use App\RuntimeAdapters\Asterisk\AsteriskAriException;
 use App\RuntimeAdapters\Asterisk\AsteriskAriProfileService;
 use App\RuntimeAdapters\Asterisk\AsteriskCatalog;
+use App\RuntimeAdapters\Asterisk\AsteriskConferenceParticipantBinder;
+use App\RuntimeAdapters\Asterisk\AsteriskConferenceParticipantBindingRetryJob;
+use App\RuntimeAdapters\Asterisk\AsteriskConferenceParticipantBindResult;
 use App\RuntimeAdapters\Asterisk\AsteriskRuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeAdapterRegistry;
@@ -33,12 +36,270 @@ use App\TelephonyDomain\Reconciliation\ConferenceReconciler;
 use App\TelephonyDomain\TelephonyDomainService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use ReflectionMethod;
 use Tests\TestCase;
 
 final class AsteriskConferenceRecoveryTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_listener_preserves_stasis_admission_reference_for_inbound_participant_binding(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId, $participantId] = $this->conferenceFixture($tenantId, $nodeId);
+        DB::table('conference_participants')->where('id', $participantId)->update([
+            'admission_reason' => 'self_admission',
+            'runtime_channel_lost_at' => now()->subSeconds(30),
+        ]);
+
+        $client = new class(new AsteriskCatalog, app(AsteriskAriProfileService::class)) extends AsteriskAriClient
+        {
+            /** @var list<array{tenant_id:string,runtime_node_id:string,conference_id:string,participant_id:string,channel_id:string,configuration_generation:int}> */
+            public array $attachments = [];
+
+            public function attachInboundParticipantChannel(string $tenantId, string $runtimeNodeId, string $conferenceId, string $participantId, string $channelId, int $configurationGeneration): array
+            {
+                $this->attachments[] = compact('tenantId', 'runtimeNodeId', 'conferenceId', 'participantId', 'channelId', 'configurationGeneration');
+
+                return ['channel_id' => $channelId];
+            }
+        };
+        $this->app->instance(AsteriskConferenceParticipantBinder::class, new AsteriskConferenceParticipantBinder($client));
+
+        $catalog = new AsteriskCatalog;
+        $receipts = new RuntimeEventReceiptRepository;
+        $epochId = $receipts->openEpoch($tenantId, $nodeId, $catalog->adapterKey(), 'listener-admission-reference');
+        $listener = new AsteriskAriEventListener(
+            $catalog,
+            $client,
+            app(AsteriskAriProfileService::class),
+            new RuntimeListenerLeaseRepository,
+            $receipts,
+            new ReconciliationRepository,
+        );
+
+        $ingest = new ReflectionMethod($listener, 'ingestAriEvent');
+        $ingest->setAccessible(true);
+        $event = [
+            'type' => 'StasisStart',
+            'timestamp' => '2026-08-15T01:51:00Z',
+            'args' => ['conf-'.$participantId],
+            'channel' => [
+                'id' => '1786758655.0',
+                'name' => 'PJSIP_anonymous-00000000',
+            ],
+        ];
+
+        $ingest->invoke($listener, (object) [
+            'id' => $nodeId,
+            'tenant_id' => $tenantId,
+            'configuration_version' => 1,
+        ], $epochId, $event);
+        $ingest->invoke($listener, (object) [
+            'id' => $nodeId,
+            'tenant_id' => $tenantId,
+            'configuration_version' => 1,
+        ], $epochId, $event);
+
+        $this->assertSame('1786758655.0', DB::table('conference_participants')->where('id', $participantId)->value('runtime_channel_id'));
+        $this->assertNull(DB::table('conference_participants')->where('id', $participantId)->value('runtime_channel_lost_at'));
+        $this->assertSame([[
+            'tenantId' => $tenantId,
+            'runtimeNodeId' => $nodeId,
+            'conferenceId' => $conferenceId,
+            'participantId' => $participantId,
+            'channelId' => '1786758655.0',
+            'configurationGeneration' => 1,
+        ]], $client->attachments);
+    }
+
+    public function test_binder_rejects_missing_malformed_unknown_and_conflicting_admission_references(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId, $participantId] = $this->conferenceFixture($tenantId, $nodeId);
+        DB::table('conference_participants')->where('id', $participantId)->update([
+            'admission_reason' => 'self_admission',
+        ]);
+        $client = new class(new AsteriskCatalog, app(AsteriskAriProfileService::class)) extends AsteriskAriClient
+        {
+            public int $attachmentCount = 0;
+
+            public function attachInboundParticipantChannel(string $tenantId, string $runtimeNodeId, string $conferenceId, string $participantId, string $channelId, int $configurationGeneration): array
+            {
+                unset($tenantId, $runtimeNodeId, $conferenceId, $participantId, $channelId, $configurationGeneration);
+                $this->attachmentCount++;
+
+                return [];
+            }
+        };
+        $binder = new AsteriskConferenceParticipantBinder($client);
+        $node = (object) ['id' => $nodeId, 'tenant_id' => $tenantId];
+        $channel = '1786758655.0';
+
+        foreach ([
+            [],
+            ['not-a-conference-reference'],
+            ['conf-'.IdentityIds::new()],
+        ] as $applicationArgs) {
+            $this->assertSame(AsteriskConferenceParticipantBindResult::TERMINAL, $binder->bind($node, [
+                'channel_id' => $channel,
+                'application_args' => $applicationArgs,
+            ]));
+        }
+
+        DB::table('conference_participants')->where('id', $participantId)->update([
+            'runtime_channel_id' => 'old-channel',
+        ]);
+        $this->assertSame(AsteriskConferenceParticipantBindResult::TERMINAL, $binder->bind($node, [
+            'channel_id' => $channel,
+            'application_args' => ['conf-'.$participantId],
+        ]));
+        $this->assertSame(0, $client->attachmentCount);
+        $this->assertSame('old-channel', DB::table('conference_participants')->where('id', $participantId)->value('runtime_channel_id'));
+        unset($conferenceId);
+    }
+
+    public function test_binder_stamps_current_channel_loss_but_ignores_stale_channel_end(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [, $participantId] = $this->conferenceFixture($tenantId, $nodeId);
+        $binder = new AsteriskConferenceParticipantBinder($this->createMock(AsteriskAriClient::class));
+        $node = (object) ['id' => $nodeId, 'tenant_id' => $tenantId];
+
+        DB::table('conference_participants')->where('id', $participantId)->update([
+            'runtime_channel_id' => 'channel-a',
+            'runtime_channel_lost_at' => null,
+        ]);
+        $binder->clear($node, 'channel-a');
+        $this->assertNull(DB::table('conference_participants')->where('id', $participantId)->value('runtime_channel_id'));
+        $this->assertNotNull(DB::table('conference_participants')->where('id', $participantId)->value('runtime_channel_lost_at'));
+
+        DB::table('conference_participants')->where('id', $participantId)->update([
+            'runtime_channel_id' => 'channel-b',
+            'runtime_channel_lost_at' => null,
+        ]);
+        $binder->clear($node, 'channel-a');
+        $this->assertSame('channel-b', DB::table('conference_participants')->where('id', $participantId)->value('runtime_channel_id'));
+        $this->assertNull(DB::table('conference_participants')->where('id', $participantId)->value('runtime_channel_lost_at'));
+    }
+
+    public function test_transient_stasis_binding_is_retried_for_the_same_live_channel_and_is_idempotent(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$conferenceId, $participantId] = $this->conferenceFixture($tenantId, $nodeId);
+        DB::table('conference_participants')->where('id', $participantId)->update(['admission_reason' => 'self_admission']);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update(['observed_state' => 'stale']);
+
+        $client = new class(new AsteriskCatalog, app(AsteriskAriProfileService::class)) extends AsteriskAriClient
+        {
+            public int $attachmentCount = 0;
+
+            public bool $channelExists = true;
+
+            public function inboundConferenceChannelExists(string $tenantId, string $runtimeNodeId, string $channelId): bool
+            {
+                return $this->channelExists;
+            }
+
+            public function attachInboundParticipantChannel(string $tenantId, string $runtimeNodeId, string $conferenceId, string $participantId, string $channelId, int $configurationGeneration): array
+            {
+                $this->attachmentCount++;
+
+                return ['channel_id' => $channelId];
+            }
+        };
+        $binder = new AsteriskConferenceParticipantBinder($client);
+        $node = (object) ['id' => $nodeId, 'tenant_id' => $tenantId];
+        $event = ['channel_id' => 'channel-b', 'application_args' => ['conf-'.$participantId]];
+
+        $this->assertSame(AsteriskConferenceParticipantBindResult::RETRYABLE, $binder->bind($node, $event));
+        DB::table('runtime_nodes')->where('id', $nodeId)->update(['observed_state' => 'ready']);
+
+        $job = new AsteriskConferenceParticipantBindingRetryJob($tenantId, $nodeId, 'channel-b', 'conf-'.$participantId);
+        $job->handle($binder, $client);
+        $job->handle($binder, $client);
+
+        $this->assertSame('channel-b', DB::table('conference_participants')->where('id', $participantId)->value('runtime_channel_id'));
+        $this->assertNull(DB::table('conference_participants')->where('id', $participantId)->value('runtime_channel_lost_at'));
+        $this->assertSame(1, $client->attachmentCount);
+        $this->assertSame($conferenceId, DB::table('conference_participants')->where('id', $participantId)->value('conference_id'));
+    }
+
+    public function test_listener_schedules_the_same_stasis_channel_for_transient_binding_retry(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [, $participantId] = $this->conferenceFixture($tenantId, $nodeId);
+        DB::table('conference_participants')->where('id', $participantId)->update(['admission_reason' => 'self_admission']);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update(['observed_state' => 'stale']);
+        Queue::fake();
+
+        $client = new class(new AsteriskCatalog, app(AsteriskAriProfileService::class)) extends AsteriskAriClient
+        {
+            public function attachInboundParticipantChannel(string $tenantId, string $runtimeNodeId, string $conferenceId, string $participantId, string $channelId, int $configurationGeneration): array
+            {
+                return ['channel_id' => $channelId];
+            }
+        };
+        $this->app->instance(AsteriskConferenceParticipantBinder::class, new AsteriskConferenceParticipantBinder($client));
+        $listener = new AsteriskAriEventListener(
+            new AsteriskCatalog,
+            $client,
+            app(AsteriskAriProfileService::class),
+            new RuntimeListenerLeaseRepository,
+            new RuntimeEventReceiptRepository,
+            new ReconciliationRepository,
+        );
+        $epochId = app(RuntimeEventReceiptRepository::class)->openEpoch($tenantId, $nodeId, (new AsteriskCatalog)->adapterKey(), 'listener-retry');
+        $ingest = new ReflectionMethod($listener, 'ingestAriEvent');
+        $ingest->setAccessible(true);
+        $ingest->invoke($listener, (object) ['id' => $nodeId, 'tenant_id' => $tenantId, 'configuration_version' => 1], $epochId, [
+            'type' => 'StasisStart',
+            'timestamp' => '2026-08-15T01:51:00Z',
+            'args' => ['conf-'.$participantId],
+            'channel' => ['id' => 'channel-retry', 'name' => 'PJSIP_anonymous-00000001'],
+        ]);
+
+        Queue::assertPushed(AsteriskConferenceParticipantBindingRetryJob::class, function (AsteriskConferenceParticipantBindingRetryJob $job) use ($tenantId, $nodeId, $participantId): bool {
+            return $job->tenantId === $tenantId
+                && $job->runtimeNodeId === $nodeId
+                && $job->channelId === 'channel-retry'
+                && $job->admissionReference === 'conf-'.$participantId
+                && $job->attempt === 1;
+        });
+    }
+
+    public function test_binding_retry_stops_when_the_exact_channel_disappears(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [, $participantId] = $this->conferenceFixture($tenantId, $nodeId);
+        DB::table('conference_participants')->where('id', $participantId)->update(['admission_reason' => 'self_admission']);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update(['observed_state' => 'stale']);
+
+        $client = new class(new AsteriskCatalog, app(AsteriskAriProfileService::class)) extends AsteriskAriClient
+        {
+            public int $attachmentCount = 0;
+
+            public function inboundConferenceChannelExists(string $tenantId, string $runtimeNodeId, string $channelId): bool
+            {
+                return false;
+            }
+
+            public function attachInboundParticipantChannel(string $tenantId, string $runtimeNodeId, string $conferenceId, string $participantId, string $channelId, int $configurationGeneration): array
+            {
+                $this->attachmentCount++;
+
+                return [];
+            }
+        };
+        $binder = new AsteriskConferenceParticipantBinder($client);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update(['observed_state' => 'ready']);
+
+        (new AsteriskConferenceParticipantBindingRetryJob($tenantId, $nodeId, 'gone-channel', 'conf-'.$participantId))->handle($binder, $client);
+
+        $this->assertNull(DB::table('conference_participants')->where('id', $participantId)->value('runtime_channel_id'));
+        $this->assertSame(0, $client->attachmentCount);
+    }
 
     public function test_conference_reconciler_repairs_missing_bridge_after_authoritative_inspection(): void
     {

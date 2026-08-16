@@ -185,19 +185,66 @@ class AsteriskAriClient
     }
 
     /**
+     * Attach the real inbound signaling channel for a self-admitted participant.
+     * The inbound channel is the participant runtime reference; no Local proof
+     * channel is originated by this path.
+     *
+     * @return array<string, mixed>
+     */
+    public function attachInboundParticipantChannel(string $tenantId, string $runtimeNodeId, string $conferenceId, string $participantId, string $channelId, int $configurationGeneration): array
+    {
+        $this->node($tenantId, $runtimeNodeId);
+        $profile = $this->profiles->requiredProfile($tenantId, $runtimeNodeId);
+        $bridgeId = $this->conferenceBridgeId($conferenceId);
+        $timeoutMs = (int) $profile['request_timeout_ms'];
+
+        $this->ensureConferenceBridge($tenantId, $runtimeNodeId, $conferenceId, $configurationGeneration);
+        $this->ariRequest(
+            $runtimeNodeId,
+            'POST',
+            'bridges/'.$bridgeId.'/addChannel',
+            ['channel' => $channelId],
+            $timeoutMs,
+            [200, 202, 204, 409],
+        );
+
+        if (! $this->participantAttachedToBridge($runtimeNodeId, $bridgeId, $channelId, $timeoutMs)) {
+            throw new AsteriskAriException(FailureClass::RuntimeUnavailable, 'ari_inbound_participant_attach_pending', 'Inbound participant channel was not attached to the conference bridge yet.', true);
+        }
+
+        return [
+            'runtime_node_id' => $runtimeNodeId,
+            'bridge_id' => $bridgeId,
+            'participant_id' => $participantId,
+            'channel_id' => $channelId,
+            'configuration_generation' => $configurationGeneration,
+        ];
+    }
+
+    public function inboundConferenceChannelExists(string $tenantId, string $runtimeNodeId, string $channelId): bool
+    {
+        $this->node($tenantId, $runtimeNodeId);
+        $profile = $this->profiles->requiredProfile($tenantId, $runtimeNodeId);
+
+        return is_array($this->getAriResource($runtimeNodeId, 'channels/'.rawurlencode($channelId), (int) $profile['request_timeout_ms']));
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function removeParticipantChannel(string $tenantId, string $runtimeNodeId, string $conferenceId, string $participantId, int $configurationGeneration): array
     {
         $profile = $this->profiles->requiredProfile($tenantId, $runtimeNodeId);
         $bridgeId = $this->conferenceBridgeId($conferenceId);
-        $channelId = $this->participantChannelId($participantId);
-        $peerChannelId = $this->participantPeerChannelId($participantId);
+        $channelId = $this->participantRuntimeChannelId($participantId) ?? $this->participantChannelId($participantId);
+        $peerChannelId = $this->participantRuntimeChannelId($participantId) === null ? $this->participantPeerChannelId($participantId) : null;
         $timeoutMs = (int) $profile['request_timeout_ms'];
 
         $this->ariRequest($runtimeNodeId, 'POST', 'bridges/'.$bridgeId.'/removeChannel', ['channel' => $channelId], $timeoutMs, [200, 202, 204, 404, 409, 422]);
         $this->ariRequest($runtimeNodeId, 'DELETE', 'channels/'.$channelId, [], $timeoutMs, [200, 202, 204, 404, 409]);
-        $this->ariRequest($runtimeNodeId, 'DELETE', 'channels/'.$peerChannelId, [], $timeoutMs, [200, 202, 204, 404, 409]);
+        if ($peerChannelId !== null) {
+            $this->ariRequest($runtimeNodeId, 'DELETE', 'channels/'.$peerChannelId, [], $timeoutMs, [200, 202, 204, 404, 409]);
+        }
 
         return [
             'runtime_node_id' => $runtimeNodeId,
@@ -240,11 +287,11 @@ class AsteriskAriClient
         ];
 
         if ($participantId !== null) {
-            $channelId = $this->participantChannelId($participantId);
-            $peerChannelId = $this->participantPeerChannelId($participantId);
+            $channelId = $this->participantRuntimeChannelId($participantId) ?? $this->participantChannelId($participantId);
+            $peerChannelId = $this->participantRuntimeChannelId($participantId) === null ? $this->participantPeerChannelId($participantId) : null;
             $channelInspection = $this->getAriResourceForAuthoritativeInspection($runtimeNodeId, 'channels/'.$channelId, 'channels', $timeoutMs);
             $channel = $channelInspection['resource'];
-            $peerInspection = $this->getAriResourceForAuthoritativeInspection($runtimeNodeId, 'channels/'.$peerChannelId, 'channels', $timeoutMs);
+            $peerInspection = $peerChannelId === null ? ['resource' => null, 'runtime_reference_health' => 'not_applicable'] : $this->getAriResourceForAuthoritativeInspection($runtimeNodeId, 'channels/'.$peerChannelId, 'channels', $timeoutMs);
             $peerChannel = $peerInspection['resource'];
             $summary['participant_channel_exists'] = is_array($channel);
             $summary['participant_channel_in_bridge'] = in_array($channelId, $channels, true);
@@ -263,6 +310,13 @@ class AsteriskAriClient
         }
 
         return $summary;
+    }
+
+    private function participantRuntimeChannelId(string $participantId): ?string
+    {
+        $channelId = DB::table('conference_participants')->where('id', $participantId)->value('runtime_channel_id');
+
+        return is_string($channelId) && trim($channelId) !== '' ? $channelId : null;
     }
 
     private function participantAttachedToBridge(string $runtimeNodeId, string $bridgeId, string $channelId, int $timeoutMs): bool
@@ -764,9 +818,25 @@ class AsteriskAriClient
             'type' => $type,
             'asterisk_id' => is_string($event['asterisk_id'] ?? null) ? mb_substr($event['asterisk_id'], 0, 120) : null,
             'timestamp' => is_string($event['timestamp'] ?? null) ? $event['timestamp'] : now()->toISOString(),
+            'args' => $this->sanitizeAriArguments($event['args'] ?? null),
             'bridge' => is_array($event['bridge'] ?? null) ? $this->sanitizeAriObject($event['bridge']) : null,
             'channel' => is_array($event['channel'] ?? null) ? $this->sanitizeAriObject($event['channel']) : null,
         ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function sanitizeAriArguments(mixed $args): array
+    {
+        if (! is_array($args)) {
+            return [];
+        }
+
+        return array_values(array_map(
+            fn (string $value): string => mb_substr(preg_replace('/[^A-Za-z0-9_.:-]/', '_', $value) ?: 'unknown', 0, 120),
+            array_filter($args, 'is_string'),
+        ));
     }
 
     /**

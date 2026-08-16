@@ -189,6 +189,7 @@ if not kamailio_config:
 
 request_block = block_after(kamailio_config, "request_route")
 application_block = block_after(kamailio_config, "route[APPLICATION_DIALOG]")
+conference_route_block = block_after(kamailio_config, "route[CONFERENCE_RUNTIME_RELAY]")
 within_block = block_after(kamailio_config, "route[WITHINDLG]")
 within_loose_route_block = block_after(within_block, "if (loose_route())")
 asterisk_block = block_after(kamailio_config, "route[APPLICATION_RUNTIME_RELAY]")
@@ -345,6 +346,19 @@ if re.search(r'\$proto\s*==\s*"udp"', application_block, re.I) or 'if (true)' in
     fail("Contact alias creation must remain limited to WS/WSS initial application dialogs")
 if "route(MEDIA_OFFER)" not in application_block:
     fail("initial application-dialog INVITE with SDP must invoke the provider-neutral media offer route")
+if 'if ($rU =~ "^conf-")' not in application_block or "route(CONFERENCE_RUNTIME_RELAY)" not in application_block:
+    fail("conference INVITEs must leave the static application-runtime route")
+for required in (
+    'loadmodule "sqlops.so"',
+    'modparam("sqlops", "sqlcon", "conference=>postgres://',
+    'sql_query("conference", "select admission_user, signaling_identity, sip_target from kamailio_conference_route_view',
+    'if ($dbr(conference_route=>[0,1]) != $au)',
+    '$du = $dbr(conference_route=>[0,2])',
+):
+    if required not in kamailio_config:
+        fail(f"conference routing projection contract missing {required}")
+if "route(APPLICATION_RUNTIME_RELAY)" in conference_route_block or "selected-application-runtime" in conference_route_block:
+    fail("conference routing must not fall back to selected-application-runtime")
 if any(token in application_block for token in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage")):
     fail("APPLICATION_DIALOG must delegate media control to provider-neutral routes")
 if "route(MEDIA_OFFER)" in register_block or "route(MEDIA_ANSWER)" in register_block or "route(MEDIA_DELETE)" in register_block:
@@ -640,6 +654,8 @@ if "exten => 9900" in base_extensions:
     fail("base Asterisk dialplan must not contain the local proof extension")
 if "[from-kamailio]" not in base_extensions or "Hangup(21)" not in base_extensions:
     fail("base Asterisk dialplan must include bounded from-kamailio rejection context")
+if "exten => _[c]o[n]f-.,1" not in base_extensions or "Stasis(utcp-t0-observation,${EXTEN})" not in base_extensions:
+    fail("base Asterisk dialplan must enter Stasis for canonical conference destinations")
 
 pjsip = (root / "infrastructure/docker/asterisk/config/pjsip.conf").read_text(encoding="utf-8")
 if pjsip.count("type=transport") != 1 or "protocol=udp" not in pjsip or "bind=0.0.0.0:5060" not in pjsip:
@@ -683,7 +699,6 @@ if not any(rule.get("from") == [{
     "podSelector": {"matchLabels": {
         "app.kubernetes.io/component": "asterisk-ari",
         "utcp.io/network-role": "asterisk-ari",
-        "utcp.dev/runtime-node": "local-asterisk-ari",
     }},
 }] and rule.get("ports") == [{"protocol": "UDP", "port": 5060}] for rule in kamailio_ingress):
     fail("Kamailio ingress must allow only canonical Asterisk UDP 5060 reverse signaling")
@@ -729,15 +744,17 @@ if len((asterisk_policy.get("spec") or {}).get("ingress") or []) != 2 or asteris
     fail("Asterisk ingress must retain exact Kamailio SIP and rtpengine media rules")
 if len(asterisk_egress) != 3 or asterisk_sip_egress not in asterisk_egress or asterisk_media_egress not in asterisk_egress or asterisk_dns_egress not in asterisk_egress:
     fail("Asterisk egress must allow exact Kamailio SIP, rtpengine media, and cluster-DNS rules")
-if (asterisk_policy.get("spec") or {}).get("podSelector", {}).get("matchLabels", {}).get("utcp.dev/runtime-node") != "local-asterisk-ari":
-    fail("Asterisk reverse SIP policy must select only the canonical local Asterisk runtime")
+if (asterisk_policy.get("spec") or {}).get("podSelector", {}).get("matchLabels") != {
+    "app.kubernetes.io/component": "asterisk-ari",
+    "utcp.io/network-role": "asterisk-ari",
+}:
+    fail("Asterisk reverse SIP policy must select only managed Asterisk runtimes")
 kamailio_egress = (kamailio_policy.get("spec") or {}).get("egress") or []
 if not any(rule.get("to") == [{
     "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
     "podSelector": {"matchLabels": {
         "app.kubernetes.io/component": "asterisk-ari",
         "utcp.io/network-role": "asterisk-ari",
-        "utcp.dev/runtime-node": "local-asterisk-ari",
     }},
 }] and rule.get("ports") == [{"protocol": "UDP", "port": 5060}] for rule in kamailio_egress):
     fail("Kamailio egress must allow only canonical Asterisk UDP 5060 signaling")

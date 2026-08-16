@@ -24,6 +24,7 @@ final class ReferenceDialerController extends Controller
         $authorization->requireTenant($userId, $tenantId, 'telephony.sessions.view_own');
         $authorization->requireTenant($userId, $tenantId, 'telephony.signaling.view_own');
         $authorization->requireTenant($userId, $tenantId, 'telephony.conferences.view');
+        $authorization->requireTenant($userId, $tenantId, 'telephony.conferences.join');
 
         $telephonySession = $domain->currentSession($tenantId, $userId);
 
@@ -35,6 +36,7 @@ final class ReferenceDialerController extends Controller
                 ? null
                 : $signaling->metadata($tenantId, $userId, (string) $telephonySession['id']),
             'conferences' => $domain->listConferences($tenantId),
+            'participation' => $domain->currentParticipation($tenantId, $userId),
         ]);
     }
 }

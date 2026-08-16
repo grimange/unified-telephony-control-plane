@@ -278,7 +278,8 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter, RuntimeConference
         $epoch = $this->openEpoch($node);
         $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('connection_opened'), 1, $this->payload($node, $profile, 'connecting', $configurationGeneration));
         $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('configuration_observed'), 1, $this->payload($node, $profile, 'ready', $configurationGeneration, ['configuration_generation' => $configurationGeneration]), 1);
-        $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('readiness_changed'), 1, $this->payload($node, $profile, 'ready', $configurationGeneration), 2);
+        $this->scheduleCapabilitySnapshot($node, $profile, $epoch, 'ready', $configurationGeneration, 2);
+        $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('readiness_changed'), 1, $this->payload($node, $profile, 'ready', $configurationGeneration), 3);
     }
 
     private function scheduleDuplicateReady(object $node, object $profile, int $configurationGeneration): void
@@ -288,6 +289,7 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter, RuntimeConference
         $duplicateKey = 'simulator:duplicate:'.$node->id.':'.$configurationGeneration;
         $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('readiness_changed'), 1, $payload, 0, $duplicateKey);
         $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('readiness_changed'), 1, $payload, 1, $duplicateKey);
+        $this->scheduleCapabilitySnapshot($node, $profile, $epoch, 'ready', $configurationGeneration, 2);
     }
 
     private function scheduleDisconnectReconnect(object $node, object $profile, int $configurationGeneration): void
@@ -295,10 +297,12 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter, RuntimeConference
         $first = $this->openEpoch($node);
         $this->events->schedule($node->tenant_id, $node->id, $first, $this->catalog->eventType('connection_opened'), 1, $this->payload($node, $profile, 'connecting', $configurationGeneration));
         $this->events->schedule($node->tenant_id, $node->id, $first, $this->catalog->eventType('readiness_changed'), 1, $this->payload($node, $profile, 'ready', $configurationGeneration), 1);
+        $this->scheduleCapabilitySnapshot($node, $profile, $first, 'ready', $configurationGeneration, 2);
         $this->events->schedule($node->tenant_id, $node->id, $first, $this->catalog->eventType('connection_closed'), 1, $this->payload($node, $profile, 'unavailable', $configurationGeneration), 2);
         $second = $this->openEpoch($node);
         $this->events->schedule($node->tenant_id, $node->id, $second, $this->catalog->eventType('connection_opened'), 1, $this->payload($node, $profile, 'connecting', $configurationGeneration), 3);
         $this->events->schedule($node->tenant_id, $node->id, $second, $this->catalog->eventType('readiness_changed'), 1, $this->payload($node, $profile, 'ready', $configurationGeneration), 4);
+        $this->scheduleCapabilitySnapshot($node, $profile, $second, 'ready', $configurationGeneration, 5);
     }
 
     private function scheduleConfigurationDrift(object $node, object $profile, string $operationType, int $configurationGeneration): void
@@ -309,13 +313,29 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter, RuntimeConference
             : max(0, $configurationGeneration - 1);
         $state = $observed === $configurationGeneration ? 'ready' : 'degraded';
         $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('configuration_observed'), 1, $this->payload($node, $profile, $state, $observed, ['configuration_generation' => $observed]));
+        $this->scheduleCapabilitySnapshot($node, $profile, $epoch, $state, $observed, 1);
         if ($state === 'ready') {
-            $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('readiness_changed'), 1, $this->payload($node, $profile, 'ready', $observed), 1);
+            $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('readiness_changed'), 1, $this->payload($node, $profile, 'ready', $observed), 2);
             DB::table('simulator_states')->where('runtime_node_id', $node->id)->update([
                 'applied_configuration_generation' => $observed,
                 'updated_at' => now(),
             ]);
         }
+    }
+
+    private function scheduleCapabilitySnapshot(object $node, object $profile, string $epoch, string $observedState, int $configurationGeneration, int $delaySeconds): void
+    {
+        $this->events->schedule(
+            $node->tenant_id,
+            $node->id,
+            $epoch,
+            $this->catalog->eventType('capabilities_observed'),
+            1,
+            $this->payload($node, $profile, $observedState, $configurationGeneration, [
+                'capabilities' => $this->catalog->supportedCapabilities(),
+            ]),
+            $delaySeconds,
+        );
     }
 
     private function openEpoch(object $node): string

@@ -124,6 +124,28 @@ export type OneTimeSignalingCredential = {
   expires_at: string
 }
 
+export type ReferenceDialerBootstrap = {
+  application: 'reference-dialer'
+  tenant_id: string
+  telephony_session: TelephonySessionSummary | null
+  signaling: SignalingMetadata | null
+  conferences: Conference[]
+  participation: ReferenceDialerParticipation | null
+}
+
+export type ReferenceDialerParticipation = {
+  participant_id: string
+  conference_id: string
+  state: 'active' | 'awaiting_runtime' | 'recoverable' | 'expired' | string
+  recoverable: boolean
+  recoverable_until: string | null
+}
+
+export type ConferenceAdmission = {
+  participant: ConferenceParticipant
+  signaling_destination: string
+}
+
 export type AdminUserDetail = {
   user: AdminUser & {
     created_at: string
@@ -202,6 +224,53 @@ export type RuntimeNode = {
     expires_at: string | null
   }>
   capabilities: string[]
+  management?: {
+    mode: 'managed' | 'external'
+    provisioning_request: {
+      id: string
+      status: string
+      deployment_target: {
+        id: string
+        name: string
+        slug: string
+        kind: string
+      }
+    } | null
+    provisioning: RuntimeManagedOperation | null
+    deprovisioning: RuntimeManagedOperation | null
+  }
+}
+
+export type RuntimeManagedOperation = {
+  id: string
+  status: RuntimeOperationStatus
+  failure: { class: string | null; code: string | null } | null
+  started_at: string | null
+  completed_at: string | null
+  updated_at: string | null
+}
+
+export type DeploymentTarget = {
+  id: string
+  name: string
+  slug: string
+  kind: string
+  configuration: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export type RuntimeProvisioningRequest = {
+  id: string
+  deployment_target_id: string
+  runtime_family: string
+  adapter_key: string
+  requested_name: string
+  requested_slug: string
+  status: string
+  runtime_node: RuntimeNode
+  created_at: string
+  updated_at: string
 }
 
 export type RuntimeManagementCatalog = {
@@ -286,6 +355,39 @@ export type RuntimeEvidence = {
     last_failure_at: string | null
     failure_class: string | null
   }
+  capabilities: {
+    declared: string[]
+    observed: string[] | null
+    declared_not_observed: string[]
+    observed_not_declared: string[]
+    observed_at: string | null
+    freshness: 'fresh' | 'stale' | 'unknown'
+    source: string | null
+    source_observation_id?: string
+    configuration_generation?: number | null
+  }
+  drain: {
+    drain_state: string
+    initial_work: number
+    remaining_work: number
+    started_at: string | null
+    last_evaluated_at: string | null
+    deadline_at: string | null
+    completed_at: string | null
+    timed_out: boolean
+    timed_out_at: string | null
+    failure_class: string | null
+    failure_code: string | null
+  } | null
+  decommission: {
+    operation_id: string
+    status: string
+    started_at: string | null
+    completed_at: string | null
+    failure_class: string | null
+    failure_code: string | null
+    failure_message: string | null
+  } | null
 }
 
 export type RuntimeHistoryResponse = {
@@ -301,6 +403,25 @@ export type RuntimeHistoryResponse = {
     has_more: boolean
     next_before: string | null
   }
+}
+
+export type RuntimeNodeEditForm = {
+  name: string
+  placement_region: string
+  placement_zone: string
+  placement_priority: number
+  capacity_weight: number
+}
+
+export type RuntimeEndpointEditForm = {
+  purpose: string
+  transport: string
+  host: string
+  port: number
+  path: string
+  tls_mode: string
+  priority: number
+  enabled: string
 }
 
 export type Conference = {
@@ -576,7 +697,7 @@ export type AuditRecordListFilters = {
   per_page?: number
 }
 
-class ApiRequestError extends Error {
+export class ApiRequestError extends Error {
   status: number
   details: unknown
 
@@ -588,55 +709,105 @@ class ApiRequestError extends Error {
   }
 }
 
+export class ApiRequestTimeoutError extends Error {
+  constructor() {
+    super('API request timed out')
+    this.name = 'ApiRequestTimeoutError'
+  }
+}
+
+export type ApiRequestOptions = RequestInit & {
+  timeoutMs?: number
+}
+
 const apiBaseUrl = (): string => import.meta.env.VITE_UTCP_API_BASE_URL ?? ''
 
 async function fetchJson<T>(
   path: string,
   allowStatuses: number[] = [200],
-  options: RequestInit = {},
+  options: ApiRequestOptions = {},
 ): Promise<T> {
-  const response = await fetch(`${apiBaseUrl()}${path}`, {
-    credentials: 'same-origin',
-    ...options,
-    headers: {
-      Accept: 'application/json',
-      ...(options.headers ?? {}),
-    },
-  })
+  const { timeoutMs, signal: suppliedSignal, ...requestInit } = options
+  const externalSignal = suppliedSignal ?? undefined
+  const controller = timeoutMs === undefined ? null : new AbortController()
+  let timedOut = false
+  let timeout: ReturnType<typeof setTimeout> | null = null
+  let removeExternalAbortListener: (() => void) | null = null
 
-  if (!allowStatuses.includes(response.status)) {
-    if (response.status === 401) disconnectRuntimeNodeRealtime()
-    let details: unknown = null
-    try {
-      details = await response.json()
-    } catch {
-      details = null
+  if (controller !== null) {
+    timeout = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, timeoutMs)
+    if (externalSignal !== undefined) {
+      const abort = () => controller.abort(externalSignal.reason)
+      if (externalSignal.aborted) abort()
+      else {
+        externalSignal.addEventListener('abort', abort, { once: true })
+        removeExternalAbortListener = () => externalSignal.removeEventListener('abort', abort)
+      }
     }
-    throw new ApiRequestError(response.status, details)
   }
 
-  return (await response.json()) as T
+  try {
+    const response = await fetch(`${apiBaseUrl()}${path}`, {
+      credentials: 'same-origin',
+      ...requestInit,
+      ...(controller === null ? { signal: externalSignal } : { signal: controller.signal }),
+      headers: {
+        Accept: 'application/json',
+        ...(options.headers ?? {}),
+      },
+    })
+
+    if (!allowStatuses.includes(response.status)) {
+      if (response.status === 401) disconnectRuntimeNodeRealtime()
+      let details: unknown = null
+      try {
+        details = await response.json()
+      } catch {
+        details = null
+      }
+      throw new ApiRequestError(response.status, details)
+    }
+
+    return (await response.json()) as T
+  } catch (errorValue) {
+    if (timedOut) throw new ApiRequestTimeoutError()
+    throw errorValue
+  } finally {
+    if (timeout !== null) clearTimeout(timeout)
+    removeExternalAbortListener?.()
+  }
 }
 
 let csrfToken: string | null = null
 
-async function csrf(): Promise<string> {
+async function csrf(options: ApiRequestOptions = {}): Promise<string> {
   if (csrfToken === null) {
-    const response = await fetchJson<{ csrf_token: string }>('/api/v1/auth/csrf')
+    const response = await fetchJson<{ csrf_token: string }>('/api/v1/auth/csrf', [200], options)
     csrfToken = response.csrf_token
   }
 
   return csrfToken
 }
 
-async function postJson<T>(path: string, payload: Record<string, unknown>, allowStatuses: number[] = [200]): Promise<T> {
-  const token = await csrf()
+async function postJson<T>(
+  path: string,
+  payload: Record<string, unknown>,
+  allowStatuses: number[] = [200],
+  extraHeaders: Record<string, string> = {},
+  requestOptions: ApiRequestOptions = {},
+): Promise<T> {
+  const token = await csrf(requestOptions)
 
   return fetchJson<T>(path, allowStatuses, {
+    ...requestOptions,
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-CSRF-TOKEN': token,
+      ...extraHeaders,
     },
     body: JSON.stringify(payload),
   })
@@ -754,16 +925,37 @@ export const identityApi = {
     patchJson<{ message: string }>(`/api/v1/admin/memberships/${membershipId}`, { status }),
   roles: () => fetchJson<RoleCatalog>('/api/v1/admin/roles'),
   runtimeNodeCatalog: () => fetchJson<{ catalog: RuntimeManagementCatalog }>('/api/v1/admin/runtime-node-catalog'),
+  deploymentTargets: () => fetchJson<{ deployment_targets: DeploymentTarget[] }>('/api/v1/admin/deployment-targets'),
   runtimeNodes: () => fetchJson<{ runtime_nodes: RuntimeNode[] }>('/api/v1/admin/runtime-nodes'),
+  createRuntimeProvisioning: (payload: Record<string, unknown>, idempotencyKey: string) =>
+    postJson<{ provisioning_request: RuntimeProvisioningRequest }>(
+      '/api/v1/admin/runtime-provisioning',
+      payload,
+      [202],
+      { 'Idempotency-Key': idempotencyKey },
+    ),
   createRuntimeNode: (payload: Record<string, unknown>) =>
     postJson<{ runtime_node: RuntimeNode }>('/api/v1/admin/runtime-nodes', payload, [201]),
+  updateRuntimeNode: (runtimeNodeId: string, payload: Record<string, unknown>) =>
+    patchJson<{ runtime_node: RuntimeNode }>(`/api/v1/admin/runtime-nodes/${runtimeNodeId}`, payload),
   updateRuntimeNodeDesiredState: (runtimeNodeId: string, desiredState: string) =>
     postJson<{ runtime_node: RuntimeNode }>(`/api/v1/admin/runtime-nodes/${runtimeNodeId}/desired-state`, { desired_state: desiredState }),
+  decommissionRuntimeNode: (runtimeNodeId: string) =>
+    postJson<{ runtime_node: RuntimeNode; runtime_operation: { id: string; status: string } }>(
+      `/api/v1/admin/runtime-nodes/${runtimeNodeId}/decommission`,
+      {},
+      [202],
+    ),
   addRuntimeEndpoint: (runtimeNodeId: string, payload: Record<string, unknown>) =>
     postJson<{ endpoint: RuntimeNode['endpoints'][number]; runtime_node: RuntimeNode }>(
       `/api/v1/admin/runtime-nodes/${runtimeNodeId}/endpoints`,
       payload,
       [201],
+    ),
+  updateRuntimeEndpoint: (runtimeNodeId: string, endpointId: string, payload: Record<string, unknown>) =>
+    patchJson<{ endpoint: RuntimeNode['endpoints'][number]; runtime_node: RuntimeNode }>(
+      `/api/v1/admin/runtime-nodes/${runtimeNodeId}/endpoints/${endpointId}`,
+      payload,
     ),
   removeRuntimeEndpoint: (runtimeNodeId: string, endpointId: string) =>
     deleteJson<{ message: string }>(`/api/v1/admin/runtime-nodes/${runtimeNodeId}/endpoints/${endpointId}`),
@@ -794,8 +986,12 @@ export const identityApi = {
     ),
   runtimeEvidence: (runtimeNodeId: string) =>
     fetchJson<{ runtime_evidence: RuntimeEvidence }>(`/api/v1/admin/runtime-nodes/${runtimeNodeId}/runtime-evidence`),
-  runtimeHistory: (runtimeNodeId: string) =>
-    fetchJson<RuntimeHistoryResponse>(`/api/v1/admin/runtime-nodes/${runtimeNodeId}/history?limit=10`),
+  runtimeHistory: (runtimeNodeId: string, before?: string | null) => {
+    const query = new URLSearchParams({ limit: '10' })
+    if (before) query.set('before', before)
+
+    return fetchJson<RuntimeHistoryResponse>(`/api/v1/admin/runtime-nodes/${runtimeNodeId}/history?${query.toString()}`)
+  },
   runtimeOperations: (params: RuntimeOperationListFilters = {}) => {
     const query = new URLSearchParams()
     if (params.runtime_node_id) query.set('runtime_node_id', params.runtime_node_id)
@@ -852,4 +1048,38 @@ export const identityApi = {
   conferenceParticipants: (conferenceId: string) =>
     fetchJson<{ participants: ConferenceParticipant[] }>(`/api/v1/admin/conferences/${conferenceId}/participants`),
   isApiRequestError: (error: unknown): error is ApiRequestError => error instanceof ApiRequestError,
+}
+
+export const referenceDialerApi = {
+  isApiRequestError: (error: unknown): error is ApiRequestError => error instanceof ApiRequestError,
+  bootstrap: (options: ApiRequestOptions = {}) => fetchJson<ReferenceDialerBootstrap>('/api/v1/reference-dialer/bootstrap', [200], options),
+  createTelephonySession: (idempotencyKey: string) =>
+    postJson<{ telephony_session: TelephonySessionSummary }>(
+      '/api/v1/telephony/sessions',
+      {},
+      [201],
+      { 'Idempotency-Key': idempotencyKey },
+    ),
+  issueSignalingCredential: (telephonySessionId: string) =>
+    postJson<{ credential: OneTimeSignalingCredential }>(
+      `/api/v1/telephony/sessions/${telephonySessionId}/signaling-credential`,
+      {},
+      [201],
+    ),
+  joinConference: (conferenceId: string, idempotencyKey: string, options: ApiRequestOptions = {}) =>
+    postJson<ConferenceAdmission>(
+      `/api/v1/conferences/${conferenceId}/participants/self`,
+      {},
+      [201],
+      { 'Idempotency-Key': idempotencyKey },
+      options,
+    ),
+  leaveConference: async (conferenceId: string): Promise<{ participant: ConferenceParticipant | null }> => {
+    try {
+      return await deleteJson<{ participant: ConferenceParticipant }>(`/api/v1/conferences/${conferenceId}/participants/self`)
+    } catch (errorValue) {
+      if (errorValue instanceof ApiRequestError && errorValue.status === 404) return { participant: null }
+      throw errorValue
+    }
+  },
 }

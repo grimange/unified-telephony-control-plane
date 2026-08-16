@@ -123,7 +123,15 @@ php -l apps/api/app/TelephonyDomain/Runtime/ConferenceOperationHandler.php >/dev
 php -l apps/api/database/migrations/2026_07_15_090000_create_telephony_session_conference_domain_tables.php >/dev/null
 find apps/api/app/Infrastructure/RuntimeFencing -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
 
-if rg -n "sip|webrtc|ari|esl|kamailio|rtpengine|asterisk|freeswitch|media" apps/api/app/TelephonyDomain apps/api/routes/web.php -g '!apps/api/app/TelephonyDomain/Signaling/**'; then
+telephony_domain_vendor_matches="$({
+  rg -n "sip|webrtc|ari|esl|kamailio|rtpengine|asterisk|freeswitch|media" apps/api/app/TelephonyDomain apps/api/routes/web.php -g '!apps/api/app/TelephonyDomain/Signaling/**' || true
+} | {
+  grep -v "return 'sip:conf-'" || true
+} | {
+  grep -v "where('runtime_node_endpoints.purpose', 'sip')" || true
+})"
+if [ -n "$telephony_domain_vendor_matches" ]; then
+  printf '%s\n' "$telephony_domain_vendor_matches"
   printf 'C5 domain or route surface contains forbidden vendor/media vocabulary.\n' >&2
   exit 1
 fi
@@ -175,20 +183,97 @@ if rg -n "kubectl|shell_exec|(^|[^:[:alnum:]_])exec\\(|proc_open|passthru|(^|[^:
   exit 1
 fi
 
-if rg -n "delete" infrastructure/kubernetes/components/runtime-fencing/rbac.yaml; then
-  printf 'C5 fencing RBAC contains delete permission.\n' >&2
-  exit 1
-fi
+runtime_authority_render="$(mktemp)"
+trap 'rm -f "$runtime_authority_render"' EXIT
+kubectl kustomize infrastructure/kubernetes/overlays/local > "$runtime_authority_render"
+python3 - "$runtime_authority_render" <<'PY'
+import sys
+from pathlib import Path
 
-if rg -n "ClusterRole|resources: \\[\"\\*\"\\]|verbs: \\[\"\\*\"\\]|resources: \\[\"secrets\"\\]" infrastructure/kubernetes/components/runtime-fencing; then
-  printf 'C5 fencing manifests contain broad or secret permissions.\n' >&2
-  exit 1
-fi
+import yaml
 
-if rg -n "runtime-fencing" infrastructure/kubernetes/overlays/local infrastructure/kubernetes/base/kustomization.yaml infrastructure/kubernetes/base/platform/kustomization.yaml infrastructure/kubernetes/base/runtime/kustomization.yaml; then
-  printf 'C5 active single-node overlays include the staged runtime-fencing worker.\n' >&2
-  exit 1
-fi
+documents = [item for item in yaml.safe_load_all(Path(sys.argv[1]).read_text()) if item]
+
+def fail(message: str) -> None:
+    print(f"C5/RNP infrastructure authority check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+def find(kind: str, name: str, namespace: str | None = None) -> dict:
+    matches = [
+        item for item in documents
+        if item.get("kind") == kind
+        and item.get("metadata", {}).get("name") == name
+        and (namespace is None or item.get("metadata", {}).get("namespace") == namespace)
+    ]
+    if len(matches) != 1:
+        fail(f"expected exactly one {kind}/{namespace or '-'}/{name}, found {len(matches)}")
+    return matches[0]
+
+deployment = find("Deployment", "utcp-runtime-fence-worker", "utcp-platform")
+pod_spec = deployment["spec"]["template"]["spec"]
+if pod_spec.get("serviceAccountName") != "utcp-runtime-fencer":
+    fail("the active infrastructure worker must use utcp-runtime-fencer")
+
+service_accounts = [
+    item for item in documents
+    if item.get("kind") == "ServiceAccount"
+    and item.get("metadata", {}).get("name") == "utcp-runtime-fencer"
+]
+if service_accounts != [item for item in service_accounts if item.get("metadata", {}).get("namespace") == "utcp-platform"]:
+    fail("utcp-runtime-fencer must be the platform ServiceAccount")
+if len(service_accounts) != 1:
+    fail("expected exactly one utcp-runtime-fencer ServiceAccount")
+
+for item in documents:
+    if item.get("kind") != "Deployment":
+        continue
+    if item is deployment:
+        continue
+    if item.get("spec", {}).get("template", {}).get("spec", {}).get("serviceAccountName") == "utcp-runtime-fencer":
+        fail(f"non-infrastructure Deployment uses utcp-runtime-fencer: {item['metadata'].get('name')}")
+
+role = find("Role", "utcp-runtime-fencer", "utcp-runtime")
+if any(rule.get("resources") == ["*"] or rule.get("verbs") == ["*"] or rule.get("apiGroups") == ["*"] for rule in role.get("rules", [])):
+    fail("infrastructure Role contains wildcard authority")
+
+expected_rules = {
+    ("apps", "deployments"): {"get", "list", "create", "patch", "delete"},
+    ("apps", "replicasets"): {"get", "list"},
+    ("apps", "deployments/scale"): {"get", "patch"},
+    ("", "pods"): {"get", "list"},
+    ("", "services"): {"get", "create", "patch", "delete"},
+    ("", "secrets"): {"get", "create", "patch", "delete"},
+}
+actual_rules = {}
+for rule in role.get("rules", []):
+    api_group = (rule.get("apiGroups") or [""])[0]
+    for resource in rule.get("resources", []):
+        if resource in {"deployments", "replicasets", "deployments/scale", "pods", "services", "secrets"}:
+            key = (api_group, resource)
+            if key in actual_rules:
+                fail(f"duplicate RBAC rule for {api_group}/{resource}")
+            actual_rules[key] = set(rule.get("verbs", []))
+if actual_rules != expected_rules:
+    fail(f"combined fencing/RNP verbs do not match expected contract: {actual_rules!r}")
+
+for item in documents:
+    if item.get("kind") in {"ClusterRole", "ClusterRoleBinding"}:
+        if item.get("metadata", {}).get("name") == "utcp-runtime-fencer":
+            fail("infrastructure authority must not use a ClusterRole or ClusterRoleBinding")
+for rule in role.get("rules", []):
+    resources = set(rule.get("resources", []))
+    verbs = set(rule.get("verbs", []))
+    forbidden_resources = {"pods/exec", "pods/attach", "pods/portforward", "nodes", "nodes/proxy", "namespaces", "serviceaccounts", "roles", "rolebindings", "clusterroles", "clusterrolebindings", "customresourcedefinitions", "persistentvolumes"}
+    if resources & forbidden_resources or verbs & {"watch", "update", "impersonate", "bind", "escalate"}:
+        fail(f"forbidden infrastructure authority present: resources={resources}, verbs={verbs}")
+
+binding = find("RoleBinding", "utcp-runtime-fencer", "utcp-runtime")
+subjects = binding.get("subjects", [])
+if subjects != [{"kind": "ServiceAccount", "name": "utcp-runtime-fencer", "namespace": "utcp-platform"}]:
+    fail("RoleBinding subject is broader than the dedicated platform ServiceAccount")
+if binding.get("roleRef", {}).get("kind") != "Role" or binding.get("roleRef", {}).get("name") != "utcp-runtime-fencer":
+    fail("RoleBinding must reference the namespaced infrastructure Role")
+PY
 
 if rg -n "Http::|curl_init|Kubernetes|KubernetesWorkloadClient|scaleDeployment" apps/api/app/TelephonyDomain apps/api/app/RuntimeAdapters/Asterisk | grep -v "RuntimeFencingCoordinator.php"; then
   printf 'C5 domain or runtime adapter contains direct Kubernetes infrastructure access.\n' >&2

@@ -37,6 +37,26 @@ final class RuntimeFencingManifestTest extends TestCase
         $this->assertSame([], $ordinaryApiClients);
     }
 
+    public function test_canonical_local_overlay_activates_only_the_dedicated_infrastructure_identity(): void
+    {
+        $objects = $this->kustomizeObjects('infrastructure/kubernetes/overlays/local');
+        $worker = $objects['Deployment/utcp-platform/utcp-runtime-fence-worker'];
+
+        $this->assertSame('utcp-runtime-fencer', $worker['spec']['template']['spec']['serviceAccountName']);
+
+        foreach ($objects as $key => $object) {
+            if (($object['kind'] ?? null) !== 'Deployment' || $key === 'Deployment/utcp-platform/utcp-runtime-fence-worker') {
+                continue;
+            }
+
+            $this->assertNotSame(
+                'utcp-runtime-fencer',
+                $object['spec']['template']['spec']['serviceAccountName'] ?? null,
+                $key.' must not use the infrastructure ServiceAccount',
+            );
+        }
+    }
+
     public function test_common_worker_egress_is_reused_without_duplicate_data_service_policy(): void
     {
         $objects = $this->kustomizeObjects('infrastructure/kubernetes/security');
@@ -221,10 +241,12 @@ final class RuntimeFencingManifestTest extends TestCase
 
         $role = $objects['Role/utcp-runtime/utcp-runtime-fencer'];
         $this->assertSame([
-            ['apiGroups' => ['apps'], 'resources' => ['deployments'], 'verbs' => ['get', 'list']],
+            ['apiGroups' => ['apps'], 'resources' => ['deployments'], 'verbs' => ['get', 'list', 'create', 'patch', 'delete']],
             ['apiGroups' => ['apps'], 'resources' => ['replicasets'], 'verbs' => ['get', 'list']],
             ['apiGroups' => ['apps'], 'resources' => ['deployments/scale'], 'verbs' => ['get', 'patch']],
             ['apiGroups' => [''], 'resources' => ['pods'], 'verbs' => ['get', 'list']],
+            ['apiGroups' => [''], 'resources' => ['services'], 'verbs' => ['get', 'create', 'patch', 'delete']],
+            ['apiGroups' => [''], 'resources' => ['secrets'], 'verbs' => ['get', 'create', 'patch', 'delete']],
         ], $role['rules']);
 
         $roleBinding = $objects['RoleBinding/utcp-runtime/utcp-runtime-fencer'];
@@ -233,6 +255,24 @@ final class RuntimeFencingManifestTest extends TestCase
         ], $roleBinding['subjects']);
         $this->assertSame('Role', $roleBinding['roleRef']['kind']);
         $this->assertSame('utcp-runtime-fencer', $roleBinding['roleRef']['name']);
+    }
+
+    public function test_rnp_writer_role_has_no_cluster_or_forbidden_privileges_and_api_has_no_fencer_identity(): void
+    {
+        $objects = $this->runtimeFencingObjects();
+        $role = $objects['Role/utcp-runtime/utcp-runtime-fencer'];
+        $serializedRules = json_encode($role['rules'], JSON_THROW_ON_ERROR);
+
+        foreach (['*', 'pods/exec', 'pods/attach', 'pods/portforward', 'nodes', 'namespaces', 'serviceaccounts', 'roles', 'rolebindings', 'clusterroles', 'clusterrolebindings', 'customresourcedefinitions'] as $forbidden) {
+            $this->assertStringNotContainsString('"'.$forbidden.'"', $serializedRules);
+        }
+        $this->assertArrayNotHasKey('ClusterRole/utcp-runtime/utcp-runtime-fencer', $objects);
+        $this->assertArrayNotHasKey('ClusterRoleBinding/utcp-runtime/utcp-runtime-fencer', $objects);
+
+        $baseObjects = $this->kustomizeObjects('infrastructure/kubernetes/base');
+        $api = $baseObjects['Deployment/utcp-platform/api'];
+        $this->assertNotSame('utcp-runtime-fencer', $api['spec']['template']['spec']['serviceAccountName'] ?? null);
+        $this->assertNotSame('true', $api['spec']['template']['metadata']['labels']['utcp.io/kubernetes-api-client'] ?? null);
     }
 
     /**

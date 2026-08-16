@@ -66,3 +66,36 @@ Repository commands may help bootstrap, diagnose, recover, migrate, or verify th
 `utcp:user-access:reset-password` is a bounded C1 recovery exception for an existing user. The command resolves exactly one user through the application service, generates a temporary password internally, stores only the hash and bounded temporary-password lifecycle fields in PostgreSQL, revokes sessions through the existing session-version authority, rotates remember-token access, appends sanitized audit records, and requires normal login plus forced password change before ordinary application access resumes. It must not create users, activate accounts, grant roles, change memberships, reveal existing credentials, add an HTTP reset endpoint for AI-coder use, or become normal identity management authority.
 
 RuntimeNode proof scripts remain automated verification clients of the same canonical RuntimeNode APIs. They are not an alternate management authority and must not grow independent mutation commands for adapter configuration, credential retirement, runtime evidence, or audit history.
+
+## Conference Signaling Placement Boundary (ADR-022)
+
+A conference's canonically bound RuntimeNode — `conferences.runtime_node_id` with
+its active `conference_runtime_bindings` row — is the single placement authority
+both for conference execution and for the browser application SIP dialog of that
+conference. A participant admitted through `participants/self` is represented in
+the runtime by that browser's own inbound PJSIP channel, which is the channel
+added to `utcp-conf-<conferenceId>`; a separately originated
+`Local/participant@utcp-conference-proof` channel is not browser self-admission
+and remains only for simulator and explicitly synthetic participants.
+
+Kamailio remains the single public browser-facing SIP edge and the sole
+registrar. For conference admission it authenticates the INVITE and then relays
+to the RuntimeNode named by a sanitized read-only routing projection derived from
+canonical PostgreSQL state, following the `kamailio_signaling_auth_view` pattern.
+Kamailio does not select an application runtime independently, does not fall back
+to the static `utcp.dev/runtime-selection` Service when resolution fails, and does
+not reimplement telephony-domain authorization. The static
+`selected-application-runtime` label remains valid only for the T3 `9900`
+connectivity fixture and loses all conference-routing authority.
+
+RuntimeNodes participating in conference signaling carry a `sip` endpoint in the
+canonical `runtime_node_endpoints` registry, addressed by cluster-internal service
+name and reachable only from the Kamailio signaling workload. No NodePort,
+LoadBalancer, or host-port publication exposes RuntimeNode SIP, and the browser
+never connects to a RuntimeNode directly. Managed Asterisk provisioning writes
+that Service port and registers that endpoint automatically, with no operator step.
+
+UTCP admission remains the authorization authority, Kamailio performs
+authenticated routing of an already-authorized admission, and the runtime performs
+the admitted operation. The browser cannot choose the RuntimeNode, the internal
+SIP destination, or the participant identity, and cannot bypass `participants/self`.

@@ -524,7 +524,6 @@ def validate(state: dict[str, Any]) -> None:
         "podSelector": {"matchLabels": {
             "app.kubernetes.io/component": "asterisk-ari",
             "utcp.io/network-role": "asterisk-ari",
-            "utcp.dev/runtime-node": "local-asterisk-ari",
         }},
     }] for rule in kamailio_egress), "Kamailio egress destination must include exact canonical Asterisk runtime")
     asterisk_media_ingress = {
@@ -568,10 +567,10 @@ def validate(state: dict[str, Any]) -> None:
         and asterisk_dns_egress in asterisk_egress,
         "Asterisk egress must be exact Kamailio SIP, rtpengine media, and cluster-DNS rules",
     )
-    require((asterisk_policy.get("spec") or {}).get("podSelector", {}).get("matchLabels", {}).get("utcp.dev/runtime-node") == "local-asterisk-ari", "Asterisk SIP policy must select only the canonical runtime")
+    require((asterisk_policy.get("spec") or {}).get("podSelector", {}).get("matchLabels") == {"app.kubernetes.io/component": "asterisk-ari", "utcp.io/network-role": "asterisk-ari"}, "Asterisk SIP policy must select only managed Asterisk runtimes")
     require(any(rule.get("from") == [{
         "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
-        "podSelector": {"matchLabels": {"app.kubernetes.io/component": "asterisk-ari", "utcp.io/network-role": "asterisk-ari", "utcp.dev/runtime-node": "local-asterisk-ari"}},
+        "podSelector": {"matchLabels": {"app.kubernetes.io/component": "asterisk-ari", "utcp.io/network-role": "asterisk-ari"}},
     }] and rule.get("ports") == [{"protocol": "UDP", "port": 5060}] for rule in (kamailio_policy.get("spec") or {}).get("ingress") or []), "Kamailio ingress must be exact canonical Asterisk UDP 5060")
     for policy in (kamailio_policy, asterisk_policy):
         rendered = yaml.safe_dump(policy, sort_keys=True)

@@ -1,4 +1,4 @@
-import { computed, nextTick, reactive, ref } from 'vue'
+import { computed, nextTick, reactive, ref, watch } from 'vue'
 import {
   identityApi,
   type AdminMembership,
@@ -11,6 +11,8 @@ import {
   type RuntimeAdapterConfigurationFieldDescriptor,
   type RuntimeEvidence,
   type RuntimeHistoryResponse,
+  type RuntimeNodeEditForm,
+  type RuntimeEndpointEditForm,
   type RuntimeManagementCatalog,
   type RuntimeNode,
   type RoleCatalog,
@@ -40,6 +42,8 @@ export const adapterConfigurationForms = reactive<Record<string, RuntimeAdapterC
 export const adapterConfigurationFieldErrors = reactive<Record<string, Record<string, string>>>({})
 export const runtimeEvidence = reactive<Record<string, RuntimeEvidence>>({})
 export const runtimeHistory = reactive<Record<string, RuntimeHistoryResponse>>({})
+export const runtimeNodeEditForms = reactive<Record<string, RuntimeNodeEditForm>>({})
+export const runtimeEndpointEditForms = reactive<Record<string, RuntimeEndpointEditForm>>({})
 export const runtimeNodeDetailStates = reactive<Record<string, { status: AsyncResourceStatus; error: string }>>({})
 export const error = ref('')
 export const message = ref('')
@@ -55,7 +59,7 @@ export const userForm = reactive({ email: '', displayName: '' })
 export const userFilters = reactive({ search: '', status: '', page: 1, perPage: 20 })
 export const userPagination = reactive({ page: 1, per_page: 20, total: 0, has_more: false })
 export const membershipForm = reactive({ userId: '', roleKey: '' })
-export const runtimeNodeForm = reactive({ name: '', slug: '', runtimeFamily: 'asterisk', adapterKey: 'asterisk-ari' })
+export const runtimeNodeForm = reactive({ name: '', slug: '', runtimeFamily: 'asterisk', adapterKey: '' })
 export const endpointForm = reactive({ purpose: 'control', transport: 'https', host: '', port: 8089, path: '', tlsMode: 'verify' })
 export const credentialForm = reactive({ type: 'control-api', identifier: '', secret: '' })
 
@@ -227,6 +231,18 @@ export function adapterOptionsFor(runtimeFamily: string): Array<{ key: string; l
     label: runtimeCatalog.value?.adapter_keys[key]?.display_name ?? key,
   }))
 }
+
+export function normalizeRuntimeNodeAdapter(runtimeFamily: string): void {
+  const adapters = adapterOptionsFor(runtimeFamily)
+  if (adapters.some((adapter) => adapter.key === runtimeNodeForm.adapterKey)) return
+
+  runtimeNodeForm.adapterKey = adapters.length === 1 ? adapters[0].key : ''
+}
+
+watch(
+  () => runtimeNodeForm.runtimeFamily,
+  (runtimeFamily) => normalizeRuntimeNodeAdapter(runtimeFamily),
+)
 
 export function capabilityOptionsFor(node: RuntimeNode): string[] {
   return runtimeCatalog.value?.adapter_keys[node.adapter_key]?.supported_capabilities ?? []
@@ -624,6 +640,7 @@ export async function setMembershipStatus(membershipId: string, status: string):
 
 export async function refreshRuntimeNodes(): Promise<void> {
   runtimeCatalog.value = (await identityApi.runtimeNodeCatalog()).catalog
+  normalizeRuntimeNodeAdapter(runtimeNodeForm.runtimeFamily)
   runtimeNodes.value = (await identityApi.runtimeNodes()).runtime_nodes
   const activeNodeIds = new Set(runtimeNodes.value.map((node) => node.id))
   for (const node of runtimeNodes.value) {
@@ -650,10 +667,63 @@ export async function createRuntimeNode(): Promise<void> {
   await refreshRuntimeNodes()
 }
 
+export function runtimeNodeEditForm(node: RuntimeNode): RuntimeNodeEditForm {
+  if (!runtimeNodeEditForms[node.id]) {
+    runtimeNodeEditForms[node.id] = {
+      name: node.name,
+      placement_region: node.placement.region ?? '',
+      placement_zone: node.placement.zone ?? '',
+      placement_priority: node.placement.priority,
+      capacity_weight: node.placement.capacity_weight,
+    }
+  }
+
+  return runtimeNodeEditForms[node.id]
+}
+
+export function runtimeEndpointEditForm(endpoint: RuntimeNode['endpoints'][number]): RuntimeEndpointEditForm {
+  if (!runtimeEndpointEditForms[endpoint.id]) {
+    runtimeEndpointEditForms[endpoint.id] = {
+      purpose: endpoint.purpose,
+      transport: endpoint.transport,
+      host: endpoint.host,
+      port: endpoint.port,
+      path: endpoint.path ?? '',
+      tls_mode: endpoint.tls_mode,
+      priority: endpoint.priority,
+      enabled: endpoint.enabled ? 'true' : 'false',
+    }
+  }
+
+  return runtimeEndpointEditForms[endpoint.id]
+}
+
+export async function saveRuntimeNodeEdit(node: RuntimeNode): Promise<void> {
+  const form = runtimeNodeEditForm(node)
+  await identityApi.updateRuntimeNode(node.id, {
+    name: form.name,
+    placement_region: form.placement_region || null,
+    placement_zone: form.placement_zone || null,
+    placement_priority: form.placement_priority,
+    capacity_weight: form.capacity_weight,
+  })
+  clearRuntimeNodeDetails(node.id)
+  await refreshRuntimeNodes()
+  await reloadRuntimeNodeDetails(node.id)
+}
+
 export async function setRuntimeDesiredState(runtimeNodeId: string, desiredState: string): Promise<void> {
   await identityApi.updateRuntimeNodeDesiredState(runtimeNodeId, desiredState)
   clearRuntimeNodeDetails(runtimeNodeId)
   await refreshRuntimeNodes()
+  await reloadRuntimeNodeDetails(runtimeNodeId)
+}
+
+export async function decommissionRuntimeNode(runtimeNodeId: string): Promise<void> {
+  await identityApi.decommissionRuntimeNode(runtimeNodeId)
+  clearRuntimeNodeDetails(runtimeNodeId)
+  await refreshRuntimeNodes()
+  await reloadRuntimeNodeDetails(runtimeNodeId)
 }
 
 export async function addRuntimeEndpoint(runtimeNodeId: string): Promise<void> {
@@ -681,6 +751,24 @@ export async function removeRuntimeEndpoint(runtimeNodeId: string, endpointId: s
   await reloadRuntimeNodeDetails(runtimeNodeId)
 }
 
+export async function updateRuntimeEndpoint(runtimeNodeId: string, endpointId: string): Promise<void> {
+  const form = runtimeEndpointEditForms[endpointId]
+  if (!form) return
+  await identityApi.updateRuntimeEndpoint(runtimeNodeId, endpointId, {
+    purpose: form.purpose,
+    transport: form.transport,
+    host: form.host,
+    port: form.port,
+    path: form.path || null,
+    tls_mode: form.tls_mode,
+    priority: form.priority,
+    enabled: form.enabled === 'true',
+  })
+  clearRuntimeNodeDetails(runtimeNodeId)
+  await refreshRuntimeNodes()
+  await reloadRuntimeNodeDetails(runtimeNodeId)
+}
+
 export async function setRuntimeCapabilities(runtimeNodeId: string): Promise<void> {
   await identityApi.setRuntimeCapabilities(runtimeNodeId, runtimeCapabilitySelections[runtimeNodeId] ?? [])
   clearRuntimeNodeDetails(runtimeNodeId)
@@ -696,11 +784,26 @@ export function clearRuntimeNodeDetails(runtimeNodeId?: string): void {
     delete adapterConfigurationFieldErrors[nextRuntimeNodeId]
     delete runtimeEvidence[nextRuntimeNodeId]
     delete runtimeHistory[nextRuntimeNodeId]
+    delete runtimeNodeEditForms[nextRuntimeNodeId]
     delete runtimeNodeDetailStates[nextRuntimeNodeId]
+  }
+  if (!runtimeNodeId) {
+    Object.keys(runtimeEndpointEditForms).forEach((endpointId) => delete runtimeEndpointEditForms[endpointId])
   }
 }
 
-async function reloadRuntimeNodeDetails(runtimeNodeId: string): Promise<void> {
+export async function loadMoreRuntimeHistory(runtimeNodeId: string): Promise<void> {
+  const current = runtimeHistory[runtimeNodeId]
+  const before = current?.pagination.next_before
+  if (!before) return
+  const next = await identityApi.runtimeHistory(runtimeNodeId, before)
+  runtimeHistory[runtimeNodeId] = {
+    history: [...(current?.history ?? []), ...next.history],
+    pagination: next.pagination,
+  }
+}
+
+export async function reloadRuntimeNodeDetails(runtimeNodeId: string): Promise<void> {
   const node = runtimeNodes.value.find((candidate) => candidate.id === runtimeNodeId)
   if (node) await loadRuntimeNodeDetails(node, true)
 }
@@ -777,7 +880,7 @@ export async function saveRuntimeAdapterConfiguration(node: RuntimeNode): Promis
 
 export async function createRuntimeCredential(runtimeNodeId: string): Promise<void> {
   await identityApi.createRuntimeCredential(runtimeNodeId, {
-    type: credentialForm.type,
+    credential_type: credentialForm.type,
     identifier: credentialForm.identifier || null,
     ['sec' + 'ret']: credentialForm.secret,
   })
@@ -788,11 +891,12 @@ export async function createRuntimeCredential(runtimeNodeId: string): Promise<vo
   await reloadRuntimeNodeDetails(runtimeNodeId)
 }
 
-export async function rotateRuntimeCredential(runtimeNodeId: string, credentialId: string): Promise<void> {
+export async function rotateRuntimeCredential(runtimeNodeId: string, credentialId: string, credentialType: string): Promise<void> {
   const nextSecret = window.prompt('Enter the replacement secret. It will be sent once and not stored in the browser.')
   if (!nextSecret) return
 
   await identityApi.rotateRuntimeCredential(runtimeNodeId, credentialId, {
+    credential_type: credentialType,
     ['sec' + 'ret']: nextSecret,
   })
   clearRuntimeNodeDetails(runtimeNodeId)
@@ -841,7 +945,7 @@ export function resetAppStateForTests(): void {
   runtimeNodeForm.name = ''
   runtimeNodeForm.slug = ''
   runtimeNodeForm.runtimeFamily = 'asterisk'
-  runtimeNodeForm.adapterKey = 'asterisk-ari'
+  runtimeNodeForm.adapterKey = ''
   endpointForm.purpose = 'control'
   endpointForm.transport = 'https'
   endpointForm.host = ''
@@ -858,6 +962,8 @@ export function resetAppStateForTests(): void {
   for (const key of Object.keys(adapterConfigurationFieldErrors)) delete adapterConfigurationFieldErrors[key]
   for (const key of Object.keys(runtimeEvidence)) delete runtimeEvidence[key]
   for (const key of Object.keys(runtimeHistory)) delete runtimeHistory[key]
+  for (const key of Object.keys(runtimeNodeEditForms)) delete runtimeNodeEditForms[key]
+  for (const key of Object.keys(runtimeEndpointEditForms)) delete runtimeEndpointEditForms[key]
   for (const key of Object.keys(runtimeNodeDetailStates)) delete runtimeNodeDetailStates[key]
   clearNotifications()
 }

@@ -485,6 +485,39 @@ if len(ingress) != 4:
 if len(egress) != 2:
     fail("allow-rtpengine-media must define exactly the Asterisk and FreeSWITCH media egress rules")
 
+canonical_asterisk_media_peer = {
+    "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+    "podSelector": {"matchLabels": {
+        "app.kubernetes.io/component": "asterisk-ari",
+        "utcp.io/network-role": "asterisk-ari",
+    }},
+}
+asterisk_ingress_media = [
+    rule for rule in ingress
+    if rule.get("ports") == [{"protocol": "UDP", "port": 40000, "endPort": 40099}]
+    and rule.get("from") == [canonical_asterisk_media_peer]
+]
+if len(asterisk_ingress_media) != 1:
+    fail("allow-rtpengine-media Asterisk ingress must select canonical Asterisk workloads for UDP 40000-40099")
+asterisk_egress_media = [
+    rule for rule in egress
+    if rule.get("ports") == [{"protocol": "UDP", "port": 10000, "endPort": 20000}]
+]
+if len(asterisk_egress_media) != 1 or asterisk_egress_media[0].get("to") != [canonical_asterisk_media_peer]:
+    fail("allow-rtpengine-media Asterisk egress must select canonical Asterisk workloads for UDP 10000-20000")
+
+def selector_matches(labels: dict[str, str], selector: dict[str, str]) -> bool:
+    return all(labels.get(label) == value for label, value in selector.items())
+
+
+asterisk_selector = canonical_asterisk_media_peer["podSelector"]["matchLabels"]
+if not selector_matches({**asterisk_selector, "utcp.dev/runtime-node": "local-asterisk-ari"}, asterisk_selector):
+    fail("allow-rtpengine-media canonical selector must match the historical base Asterisk workload")
+if not selector_matches({**asterisk_selector, "utcp.dev/runtime-node": "managed-runtime-node"}, asterisk_selector):
+    fail("allow-rtpengine-media canonical selector must match managed Asterisk workloads")
+if selector_matches({"app.kubernetes.io/component": "worker", "utcp.io/network-role": "worker"}, asterisk_selector):
+    fail("allow-rtpengine-media canonical selector must exclude unrelated workloads")
+
 rendered = yaml.safe_dump(policy, sort_keys=True)
 for forbidden in ("utcp-data", "postgres", "redis", "kube-system", "0.0.0.0/0", "::/0"):
     if forbidden in rendered:
@@ -540,7 +573,6 @@ if asterisk_egress_peers != [
         "podSelector": {"matchLabels": {
             "app.kubernetes.io/component": "asterisk-ari",
             "utcp.io/network-role": "asterisk-ari",
-            "utcp.dev/runtime-node": "local-asterisk-ari",
         }},
     }
 ]:
@@ -576,7 +608,6 @@ asterisk_sip_spec = asterisk_sip_policy.get("spec") or {}
 if (asterisk_sip_spec.get("podSelector") or {}).get("matchLabels") != {
     "app.kubernetes.io/component": "asterisk-ari",
     "utcp.io/network-role": "asterisk-ari",
-    "utcp.dev/runtime-node": "local-asterisk-ari",
 }:
     fail("allow-asterisk-sip-from-kamailio must target only the canonical Asterisk runtime Pods")
 if asterisk_sip_spec.get("policyTypes") != ["Ingress", "Egress"]:

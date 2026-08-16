@@ -8,6 +8,7 @@ use App\Identity\IdentityIds;
 use App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentityResolver;
 use App\Models\User;
 use App\RuntimeAdapters\Asterisk\AsteriskAriProfileService;
+use App\RuntimeEngine\Commands\CommandWorker;
 use App\RuntimeEngine\EngineIds;
 use App\RuntimeEngine\Sources\EventSourceRepository;
 use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationDescriptorCollection;
@@ -114,6 +115,211 @@ final class RuntimeRegistryTest extends TestCase
         $this->assertStringNotContainsString($secret.'-rotated', $serialized);
     }
 
+    public function test_disabled_runtime_node_can_be_soft_retired_and_retirement_is_terminal(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin('retirement-admin@utcp.local.test', 'retirement');
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $this->nodePayload('retirement-proof'))
+            ->assertCreated()
+            ->json('runtime_node');
+
+        DB::table('runtime_nodes')->where('id', $node['id'])->update(['desired_state' => 'disabled']);
+        DB::table('runtime_reconciliation_states')->insert([
+            'id' => EngineIds::new(),
+            'tenant_id' => $tenantId,
+            'target_type' => 'runtime_node',
+            'target_id' => $node['id'],
+            'desired_generation' => 1,
+            'observed_generation' => null,
+            'status' => 'waiting',
+            'next_check_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'retired'])
+            ->assertOk()
+            ->assertJsonPath('runtime_node.desired_state', 'retired');
+
+        $this->assertDatabaseHas('runtime_nodes', ['id' => $node['id'], 'desired_state' => 'retired']);
+        $this->assertDatabaseMissing('runtime_reconciliation_states', ['target_id' => $node['id']]);
+        $this->assertDatabaseHas('control_plane_audit_records', [
+            'subject_id' => $node['id'],
+            'action' => 'runtime_node.desired_state_changed',
+        ]);
+
+        foreach (['draft', 'active', 'draining', 'disabled'] as $state) {
+            $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+                ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => $state])
+                ->assertUnprocessable();
+        }
+
+        $this->assertDatabaseHas('runtime_nodes', ['id' => $node['id'], 'desired_state' => 'retired']);
+    }
+
+    public function test_disabled_runtime_node_retires_all_active_credentials_atomically(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin('disabled-credential-retirement-admin@utcp.local.test', 'disabled-credential-retirement');
+        $session = ['user_session_version' => 1, 'active_tenant_id' => $tenantId];
+        $node = $this->actingAs($admin)->withSession($session)
+            ->postJson('/api/v1/admin/runtime-nodes', $this->nodePayload('disabled-credential-retirement-proof'))
+            ->assertCreated()
+            ->json('runtime_node');
+        $firstCredentialId = $this->createCredentialRow($node['id'], 'control-api', 'disabled-retirement-secret-1');
+        $secondCredentialId = $this->createCredentialRow($node['id'], 'event-api', 'disabled-retirement-secret-2');
+
+        $this->actingAs($admin)->withSession($session)
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'disabled'])
+            ->assertOk();
+
+        $retirement = $this->actingAs($admin)->withSession($session)
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'retired'])
+            ->assertOk()
+            ->assertJsonPath('runtime_node.desired_state', 'retired');
+
+        $this->assertDatabaseHas('runtime_nodes', ['id' => $node['id'], 'desired_state' => 'retired']);
+        $this->assertDatabaseHas('runtime_node_credentials', ['id' => $firstCredentialId, 'status' => 'retired']);
+        $this->assertDatabaseHas('runtime_node_credentials', ['id' => $secondCredentialId, 'status' => 'retired']);
+        $this->assertSame(0, DB::table('runtime_node_credentials')->where('runtime_node_id', $node['id'])->where('status', 'active')->count());
+        $this->assertSame(2, DB::table('runtime_node_credentials')->where('runtime_node_id', $node['id'])->count());
+        $this->assertDatabaseHas('control_plane_audit_records', ['subject_id' => $node['id'], 'action' => 'runtime_node.credential_retired']);
+        $this->assertDatabaseHas('control_plane_audit_records', ['subject_id' => $node['id'], 'action' => 'runtime_node.desired_state_changed']);
+        $this->assertDatabaseHas('control_plane_outbox_messages', ['aggregate_id' => $node['id'], 'event_type' => 'runtime_node.credential_retired']);
+        $this->assertDatabaseHas('control_plane_outbox_messages', ['aggregate_id' => $node['id'], 'event_type' => 'runtime_node.desired_state_changed']);
+        $this->assertStringNotContainsString('disabled-retirement-secret-', json_encode($retirement->json(), JSON_THROW_ON_ERROR));
+
+        $serialized = json_encode([
+            DB::table('control_plane_audit_records')->where('subject_id', $node['id'])->get()->all(),
+            DB::table('control_plane_outbox_messages')->where('aggregate_id', $node['id'])->get()->all(),
+        ], JSON_THROW_ON_ERROR);
+        $this->assertStringNotContainsString('disabled-retirement-secret-', $serialized);
+    }
+
+    public function test_retired_runtime_node_rejects_metadata_update_without_persisted_side_effects(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin('retired-metadata-admin@utcp.local.test', 'retired-metadata');
+        $session = ['user_session_version' => 1, 'active_tenant_id' => $tenantId];
+        $node = $this->actingAs($admin)->withSession($session)
+            ->postJson('/api/v1/admin/runtime-nodes', $this->nodePayload('retired-metadata-proof'))
+            ->assertCreated()
+            ->json('runtime_node');
+
+        $this->actingAs($admin)->withSession($session)
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'disabled'])
+            ->assertOk();
+        $this->actingAs($admin)->withSession($session)
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'retired'])
+            ->assertOk();
+
+        $before = DB::table('runtime_nodes')->where('id', $node['id'])->first();
+        $updatedAuditCount = DB::table('control_plane_audit_records')
+            ->where('subject_id', $node['id'])
+            ->where('action', 'runtime_node.updated')
+            ->count();
+        $updatedOutboxCount = DB::table('control_plane_outbox_messages')
+            ->where('aggregate_id', $node['id'])
+            ->where('event_type', 'runtime_node.updated')
+            ->count();
+
+        $this->actingAs($admin)->withSession($session)
+            ->patchJson("/api/v1/admin/runtime-nodes/{$node['id']}", ['name' => 'should not apply'])
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Retired runtime nodes are read-only historical records.');
+
+        $after = DB::table('runtime_nodes')->where('id', $node['id'])->first();
+        $this->assertSame('retired', $after->desired_state);
+        $this->assertSame($before->name, $after->name);
+        $this->assertSame((int) $before->configuration_version, (int) $after->configuration_version);
+        $this->assertSame($before->updated_at, $after->updated_at);
+        $this->assertSame($updatedAuditCount, DB::table('control_plane_audit_records')
+            ->where('subject_id', $node['id'])
+            ->where('action', 'runtime_node.updated')
+            ->count());
+        $this->assertSame($updatedOutboxCount, DB::table('control_plane_outbox_messages')
+            ->where('aggregate_id', $node['id'])
+            ->where('event_type', 'runtime_node.updated')
+            ->count());
+    }
+
+    public function test_runtime_node_retirement_requires_zero_active_bindings(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin('retirement-binding-admin@utcp.local.test', 'retirement-binding');
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $this->nodePayload('retirement-binding-proof'))
+            ->assertCreated()
+            ->json('runtime_node');
+
+        DB::table('runtime_nodes')->where('id', $node['id'])->update(['desired_state' => 'disabled']);
+        $conferenceId = IdentityIds::new();
+        DB::table('conferences')->insert([
+            'id' => $conferenceId,
+            'tenant_id' => $tenantId,
+            'slug' => 'retirement-active-binding',
+            'display_name' => 'Retirement Active Binding',
+            'runtime_node_id' => $node['id'],
+            'desired_state' => 'open',
+            'observed_state' => 'ready',
+            'configuration_generation' => 1,
+            'opened_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('conference_runtime_bindings')->insert([
+            'id' => IdentityIds::new(),
+            'tenant_id' => $tenantId,
+            'conference_id' => $conferenceId,
+            'runtime_node_id' => $node['id'],
+            'status' => 'active',
+            'bound_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'retired'])
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'Runtime node cannot be retired while active runtime bindings exist.');
+
+        $this->assertDatabaseHas('runtime_nodes', ['id' => $node['id'], 'desired_state' => 'disabled']);
+        $this->assertDatabaseHas('conference_runtime_bindings', ['conference_id' => $conferenceId, 'status' => 'active']);
+    }
+
+    public function test_active_runtime_identity_cannot_change_until_node_is_draft(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin('identity-guard-admin@utcp.local.test', 'identity-guard');
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $this->nodePayload('identity-guard-proof'))
+            ->assertCreated()
+            ->json('runtime_node');
+
+        DB::table('runtime_nodes')->where('id', $node['id'])->update(['desired_state' => 'active']);
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->patchJson("/api/v1/admin/runtime-nodes/{$node['id']}", [
+                'runtime_family' => 'freeswitch',
+                'adapter_key' => 'freeswitch-esl',
+            ])
+            ->assertUnprocessable();
+
+        DB::table('runtime_nodes')->where('id', $node['id'])->update(['desired_state' => 'disabled']);
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->patchJson("/api/v1/admin/runtime-nodes/{$node['id']}", [
+                'runtime_family' => 'freeswitch',
+                'adapter_key' => 'freeswitch-esl',
+            ])
+            ->assertOk()
+            ->assertJsonPath('runtime_node.runtime_family', 'freeswitch')
+            ->assertJsonPath('runtime_node.adapter_key', 'freeswitch-esl');
+
+        DB::table('runtime_nodes')->where('id', $node['id'])->update(['desired_state' => 'draft']);
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->patchJson("/api/v1/admin/runtime-nodes/{$node['id']}", [
+                'runtime_family' => 'asterisk',
+                'adapter_key' => 'asterisk-ari',
+            ])
+            ->assertOk();
+    }
+
     public function test_runtime_node_capacity_weight_zero_is_accepted_as_unlimited_slots(): void
     {
         [$admin, $tenantId] = $this->createTenantAdmin();
@@ -158,7 +364,7 @@ final class RuntimeRegistryTest extends TestCase
 
         $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
             ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/endpoints", [
-                'purpose' => 'sip',
+                'purpose' => 'invalid-sip-purpose',
                 'transport' => 'udp',
                 'host' => 'bad.local.test',
                 'port' => 5060,
@@ -546,6 +752,8 @@ final class RuntimeRegistryTest extends TestCase
         $this->assertContains('runtime.observation', $catalog['adapter_keys']['asterisk-ari']['supported_capabilities']);
         $this->assertNotContains('conference.execution', $catalog['adapter_keys']['asterisk-ari']['supported_capabilities']);
         $this->assertArrayNotHasKey('implementation_class', $catalog['adapter_keys']['asterisk-ari']);
+        $this->assertContains('sip', $catalog['endpoint_purposes']);
+        $this->assertContains('udp', $catalog['endpoint_transports']);
     }
 
     public function test_runtime_management_catalog_publishes_adapter_configuration_descriptors(): void
@@ -941,6 +1149,177 @@ final class RuntimeRegistryTest extends TestCase
     /**
      * @return array{0: User, 1: string}
      */
+    public function test_drained_runtime_node_decommission_retires_credentials_and_preserves_history(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin('decommission-admin@utcp.local.test', 'decommission');
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $this->nodePayload('decommission-proof'))
+            ->assertCreated()
+            ->json('runtime_node');
+        DB::table('runtime_nodes')->where('id', $node['id'])->update(['desired_state' => 'drained']);
+        $credentialId = $this->createCredentialRow($node['id'], 'control-api', 'decommission-secret');
+
+        $request = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/decommission", ['reason' => 'retirement proof'], ['Idempotency-Key' => 'decommission-proof-key'])
+            ->assertAccepted()
+            ->assertJsonMissing(['secret' => 'decommission-secret'])
+            ->json();
+        $operationId = $request['runtime_operation']['id'];
+
+        $this->assertSame(1, app(CommandWorker::class)->workOnce(
+            'decommission-proof-worker',
+            10,
+            60,
+            [(string) config('telephony_domain.operation_types.runtime_node_decommission')],
+        ));
+
+        $this->assertDatabaseHas('runtime_nodes', ['id' => $node['id'], 'desired_state' => 'retired']);
+        $this->assertDatabaseHas('runtime_node_credentials', ['id' => $credentialId, 'status' => 'retired']);
+        $this->assertDatabaseHas('runtime_operations', ['id' => $operationId, 'status' => 'succeeded']);
+        $this->assertDatabaseHas('control_plane_audit_records', ['subject_id' => $node['id'], 'action' => 'runtime_node.decommission_requested']);
+        $this->assertDatabaseHas('control_plane_audit_records', ['subject_id' => $node['id'], 'action' => 'runtime_node.credential_retired']);
+        $this->assertDatabaseHas('control_plane_audit_records', ['subject_id' => $node['id'], 'action' => 'runtime_node.desired_state_changed']);
+
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->getJson("/api/v1/admin/runtime-nodes/{$node['id']}/runtime-evidence")
+            ->assertOk()
+            ->assertJsonPath('runtime_evidence.decommission.operation_id', $operationId)
+            ->assertJsonPath('runtime_evidence.decommission.status', 'succeeded');
+
+        $serialized = json_encode(DB::table('control_plane_audit_records')->get()->all(), JSON_THROW_ON_ERROR);
+        $this->assertStringNotContainsString('decommission-secret', $serialized);
+    }
+
+    public function test_decommission_requires_drained_state_and_generic_retirement_is_blocked(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin('decommission-state-admin@utcp.local.test', 'decommission-state');
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $this->nodePayload('decommission-state-proof'))
+            ->assertCreated()
+            ->json('runtime_node');
+
+        foreach (['draft', 'active', 'draining'] as $state) {
+            DB::table('runtime_nodes')->where('id', $node['id'])->update(['desired_state' => $state]);
+            $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+                ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/decommission")
+                ->assertUnprocessable();
+        }
+
+        DB::table('runtime_nodes')->where('id', $node['id'])->update(['desired_state' => 'drained']);
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'retired'])
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'A drained runtime node must be decommissioned through the canonical decommission action.');
+    }
+
+    public function test_decommission_request_is_idempotent_and_reactivation_invalidates_stale_worker(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin('decommission-race-admin@utcp.local.test', 'decommission-race');
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $this->nodePayload('decommission-race-proof'))
+            ->assertCreated()
+            ->json('runtime_node');
+        DB::table('runtime_nodes')->where('id', $node['id'])->update(['desired_state' => 'drained']);
+        $credentialId = $this->createCredentialRow($node['id'], 'control-api', 'race-secret');
+
+        $first = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/decommission", [], ['Idempotency-Key' => 'decommission-race-key'])
+            ->assertAccepted()
+            ->json('runtime_operation.id');
+        $second = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/decommission", [], ['Idempotency-Key' => 'decommission-race-key'])
+            ->assertAccepted()
+            ->json('runtime_operation.id');
+        $this->assertSame($first, $second);
+
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'active'])
+            ->assertOk()
+            ->assertJsonPath('runtime_node.desired_state', 'active');
+        app(CommandWorker::class)->workOnce(
+            'decommission-race-worker',
+            10,
+            60,
+            [(string) config('telephony_domain.operation_types.runtime_node_decommission')],
+        );
+
+        $this->assertDatabaseHas('runtime_nodes', ['id' => $node['id'], 'desired_state' => 'active']);
+        $this->assertDatabaseHas('runtime_node_credentials', ['id' => $credentialId, 'status' => 'active']);
+        $this->assertDatabaseHas('runtime_operations', ['id' => $first, 'status' => 'terminal_failed', 'last_failure_code' => 'decommission_authority_stale']);
+    }
+
+    public function test_retired_runtime_node_is_terminal_and_cannot_be_decommissioned_or_reactivated(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin('decommission-terminal-admin@utcp.local.test', 'decommission-terminal');
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $this->nodePayload('decommission-terminal-proof'))
+            ->assertCreated()
+            ->json('runtime_node');
+        DB::table('runtime_nodes')->where('id', $node['id'])->update(['desired_state' => 'retired']);
+
+        foreach ([
+            ['desired-state', ['desired_state' => 'active']],
+            ['desired-state', ['desired_state' => 'draining']],
+            ['decommission', []],
+        ] as [$action, $payload]) {
+            $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+                ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/{$action}", $payload)
+                ->assertUnprocessable();
+        }
+
+        $this->assertDatabaseHas('runtime_nodes', ['id' => $node['id'], 'desired_state' => 'retired']);
+    }
+
+    public function test_decommission_rechecks_active_bindings_before_retirement(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin('decommission-binding-admin@utcp.local.test', 'decommission-binding');
+        $node = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/runtime-nodes', $this->nodePayload('decommission-binding-proof'))
+            ->assertCreated()
+            ->json('runtime_node');
+        DB::table('runtime_nodes')->where('id', $node['id'])->update(['desired_state' => 'drained']);
+        $operationId = $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/decommission")
+            ->assertAccepted()
+            ->json('runtime_operation.id');
+
+        $conferenceId = IdentityIds::new();
+        DB::table('conferences')->insert([
+            'id' => $conferenceId,
+            'tenant_id' => $tenantId,
+            'slug' => 'decommission-race-binding',
+            'display_name' => 'Decommission Race Binding',
+            'runtime_node_id' => $node['id'],
+            'desired_state' => 'open',
+            'observed_state' => 'ready',
+            'configuration_generation' => 1,
+            'opened_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('conference_runtime_bindings')->insert([
+            'id' => IdentityIds::new(),
+            'tenant_id' => $tenantId,
+            'conference_id' => $conferenceId,
+            'runtime_node_id' => $node['id'],
+            'status' => 'active',
+            'bound_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        app(CommandWorker::class)->workOnce(
+            'decommission-binding-worker',
+            10,
+            60,
+            [(string) config('telephony_domain.operation_types.runtime_node_decommission')],
+        );
+
+        $this->assertDatabaseHas('runtime_nodes', ['id' => $node['id'], 'desired_state' => 'drained']);
+        $this->assertDatabaseHas('runtime_operations', ['id' => $operationId, 'status' => 'terminal_failed', 'last_failure_code' => 'decommission_authority_stale']);
+        $this->assertDatabaseHas('conference_runtime_bindings', ['conference_id' => $conferenceId, 'status' => 'active']);
+    }
+
     private function createTenantAdmin(string $email = 'admin@utcp.local.test', string $slug = 'local'): array
     {
         $user = $this->createUser($email);

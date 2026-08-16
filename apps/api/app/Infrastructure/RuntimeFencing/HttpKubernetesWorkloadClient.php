@@ -33,6 +33,27 @@ final class HttpKubernetesWorkloadClient implements KubernetesWorkloadClient
         return $this->decodeObject($response, 'Deployment');
     }
 
+    public function inspectResource(string $kind, string $name): ?array
+    {
+        if (! in_array($kind, ['Deployment', 'Service', 'Secret'], true)) {
+            throw KubernetesWorkloadClientException::invalidRequest('Unsupported Kubernetes resource inspection kind.');
+        }
+
+        $resource = $this->getManagedResource($kind, $name);
+        if ($resource === null) {
+            return null;
+        }
+
+        return [
+            'kind' => $kind,
+            'metadata' => [
+                'name' => data_get($resource, 'metadata.name'),
+                'namespace' => data_get($resource, 'metadata.namespace'),
+                'labels' => data_get($resource, 'metadata.labels', []),
+            ],
+        ];
+    }
+
     public function scaleDeployment(string $namespace, string $name, int $replicas): void
     {
         $this->assertDnsLabel($namespace, 'namespace');
@@ -96,6 +117,252 @@ final class HttpKubernetesWorkloadClient implements KubernetesWorkloadClient
             $items,
             fn ($pod): bool => is_array($pod) && $this->isOwnedByDeploymentUid($pod, $deploymentUid, $replicaSetsByUid),
         ));
+    }
+
+    /**
+     * @param  array<string, mixed>  $desired
+     * @return array<string, mixed>
+     */
+    public function applySecret(array $desired, string $runtimeNodeSlug): array
+    {
+        return $this->applyManagedResource('Secret', $desired, $runtimeNodeSlug);
+    }
+
+    /**
+     * @param  array<string, mixed>  $desired
+     * @return array<string, mixed>
+     */
+    public function applyDeployment(array $desired, string $runtimeNodeSlug): array
+    {
+        return $this->applyManagedResource('Deployment', $desired, $runtimeNodeSlug);
+    }
+
+    /**
+     * @param  array<string, mixed>  $desired
+     * @return array<string, mixed>
+     */
+    public function applyService(array $desired, string $runtimeNodeSlug): array
+    {
+        return $this->applyManagedResource('Service', $desired, $runtimeNodeSlug);
+    }
+
+    public function deleteSecret(string $name, string $runtimeNodeSlug): bool
+    {
+        return $this->deleteManagedResource('Secret', $name, $runtimeNodeSlug);
+    }
+
+    public function deleteDeployment(string $name, string $runtimeNodeSlug): bool
+    {
+        return $this->deleteManagedResource('Deployment', $name, $runtimeNodeSlug);
+    }
+
+    public function deleteService(string $name, string $runtimeNodeSlug): bool
+    {
+        return $this->deleteManagedResource('Service', $name, $runtimeNodeSlug);
+    }
+
+    /**
+     * @param  array<string, mixed>  $desired
+     * @return array<string, mixed>
+     */
+    private function applyManagedResource(string $expectedKind, array $desired, string $runtimeNodeSlug): array
+    {
+        [$name, $metadata] = $this->resourceIdentity($expectedKind, $desired);
+        $ownership = $this->ownershipLabels($runtimeNodeSlug);
+        $labels = $metadata['labels'] ?? [];
+        if (! is_array($labels)) {
+            throw KubernetesWorkloadClientException::invalidRequest('Kubernetes resource labels must be an object.');
+        }
+        foreach ($ownership as $key => $value) {
+            if (isset($labels[$key]) && (string) $labels[$key] !== $value) {
+                throw KubernetesWorkloadClientException::ownershipConflict('Desired Kubernetes resource ownership does not match the RuntimeNode.');
+            }
+            $labels[$key] = $value;
+        }
+        $desired['metadata']['labels'] = $labels;
+
+        $existing = $this->getManagedResource($expectedKind, $name);
+        if ($existing === null) {
+            $response = $this->send('post', $this->collectionPath($expectedKind), $this->createBody($desired, $expectedKind), [
+                'Content-Type' => 'application/json',
+            ]);
+            $this->assertSuccessful($response);
+
+            return $this->publicResource($this->decodeObject($response, $expectedKind), $expectedKind);
+        }
+
+        $this->assertOwned($existing, $runtimeNodeSlug);
+        $response = $this->send('patch', $this->resourcePath($expectedKind, $name), $this->patchBody($desired, $expectedKind), [
+            'Content-Type' => 'application/merge-patch+json',
+        ]);
+        $this->assertSuccessful($response);
+
+        return $this->publicResource($this->decodeObject($response, $expectedKind), $expectedKind);
+    }
+
+    private function deleteManagedResource(string $expectedKind, string $name, string $runtimeNodeSlug): bool
+    {
+        $this->assertDnsLabel($name, strtolower($expectedKind));
+        $existing = $this->getManagedResource($expectedKind, $name);
+        if ($existing === null) {
+            return false;
+        }
+        $this->assertOwned($existing, $runtimeNodeSlug);
+
+        $response = $this->send('delete', $this->resourcePath($expectedKind, $name));
+        if ($response->status() === 404) {
+            return false;
+        }
+        $this->assertSuccessful($response);
+
+        return true;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function getManagedResource(string $expectedKind, string $name): ?array
+    {
+        $this->assertDnsLabel($name, strtolower($expectedKind));
+        $response = $this->send('get', $this->resourcePath($expectedKind, $name));
+        if ($response->status() === 404) {
+            return null;
+        }
+        $this->assertSuccessful($response);
+
+        return $this->decodeObject($response, $expectedKind);
+    }
+
+    /**
+     * @param  array<string, mixed>  $desired
+     * @return array{0: string, 1: array<string, mixed>}
+     */
+    private function resourceIdentity(string $expectedKind, array $desired): array
+    {
+        if (($desired['apiVersion'] ?? null) === null || (string) ($desired['kind'] ?? '') !== $expectedKind) {
+            throw KubernetesWorkloadClientException::invalidRequest('Kubernetes resource kind or apiVersion is invalid.');
+        }
+        $metadata = $desired['metadata'] ?? null;
+        if (! is_array($metadata)) {
+            throw KubernetesWorkloadClientException::invalidRequest('Kubernetes resource metadata is invalid.');
+        }
+        $namespace = (string) ($metadata['namespace'] ?? '');
+        if ($namespace !== (string) config('runtime_engine.kubernetes.runtime_namespace', 'utcp-runtime')) {
+            throw KubernetesWorkloadClientException::targetMismatch('Kubernetes resource namespace is outside the managed runtime boundary.');
+        }
+        $name = (string) ($metadata['name'] ?? '');
+        $this->assertDnsLabel($name, strtolower($expectedKind));
+
+        return [$name, $metadata];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private function ownershipLabels(string $runtimeNodeSlug): array
+    {
+        $this->assertDnsLabel($runtimeNodeSlug, 'RuntimeNode');
+
+        return [
+            'app.kubernetes.io/part-of' => 'utcp',
+            'utcp.dev/runtime-node' => $runtimeNodeSlug,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $resource
+     */
+    private function assertOwned(array $resource, string $runtimeNodeSlug): void
+    {
+        $labels = data_get($resource, 'metadata.labels', []);
+        if (! is_array($labels)) {
+            throw KubernetesWorkloadClientException::ownershipConflict();
+        }
+        foreach ($this->ownershipLabels($runtimeNodeSlug) as $key => $value) {
+            if ((string) ($labels[$key] ?? '') !== $value) {
+                throw KubernetesWorkloadClientException::ownershipConflict();
+            }
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $desired
+     * @return array<string, mixed>
+     */
+    private function createBody(array $desired, string $expectedKind): array
+    {
+        if ($expectedKind === 'Service') {
+            $desired['spec'] = $this->withoutServiceManagedFields($desired['spec'] ?? []);
+        }
+
+        return $desired;
+    }
+
+    /**
+     * @param  array<string, mixed>  $desired
+     * @return array<string, mixed>
+     */
+    private function patchBody(array $desired, string $expectedKind): array
+    {
+        foreach (['apiVersion', 'kind'] as $key) {
+            unset($desired[$key]);
+        }
+        $desired['metadata'] = array_intersect_key($desired['metadata'], array_flip(['name', 'namespace', 'labels', 'annotations']));
+        if ($expectedKind === 'Service') {
+            $desired['spec'] = $this->withoutServiceManagedFields($desired['spec'] ?? []);
+        }
+
+        return $desired;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function withoutServiceManagedFields(mixed $spec): array
+    {
+        if (! is_array($spec)) {
+            throw KubernetesWorkloadClientException::invalidRequest('Kubernetes Service spec is invalid.');
+        }
+        foreach (['clusterIP', 'clusterIPs', 'ipFamilies', 'ipFamilyPolicy', 'healthCheckNodePort'] as $field) {
+            unset($spec[$field]);
+        }
+
+        return $spec;
+    }
+
+    private function collectionPath(string $kind): string
+    {
+        $resource = match ($kind) {
+            'Secret', 'Service' => strtolower($kind).'s',
+            'Deployment' => 'deployments',
+            default => throw KubernetesWorkloadClientException::invalidRequest('Unsupported Kubernetes resource kind.'),
+        };
+        $group = $kind === 'Deployment' ? '/apis/apps/v1' : '/api/v1';
+
+        return $group.'/namespaces/'.rawurlencode((string) config('runtime_engine.kubernetes.runtime_namespace', 'utcp-runtime')).'/'.$resource;
+    }
+
+    private function resourcePath(string $kind, string $name): string
+    {
+        return $this->collectionPath($kind).'/'.rawurlencode($name);
+    }
+
+    /**
+     * @param  array<string, mixed>  $resource
+     * @return array<string, mixed>
+     */
+    private function publicResource(array $resource, string $kind): array
+    {
+        if ($kind !== 'Secret') {
+            return $resource;
+        }
+
+        return [
+            'apiVersion' => $resource['apiVersion'] ?? 'v1',
+            'kind' => 'Secret',
+            'metadata' => $resource['metadata'] ?? [],
+            'type' => $resource['type'] ?? null,
+        ];
     }
 
     /**
@@ -172,6 +439,8 @@ final class HttpKubernetesWorkloadClient implements KubernetesWorkloadClient
             401, 403 => throw KubernetesWorkloadClientException::forbidden(),
             404 => throw KubernetesWorkloadClientException::targetMismatch(),
             409 => throw KubernetesWorkloadClientException::conflict(),
+            422 => throw KubernetesWorkloadClientException::invalidRequest(),
+            408 => throw KubernetesWorkloadClientException::unavailable('Kubernetes API request timed out.'),
             429 => throw KubernetesWorkloadClientException::unavailable(),
             default => $response->serverError()
                 ? throw KubernetesWorkloadClientException::unavailable()

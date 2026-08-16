@@ -248,7 +248,6 @@ asterisk_spec = asterisk.get("spec") or {}
 if (asterisk_spec.get("podSelector") or {}).get("matchLabels") != {
     "app.kubernetes.io/component": "asterisk-ari",
     "utcp.io/network-role": "asterisk-ari",
-    "utcp.dev/runtime-node": "local-asterisk-ari",
 }:
     fail("Asterisk policy must select only canonical Asterisk")
 if "local-asterisk-ari-b" in yaml.safe_dump(asterisk, sort_keys=True):
@@ -450,7 +449,7 @@ elif mutation == "dns-broad-cidr":
 elif mutation == "unrestricted-egress":
     asterisk_spec.setdefault("egress", []).append({})
 elif mutation == "allow-secondary-asterisk":
-    asterisk_spec["podSelector"]["matchLabels"]["utcp.dev/runtime-node"] = "local-asterisk-ari-b"
+    asterisk_spec["podSelector"]["matchLabels"]["example.com/secondary-runtime"] = "true"
 elif mutation == "remove-sip-egress":
     asterisk_spec["egress"] = [
         rule for rule in asterisk_spec.get("egress") or []

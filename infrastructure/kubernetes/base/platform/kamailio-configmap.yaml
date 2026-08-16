@@ -42,6 +42,7 @@ data:
     loadmodule "usrloc.so"
     loadmodule "registrar.so"
     loadmodule "db_postgres.so"
+    loadmodule "sqlops.so"
     loadmodule "nathelper.so"
     loadmodule "rtpengine.so"
     loadmodule "pike.so"
@@ -54,6 +55,8 @@ data:
     modparam("auth_db", "calculate_ha1", 0)
     modparam("auth_db", "use_domain", 1)
     modparam("auth_db", "load_credentials", "")
+
+    modparam("sqlops", "sqlcon", "conference=>postgres://__KAMAILIO_AUTH_DB_USER__:__KAMAILIO_AUTH_DB_PASSWORD__@postgres.utcp-data.svc.cluster.local:5432/utcp")
 
     modparam("usrloc", "db_url", "postgres://__KAMAILIO_USRLOC_DB_USER__:__KAMAILIO_USRLOC_DB_PASSWORD__@postgres.utcp-data.svc.cluster.local:5432/utcp")
     modparam("usrloc", "db_mode", 1)
@@ -176,7 +179,46 @@ data:
 
         route(MEDIA_OFFER);
         record_route();
-        route(APPLICATION_RUNTIME_RELAY);
+        if ($rU =~ "^conf-") {
+            route(CONFERENCE_RUNTIME_RELAY);
+        } else {
+            route(APPLICATION_RUNTIME_RELAY);
+        }
+        exit;
+    }
+
+    route[CONFERENCE_RUNTIME_RELAY] {
+        if (!($rU =~ "^conf-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")) {
+            xlog("L_INFO", "kamailio_conference_route result=invalid_admission_user method=$rm call_id=$ci\n");
+            sl_send_reply("400", "Bad Request");
+            exit;
+        }
+
+        if (!sql_query("conference", "select admission_user, signaling_identity, sip_target from kamailio_conference_route_view where admission_user = '$rU'", "conference_route")) {
+            xlog("L_WARN", "kamailio_conference_route result=projection_query_failed method=$rm call_id=$ci\n");
+            t_reply("503", "Conference Runtime Unavailable");
+            exit;
+        }
+
+        if ($dbr(conference_route=>rows) != 1) {
+            xlog("L_INFO", "kamailio_conference_route result=route_not_found method=$rm call_id=$ci\n");
+            t_reply("404", "Conference Participant Not Found");
+            exit;
+        }
+
+        if ($dbr(conference_route=>[0,1]) != $au) {
+            xlog("L_WARN", "kamailio_conference_route result=auth_identity_mismatch method=$rm call_id=$ci\n");
+            t_reply("403", "Forbidden");
+            exit;
+        }
+
+        $du = $dbr(conference_route=>[0,2]);
+        t_on_reply("APPLICATION_RUNTIME_MEDIA_REPLY");
+        t_on_failure("APPLICATION_RUNTIME_UNAVAILABLE");
+        if (!t_relay()) {
+            xlog("L_WARN", "kamailio_conference_route result=runtime_unavailable method=$rm call_id=$ci\n");
+            t_reply("503", "Conference Runtime Unavailable");
+        }
         exit;
     }
 

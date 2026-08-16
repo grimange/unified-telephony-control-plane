@@ -62,3 +62,18 @@ Do not record proof secrets, ciphertext, raw fingerprints tied to user identitie
 ## Hosted CI
 
 Hosted execution is not observed until the workflow runs after commit and push.
+
+## RNM-1 reconciliation (2026-08-08)
+
+C2 remains complete as the canonical PostgreSQL RuntimeNode registry authority
+defined by ADR-015; RNM supplies the later product-level lifecycle semantics.
+The RNM-1 focused verification executed against the current repository passed:
+
+```text
+cd apps/api && php artisan test --filter='(RuntimeRegistryTest|draining_runtime_is_cordoned|listener_ordinary_eligibility|restore_authorized_listener_node)'
+29 tests, 361 assertions: PASS
+```
+
+That executed result covers terminal soft retirement, active-binding protection,
+active-only placement, existing draining bindings, listener exclusion, and
+identity mutation guards. No historical C2 proof outcome is inferred here.

@@ -34,6 +34,7 @@
         <env name="UTCP_APP_VERSION" value="0.1.0-dev"/>
         <env name="UTCP_BUILD_COMMIT" value="unknown"/>
         <env name="UTCP_BUILD_TIMESTAMP" value="unknown"/>
+        <env name="UTCP_MANAGED_ASTERISK_IMAGE" value="registry.example.test/utcp/asterisk-ari:test"/>
         <env name="UTCP_READINESS_REQUIRED_DEPENDENCIES" value=""/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>

@@ -20,10 +20,16 @@ return [
         'verify_conference_absent' => 'runtime.node.verify_conference_absent',
         'runtime_fence' => 'runtime.node.runtime.fence',
         'runtime_node_restore' => 'runtime.node.restore',
+        'runtime_node_decommission' => 'runtime.node.decommission',
+        'runtime_node_provision' => 'runtime.node.provision',
+        'runtime_node_deprovision' => 'runtime.node.deprovision',
     ],
 
     'operation_max_attempts' => [
         'runtime_node_restore' => 8,
+        'runtime_node_decommission' => 8,
+        'runtime_node_provision' => 8,
+        'runtime_node_deprovision' => 8,
     ],
 
     'runtime_capabilities' => [

@@ -32,3 +32,17 @@ Disposable Compose compatibility proof (`make compose-proof`) exercises the same
 - Generic C3 workers, normalizers, and reconcilers remain runtime-neutral; Kamailio-specific behavior stays inside the observer/normalizer/differ boundary.
 - Future Asterisk, FreeSWITCH, rtpengine, and external-trunk phases (T2, T3, T6) must integrate through these same runtime-neutral boundaries instead of changing T1 signaling authority.
 - T1 does not add Asterisk signaling, media, or conference execution.
+
+## ADR-022 amendment (V0 conference routing projection)
+
+[ADR-022](ADR-022-conference-sip-routing-and-browser-participant-leg.md) extends
+this decision from registration to conference admission routing. Kamailio remains
+the single browser-facing SIP edge and the sole registrar, and it gains no new
+business authority: it authenticates the conference INVITE with the existing
+session-scoped credential and then reads a sanitized routing projection to learn
+which RuntimeNode terminates that conference's dialog. The projection follows the
+`kamailio_signaling_auth_view` pattern established here — a read-only PostgreSQL
+view exposing only sanitized routing columns, granted to its own least-privilege
+role, computed at query time so no cached projection can go stale. Kamailio must
+not independently select an application runtime and must not fall back to another
+runtime when resolution fails.

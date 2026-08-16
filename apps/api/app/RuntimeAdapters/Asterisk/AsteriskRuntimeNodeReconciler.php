@@ -36,6 +36,9 @@ final class AsteriskRuntimeNodeReconciler implements Reconciler
                 ? ReconciliationResult::converged(300)
                 : ReconciliationResult::waiting('runtime_node_disabled', 120);
         }
+        if ($node->desired_state === 'retired') {
+            return ReconciliationResult::converged(300);
+        }
 
         if (! $this->hasRequiredShape((string) $node->id)) {
             return ReconciliationResult::blocked('asterisk_ari_configuration_incomplete');

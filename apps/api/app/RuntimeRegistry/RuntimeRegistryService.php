@@ -15,6 +15,8 @@ use App\ControlPlane\Shared\PayloadSafety;
 use App\ControlPlane\Shared\StableJson;
 use App\Identity\IdentityContext;
 use App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentityValidator;
+use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
@@ -29,6 +31,8 @@ final class RuntimeRegistryService
         private readonly OutboxRepository $outbox,
         private readonly IdempotencyStore $idempotency,
         private readonly RuntimeOperationRepository $operations,
+        private readonly ReconciliationRepository $reconciliation,
+        private readonly RuntimeNodeDrainRepository $drains,
     ) {}
 
     /**
@@ -43,45 +47,60 @@ final class RuntimeRegistryService
             return $existing;
         }
 
-        $result = DB::transaction(function () use ($request, $tenantId, $input): array {
-            $this->catalog->assertAdapterForFamily($input['runtime_family'], $input['adapter_key']);
-            $id = RuntimeRegistryIds::new();
-            $labels = $this->validatedLabels($input['labels'] ?? []);
-            DB::table('runtime_nodes')->insert([
-                'id' => $id,
-                'tenant_id' => $tenantId,
-                'name' => $input['name'],
-                'slug' => $input['slug'],
-                'runtime_family' => $input['runtime_family'],
-                'adapter_key' => $input['adapter_key'],
-                'desired_state' => 'draft',
-                'observed_state' => 'unobserved',
-                'configuration_version' => 1,
-                'created_by' => $request->user()->id,
-                'updated_by' => $request->user()->id,
-                'placement_region' => $input['placement_region'] ?? null,
-                'placement_zone' => $input['placement_zone'] ?? null,
-                'placement_priority' => $input['placement_priority'] ?? 100,
-                'capacity_weight' => $input['capacity_weight'] ?? 100,
-                'labels' => $labels === [] ? null : json_encode($labels, JSON_THROW_ON_ERROR),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
-            $this->emit($request, $tenantId, $id, 'runtime_node.created', [
-                'runtime_family' => $input['runtime_family'],
-                'adapter_key' => $input['adapter_key'],
-                'desired_state' => 'draft',
-                'configuration_version' => 1,
-            ]);
+        try {
+            $result = DB::transaction(function () use ($request, $tenantId, $input): array {
+                $this->catalog->assertAdapterForFamily($input['runtime_family'], $input['adapter_key']);
+                $id = RuntimeRegistryIds::new();
+                $labels = $this->validatedLabels($input['labels'] ?? []);
+                DB::table('runtime_nodes')->insert([
+                    'id' => $id,
+                    'tenant_id' => $tenantId,
+                    'name' => $input['name'],
+                    'slug' => $input['slug'],
+                    'runtime_family' => $input['runtime_family'],
+                    'adapter_key' => $input['adapter_key'],
+                    'desired_state' => 'draft',
+                    'observed_state' => 'unobserved',
+                    'configuration_version' => 1,
+                    'created_by' => $request->user()->id,
+                    'updated_by' => $request->user()->id,
+                    'placement_region' => $input['placement_region'] ?? null,
+                    'placement_zone' => $input['placement_zone'] ?? null,
+                    'placement_priority' => $input['placement_priority'] ?? 100,
+                    'capacity_weight' => $input['capacity_weight'] ?? 100,
+                    'labels' => $labels === [] ? null : json_encode($labels, JSON_THROW_ON_ERROR),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+                $this->emit($request, $tenantId, $id, 'runtime_node.created', [
+                    'runtime_family' => $input['runtime_family'],
+                    'adapter_key' => $input['adapter_key'],
+                    'desired_state' => 'draft',
+                    'configuration_version' => 1,
+                ]);
 
-            return ['runtime_node' => $this->node($id, $tenantId)];
-        });
+                return ['runtime_node' => $this->node($id, $tenantId)];
+            });
+        } catch (QueryException $exception) {
+            if (in_array((string) $exception->getCode(), ['23505', '23000'], true)) {
+                throw new InvalidArgumentException('A runtime with this name or identifier already exists.', 0, $exception);
+            }
+
+            throw $exception;
+        }
 
         if ($key !== null) {
             $this->idempotency->complete('runtime_registry.nodes.create', $key, $result);
         }
 
         return $result;
+    }
+
+    public function assertManualMutationAllowed(string $tenantId, string $nodeId): void
+    {
+        if (DB::table('runtime_provisioning_requests')->where('tenant_id', $tenantId)->where('runtime_node_id', $nodeId)->exists()) {
+            throw new InvalidArgumentException('This runtime is managed by UTCP. Its generated runtime configuration cannot be edited manually.');
+        }
     }
 
     /**
@@ -112,9 +131,13 @@ final class RuntimeRegistryService
     {
         return DB::transaction(function () use ($request, $tenantId, $nodeId, $input): array {
             $node = $this->nodeForUpdate($nodeId, $tenantId);
+            $this->assertNodeNotRetired($node);
             $runtimeFamily = $input['runtime_family'] ?? $node->runtime_family;
             $adapterKey = $input['adapter_key'] ?? $node->adapter_key;
             $this->catalog->assertAdapterForFamily($runtimeFamily, $adapterKey);
+            if ($runtimeFamily !== $node->runtime_family || $adapterKey !== $node->adapter_key) {
+                $this->assertIdentityChangeAllowed($node, $tenantId);
+            }
             $labels = array_key_exists('labels', $input) ? $this->validatedLabels($input['labels'] ?? []) : null;
             $version = ((int) $node->configuration_version) + 1;
             $update = [
@@ -146,9 +169,22 @@ final class RuntimeRegistryService
     {
         return DB::transaction(function () use ($request, $tenantId, $nodeId, $desiredState, $reason): array {
             $node = $this->nodeForUpdate($nodeId, $tenantId);
+            if ($desiredState === 'drained') {
+                throw new InvalidArgumentException('Runtime node can only become drained after the drain coordinator proves zero remaining work.');
+            }
+            if ($node->desired_state === 'drained' && $desiredState === 'retired') {
+                throw new InvalidArgumentException('A drained runtime node must be decommissioned through the canonical decommission action.');
+            }
             $this->catalog->assertDesiredTransition($node->desired_state, $desiredState);
-            if ($node->desired_state === 'disabled' && $desiredState === 'active' && ($sourceFence = $this->latestSuccessfulFenceForDisabledNode($tenantId, $nodeId)) !== null) {
+            if ($desiredState === 'retired' && $this->activeBindingCount($tenantId, $nodeId) > 0) {
+                throw new InvalidArgumentException('Runtime node cannot be retired while active runtime bindings exist.');
+            }
+            $context = null;
+            if ($node->desired_state === 'disabled' && $desiredState === 'retired') {
                 $context = IdentityContext::fromRequest($request, $tenantId);
+            }
+            if ($node->desired_state === 'disabled' && $desiredState === 'active' && ($sourceFence = $this->latestSuccessfulFenceForDisabledNode($tenantId, $nodeId)) !== null) {
+                $context = $context ?? IdentityContext::fromRequest($request, $tenantId);
                 $operationId = $this->requestRestoreOperation($context, $node, $sourceFence, $request->user()?->getAuthIdentifier(), $reason);
 
                 return [
@@ -156,16 +192,343 @@ final class RuntimeRegistryService
                     'runtime_operation' => $this->serializeOperation($operationId),
                 ];
             }
+            if ($context !== null) {
+                $this->retireActiveCredentialsForTerminalRetirement($context, $tenantId, $nodeId, 'disabled_to_retired');
+            }
             DB::table('runtime_nodes')->where('id', $nodeId)->update([
                 'desired_state' => $desiredState,
                 'configuration_version' => ((int) $node->configuration_version) + 1,
                 'updated_by' => $request->user()->id,
                 'updated_at' => now(),
             ]);
+            if ($desiredState === 'draining') {
+                $this->drains->start($tenantId, $nodeId, $this->activeBindingCount($tenantId, $nodeId));
+                $this->reconciliation->ensureTarget($tenantId, 'runtime_node_drain', $nodeId, (int) $node->configuration_version + 1, 0);
+            } elseif ($node->desired_state === 'draining' && $desiredState !== 'draining') {
+                $this->drains->cancel($tenantId, $nodeId);
+                $this->reconciliation->wakeTarget($tenantId, 'runtime_node_drain', $nodeId, (int) $node->configuration_version + 1, 0);
+            }
+            if ($desiredState === 'retired') {
+                DB::table('runtime_reconciliation_states')
+                    ->whereIn('target_type', ['runtime_node', 'runtime_node_drain'])
+                    ->where('target_id', $nodeId)
+                    ->delete();
+                DB::table('runtime_listener_leases')
+                    ->whereIn('event_source_id', DB::table('event_sources')->where('runtime_node_id', $nodeId)->select('id'))
+                    ->where('status', 'claimed')
+                    ->update([
+                        'status' => 'released',
+                        'released_at' => now(),
+                        'lease_expires_at' => null,
+                        'updated_at' => now(),
+                    ]);
+                $this->scheduleManagedDeprovisionIfApplicable(
+                    $context ?? ExecutionContext::system(tenantId: $tenantId, reason: 'managed runtime retired', origin: 'runtime-registry'),
+                    $tenantId,
+                    $nodeId,
+                );
+            }
             $this->emit($request, $tenantId, $nodeId, 'runtime_node.desired_state_changed', ['from' => $node->desired_state, 'to' => $desiredState]);
 
             return ['runtime_node' => $this->node($nodeId, $tenantId)];
         });
+    }
+
+    public function completeDrain(ExecutionContext $context, string $tenantId, string $nodeId): bool
+    {
+        return DB::transaction(function () use ($context, $tenantId, $nodeId): bool {
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            if ($node->desired_state === 'drained') {
+                return true;
+            }
+            if ($node->desired_state !== 'draining' || $this->activeBindingCount($tenantId, $nodeId) !== 0) {
+                return false;
+            }
+            $this->catalog->assertDesiredTransition('draining', 'drained');
+            DB::table('runtime_nodes')->where('id', $nodeId)->update([
+                'desired_state' => 'drained',
+                'configuration_version' => ((int) $node->configuration_version) + 1,
+                'updated_by' => null,
+                'updated_at' => now(),
+            ]);
+            DB::table('runtime_node_drains')->where('tenant_id', $tenantId)->where('runtime_node_id', $nodeId)->update([
+                'status' => 'completed',
+                'remaining_work' => 0,
+                'last_evaluated_at' => now(),
+                'completed_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $this->emitContext($context, $tenantId, $nodeId, 'runtime_node.desired_state_changed', [
+                'from' => 'draining',
+                'to' => 'drained',
+                'reason' => 'canonical_runtime_bindings_empty',
+            ]);
+
+            return true;
+        });
+    }
+
+    /** Internal managed-provisioning seam. Plaintext is returned only to the infrastructure worker. */
+    public function ensureManagedCredential(ExecutionContext $context, string $tenantId, string $nodeId, string $type): array
+    {
+        return DB::transaction(function () use ($context, $tenantId, $nodeId, $type): array {
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            $this->assertNodeNotRetired($node);
+            $credential = DB::table('runtime_node_credentials')
+                ->where('runtime_node_id', $nodeId)->where('credential_type', $type)->where('status', 'active')
+                ->orderByDesc('version')->lockForUpdate()->first();
+            if ($credential !== null) {
+                return [
+                    'identifier' => (string) $credential->identifier,
+                    'secret' => Crypt::decryptString((string) $credential->encrypted_secret),
+                    'version' => (int) $credential->version,
+                ];
+            }
+
+            $identifier = 'utcp_'.Str::lower(Str::random(24));
+            $secret = Str::random(64);
+            $version = ((int) DB::table('runtime_node_credentials')->where('runtime_node_id', $nodeId)->where('credential_type', $type)->max('version')) + 1;
+            $id = RuntimeRegistryIds::new();
+            DB::table('runtime_node_credentials')->insert([
+                'id' => $id, 'runtime_node_id' => $nodeId, 'credential_type' => $type,
+                'identifier' => $identifier, 'encrypted_secret' => Crypt::encryptString($secret),
+                'secret_fingerprint' => $this->fingerprint($secret), 'version' => $version,
+                'status' => 'active', 'rotated_at' => now(), 'expires_at' => null,
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+            $this->bumpNodeContext($context, $tenantId, $nodeId);
+            $this->emitContext($context, $tenantId, $nodeId, 'runtime_node.credential_rotated', [
+                'change' => 'created', 'registry_item_id' => $id, 'type' => $type, 'version' => $version,
+            ]);
+
+            return ['identifier' => $identifier, 'secret' => $secret, 'version' => $version];
+        });
+    }
+
+    /** @param array<string,mixed> $endpoint */
+    public function ensureManagedEndpoint(ExecutionContext $context, string $tenantId, string $nodeId, array $endpoint): void
+    {
+        DB::transaction(function () use ($context, $tenantId, $nodeId, $endpoint): void {
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            $this->assertNodeNotRetired($node);
+            $this->catalog->assertEndpoint($endpoint['purpose'], $endpoint['transport'], (int) $endpoint['port'], $endpoint['tls_mode'], $endpoint['path']);
+            $existing = DB::table('runtime_node_endpoints')->where('runtime_node_id', $nodeId)->where('purpose', $endpoint['purpose'])->first();
+            if ($existing !== null && $existing->host === $endpoint['host'] && (int) $existing->port === (int) $endpoint['port'] && $existing->path === $endpoint['path'] && $existing->transport === $endpoint['transport']) {
+                return;
+            }
+            if ($existing !== null) {
+                DB::table('runtime_node_endpoints')->where('id', $existing->id)->update([...$endpoint, 'updated_at' => now()]);
+            } else {
+                DB::table('runtime_node_endpoints')->insert(['id' => RuntimeRegistryIds::new(), 'runtime_node_id' => $nodeId, ...$endpoint, 'metadata' => null, 'created_at' => now(), 'updated_at' => now()]);
+            }
+            $this->bumpNodeContext($context, $tenantId, $nodeId);
+            $this->emitContext($context, $tenantId, $nodeId, 'runtime_node.endpoints_changed', ['change' => 'managed_provisioning', 'purpose' => $endpoint['purpose']]);
+        });
+    }
+
+    /** @param list<string> $capabilities */
+    public function ensureManagedCapabilities(ExecutionContext $context, string $tenantId, string $nodeId, array $capabilities): void
+    {
+        DB::transaction(function () use ($context, $tenantId, $nodeId, $capabilities): void {
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            $this->catalog->assertCapabilitiesForAdapter((string) $node->adapter_key, $capabilities);
+            $current = DB::table('runtime_node_capabilities')->where('runtime_node_id', $nodeId)->orderBy('capability_key')->pluck('capability_key')->all();
+            sort($capabilities);
+            if ($current === $capabilities) {
+                return;
+            }
+            DB::table('runtime_node_capabilities')->where('runtime_node_id', $nodeId)->delete();
+            foreach ($capabilities as $capability) {
+                DB::table('runtime_node_capabilities')->insert(['id' => RuntimeRegistryIds::new(), 'runtime_node_id' => $nodeId, 'capability_key' => $capability, 'created_at' => now(), 'updated_at' => now()]);
+            }
+            $this->bumpNodeContext($context, $tenantId, $nodeId);
+            $this->emitContext($context, $tenantId, $nodeId, 'runtime_node.capabilities_changed', ['capabilities' => $capabilities]);
+        });
+    }
+
+    /** @param array<string,mixed> $labels */
+    public function ensureManagedWorkloadIdentity(ExecutionContext $context, string $tenantId, string $nodeId, array $labels): void
+    {
+        DB::transaction(function () use ($context, $tenantId, $nodeId, $labels): void {
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            $current = $node->labels === null ? [] : json_decode((string) $node->labels, true, 512, JSON_THROW_ON_ERROR);
+            $merged = array_replace($current, $labels);
+            if ($merged === $current) {
+                return;
+            }
+            DB::table('runtime_nodes')->where('id', $nodeId)->update(['labels' => json_encode($merged, JSON_THROW_ON_ERROR), 'configuration_version' => ((int) $node->configuration_version) + 1, 'updated_by' => null, 'updated_at' => now()]);
+            $this->emitContext($context, $tenantId, $nodeId, 'runtime_node.updated', ['configuration_version' => ((int) $node->configuration_version) + 1, 'managed_workload_identity' => true]);
+        });
+    }
+
+    public function activateManagedNode(ExecutionContext $context, string $tenantId, string $nodeId): void
+    {
+        DB::transaction(function () use ($context, $tenantId, $nodeId): void {
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            $this->catalog->assertDesiredTransition((string) $node->desired_state, 'active');
+            DB::table('runtime_nodes')->where('id', $nodeId)->update(['desired_state' => 'active', 'configuration_version' => ((int) $node->configuration_version) + 1, 'updated_by' => null, 'updated_at' => now()]);
+            $this->emitContext($context, $tenantId, $nodeId, 'runtime_node.desired_state_changed', ['from' => $node->desired_state, 'to' => 'active']);
+        });
+    }
+
+    /**
+     * Request the durable, system-executed decommission of a drained node.
+     *
+     * @return array{runtime_node: array<string,mixed>, runtime_operation: array<string,mixed>}
+     */
+    public function requestDecommission(Request $request, string $tenantId, string $nodeId, ?IdempotencyKey $key = null, ?string $reason = null): array
+    {
+        $context = IdentityContext::fromRequest($request, $tenantId);
+        $operationType = (string) config('telephony_domain.operation_types.runtime_node_decommission', 'runtime.node.decommission');
+
+        return DB::transaction(function () use ($context, $tenantId, $nodeId, $key, $reason, $operationType): array {
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            if ($node->desired_state !== 'drained') {
+                throw new InvalidArgumentException('Only a drained runtime node can be decommissioned.');
+            }
+            if ($this->activeBindingCount($tenantId, $nodeId) > 0) {
+                throw new InvalidArgumentException('Runtime node cannot be decommissioned while active runtime bindings exist.');
+            }
+
+            $existing = DB::table('runtime_operations')
+                ->where('tenant_id', $tenantId)
+                ->where('runtime_node_id', $nodeId)
+                ->where('operation_type', $operationType)
+                ->whereIn('status', [
+                    OperationStatus::Pending->value,
+                    OperationStatus::Leased->value,
+                    OperationStatus::Running->value,
+                    OperationStatus::RetryScheduled->value,
+                ])
+                ->orderByDesc('created_at')
+                ->first();
+            $operationId = $existing?->id;
+
+            if ($operationId === null) {
+                $operationId = $this->operations->create(
+                    $operationType,
+                    'runtime_node',
+                    $nodeId,
+                    [
+                        'tenant_id' => $tenantId,
+                        'runtime_node_id' => $nodeId,
+                        'requested_desired_state' => 'retired',
+                        'reason' => $reason,
+                        'expected_configuration_version' => (int) $node->configuration_version,
+                        'physical_runtime_destroyed' => false,
+                    ],
+                    $context,
+                    idempotencyKey: $key,
+                    maxAttempts: (int) config('telephony_domain.operation_max_attempts.runtime_node_decommission', 8),
+                    runtimeNodeId: $nodeId,
+                );
+                $this->emitContext($context, $tenantId, $nodeId, 'runtime_node.decommission_requested', [
+                    'operation_id' => $operationId,
+                    'desired_state' => 'drained',
+                    'reason' => $reason,
+                ]);
+            }
+
+            return [
+                'runtime_node' => $this->node($nodeId, $tenantId),
+                'runtime_operation' => $this->serializeOperation($operationId),
+            ];
+        });
+    }
+
+    /**
+     * Complete decommission under the canonical desired-state authority.
+     * The caller must already own a running runtime operation; the node lock
+     * prevents reactivation from racing with credential retirement.
+     */
+    public function completeDecommission(ExecutionContext $context, string $tenantId, string $nodeId, string $operationId): void
+    {
+        DB::transaction(function () use ($context, $tenantId, $nodeId, $operationId): void {
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            if ($node->desired_state === 'retired') {
+                return;
+            }
+            if ($node->desired_state !== 'drained') {
+                throw new InvalidArgumentException('Runtime node decommission authority is stale because the node is no longer drained.');
+            }
+            if ($this->activeBindingCount($tenantId, $nodeId) > 0) {
+                throw new InvalidArgumentException('Runtime node cannot be retired while active runtime bindings exist.');
+            }
+
+            $operation = DB::table('runtime_operations')
+                ->where('id', $operationId)
+                ->where('tenant_id', $tenantId)
+                ->where('runtime_node_id', $nodeId)
+                ->where('operation_type', (string) config('telephony_domain.operation_types.runtime_node_decommission', 'runtime.node.decommission'))
+                ->lockForUpdate()
+                ->first();
+            if ($operation === null || ! in_array((string) $operation->status, [OperationStatus::Leased->value, OperationStatus::Running->value], true)) {
+                throw new InvalidArgumentException('Runtime node decommission operation is not current.');
+            }
+
+            $this->retireActiveCredentialsForTerminalRetirement($context, $tenantId, $nodeId, 'decommission_retired', $operationId);
+
+            DB::table('runtime_reconciliation_states')
+                ->whereIn('target_type', ['runtime_node', 'runtime_node_drain'])
+                ->where('target_id', $nodeId)
+                ->delete();
+            DB::table('runtime_listener_leases')
+                ->whereIn('event_source_id', DB::table('event_sources')->where('runtime_node_id', $nodeId)->select('id'))
+                ->where('status', 'claimed')
+                ->update([
+                    'status' => 'released',
+                    'released_at' => now(),
+                    'lease_expires_at' => null,
+                    'updated_at' => now(),
+                ]);
+            $this->catalog->assertDesiredTransition('drained', 'retired');
+            DB::table('runtime_nodes')->where('id', $nodeId)->update([
+                'desired_state' => 'retired',
+                'configuration_version' => ((int) $node->configuration_version) + 1,
+                'updated_by' => null,
+                'updated_at' => now(),
+            ]);
+            $this->emitContext($context, $tenantId, $nodeId, 'runtime_node.desired_state_changed', [
+                'from' => 'drained',
+                'to' => 'retired',
+                'reason' => 'decommission_completed',
+                'operation_id' => $operationId,
+                'physical_runtime_destroyed' => false,
+            ]);
+            $this->scheduleManagedDeprovisionIfApplicable($context, $tenantId, $nodeId);
+        });
+    }
+
+    private function scheduleManagedDeprovisionIfApplicable(ExecutionContext $context, string $tenantId, string $nodeId): void
+    {
+        $request = DB::table('runtime_provisioning_requests')
+            ->where('tenant_id', $tenantId)
+            ->where('runtime_node_id', $nodeId)
+            ->get();
+        if ($request->count() !== 1) {
+            return;
+        }
+
+        $provisioningRequest = $request->first();
+        $operationType = (string) config('telephony_domain.operation_types.runtime_node_deprovision', 'runtime.node.deprovision');
+        $operationId = $this->operations->create(
+            operationType: $operationType,
+            aggregateType: 'runtime_provisioning_request',
+            aggregateId: (string) $provisioningRequest->id,
+            payload: [
+                'provisioning_request_id' => (string) $provisioningRequest->id,
+                'runtime_node_id' => $nodeId,
+            ],
+            context: $context,
+            idempotencyKey: IdempotencyKey::fromString('runtime-node-deprovision:'.$provisioningRequest->id),
+            maxAttempts: (int) config('telephony_domain.operation_max_attempts.runtime_node_deprovision', 8),
+            runtimeNodeId: $nodeId,
+        );
+        $this->emitContext($context, $tenantId, $nodeId, 'runtime_deprovision.requested', [
+            'operation_id' => $operationId,
+            'provisioning_request_id' => (string) $provisioningRequest->id,
+            'desired_state' => 'retired',
+        ]);
     }
 
     public function disableAfterSuccessfulFence(ExecutionContext $context, string $tenantId, string $nodeId, string $sourceFenceOperationId): void
@@ -238,7 +601,8 @@ final class RuntimeRegistryService
     public function addEndpoint(Request $request, string $tenantId, string $nodeId, array $input): array
     {
         return DB::transaction(function () use ($request, $tenantId, $nodeId, $input): array {
-            $this->nodeForUpdate($nodeId, $tenantId);
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            $this->assertNodeNotRetired($node);
             $this->catalog->assertEndpoint($input['purpose'], $input['transport'], (int) $input['port'], $input['tls_mode'] ?? 'disabled', $input['path'] ?? null);
             $id = RuntimeRegistryIds::new();
             DB::table('runtime_node_endpoints')->insert([
@@ -270,7 +634,8 @@ final class RuntimeRegistryService
     public function updateEndpoint(Request $request, string $tenantId, string $nodeId, string $endpointId, array $input): array
     {
         return DB::transaction(function () use ($request, $tenantId, $nodeId, $endpointId, $input): array {
-            $this->nodeForUpdate($nodeId, $tenantId);
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            $this->assertNodeNotRetired($node);
             $endpoint = DB::table('runtime_node_endpoints')->where('id', $endpointId)->where('runtime_node_id', $nodeId)->lockForUpdate()->first();
             abort_unless($endpoint !== null, 404, 'Endpoint not found.');
             $purpose = $input['purpose'] ?? $endpoint->purpose;
@@ -300,7 +665,8 @@ final class RuntimeRegistryService
     public function removeEndpoint(Request $request, string $tenantId, string $nodeId, string $endpointId): void
     {
         DB::transaction(function () use ($request, $tenantId, $nodeId, $endpointId): void {
-            $this->nodeForUpdate($nodeId, $tenantId);
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            $this->assertNodeNotRetired($node);
             $deleted = DB::table('runtime_node_endpoints')->where('id', $endpointId)->where('runtime_node_id', $nodeId)->delete();
             abort_unless($deleted === 1, 404, 'Endpoint not found.');
             $this->bumpNode($request, $nodeId, $tenantId);
@@ -316,6 +682,7 @@ final class RuntimeRegistryService
     {
         return DB::transaction(function () use ($request, $tenantId, $nodeId, $capabilities): array {
             $node = $this->nodeForUpdate($nodeId, $tenantId);
+            $this->assertNodeNotRetired($node);
             $capabilities = array_values(array_unique($capabilities));
             sort($capabilities);
             $this->catalog->assertCapabilitiesForAdapter((string) $node->adapter_key, $capabilities);
@@ -360,7 +727,8 @@ final class RuntimeRegistryService
     public function retireCredential(Request $request, string $tenantId, string $nodeId, string $credentialId): array
     {
         return DB::transaction(function () use ($request, $tenantId, $nodeId, $credentialId): array {
-            $this->nodeForUpdate($nodeId, $tenantId);
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            $this->assertNodeNotRetired($node);
             $credential = DB::table('runtime_node_credentials')->where('id', $credentialId)->where('runtime_node_id', $nodeId)->lockForUpdate()->first();
             abort_unless($credential !== null, 404, 'Credential not found.');
             if ($credential->status === 'active') {
@@ -398,7 +766,8 @@ final class RuntimeRegistryService
         }
 
         $result = DB::transaction(function () use ($request, $tenantId, $nodeId, $previousCredentialId, $input, $type): array {
-            $this->nodeForUpdate($nodeId, $tenantId);
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            $this->assertNodeNotRetired($node);
             $secret = trim((string) $input['secret']);
             if ($secret === '') {
                 throw new InvalidArgumentException('Credential secret is required.');
@@ -448,6 +817,53 @@ final class RuntimeRegistryService
         abort_unless($node !== null, 404, 'Runtime node not found.');
 
         return $node;
+    }
+
+    private function activeBindingCount(string $tenantId, string $nodeId): int
+    {
+        return (int) DB::table('conference_runtime_bindings')
+            ->where('tenant_id', $tenantId)
+            ->where('runtime_node_id', $nodeId)
+            ->where('status', 'active')
+            ->count();
+    }
+
+    private function assertIdentityChangeAllowed(object $node, string $tenantId): void
+    {
+        if (! in_array((string) $node->desired_state, ['draft', 'disabled'], true) || $this->activeBindingCount($tenantId, (string) $node->id) > 0) {
+            throw new InvalidArgumentException('Runtime family and adapter identity can only change on a draft or disabled node with no active runtime bindings.');
+        }
+    }
+
+    private function assertNodeNotRetired(object $node): void
+    {
+        if ((string) $node->desired_state === 'retired') {
+            throw new InvalidArgumentException('Retired runtime nodes are read-only historical records.');
+        }
+    }
+
+    private function retireActiveCredentialsForTerminalRetirement(ExecutionContext $context, string $tenantId, string $nodeId, string $change, ?string $operationId = null): void
+    {
+        $activeCredentials = DB::table('runtime_node_credentials')
+            ->where('runtime_node_id', $nodeId)
+            ->where('status', 'active')
+            ->lockForUpdate()
+            ->get();
+        foreach ($activeCredentials as $credential) {
+            DB::table('runtime_node_credentials')->where('id', $credential->id)->update([
+                'status' => 'retired',
+                'updated_at' => now(),
+            ]);
+            $payload = [
+                'change' => $change,
+                'registry_item_id' => $credential->id,
+                'type' => $credential->credential_type,
+            ];
+            if ($operationId !== null) {
+                $payload['operation_id'] = $operationId;
+            }
+            $this->emitContext($context, $tenantId, $nodeId, 'runtime_node.credential_retired', $payload);
+        }
     }
 
     private function latestSuccessfulFenceForDisabledNode(string $tenantId, string $nodeId): ?object
@@ -696,8 +1112,93 @@ final class RuntimeRegistryService
             'endpoints' => DB::table('runtime_node_endpoints')->where('runtime_node_id', $node->id)->orderBy('purpose')->orderBy('priority')->get()->map(fn (object $endpoint): array => $this->serializeEndpoint($endpoint))->all(),
             'credentials' => DB::table('runtime_node_credentials')->where('runtime_node_id', $node->id)->orderBy('credential_type')->orderByDesc('version')->get()->map(fn (object $credential): array => $this->serializeCredential($credential))->all(),
             'capabilities' => DB::table('runtime_node_capabilities')->where('runtime_node_id', $node->id)->orderBy('capability_key')->pluck('capability_key')->all(),
+            'management' => $this->managedRuntimeMetadata($node),
             'created_at' => $node->created_at,
             'updated_at' => $node->updated_at,
+        ];
+    }
+
+    /**
+     * This is a read-only projection of the canonical RNP relationship. The
+     * presence of a provisioning request, rather than runtime technology or
+     * Kubernetes labels, is the managed-runtime authority.
+     *
+     * @return array<string, mixed>
+     */
+    private function managedRuntimeMetadata(object $node): array
+    {
+        $request = DB::table('runtime_provisioning_requests as provisioning')
+            ->join('deployment_targets as targets', 'targets.id', '=', 'provisioning.deployment_target_id')
+            ->where('provisioning.tenant_id', $node->tenant_id)
+            ->where('provisioning.runtime_node_id', $node->id)
+            ->select([
+                'provisioning.id',
+                'provisioning.status',
+                'provisioning.deployment_target_id',
+                'targets.name as deployment_target_name',
+                'targets.slug as deployment_target_slug',
+                'targets.kind as deployment_target_kind',
+            ])
+            ->first();
+
+        if ($request === null) {
+            return [
+                'mode' => 'external',
+                'provisioning' => null,
+                'deprovisioning' => null,
+            ];
+        }
+
+        $provisionType = (string) config('telephony_domain.operation_types.runtime_node_provision', 'runtime.node.provision');
+        $deprovisionType = (string) config('telephony_domain.operation_types.runtime_node_deprovision', 'runtime.node.deprovision');
+        $provisioning = DB::table('runtime_operations')
+            ->where('tenant_id', $node->tenant_id)
+            ->where('aggregate_type', 'runtime_provisioning_request')
+            ->where('aggregate_id', $request->id)
+            ->where('operation_type', $provisionType)
+            ->orderByDesc('created_at')
+            ->first();
+        $deprovisioning = DB::table('runtime_operations')
+            ->where('tenant_id', $node->tenant_id)
+            ->where('runtime_node_id', $node->id)
+            ->where('operation_type', $deprovisionType)
+            ->orderByDesc('created_at')
+            ->first();
+
+        return [
+            'mode' => 'managed',
+            'provisioning_request' => [
+                'id' => (string) $request->id,
+                'status' => (string) $request->status,
+                'deployment_target' => [
+                    'id' => (string) $request->deployment_target_id,
+                    'name' => (string) $request->deployment_target_name,
+                    'slug' => (string) $request->deployment_target_slug,
+                    'kind' => (string) $request->deployment_target_kind,
+                ],
+            ],
+            'provisioning' => $this->managedOperationMetadata($provisioning),
+            'deprovisioning' => $this->managedOperationMetadata($deprovisioning),
+        ];
+    }
+
+    /** @return array<string, mixed>|null */
+    private function managedOperationMetadata(?object $operation): ?array
+    {
+        if ($operation === null) {
+            return null;
+        }
+
+        return [
+            'id' => (string) $operation->id,
+            'status' => (string) $operation->status,
+            'failure' => $operation->last_failure_class === null && $operation->last_failure_code === null ? null : [
+                'class' => $operation->last_failure_class === null ? null : (string) $operation->last_failure_class,
+                'code' => $operation->last_failure_code === null ? null : (string) $operation->last_failure_code,
+            ],
+            'started_at' => $operation->started_at,
+            'completed_at' => $operation->completed_at,
+            'updated_at' => $operation->updated_at,
         ];
     }
 
@@ -765,6 +1266,15 @@ final class RuntimeRegistryService
         DB::table('runtime_nodes')->where('id', $nodeId)->where('tenant_id', $tenantId)->update([
             'configuration_version' => DB::raw('configuration_version + 1'),
             'updated_by' => $request->user()->id,
+            'updated_at' => now(),
+        ]);
+    }
+
+    private function bumpNodeContext(ExecutionContext $context, string $tenantId, string $nodeId): void
+    {
+        DB::table('runtime_nodes')->where('id', $nodeId)->where('tenant_id', $tenantId)->update([
+            'configuration_version' => DB::raw('configuration_version + 1'),
+            'updated_by' => $context->actorId,
             'updated_at' => now(),
         ]);
     }

@@ -33,6 +33,16 @@ final class KubernetesWorkloadClientException extends RuntimeException
         return new self('fence_in_progress', $message);
     }
 
+    public static function ownershipConflict(string $message = 'Kubernetes resource is not owned by the expected RuntimeNode.'): self
+    {
+        return new self('ownership_conflict', $message);
+    }
+
+    public static function invalidRequest(string $message = 'Kubernetes API rejected the resource request.'): self
+    {
+        return new self('invalid_request', $message);
+    }
+
     public static function failed(string $message = 'Kubernetes API returned malformed fencing evidence.'): self
     {
         return new self('failed', $message);

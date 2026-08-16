@@ -982,7 +982,7 @@ final class RuntimeEngineTest extends TestCase
 
     public function test_stale_observation_derivation(): void
     {
-        [, $nodeId] = $this->runtimeNode('active');
+        [$tenantId, $nodeId] = $this->runtimeNode('active');
         DB::table('runtime_nodes')->where('id', $nodeId)->update([
             'observed_state' => 'ready',
             'observed_at' => now()->subHour(),
@@ -990,6 +990,97 @@ final class RuntimeEngineTest extends TestCase
 
         $this->assertSame(1, (new ProjectionService)->markStale(60));
         $this->assertDatabaseHas('runtime_nodes', ['id' => $nodeId, 'observed_state' => 'stale']);
+        $this->assertDatabaseHas('control_plane_outbox_messages', [
+            'tenant_id' => $tenantId,
+            'aggregate_type' => 'runtime_node',
+            'aggregate_id' => $nodeId,
+            'event_type' => 'runtime_node.observed_state_changed',
+        ]);
+    }
+
+    public function test_background_runtime_observation_appends_notification_intent_with_canonical_state(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('active');
+        $receipts = new RuntimeEventReceiptRepository;
+        $epochId = $receipts->openEpoch($tenantId, $nodeId, 'asterisk-ari', 'projection-test');
+        $accepted = $receipts->ingest(
+            $tenantId,
+            $nodeId,
+            'asterisk-ari',
+            $epochId,
+            'runtime-node-observation-1',
+            'runtime.node.observed',
+            1,
+            ['safe' => true],
+        );
+        $receipt = DB::table('runtime_event_receipts')->where('id', $accepted['id'])->first();
+
+        (new ProjectionService)->apply($receipt, [[
+            'tenant_id' => $tenantId,
+            'observation_type' => 'runtime.state.observed',
+            'observation_version' => 1,
+            'subject_type' => 'runtime_node',
+            'subject_id' => $nodeId,
+            'observed_state' => 'ready',
+            'configuration_version' => 2,
+            'observed_at' => now(),
+            'payload' => ['safe' => true],
+        ]]);
+
+        $this->assertDatabaseHas('runtime_nodes', [
+            'id' => $nodeId,
+            'observed_state' => 'ready',
+            'observed_configuration_version' => 2,
+        ]);
+        $this->assertDatabaseHas('control_plane_outbox_messages', [
+            'tenant_id' => $tenantId,
+            'aggregate_type' => 'runtime_node',
+            'aggregate_id' => $nodeId,
+            'event_type' => 'runtime_node.observed_state_changed',
+        ]);
+    }
+
+    public function test_background_runtime_observation_and_notification_roll_back_together(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('active');
+        $receipts = new RuntimeEventReceiptRepository;
+        $epochId = $receipts->openEpoch($tenantId, $nodeId, 'asterisk-ari', 'projection-rollback-test');
+        $accepted = $receipts->ingest(
+            $tenantId,
+            $nodeId,
+            'asterisk-ari',
+            $epochId,
+            'runtime-node-observation-rollback',
+            'runtime.node.observed',
+            1,
+            ['safe' => true],
+        );
+        $receipt = DB::table('runtime_event_receipts')->where('id', $accepted['id'])->first();
+
+        try {
+            DB::transaction(function () use ($receipt, $tenantId, $nodeId): void {
+                (new ProjectionService)->apply($receipt, [[
+                    'tenant_id' => $tenantId,
+                    'observation_type' => 'runtime.state.observed',
+                    'observation_version' => 1,
+                    'subject_type' => 'runtime_node',
+                    'subject_id' => $nodeId,
+                    'observed_state' => 'degraded',
+                    'configuration_version' => 3,
+                    'observed_at' => now(),
+                    'payload' => ['safe' => true],
+                ]]);
+                throw new RollbackProof;
+            }, 1);
+            $this->fail('projection rollback did not throw');
+        } catch (RollbackProof) {
+            $this->assertDatabaseHas('runtime_nodes', ['id' => $nodeId, 'observed_state' => 'unobserved']);
+            $this->assertDatabaseMissing('control_plane_outbox_messages', [
+                'aggregate_type' => 'runtime_node',
+                'aggregate_id' => $nodeId,
+                'event_type' => 'runtime_node.observed_state_changed',
+            ]);
+        }
     }
 
     /**

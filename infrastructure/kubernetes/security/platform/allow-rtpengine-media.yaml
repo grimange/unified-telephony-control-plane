@@ -32,7 +32,6 @@ spec:
             matchLabels:
               app.kubernetes.io/component: asterisk-ari
               utcp.io/network-role: asterisk-ari
-              utcp.dev/runtime-node: local-asterisk-ari
       ports:
         - protocol: UDP
           port: 40000
@@ -72,7 +71,6 @@ spec:
             matchLabels:
               app.kubernetes.io/component: asterisk-ari
               utcp.io/network-role: asterisk-ari
-              utcp.dev/runtime-node: local-asterisk-ari
       ports:
         - protocol: UDP
           port: 10000

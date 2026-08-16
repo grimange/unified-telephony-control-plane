@@ -421,7 +421,10 @@ runtime_policy_spec = runtime_policy.get("spec") or {}
 selected_runtime_labels = {
     "app.kubernetes.io/component": "asterisk-ari",
     "utcp.io/network-role": "asterisk-ari",
-    "utcp.dev/runtime-node": "local-asterisk-ari",
+}
+media_runtime_labels = {
+    "app.kubernetes.io/component": "asterisk-ari",
+    "utcp.io/network-role": "asterisk-ari",
 }
 rtpengine_labels = {
     "app.kubernetes.io/component": "rtpengine",
@@ -431,12 +434,12 @@ if (runtime_policy_spec.get("podSelector") or {}).get("matchLabels") != selected
     fail("canonical runtime policy must select exactly the reference Asterisk runtime")
 if not has_exact_policy_rule(
     egress, "egress", "utcp-runtime", "UDP", runtime_rtp_min,
-    pod_labels=selected_runtime_labels, end_port=runtime_rtp_max
+    pod_labels=media_runtime_labels, end_port=runtime_rtp_max
 ):
     fail("rtpengine egress must target the runtime RTP listener range 10000-20000")
 if not has_exact_policy_rule(
     ingress, "ingress", "utcp-runtime", "UDP", 40000,
-    pod_labels=selected_runtime_labels, end_port=40099
+    pod_labels=media_runtime_labels, end_port=40099
 ):
     fail("rtpengine ingress must accept runtime RTP on the rtpengine media range 40000-40099")
 if not has_exact_policy_rule(
@@ -474,6 +477,23 @@ for required in (
         fail(f"NetworkPolicy missing required selector or port: {required}")
 if (policy_spec.get("podSelector") or {}).get("matchLabels") != {"utcp.io/network-role": "rtpengine-media"}:
     fail("allow-rtpengine-media must target only rtpengine-media Pods")
+canonical_asterisk_media_peer = {
+    "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+    "podSelector": {"matchLabels": media_runtime_labels},
+}
+asterisk_ingress_media = [
+    rule for rule in ingress
+    if rule.get("ports") == [{"protocol": "UDP", "port": 40000, "endPort": 40099}]
+    and rule.get("from") == [canonical_asterisk_media_peer]
+]
+if len(asterisk_ingress_media) != 1:
+    fail("allow-rtpengine-media Asterisk ingress must select canonical Asterisk workloads")
+asterisk_egress_media = [
+    rule for rule in egress
+    if rule.get("ports") == [{"protocol": "UDP", "port": 10000, "endPort": 20000}]
+]
+if len(asterisk_egress_media) != 1 or asterisk_egress_media[0].get("to") != [canonical_asterisk_media_peer]:
+    fail("allow-rtpengine-media Asterisk egress must select canonical Asterisk workloads")
 if not has_exact_policy_rule(
     ingress,
     "ingress",

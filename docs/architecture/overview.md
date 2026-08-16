@@ -154,3 +154,48 @@ Observability components remain cluster-internal and are not exposed through Gat
 - Keep Kubernetes concepts out of the core telephony domain.
 - Keep Redis and WebSockets out of canonical business authority.
 - Keep CLI commands limited to bootstrap, diagnostics, recovery, migration, and verification.
+
+## RT-1 Realtime Control-Plane UI Contract
+
+The Laravel Reverb milestone is a notification/invalidation transport
+for the authenticated Admin UI. Reverb is not durable event storage and is not
+state authority. PostgreSQL plus the existing UTCP domain/application services,
+event/outbox seams, projections, and reconciliation authorities remain the
+source of truth.
+
+The required flow is canonical transaction commit, existing domain event or
+durable outbox where required, Laravel Reverb, authenticated tenant-scoped
+browser notification, and canonical API refetch.
+
+The command boundary is fixed: REST/application API is the command and
+canonical-read path; Reverb is asynchronous change notification. Reverb
+availability is non-blocking for normal management. Create, drain, retire,
+deprovision, and later lifecycle commands, API reads, and canonical backend
+processing continue during an outage. Only immediate browser updates may be
+delayed. After automatic reconnect, the browser resynchronizes from canonical
+APIs because transient notifications may have been missed. Manual
+reconciliation or projection is not normal recovery.
+
+RT-1 is RuntimeNode-first: lifecycle/state changes, runtime operation progress,
+readiness and observed-state projection, drain, retirement, and managed
+deprovision progress/completion. It preserves the existing authorities of
+RuntimeProvisioningService, RuntimeRegistryService, RNM, the runtime operation
+framework, ProjectionService/runtime observation, and the
+telephony-infrastructure-worker. Reverb does not replace them or create a
+second frontend lifecycle authority.
+
+Channel authorization uses the normal session, tenant membership, and existing
+capability model, such as runtime.nodes.view. It introduces no Reverb-only
+permission system. Tenant scoping is mandatory: a browser must never receive
+another tenant's control-plane events, and the exact channel string remains an
+implementation decision.
+
+Broadcasts are minimal change notifications, such as an aggregate identifier
+and version, followed by a sanitized API refetch. Credential plaintext,
+Kubernetes Secret data, kubeconfig, tokens, lease/fencing secrets, raw stack
+traces, and unnecessary Kubernetes resource details are excluded. Reverb stays
+internal/ClusterIP behind the established Gateway/Traefik edge; the reserved
+events.utcp.local.test hostname does not authorize NodePort, LoadBalancer, or
+direct-host exposure. Conference, participant, trunk, and session surfaces may
+reuse this transport later, but they are not RT-1A scope and no concrete event
+classes or schemas are established here.

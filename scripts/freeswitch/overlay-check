@@ -91,7 +91,12 @@ def all_references(document: Any, field: str | None = None):
         for key, value in document.items():
             if key in {"configMap", "configMapRef", "configMapKeyRef"} and isinstance(value, dict):
                 if value.get("name"):
-                    yield "ConfigMap", str(value["name"])
+                    name = str(value["name"])
+                    # Kubernetes creates this service-account CA ConfigMap in
+                    # every namespace; it is not part of the rendered product
+                    # resource set and must not be treated as a missing target.
+                    if name != "kube-root-ca.crt":
+                        yield "ConfigMap", name
             if key in {"secret", "secretRef", "secretKeyRef"} and isinstance(value, dict):
                 if value.get("secretName"):
                     yield "Secret", str(value["secretName"])

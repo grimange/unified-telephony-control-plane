@@ -316,3 +316,17 @@ Kubernetes allocation; public binding loss leaves a healthy rtpengine on the
 wrong node with no local endpoint; and candidate unreachability preserves the
 healthy local endpoint and allocation while removing only external RTP
 admission. Each case restored to zero canonical diff and baseline resources.
+
+## ADR-022 amendment (V0 deferral discharged)
+
+The deferral recorded above as "Kamailio INVITE route authority consuming the
+canonical RuntimeNode eligibility projection" is discharged by
+[ADR-022](ADR-022-conference-sip-routing-and-browser-participant-leg.md).
+Conference INVITEs are routed to the conference's canonically bound RuntimeNode
+through a sanitized PostgreSQL routing projection, and the browser's own PJSIP
+channel becomes the conference participant. The `9900` extension is retained
+solely as the T3 SIP and media connectivity fixture that the T3 media prover and
+media proof job depend on; it must no longer be returned by canonical conference
+admission. The rtpengine media plane itself is unchanged by ADR-022 — media
+continues to traverse rtpengine between the browser and the runtime that
+terminates the dialog.

@@ -154,6 +154,9 @@ let activeRuntimeNodeChannel: EchoChannel | null = null
 let activeRuntimeNodeToken = 0
 let activeRuntimeNodeSnapshotReady = false
 let activeRuntimeNodeSubscriptionReady = false
+const pendingRuntimeNodeRefreshIds = new Set<string>()
+let runtimeNodeRefreshScheduled = false
+let runtimeNodeRefreshGeneration = 0
 let activeConferenceChannelName: string | null = null
 let activeConferenceSubscription: ConferenceRealtimeSubscription | null = null
 let activeConferenceChannel: EchoChannel | null = null
@@ -637,17 +640,34 @@ function handleRuntimeNodeNotification(payload: unknown): void {
   if (subscription === null || !subscription.sessionActive()) return
   if (!isRuntimeNodeNotification(payload, subscription.tenantId)) return
 
-  void refreshCanonicalSnapshotsForNotification(String(payload.runtime_node_id))
+  queueCanonicalRuntimeNodeRefresh(String(payload.runtime_node_id))
 }
 
-async function refreshCanonicalSnapshotsForNotification(runtimeNodeId: string): Promise<void> {
-  const subscription = activeRuntimeNodeSubscription
-  if (subscription === null) return
+function queueCanonicalRuntimeNodeRefresh(runtimeNodeId: string): void {
+  pendingRuntimeNodeRefreshIds.add(runtimeNodeId)
+  if (runtimeNodeRefreshScheduled) return
 
-  await subscription.refreshList()
-  if (subscription.openRuntimeNodeIds().includes(runtimeNodeId)) {
-    await subscription.refreshNodeDetails(runtimeNodeId)
-  }
+  runtimeNodeRefreshScheduled = true
+  const generation = runtimeNodeRefreshGeneration
+  void Promise.resolve().then(async () => {
+    runtimeNodeRefreshScheduled = false
+    if (generation !== runtimeNodeRefreshGeneration) return
+
+    const runtimeNodeIds = [...pendingRuntimeNodeRefreshIds]
+    pendingRuntimeNodeRefreshIds.clear()
+    const subscription = activeRuntimeNodeSubscription
+    if (subscription === null || !subscription.sessionActive()) return
+
+    try {
+      await subscription.refreshList()
+      const openRuntimeNodeIds = new Set(subscription.openRuntimeNodeIds())
+      await Promise.all(runtimeNodeIds
+        .filter((id) => openRuntimeNodeIds.has(id))
+        .map((id) => subscription.refreshNodeDetails(id)))
+    } catch (error) {
+      runtimeNodeRealtimeError.value = error instanceof Error ? error.message : 'RuntimeNode refresh failed.'
+    }
+  })
 }
 
 async function resynchronizeCanonicalSnapshots(): Promise<boolean> {
@@ -907,6 +927,8 @@ function leaveRuntimeNodeChannel(): void {
   activeRuntimeNodeSnapshotReady = false
   activeRuntimeNodeSubscriptionReady = false
   activeRuntimeNodeToken++
+  runtimeNodeRefreshGeneration++
+  pendingRuntimeNodeRefreshIds.clear()
 }
 
 function leaveConferenceChannel(): void {

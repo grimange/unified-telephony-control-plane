@@ -34,3 +34,17 @@ The deterministic simulator implements those operations only as an explicit `Run
 - Redis does not own sessions, conferences, participants, admission, or runtime binding.
 - Generic C3 workers and reconcilers do not branch on simulator-specific behavior.
 - Future Asterisk, FreeSWITCH, Kamailio, rtpengine, and browser workflow phases must integrate through these runtime-neutral boundaries instead of changing C5 domain authority.
+
+## ADR-022 amendment (V0 conference SIP routing)
+
+[ADR-022](ADR-022-conference-sip-routing-and-browser-participant-leg.md) extends
+this decision for browser self-admission. `conferences.runtime_node_id` and the
+active `conference_runtime_bindings` row become the placement authority not only
+for conference execution but also for the browser application SIP dialog of that
+conference. A participant admitted through `participants/self` is represented by
+the browser's own inbound PJSIP channel rather than a separately originated
+`Local/participant@utcp-conference-proof` channel, so
+`conference.participant.ensure` stops originating a channel for
+`admission_reason = self_admission`. `TelephonySession` authority is unchanged:
+it remains a control-plane authorization session and is still not a SIP dialog,
+a media path, a call, or a runtime channel.
