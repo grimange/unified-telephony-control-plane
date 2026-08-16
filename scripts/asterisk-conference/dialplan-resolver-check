@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+IMAGE="${UTCP_ASTERISK_IMAGE:-utcp-asterisk-ari:dev}"
+CONTAINER="utcp-asterisk-dialplan-check"
+PARTICIPANT="f11ce90b-cba5-4ece-a594-2f553c3461d0"
+
+fail() {
+  printf 'asterisk dialplan resolver check failed: %s\n' "$1" >&2
+  exit 1
+}
+
+command -v docker >/dev/null || fail "docker is required for the Asterisk resolver check"
+docker image inspect "$IMAGE" >/dev/null 2>&1 || fail "Asterisk image is unavailable: $IMAGE"
+
+cleanup() {
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+cleanup
+
+docker run -d --rm \
+  --name "$CONTAINER" \
+  -e ARI_USERNAME=resolver-check \
+  -e ARI_PASSWORD=resolver-check \
+  -v "$ROOT/infrastructure/docker/asterisk/config/extensions.conf:/opt/utcp-asterisk-config/extensions.conf:ro" \
+  -v "$ROOT/infrastructure/kubernetes/overlays/local/runtime:/opt/utcp-asterisk-local-config:ro" \
+  "$IMAGE" >/dev/null || fail "could not start Asterisk resolver container"
+
+for _ in $(seq 1 30); do
+  if docker exec "$CONTAINER" asterisk -C /tmp/utcp-asterisk/asterisk.conf -rx 'core show uptime' >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+resolver() {
+  docker exec "$CONTAINER" asterisk -C /tmp/utcp-asterisk/asterisk.conf -rx "dialplan show $1@from-kamailio" 2>/dev/null
+}
+
+conference_result="$(resolver "conf-$PARTICIPANT")" || fail "Asterisk could not resolve the conference destination"
+printf '%s\n' "$conference_result" | grep -Fq "'_[c]o[n]f-.'" || fail "canonical conf UUID did not resolve to the literal conf- extension"
+printf '%s\n' "$conference_result" | grep -Fq 'Stasis(utcp-t0-observation,${EXTEN})' || fail "canonical conference extension lost the existing Stasis entry"
+printf '%s\n' "$conference_result" | grep -Fq "'_.'" || fail "conference context lost its fail-closed catch-all"
+
+t3_result="$(resolver 9900)" || fail "Asterisk could not resolve the T3 destination"
+printf '%s\n' "$t3_result" | grep -Fq "'9900'" || fail "9900 no longer resolves to the T3 fixture"
+printf '%s\n' "$t3_result" | grep -Fq 'Echo()' || fail "9900 no longer enters the Echo fixture"
+
+invalid_result="$(resolver arbitrary-invalid)" || fail "Asterisk could not resolve the invalid destination"
+printf '%s\n' "$invalid_result" | grep -Fq "'_.'" || fail "invalid destination did not resolve to the rejection catch-all"
+printf '%s\n' "$invalid_result" | grep -Fq 'Hangup(21)' || fail "invalid destination lost the rejection Hangup(21)"
+
+printf 'asterisk_dialplan_resolver_check=ok\n'
