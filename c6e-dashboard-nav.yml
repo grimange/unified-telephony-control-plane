@@ -1,0 +1,88 @@
+- main [ref=e26]:
+  - generic [ref=e27]:
+    - generic [ref=e28]:
+      - paragraph [ref=e29]: Unified Telephony Control Plane
+      - heading "Dashboard" [level=1] [ref=e30]
+      - paragraph [ref=e31]: UTCP Local Administrator · admin@utcp.local.test
+    - generic [ref=e32]:
+      - generic [ref=e33]:
+        - generic [ref=e34]: Active tenant
+        - combobox "Active tenant" [ref=e35]:
+          - option "No tenant selected" [selected]
+          - option "Local Tenant"
+      - generic [ref=e36]:
+        - generic [ref=e37]: Appearance
+        - combobox "Appearance" [ref=e38]:
+          - option "System" [selected]
+          - option "Light"
+          - option "Dark"
+      - button "Log out" [ref=e39] [cursor=pointer]
+  - generic [ref=e41]:
+    - complementary [ref=e42]:
+      - paragraph [ref=e43]: Navigation
+      - navigation "Primary" [ref=e44]:
+        - generic [ref=e45]:
+          - paragraph [ref=e46]: Overview
+          - link "Dashboard" [ref=e47] [cursor=pointer]:
+            - /url: /dashboard
+        - generic [ref=e48]:
+          - paragraph [ref=e49]: Access and tenancy
+          - link "Tenants" [ref=e50] [cursor=pointer]:
+            - /url: /admin/tenants
+          - link "Users" [ref=e51] [cursor=pointer]:
+            - /url: /admin/users
+      - generic [ref=e52]:
+        - strong [ref=e53]: Tenant context
+        - paragraph [ref=e54]: No tenant selected
+        - paragraph [ref=e55]: Catalog c5.2026-07-15
+    - region [ref=e57]:
+      - generic [ref=e58]:
+        - generic [ref=e59]:
+          - heading "Dashboard" [level=2] [ref=e60]
+          - paragraph [ref=e61]: Review current control-plane state and move into management, runtime, reconciliation, and audit workflows.
+        - button "Refresh" [ref=e62] [cursor=pointer]
+      - generic [ref=e64]:
+        - region [ref=e65]:
+          - generic [ref=e67]:
+            - paragraph [ref=e68]: Identity
+            - heading "UTCP Local Administrator" [level=3] [ref=e69]
+          - generic [ref=e70]:
+            - term [ref=e71]: Email
+            - definition [ref=e72]: admin@utcp.local.test
+            - term [ref=e73]: Status
+            - definition [ref=e74]: active
+            - term [ref=e75]: Tenant
+            - definition [ref=e76]: No tenant selected
+            - term [ref=e77]: Tenant selection
+            - definition [ref=e78]: Required for tenant-scoped operations
+            - term [ref=e79]: Session expires
+            - definition [ref=e80]: 2026-08-21T22:49:06+00:00
+        - region [ref=e81]:
+          - generic [ref=e82]:
+            - generic [ref=e83]:
+              - paragraph [ref=e84]: Management
+              - heading "Users and telephony sessions" [level=3] [ref=e85]
+            - strong [ref=e86]: "48"
+          - list [ref=e87]:
+            - listitem [ref=e88]: 0 active telephony session records in the returned page
+            - listitem [ref=e89]: "RA Admin: active"
+            - listitem [ref=e90]: "T3 S3B Prover t3s3b1785716804: active"
+            - listitem [ref=e91]: "T3 S3B Prover t3s3b1785716848: active"
+        - region [ref=e92]:
+          - generic [ref=e94]:
+            - paragraph [ref=e95]: Needs attention
+            - heading "Attention summary" [level=3] [ref=e96]
+          - generic [ref=e97]:
+            - strong [ref=e98]: No attention items
+            - paragraph [ref=e99]: No degraded or unavailable state was returned by authorized summary requests.
+        - region [ref=e100]:
+          - generic [ref=e102]:
+            - paragraph [ref=e103]: Quick navigation
+            - heading "Available management" [level=3] [ref=e104]
+          - generic [ref=e105]:
+            - link "Dashboard" [ref=e106] [cursor=pointer]:
+              - /url: /dashboard
+            - link "Tenants" [ref=e107] [cursor=pointer]:
+              - /url: /admin/tenants
+            - link "Users" [ref=e108] [cursor=pointer]:
+              - /url: /admin/users
