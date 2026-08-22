@@ -9,6 +9,19 @@ required_tools
 ensure_kubeconfig
 check_k1_tag
 
+grep -Fq 'for deployment in api asterisk-ari-events control-plane-outbox-dispatcher gateway kamailio kamailio-registration-observer reverb rtpengine scheduler simulator-event-source telephony-command-worker telephony-event-normalizer telephony-reconciler utcp-runtime-fence-worker web worker;' "$SCRIPT_DIR/apply" || {
+  printf 'Kubernetes config check failed: local apply must enumerate the canonical platform deployments for freshness\n' >&2
+  exit 1
+}
+grep -Fq 'rollout restart "deployment/$deployment"' "$SCRIPT_DIR/apply" || {
+  printf 'Kubernetes config check failed: local apply must automatically restart refreshed platform images\n' >&2
+  exit 1
+}
+grep -Fq 'rollout restart deployment/asterisk-ari' "$SCRIPT_DIR/apply" || {
+  printf 'Kubernetes config check failed: local apply must refresh runtime deployment/asterisk-ari\n' >&2
+  exit 1
+}
+
 tmp="$(mktemp)"
 migration_tmp="$(mktemp)"
 platform_tmp="$(mktemp)"

@@ -11,6 +11,7 @@ return [
     'participant_roles' => ['host', 'participant'],
 
     'session_lifetime_minutes' => env('UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES', 60),
+    'origination_timeout_seconds' => 60,
 
     'operation_types' => [
         'conference_ensure' => 'conference.ensure',
@@ -23,6 +24,25 @@ return [
         'runtime_node_decommission' => 'runtime.node.decommission',
         'runtime_node_provision' => 'runtime.node.provision',
         'runtime_node_deprovision' => 'runtime.node.deprovision',
+        'call_leg_originate' => 'call.leg.originate',
+        'call_leg_cancel_origination' => 'call.leg.cancel_origination',
+        'call_leg_answer' => 'call.leg.answer',
+        'call_leg_hangup' => 'call.leg.hangup',
+        'call_hangup' => 'call.hangup',
+        'call_leg_hold' => 'call.leg.hold',
+        'call_leg_resume' => 'call.leg.resume',
+        'call_legs_bridge' => 'call.legs.bridge',
+        'call_legs_unbridge' => 'call.legs.unbridge',
+        'call_leg_blind_transfer' => 'call.leg.blind_transfer',
+        'call_leg_attended_transfer' => 'call.leg.attended_transfer',
+        'call_leg_redirect' => 'call.leg.redirect',
+        'call_leg_mute' => 'call.leg.mute',
+        'call_leg_unmute' => 'call.leg.unmute',
+        'call_leg_send_dtmf' => 'call.leg.send_dtmf',
+        'call_leg_play_media' => 'call.leg.play_media',
+        'call_leg_stop_media' => 'call.leg.stop_media',
+        'call_leg_start_recording' => 'call.leg.start_recording',
+        'call_leg_stop_recording' => 'call.leg.stop_recording',
     ],
 
     'operation_max_attempts' => [
@@ -35,5 +55,12 @@ return [
     'runtime_capabilities' => [
         'conference_lifecycle' => 'conference.lifecycle',
         'conference_participation' => 'conference.participation',
+        'call_origination' => 'call.origination',
+        'call_control' => 'call.control',
+        'call_hold' => 'call.hold',
+        'call_transfer' => 'call.transfer',
+        'call_dtmf_send' => 'call.dtmf.send',
+        'media_playback' => 'media.playback',
+        'recording' => 'recording',
     ],
 ];

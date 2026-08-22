@@ -29,8 +29,17 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
 
     public function normalize(object $receipt, array $payload): array
     {
-        if ($this->isConferenceEvent()) {
+        if ($this->isConferenceEvent() && $this->hasConferenceOwnership($receipt, $payload)) {
             return $this->normalizeConferenceEvent($receipt, $payload);
+        }
+
+        $generic = $this->normalizeGenericCallEvent($receipt, $payload);
+        if ($generic !== null) {
+            return [$generic];
+        }
+
+        if ($this->isConferenceEvent()) {
+            return [];
         }
 
         $state = match ($this->eventType) {
@@ -99,6 +108,130 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
             $this->catalog->eventType('channel_destroyed'),
             $this->catalog->eventType('stasis_end'),
         ], true);
+    }
+
+    private function hasConferenceOwnership(object $receipt, array $payload): bool
+    {
+        if (! isset($receipt->tenant_id, $receipt->runtime_node_id)) {
+            return false;
+        }
+
+        $channelId = is_string($payload['channel_id'] ?? null) ? $payload['channel_id'] : null;
+        if ($channelId !== null && AsteriskConferenceChannelOwnership::owns(
+            (string) $receipt->tenant_id,
+            (string) $receipt->runtime_node_id,
+            $channelId,
+        )) {
+            return true;
+        }
+
+        $bridgeId = is_string($payload['bridge_id'] ?? null) ? $payload['bridge_id'] : null;
+
+        return $bridgeId !== null && $this->suffixForPrefix($bridgeId, (string) config('asterisk_ari.conference.bridge_id_prefix', 'utcp-conf-')) !== null;
+    }
+
+    /** @return array<string, mixed>|null */
+    private function normalizeGenericCallEvent(object $receipt, array $payload): ?array
+    {
+        if (! isset($receipt->tenant_id, $receipt->runtime_node_id)) {
+            return null;
+        }
+
+        $channelId = is_string($payload['channel_id'] ?? null) ? trim($payload['channel_id']) : '';
+        if ($channelId === '' || $this->conferenceChannel($receipt, $channelId)) {
+            return null;
+        }
+
+        $type = match ($this->eventType) {
+            $this->catalog->eventType('stasis_start') => 'call.leg.offered',
+            $this->catalog->eventType('channel_state_change') => match (mb_strtolower((string) ($payload['channel_state'] ?? ''))) {
+                'ring', 'ringing' => 'call.leg.ringing',
+                'earlymedia', 'early_media' => 'call.leg.early_media',
+                'up', 'answered' => 'call.leg.answered',
+                default => null,
+            },
+            $this->catalog->eventType('channel_destroyed'),
+            $this->catalog->eventType('stasis_end') => 'call.leg.terminated',
+            $this->catalog->eventType('channel_dtmf_received') => 'call.leg.dtmf_received',
+            $this->catalog->eventType('channel_entered_bridge') => 'call.legs.bridged',
+            $this->catalog->eventType('channel_left_bridge') => 'call.legs.unbridged',
+            $this->catalog->eventType('playback_started') => 'call.leg.media_started',
+            $this->catalog->eventType('playback_finished') => 'call.leg.media_stopped',
+            $this->catalog->eventType('recording_started') => 'call.leg.recording_started',
+            $this->catalog->eventType('recording_finished') => 'call.leg.recording_stopped',
+            $this->catalog->eventType('channel_hold') => 'call.leg.held',
+            $this->catalog->eventType('channel_unhold') => 'call.leg.resumed',
+            $this->catalog->eventType('channel_mute') => 'call.leg.muted',
+            $this->catalog->eventType('channel_unmute') => 'call.leg.unmuted',
+            default => null,
+        };
+        if ($type === null) {
+            return null;
+        }
+
+        $leg = DB::table('call_legs')->where('tenant_id', (string) $receipt->tenant_id)->where('runtime_node_id', (string) $receipt->runtime_node_id)->where('runtime_channel_id', $channelId)->first();
+        if ($leg === null && $type === 'call.leg.offered') {
+            $correlatedLegId = AsteriskAriClient::callLegIdFromChannelId($channelId);
+            if ($correlatedLegId !== null) {
+                $leg = DB::table('call_legs')
+                    ->where('tenant_id', (string) $receipt->tenant_id)
+                    ->where('id', $correlatedLegId)
+                    ->where('runtime_node_id', (string) $receipt->runtime_node_id)
+                    ->whereNull('runtime_channel_id')
+                    ->where('direction', 'outbound')
+                    ->first();
+            }
+        }
+        $channels = is_array($payload['bridge_channel_ids'] ?? null) ? array_values(array_filter($payload['bridge_channel_ids'], 'is_string')) : [$channelId];
+        $safe = [
+            'runtime_node_id' => (string) $receipt->runtime_node_id,
+            'runtime_channel_id' => $channelId,
+        ];
+        if (is_string($payload['remote_identity'] ?? null) && trim($payload['remote_identity']) !== '') {
+            $safe['remote_identity'] = trim($payload['remote_identity']);
+        }
+        if (is_string($payload['digit'] ?? null)) {
+            $safe['digit'] = $payload['digit'];
+        }
+        if (isset($payload['duration_ms']) && is_int($payload['duration_ms'])) {
+            $safe['duration_ms'] = $payload['duration_ms'];
+        }
+        if (in_array($type, ['call.legs.bridged', 'call.legs.unbridged'], true)) {
+            $safe['runtime_channel_ids'] = count($channels) === 2 ? $channels : [];
+            if (count($channels) === 2) {
+                $safe['leg_ids'] = DB::table('call_legs')
+                    ->where('tenant_id', (string) $receipt->tenant_id)
+                    ->where('runtime_node_id', (string) $receipt->runtime_node_id)
+                    ->whereIn('runtime_channel_id', $channels)
+                    ->orderBy('runtime_channel_id')
+                    ->pluck('id')
+                    ->map(static fn (mixed $id): string => (string) $id)
+                    ->all();
+            }
+        }
+        if ($type === 'call.leg.terminated') {
+            $safe['termination_reason'] = is_string($payload['termination_reason'] ?? null) ? $payload['termination_reason'] : 'runtime_lost';
+        }
+
+        return [
+            'observation_type' => $type,
+            'observation_version' => 1,
+            'subject_type' => 'call_leg',
+            'subject_id' => $leg === null ? 'runtime:'.$channelId : (string) $leg->id,
+            'observed_state' => $type === 'call.leg.offered' ? 'offered' : 'observed',
+            'configuration_version' => isset($payload['configuration_generation']) ? (int) $payload['configuration_generation'] : null,
+            'observed_at' => is_string($payload['occurred_at'] ?? null) ? $payload['occurred_at'] : now(),
+            'payload' => $safe,
+        ];
+    }
+
+    private function conferenceChannel(object $receipt, string $channelId): bool
+    {
+        return AsteriskConferenceChannelOwnership::owns(
+            (string) $receipt->tenant_id,
+            (string) $receipt->runtime_node_id,
+            $channelId,
+        );
     }
 
     /**

@@ -10,6 +10,7 @@ use App\ControlPlane\Shared\CausationId;
 use App\ControlPlane\Shared\CorrelationId;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\RequestId;
+use App\TelephonyDomain\CallDomainService;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -21,6 +22,7 @@ final class CommandWorker
         private readonly OutboxRepository $outbox,
         private readonly RuntimeOperationHandlerRegistry $handlers,
         private readonly RuntimeAdapterRegistry $adapters,
+        private readonly CallDomainService $calls,
     ) {}
 
     /**
@@ -77,6 +79,12 @@ final class CommandWorker
                         $this->contextFromRow($row),
                     );
                     $this->operations->complete($claim->id, $claim->leaseToken, $event, $this->outbox);
+                    $this->calls->applySuccessfulCallOperation(
+                        (string) $row->tenant_id,
+                        (string) $row->operation_type,
+                        (string) $row->aggregate_type,
+                        (string) $row->aggregate_id,
+                    );
                     $processed++;
                     Log::info('runtime operation completed', [
                         'component' => 'telephony-command-worker',

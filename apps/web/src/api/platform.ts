@@ -290,8 +290,8 @@ export type RuntimeManagementCatalog = {
   runtime_capabilities: Record<string, { display_name: string; description: string | null }>
   desired_states: Record<string, { display_name: string; description: string | null }>
   endpoint_purposes: Record<string, { display_name: string; description: string | null }>
-  endpoint_transports: Record<string, { display_name: string; description: string | null }>
-  endpoint_tls_modes: Record<string, { display_name: string; description: string | null }>
+  endpoint_transports: string[]
+  endpoint_tls_modes: string[]
 }
 
 export type RuntimeAdapterConfigurationInputType = 'text' | 'integer' | 'json'
@@ -697,6 +697,70 @@ export type AuditRecordListFilters = {
   per_page?: number
 }
 
+export type Call = {
+  id: string
+  tenant_id: string
+  direction: 'inbound' | 'outbound' | string
+  state: string
+  desired_state?: string
+  termination_reason: string | null
+  terminated_at: string | null
+  correlation_id: string | null
+  created_at: string
+  updated_at: string
+  destination_ref?: string | null
+}
+
+export type CallLeg = {
+  id: string
+  call_id: string
+  direction: string
+  role: string
+  state: string
+  runtime_node_id: string | null
+  runtime_channel_id: string | null
+  remote_identity: string | null
+  bridged_to_leg_id: string | null
+  bridged_at: string | null
+  termination_reason: string | null
+  terminated_at: string | null
+  telephony_session_id: string | null
+}
+
+export type CallOperation = {
+  id: string
+  operation_type: string
+  target: { type: string; id: string }
+  status: string
+  attempts: number
+  failure_class: string | null
+  failure_code: string | null
+  correlation_id: string | null
+  request_id: string | null
+  created_at: string
+  started_at: string | null
+  completed_at: string | null
+}
+
+export type CallTimelineEntry = {
+  id: string
+  type: string
+  source: 'command' | 'observation' | 'audit' | string
+  occurred_at: string
+  recorded_at: string | null
+  call_id: string
+  leg_id: string | null
+  summary: string
+  metadata: Record<string, unknown>
+}
+
+export type CallPagination = {
+  page: number
+  per_page: number
+  total: number
+  has_more: boolean
+}
+
 export class ApiRequestError extends Error {
   status: number
   details: unknown
@@ -1047,6 +1111,46 @@ export const identityApi = {
   conference: (conferenceId: string) => fetchJson<{ conference: Conference }>(`/api/v1/admin/conferences/${conferenceId}`),
   conferenceParticipants: (conferenceId: string) =>
     fetchJson<{ participants: ConferenceParticipant[] }>(`/api/v1/admin/conferences/${conferenceId}/participants`),
+  isApiRequestError: (error: unknown): error is ApiRequestError => error instanceof ApiRequestError,
+}
+
+function paginatedQuery(params: { page?: number; per_page?: number }): string {
+  const query = new URLSearchParams()
+  if (params.page) query.set('page', String(params.page))
+  if (params.per_page) query.set('per_page', String(params.per_page))
+
+  return query.toString() === '' ? '' : `?${query.toString()}`
+}
+
+export const callApi = {
+  list: (params: { page?: number; per_page?: number } = {}) =>
+    fetchJson<{ data: Call[]; pagination: CallPagination }>(`/api/v1/calls${paginatedQuery(params)}`),
+  get: (callId: string) => fetchJson<{ data: Call }>(`/api/v1/calls/${callId}`),
+  legs: (callId: string, params: { page?: number; per_page?: number } = {}) =>
+    fetchJson<{ data: CallLeg[]; pagination: CallPagination }>(`/api/v1/calls/${callId}/legs${paginatedQuery(params)}`),
+  createOutbound: (destinationRef: string, runtimeNodeId: string, idempotencyKey: string) =>
+    postJson<{ data: Call }>(
+      '/api/v1/calls',
+      { direction: 'outbound', destination_ref: destinationRef, runtime_node_id: runtimeNodeId || null },
+      [201],
+      { 'Idempotency-Key': idempotencyKey },
+    ),
+  operations: (callId: string, params: { page?: number; per_page?: number } = {}) =>
+    fetchJson<{ data: CallOperation[]; pagination: CallPagination }>(`/api/v1/calls/${callId}/operations${paginatedQuery(params)}`),
+  submitOperation: (
+    callId: string,
+    operationType: string,
+    targetLegId: string | null,
+    payload: Record<string, unknown>,
+    idempotencyKey: string,
+  ) => postJson<{ data: CallOperation }>(
+    `/api/v1/calls/${callId}/operations`,
+    { operation_type: operationType, target_leg_id: targetLegId, payload },
+    [202],
+    { 'Idempotency-Key': idempotencyKey },
+  ),
+  timeline: (callId: string, params: { page?: number; per_page?: number } = {}) =>
+    fetchJson<{ data: CallTimelineEntry[]; pagination: CallPagination }>(`/api/v1/calls/${callId}/timeline${paginatedQuery(params)}`),
   isApiRequestError: (error: unknown): error is ApiRequestError => error instanceof ApiRequestError,
 }
 

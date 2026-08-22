@@ -25,6 +25,12 @@ return [
         'telephony.conferences.manage' => ['scope' => 'tenant', 'description' => 'Manage tenant conferences and desired state'],
         'telephony.conferences.join' => ['scope' => 'tenant', 'description' => 'Join open tenant conferences through an active control session'],
         'telephony.conferences.participants.manage' => ['scope' => 'tenant', 'description' => 'Manage tenant conference participants'],
+        'telephony.calls.view' => ['scope' => 'tenant', 'description' => 'View tenant calls'],
+        'telephony.calls.view_own' => ['scope' => 'tenant', 'description' => 'View owned calls'],
+        'telephony.calls.originate' => ['scope' => 'tenant', 'description' => 'Originate calls'],
+        'telephony.calls.control' => ['scope' => 'tenant', 'description' => 'Control calls'],
+        'telephony.calls.record' => ['scope' => 'tenant', 'description' => 'Control call recording'],
+        'telephony.calls.manage' => ['scope' => 'tenant', 'description' => 'Manage tenant calls'],
     ],
 
     'roles' => [
@@ -54,6 +60,7 @@ return [
                 'telephony.conferences.manage',
                 'telephony.conferences.join',
                 'telephony.conferences.participants.manage',
+                'telephony.calls.view', 'telephony.calls.view_own', 'telephony.calls.originate', 'telephony.calls.control', 'telephony.calls.record', 'telephony.calls.manage',
                 'runtime.nodes.view',
                 'runtime.nodes.manage',
                 'runtime.credentials.rotate',

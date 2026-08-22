@@ -7,12 +7,8 @@ secretGenerator:
     namespace: utcp-runtime
     envs:
       - local-asterisk-ari-credentials.properties
-configMapGenerator:
-  - name: asterisk-local-sip-fixtures
-    namespace: utcp-runtime
-    files:
-      - extensions.local.conf
 resources:
+  - ../../../components/asterisk-sip-fixtures
   - ../../../base/runtime
 images:
   - name: utcp-asterisk-ari

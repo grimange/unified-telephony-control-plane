@@ -7,6 +7,7 @@ use App\RuntimeEngine\Commands\RuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeConferenceInspectionAdapter;
 use App\RuntimeEngine\Commands\RuntimeConferenceInspectionResult;
 use App\RuntimeEngine\Events\RuntimeEventReceiptRepository;
+use App\TelephonyDomain\CallOperationCatalog;
 use App\TelephonyDomain\TelephonyDomainService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -45,7 +46,9 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
                 'conference.participant.ensure' => $this->ensureParticipant($operation, $node),
                 'conference.participant.remove' => $this->removeParticipant($operation, $node),
                 'runtime.node.verify_conference_absent' => $this->verifyConferenceAbsent($operation, $node),
-                default => $this->failure(FailureClass::UnsupportedCapability, 'asterisk_operation_unsupported', 'Asterisk ARI adapter does not support this operation.'),
+                default => array_key_exists($operationType, CallOperationCatalog::all())
+                    ? $this->callOperationMatch($operationType, $operation, $node)
+                    : $this->failure(FailureClass::UnsupportedCapability, 'asterisk_operation_unsupported', 'Asterisk ARI adapter does not support this operation.'),
             };
         } catch (AsteriskAriException $exception) {
             Log::warning('asterisk ari operation failed', [
@@ -59,6 +62,67 @@ final class AsteriskRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceI
 
             return $this->failure($exception->failureClass, $exception->failureCode, $exception->getMessage(), $exception->retryable);
         }
+    }
+
+    /** @return array<string, mixed> */
+    private function callOperationMatch(string $operationType, array $operation, object $node): array
+    {
+        if (! array_key_exists($operationType, CallOperationCatalog::all())) {
+            return $this->failure(FailureClass::UnsupportedCapability, 'asterisk_operation_unsupported', 'Asterisk ARI adapter does not support this operation.');
+        }
+
+        $target = (string) ($operation['aggregate_type'] ?? '');
+        $payload = is_array($operation['payload'] ?? null) ? $operation['payload'] : [];
+        $tenantId = (string) $node->tenant_id;
+        $legs = [];
+
+        if ($target === 'call_leg') {
+            $leg = DB::table('call_legs')->where('tenant_id', $tenantId)->where('id', (string) ($operation['aggregate_id'] ?? ''))->first();
+            if ($leg === null || (string) $leg->runtime_node_id !== (string) $node->id) {
+                return $this->failure(FailureClass::Conflict, 'asterisk_call_leg_target_stale', 'CallLeg is not owned by the selected Asterisk runtime node.');
+            }
+            $expected = is_string($payload['runtime_channel_id'] ?? null) ? $payload['runtime_channel_id'] : null;
+            if ($expected !== null && $expected !== (string) ($leg->runtime_channel_id ?? '')) {
+                return $this->failure(FailureClass::Conflict, 'asterisk_call_leg_target_stale', 'CallLeg runtime channel is no longer current.');
+            }
+            if ($operationType !== 'call.leg.originate' && (string) ($leg->runtime_channel_id ?? '') === '') {
+                return $this->failure(FailureClass::Conflict, 'asterisk_call_channel_unbound', 'CallLeg has no current Asterisk runtime channel.');
+            }
+            if ((string) ($leg->runtime_channel_id ?? '') !== '' && $this->conferenceOwnsChannel($tenantId, (string) $node->id, (string) $leg->runtime_channel_id)) {
+                return $this->failure(FailureClass::Conflict, 'asterisk_conference_channel_not_generic', 'Conference-owned channels are not generic CallLeg targets.');
+            }
+            $legs[] = $leg;
+        } elseif ($target === 'call') {
+            $call = DB::table('calls')->where('tenant_id', $tenantId)->where('id', (string) ($operation['aggregate_id'] ?? ''))->first();
+            if ($call === null) {
+                return $this->failure(FailureClass::InvalidRequest, 'asterisk_call_target_not_found', 'Call target was not found for this tenant.');
+            }
+            $legs = DB::table('call_legs')->where('tenant_id', $tenantId)->where('call_id', (string) $call->id)->where('runtime_node_id', (string) $node->id)->whereNotNull('runtime_channel_id')->get()->all();
+        } elseif ($target === 'relationship') {
+            foreach (($payload['leg_ids'] ?? []) as $legId) {
+                $leg = DB::table('call_legs')->where('tenant_id', $tenantId)->where('id', (string) $legId)->first();
+                if ($leg === null || (string) $leg->call_id !== (string) ($operation['aggregate_id'] ?? '') || (string) $leg->runtime_node_id !== (string) $node->id || (string) ($leg->runtime_channel_id ?? '') === '') {
+                    return $this->failure(FailureClass::Conflict, 'asterisk_relationship_target_stale', 'Relationship legs are not current same-call Asterisk targets.');
+                }
+                if ($this->conferenceOwnsChannel($tenantId, (string) $node->id, (string) $leg->runtime_channel_id)) {
+                    return $this->failure(FailureClass::Conflict, 'asterisk_conference_channel_not_generic', 'Conference-owned channels are not generic CallLeg targets.');
+                }
+                $legs[] = $leg;
+            }
+        }
+
+        return $this->completed('runtime_operation.asterisk_call_executed', $operation, $this->client->executeCallOperation(
+            $tenantId,
+            (string) $node->id,
+            $operationType,
+            $payload,
+            array_map(static fn (object $leg): array => ['id' => (string) $leg->id, 'call_id' => (string) $leg->call_id, 'runtime_channel_id' => (string) $leg->runtime_channel_id], $legs),
+        ));
+    }
+
+    private function conferenceOwnsChannel(string $tenantId, string $runtimeNodeId, string $channelId): bool
+    {
+        return AsteriskConferenceChannelOwnership::owns($tenantId, $runtimeNodeId, $channelId);
     }
 
     public function inspectConferenceRuntime(string $tenantId, string $runtimeNodeId, string $conferenceId, ?string $participantId = null): RuntimeConferenceInspectionResult

@@ -526,14 +526,12 @@
                       :aria-describedby="describedBy"
                       :invalid="invalid"
                     >
-                      <option value="https">
-                        HTTPS
-                      </option>
-                      <option value="wss">
-                        WSS
-                      </option>
-                      <option value="tcp">
-                        TCP
+                      <option
+                        v-for="option in endpointTransportOptions"
+                        :key="option.key"
+                        :value="option.key"
+                      >
+                        {{ option.label }}
                       </option>
                     </UiSelect>
                   </template>
@@ -626,14 +624,12 @@
                       v-model="runtimeEndpointEditForm(endpoint).transport"
                       aria-label="Endpoint transport"
                     >
-                      <option value="https">
-                        HTTPS
-                      </option>
-                      <option value="wss">
-                        WSS
-                      </option>
-                      <option value="tcp">
-                        TCP
+                      <option
+                        v-for="option in endpointTransportOptions"
+                        :key="option.key"
+                        :value="option.key"
+                      >
+                        {{ option.label }}
                       </option>
                     </UiSelect>
                     <UiTextInput
@@ -658,14 +654,12 @@
                       v-model="runtimeEndpointEditForm(endpoint).tls_mode"
                       aria-label="Endpoint TLS mode"
                     >
-                      <option value="verify">
-                        Verify TLS
-                      </option>
-                      <option value="insecure">
-                        Allow insecure TLS
-                      </option>
-                      <option value="none">
-                        No TLS
+                      <option
+                        v-for="option in endpointTlsModeOptions"
+                        :key="option.key"
+                        :value="option.key"
+                      >
+                        {{ option.label }}
                       </option>
                     </UiSelect>
                     <UiTextInput
@@ -1006,6 +1000,7 @@ import { useListQueryState } from '../composables/listQueryState'
 import { identityApi, type RuntimeNode } from '../api/platform'
 import { router } from '../router'
 import { managedDeprovisioningLabel, managedProvisioningLabel, runtimeNodePrimaryStatus } from './runtimeNodeManagementPresentation'
+import { catalogOptions } from './runtimeCatalogPresentation'
 import {
   disconnectRuntimeNodeRealtime,
   resynchronizeRuntimeNodeRealtime,
@@ -1104,6 +1099,9 @@ const runtimeNodeRealtimeStatusCategory = computed((): 'success' | 'warning' | '
 
   return 'neutral'
 })
+
+const endpointTransportOptions = computed(() => catalogOptions(runtimeCatalog.value?.endpoint_transports))
+const endpointTlsModeOptions = computed(() => catalogOptions(runtimeCatalog.value?.endpoint_tls_modes))
 
 function runtimeStatusCategory(status: string): 'success' | 'warning' | 'danger' | 'neutral' | 'information' {
   if (['active', 'ready', 'healthy', 'observed'].includes(status)) return 'success'

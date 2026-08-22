@@ -21,6 +21,10 @@ kube apply -k "$K8S_MIGRATION_OVERLAY"
 wait_migration
 
 kube apply -k "$K8S_PLATFORM_OVERLAY"
+for deployment in api asterisk-ari-events control-plane-outbox-dispatcher gateway kamailio kamailio-registration-observer reverb rtpengine scheduler simulator-event-source telephony-command-worker telephony-event-normalizer telephony-reconciler utcp-runtime-fence-worker web worker; do
+  kube -n "$K8S_PLATFORM_NAMESPACE" rollout restart "deployment/$deployment"
+done
+kube -n "$K8S_RUNTIME_NAMESPACE" rollout restart deployment/asterisk-ari
 wait_platform
 
 "$SCRIPT_DIR/status"

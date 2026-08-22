@@ -7,6 +7,7 @@ UTCP must not silently transfer authority from one component to another.
 | Business policy, tenant policy, desired state, reconciliation decisions, audit history | UTCP |
 | Users, tenants, memberships, account status, membership status, tenant status, built-in roles, capabilities, and role assignments | PostgreSQL through UTCP identity services |
 | Runtime nodes, endpoint configuration, encrypted credential metadata, declared runtime capabilities, placement metadata, desired lifecycle state, and registry audit history | PostgreSQL through UTCP runtime registry services |
+| Kubernetes Node/host existence, conditions, addresses, capacity, labels, taints, cordon state, and Pod placement | Kubernetes API; UTCP may observe and normalize these facts but must not become their canonical authority |
 | Runtime operations, outbox dispatch state, raw runtime-event receipts, observations, projection checkpoints, reconciliation state, leases, and fencing | PostgreSQL through UTCP runtime engine services |
 | Browser session authentication | Laravel session authentication; Redis may store transient session state only |
 | Canonical persisted business records | PostgreSQL |
@@ -30,6 +31,8 @@ UTCP must not silently transfer authority from one component to another.
 - Platform authority and tenant membership are distinct. Platform administrators are not modeled as members of a fabricated system tenant.
 - WebSocket and Reverb messages notify clients. They must not be the only record of a business transition.
 - Kubernetes placement and readiness signals must not encode tenant or telephony business policy.
+- A Kubernetes Node/host is not a UTCP `RuntimeNode`: one Kubernetes Node may host zero, one, or multiple telephony runtimes. Kubernetes remains authoritative for infrastructure facts; UTCP owns the telephony interpretation of those facts.
+- Future Host visibility and maintenance actions must use the canonical UTCP API, authorization, audit, and reconciliation boundaries. UTCP is not a generic Kubernetes dashboard and must not expose arbitrary `kubectl` passthrough.
 - Kubernetes NetworkPolicies protect current namespace and service boundaries. They must not pre-authorize future telephony, media, or runtime paths before those workloads exist.
 - Observability records runtime signals. Metrics, logs, dashboards, and alerts do not become canonical business state or reconciliation authority.
 - Runtime-operation ownership, idempotency, inbox deduplication, outbox persistence, and audit records are PostgreSQL-backed application-kernel authority. Redis may deliver queue work later, but Redis must not decide operation ownership or become the canonical operation ledger.

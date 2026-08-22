@@ -41,6 +41,7 @@ return [
         'participant_joined' => 'simulator.conference.participant_joined',
         'participant_left' => 'simulator.conference.participant_left',
         'participant_failed' => 'simulator.conference.participant_failed',
+        'call_observation' => 'simulator.call.observation',
     ],
 
     'batch_size' => env('UTCP_SIMULATOR_BATCH_SIZE', 10),

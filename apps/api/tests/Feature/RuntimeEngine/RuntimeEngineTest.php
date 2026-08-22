@@ -28,6 +28,7 @@ use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use App\RuntimeEngine\Reconciliation\ReconciliationResult;
 use App\RuntimeEngine\Reconciliation\ReconciliationWorker;
 use App\RuntimeEngine\Sources\EventSourceRepository;
+use App\TelephonyDomain\CallDomainService;
 use DomainException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -118,6 +119,7 @@ final class RuntimeEngineTest extends TestCase
                 new TestRuntimeHandler('test.operation.terminal', 'terminal_failure'),
             ]),
             new RuntimeAdapterRegistry([new TestRuntimeAdapter]),
+            app(CallDomainService::class),
         );
 
         $successId = $operations->create('test.operation.success', 'runtime_node', $nodeId, ['safe' => true], $context, runtimeNodeId: $nodeId);
@@ -156,6 +158,7 @@ final class RuntimeEngineTest extends TestCase
                 new TestRuntimeHandler('runtime.node.runtime.fence', 'completed'),
             ]),
             new RuntimeAdapterRegistry([new TestRuntimeAdapter]),
+            app(CallDomainService::class),
         );
 
         $normalId = $operations->create('test.operation.normal', 'runtime_node', $nodeId, ['safe' => true], $context, runtimeNodeId: $nodeId);
@@ -194,6 +197,7 @@ final class RuntimeEngineTest extends TestCase
                 new TestRuntimeHandler('runtime.node.runtime.fence', 'completed'),
             ]),
             new RuntimeAdapterRegistry([new TestRuntimeAdapter]),
+            app(CallDomainService::class),
         );
 
         $normalId = $operations->create('test.operation.normal', 'runtime_node', $nodeId, ['safe' => true], $context, runtimeNodeId: $nodeId);
@@ -215,6 +219,7 @@ final class RuntimeEngineTest extends TestCase
                 new TestRuntimeHandler('test.operation.normal', 'completed'),
             ]),
             new RuntimeAdapterRegistry([new TestRuntimeAdapter]),
+            app(CallDomainService::class),
         );
 
         $this->expectException(\InvalidArgumentException::class);
@@ -832,6 +837,53 @@ final class RuntimeEngineTest extends TestCase
         $this->assertSame($baseline, $this->runtimeReconciliationOutboxCount());
     }
 
+    public function test_superseded_reconciliation_claim_is_skipped_and_next_claim_is_processed(): void
+    {
+        [$tenantId, $firstNodeId] = $this->runtimeNode('active', 'superseded-claim-first');
+        [, $secondNodeId] = $this->runtimeNode('active', 'superseded-claim-second');
+        $repository = new ReconciliationRepository;
+        $firstStateId = $repository->ensureTarget($tenantId, 'runtime_node', $firstNodeId, 1);
+        $secondStateId = $repository->ensureTarget($tenantId, 'runtime_node', $secondNodeId, 1);
+        $reconciler = new SupersedingThenConvergedReconciler($firstStateId);
+        $worker = new ReconciliationWorker(
+            $repository,
+            new ReconcilerRegistry([$reconciler]),
+            new RuntimeOperationRepository,
+        );
+
+        $this->assertSame(1, $worker->workOnce('reconciler-lease-loss', batchSize: 2));
+        $this->assertSame(2, $reconciler->evaluations);
+        $this->assertDatabaseHas('runtime_reconciliation_states', [
+            'id' => $firstStateId,
+            'lease_owner' => 'replacement-worker',
+            'lease_token' => 'replacement-token',
+        ]);
+        $this->assertDatabaseHas('runtime_reconciliation_states', [
+            'id' => $secondStateId,
+            'status' => 'converged',
+            'lease_owner' => null,
+        ]);
+        $this->assertDatabaseMissing('runtime_operations', [
+            'aggregate_id' => $firstNodeId,
+            'operation_type' => 'test.operation.reconcile',
+        ]);
+    }
+
+    public function test_unexpected_reconciliation_exception_is_not_silently_swallowed(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('active', 'unexpected-reconciliation-failure');
+        $repository = new ReconciliationRepository;
+        $repository->ensureTarget($tenantId, 'runtime_node', $nodeId, 1);
+        $worker = new ReconciliationWorker(
+            $repository,
+            new ReconcilerRegistry([new ThrowingReconciler]),
+            new RuntimeOperationRepository,
+        );
+
+        $this->expectException(\RuntimeException::class);
+        $worker->workOnce('reconciler-unexpected-failure', batchSize: 1);
+    }
+
     public function test_claim_due_only_changes_lease_fields_and_emits_no_reconciliation_events(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode('active', 'claim-silent-node');
@@ -1271,6 +1323,47 @@ final class OperationRequiredReconciler implements Reconciler
             'test.operation.reconcile',
             ['action' => 'refresh'],
         );
+    }
+}
+
+final class SupersedingThenConvergedReconciler implements Reconciler
+{
+    public int $evaluations = 0;
+
+    public function __construct(private readonly string $supersededStateId) {}
+
+    public function targetType(): string
+    {
+        return 'runtime_node';
+    }
+
+    public function evaluate(object $state): ReconciliationResult
+    {
+        $this->evaluations++;
+
+        if ($this->evaluations === 1) {
+            DB::table('runtime_reconciliation_states')->where('id', $this->supersededStateId)->update([
+                'lease_owner' => 'replacement-worker',
+                'lease_token' => 'replacement-token',
+                'lease_expires_at' => now()->addMinute(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        return ReconciliationResult::converged(0);
+    }
+}
+
+final class ThrowingReconciler implements Reconciler
+{
+    public function targetType(): string
+    {
+        return 'runtime_node';
+    }
+
+    public function evaluate(object $state): ReconciliationResult
+    {
+        throw new \RuntimeException('unexpected reconciliation failure');
     }
 }
 

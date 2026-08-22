@@ -242,6 +242,15 @@ final class ReconciliationRepository
         });
     }
 
+    public function isCurrent(string $id, string $leaseToken): bool
+    {
+        return DB::table('runtime_reconciliation_states')
+            ->where('id', $id)
+            ->where('lease_token', $leaseToken)
+            ->where('lease_expires_at', '>', now())
+            ->exists();
+    }
+
     /**
      * @param  array{status:string,desired_generation:int,observed_generation:int|null,last_operation_id:string|null,blocked_reason:string|null}  $prior
      * @param  array{status:string,desired_generation:int,observed_generation:int|null,last_operation_id:string|null,blocked_reason:string|null}  $next

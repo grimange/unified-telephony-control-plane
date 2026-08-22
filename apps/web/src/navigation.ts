@@ -38,6 +38,7 @@ export const navigationEntries: NavigationEntry[] = [
     isVisible: (session) =>
       ['telephony.sessions.view_own', 'telephony.signaling.view_own'].every((capability) => hasCapability(session, capability)),
   },
+  { route: '/calls', label: 'Calls', group: 'runtime-control', exact: true, requiredCapability: 'telephony.calls.view', requiresActiveTenant: true },
   { route: '/admin/tenants', label: 'Tenants', group: 'access-tenancy', exact: true, requiredCapability: 'platform.tenants.view' },
   {
     route: '/admin/users',

@@ -2,13 +2,24 @@
 
 namespace App\RuntimeAdapters\Asterisk;
 
+use App\ControlPlane\Shared\ExecutionContext;
+use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClient;
+use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClientException;
 use App\RuntimeEngine\Reconciliation\Reconciler;
 use App\RuntimeEngine\Reconciliation\ReconciliationResult;
+use App\RuntimeProvisioning\ManagedAsteriskProvisioningOperationHandler;
+use App\RuntimeRegistry\RuntimeRegistryService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 final class AsteriskRuntimeNodeReconciler implements Reconciler
 {
-    public function __construct(private readonly AsteriskCatalog $catalog) {}
+    public function __construct(
+        private readonly AsteriskCatalog $catalog,
+        private readonly ?RuntimeRegistryService $registry = null,
+        private readonly ?KubernetesWorkloadClient $kubernetes = null,
+        private readonly ?ManagedAsteriskProvisioningOperationHandler $provisioning = null,
+    ) {}
 
     public function targetType(): string
     {
@@ -44,6 +55,20 @@ final class AsteriskRuntimeNodeReconciler implements Reconciler
             return ReconciliationResult::blocked('asterisk_ari_configuration_incomplete');
         }
 
+        if ($this->registry !== null && $this->registry->isManagedNode((string) $node->tenant_id, (string) $node->id)) {
+            if (! $this->convergeManagedDeployment($node)) {
+                return ReconciliationResult::waiting('managed_deployment_convergence_failed', 30);
+            }
+
+            $this->registry->ensureManagedCapabilities(
+                ExecutionContext::system(tenantId: (string) $node->tenant_id, reason: 'managed Asterisk capability convergence', origin: 'runtime-engine'),
+                (string) $node->tenant_id,
+                (string) $node->id,
+                config('runtime_registry.adapter_keys.asterisk-ari.supported_capabilities', []),
+            );
+            $node = DB::table('runtime_nodes')->where('id', $node->id)->first();
+        }
+
         $lastOperation = $target->last_operation_id === null ? null : DB::table('runtime_operations')->where('id', $target->last_operation_id)->first();
         if ($lastOperation !== null && $lastOperation->status === 'terminal_failed') {
             $class = (string) ($lastOperation->last_failure_class ?? '');
@@ -67,6 +92,30 @@ final class AsteriskRuntimeNodeReconciler implements Reconciler
             'configuration_generation' => (int) $node->configuration_version,
             'reason' => 'asterisk_ari_readiness_missing',
         ], 'asterisk_ari_readiness_missing');
+    }
+
+    private function convergeManagedDeployment(object $node): bool
+    {
+        if ($this->kubernetes === null || $this->provisioning === null) {
+            return true;
+        }
+
+        try {
+            $this->kubernetes->applyDeployment(
+                $this->provisioning->desiredDeployment((string) $node->id, (string) $node->slug),
+                (string) $node->slug,
+            );
+
+            return true;
+        } catch (KubernetesWorkloadClientException $exception) {
+            Log::warning('managed Asterisk Deployment convergence failed', [
+                'component' => 'telephony-reconciler',
+                'runtime_node_id' => (string) $node->id,
+                'reason' => $exception->reason,
+            ]);
+
+            return false;
+        }
     }
 
     private function hasRequiredShape(string $runtimeNodeId): bool

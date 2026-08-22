@@ -2,6 +2,10 @@
 
 This is the executable repository roadmap: actual phase ordering, phase objectives and boundaries, current completion state, the next actionable phase, and links to evidence and ADRs. It is synchronized against the two upstream planning documents and against repository-proven state (ADRs, evidence, runbooks, tests, live proof).
 
+**C6 natural-live-proof readiness corrections (2026-08-21): IMPLEMENTED / TESTED; C6E natural proof pending.** The forward identity migration synchronizes current configured capabilities into already-migrated databases; the normal managed Asterisk reconciliation path converges system-owned capabilities idempotently; managed Asterisk projects the proof-only `c6-generic-proof` Stasis destination without changing conference or T3 Echo routing; and the canonical local mutable-image apply workflow automatically rolls affected deployments. No frontend, call schema, runtime authority, T4, C7, or live-call proof changes are included. Evidence: [`docs/evidence/c6/c6-natural-live-proof-readiness-corrections.md`](../evidence/c6/c6-natural-live-proof-readiness-corrections.md).
+
+**Multi-machine infrastructure direction (2026-08-22): ROADMAP-DEFINED / PLANNED.** ADR-024 establishes Kubernetes Host/Node awareness as a separate K-series track. The first future slice, K5 Host Visibility, is read-only and covers Node discovery, Host inventory, basic readiness/capacity, workload placement, RuntimeNode association, and an operator-oriented Admin UI surface. It does not change the primary `RT-1 -> C6 -> T4 -> C7` sequence or make Host visibility a C6 or T4 prerequisite.
+
 ## Document Hierarchy
 
 Five documents share roadmap responsibility. Each has one job; none should duplicate another's.
@@ -31,6 +35,7 @@ K1  Kubernetes application base
 K2  Traefik and Gateway API
 K3  Kubernetes security boundaries
 K4  Initial observability
+K5  Host visibility and telephony placement awareness (planned side track)
 C0  Control-plane application kernel
 C1  Identity, tenancy, and authorization
 C2  Runtime registry and runtime-node management
@@ -42,18 +47,203 @@ T1  Kamailio SIP-over-WSS signaling
 T2  Asterisk conference execution
 T3  rtpengine browser media
 V0  Natural login, SIP registration, and conference admission        [complete]
-RT-1 Realtime control-plane UI notifications                         [in progress: RT-1A complete]
-T4  FreeSWITCH ESL adapter parity
-T5  Multi-runtime convergence, failover, and recovery
-C6  Call lifecycle and normalized call-control domain          [extended scope, not yet started]
-C7  External trunk, route, and caller-identity authority        [extended scope, not yet started]
-T6  External trunk integration and live route projection        [extended scope, not yet started]
-V1  Call lifecycle, call control, and external trunk proof       [extended scope, not yet started]
-A0  Reference application contract                              [extended scope, not yet started]
+RT-1 Horizontal runtime-resource expansion                             [RT-1A complete]
+C6  Canonical call lifecycle and normalized call control          [next]
+T4  FreeSWITCH call-control adapter parity                         [after C6]
+C7A External connectivity, telephony addressing, and caller identity [planned]
+C7B Inbound/outbound route and destination authority                  [planned]
+T6  Live external connectivity and route projection                  [planned]
+V1  Bidirectional external call routing and control                   [planned]
+A0  Reference consumers                                                [planned]
 R0  Portfolio release
 ```
 
-F0 through T1 are complete exactly as `CLAUDE.md` orders them. T2 through T5/R0 are the same five phases `CLAUDE.md` already names, in the same order. C6, C7, T6, V1, and A0 are added between T5 and R0 to carry forward the initial plan's full product scope (see "Phase-Identifier Reconciliation" below for why they sit here and not earlier).
+F0 through T1 are complete exactly as `CLAUDE.md` orders them. T2, T3, V0, and
+the prior T4/T5 records remain preserved as historical/current status records;
+T5 is complete and is not restored as pending work. The
+active post-RH-3 sequence is the horizontal RT-1 track, then C6, T4, C7A, C7B,
+T6, V1, A0, and R0. C7 remains one top-level roadmap identity and is executed
+through the two bounded C7A and C7B corridors below. This revision does not
+renumber completed phases or erase the historical reconciliation that explains
+the earlier placement.
+
+## Post-RH-3 Foundation Revision — Current Executable Direction
+
+This section is the current executable direction after RH-3. It is a roadmap
+contract, not an implementation claim. RH-3 is **COMPLETE / LIVE PROVEN /
+SIMPLIFICATION COMPLETE / FROZEN**. No application, schema, API, runtime, or
+infrastructure work is part of this documentation revision.
+
+### Product boundary
+
+UTCP is a vendor-neutral telephony control plane. It owns foundational,
+reusable telephony authority, normalized runtime operations, lifecycle
+coordination, routing decisions, and auditability. It is not a campaign dialer,
+CRM, contact-center application, predictive dialing engine, full IVR authoring
+product, visual workflow editor, billing platform, or carrier settlement
+system. Applications own campaign membership, lead and CRM decisions, pacing,
+workflow meaning, disposition, and reporting.
+
+### C6 — Canonical Call Lifecycle & Normalized Call Control
+
+C6 defines the canonical `Call`, `CallLeg`, `CallParticipant`, `CallOperation`,
+`CallObservation`, `CallRouteDecision`, `CallTermination`, and
+`CallTimelineEntry` model and capability-aware operations. The lifecycle must
+support both calls originated by an application and calls first observed or
+adopted from an external/runtime source. An inbound call therefore enters
+through a normalized inbound entry concept/state (for example, `OFFERED`),
+rather than being forced through the outbound-only
+`REQUESTED -> SELECTING_ROUTE -> ORIGINATING` sequence. The final state name is
+chosen by the C6 contract and is not prescribed by Asterisk or FreeSWITCH.
+
+In addition to existing control operations, C6 adds:
+
+- a normalized DTMF-received observation on a `CallLeg`, representing an
+  observed digit/event without assigning business meaning; and
+- low-level `playMedia` and `stopMedia` operations for media playback on a
+  leg.
+
+An application may interpret digit `1` as Sales; UTCP only reports the
+observation. Recording control remains separate from recording storage,
+retention, and compliance workflow. The simulator remains required for C6
+contract tests.
+
+### T4 — FreeSWITCH Call-Control Adapter Parity
+
+T4 implements and proves the normalized C6 adapter contract through FreeSWITCH
+ESL. It consumes C6 and does not invent alternate FreeSWITCH call semantics.
+The proof is that the same normalized C6 operation contract can execute through
+the Asterisk and FreeSWITCH adapters, with adapter-specific behavior hidden
+behind the normalized contract. Existing FreeSWITCH SIP/media parity remains
+historical evidence; no ESL call-control implementation is claimed here.
+
+T4 follows C6 because normalized call-control parity cannot be proven before
+C6 defines the normalized contract. T4 should precede C7 because validating
+that contract against a second real runtime prevents later routing and address
+domains from building on accidentally Asterisk-shaped semantics. T4 is
+deferred from its previous numeric position, not removed.
+
+### C7 — External authority, split into two bounded corridors
+
+#### C7A — External Connectivity, Telephony Addressing & Caller Identity
+
+C7A defines tenant-owned, lifecycle-aware and readiness-aware:
+`ExternalTrunk`, `TrunkEndpoint`, `TrunkCredentialReference` (or the existing
+equivalent), `TelephonyAddress`, `CallerIdentity`, and
+`CallerIdentityPolicy`. It answers who owns an address, which tenant and
+external trunk/provider relationship it belongs to, whether it is active or
+disabled, whether it is eligible for inbound routing or caller identity, what
+route/destination assignment applies, and what audit history exists.
+
+`TelephonyAddress` is the runtime-neutral canonical concept, not an abstraction
+named simply `DID`. It may represent E.164/DID addresses, SIP URIs, and logical
+extensions where supported. C7A does not own number purchasing, number
+porting, carrier commercial inventory, billing, or settlement; those remain
+provider/commercial extensions.
+
+#### C7B — Inbound/Outbound Route & Destination Authority
+
+C7B defines `InboundRoute`, `OutboundRoute`, `RouteConstraint`, `RouteDecision`,
+and the normalized `DestinationRef`. A `DestinationRef` contains no runtime
+fields such as an Asterisk dialplan context or PJSIP endpoint, a FreeSWITCH
+Sofia profile or XML dialplan destination, or a Kamailio dispatcher ID. Its
+extensible classes may include a telephony identity, conference, application
+endpoint, external destination, and a reserved future queue destination.
+
+Canonical inbound resolution is:
+
+```text
+External SIP peer
+  -> ExternalTrunk
+  -> called TelephonyAddress
+  -> InboundRoute
+  -> RouteDecision
+  -> DestinationRef
+  -> canonical Call / CallLeg
+  -> runtime or application execution
+```
+
+The canonical API/domain state owns the routing authority; runtime adapters
+and projectors execute the selected result. Canonical outbound resolution is:
+
+```text
+application requests OriginateCall
+  -> outbound route selection
+  -> caller identity policy
+  -> external trunk selection
+  -> runtime selection
+  -> Call / CallLeg execution
+  -> observations, termination, and audit
+```
+
+This is reusable telephony control-plane behavior, not campaign or dialer
+behavior. No campaign, lead list, pacing, predictive dialing, agent
+assignment, disposition, or campaign retry policy belongs in C7.
+
+### T6 — Live External Connectivity / Route Projection
+
+T6 proves projection and application of canonical C7 resources: `ExternalTrunk`,
+`TelephonyAddress` where runtime/network projection is required,
+`InboundRoute`, `OutboundRoute`, `CallerIdentity`, and `DestinationRef`
+resolution. Projection runs through Kamailio and the selected runtime adapter
+where required; canonical C7 APIs do not change based on runtime choice.
+Baseline proof uses synthetic external SIP peers. No commercial carrier is
+required. Kamailio executes projected signaling but never owns tenant,
+trunk, address, caller-identity, route, or runtime-eligibility authority.
+
+### V1 — Bidirectional External Call Routing & Control
+
+V1 proves two provider- and runtime-neutral vertical corridors at the canonical
+API level:
+
+- **Outbound:** authenticated application -> `OriginateCall` -> outbound route
+  -> caller identity -> external trunk -> runtime -> synthetic external peer
+  -> normalized observations and control.
+- **Inbound:** synthetic external peer -> external trunk -> called
+  `TelephonyAddress` -> inbound route -> `DestinationRef` -> canonical
+  `Call` / `CallLeg` -> selected application/runtime destination -> normalized
+  observations and control.
+
+### A0 — Reference Consumers
+
+A0 proves the application boundary through three intentionally small consumers:
+
+- an outbound consumer that originates and controls an external call through
+  UTCP, and is not a campaign dialer;
+- an inbound consumer that receives and owns a routed inbound call through
+  UTCP, and is not a PBX UI; and
+- a minimal IVR consumer that exercises inbound `TelephonyAddress` ->
+  `DestinationRef(application)` -> application acceptance/control ->
+  `playMedia` -> DTMF-received observation -> application-selected
+  `DestinationRef` -> UTCP transfer/redirect -> continued normalized lifecycle.
+
+The minimal IVR consumer must not grow into a full IVR editor, menu
+administration product, or contact-center workflow system.
+
+### Explicit product-boundary deferrals
+
+Queue/ACD is not required for the foundational UTCP release. It may be a
+future application/domain extension; C7B may reserve a future queue
+`DestinationRef` class, but there is no Queue/ACD phase and no skills, agent
+distribution, queue strategy, wrap-up, or workforce logic in this roadmap.
+
+UTCP provides the reusable IVR primitives `answer`, `hangup`, transfer or
+redirect, `bridge`, DTMF-received observation, media playback, media stop, call
+timeline/observations, and `DestinationRef` application handoff. IVR
+applications own menu trees, the meaning of a digit, business hours, CRM
+decisions, prompt sequencing, and visual workflow design.
+
+### Capability catalog
+
+| Capability | Boundary |
+| --- | --- |
+| Call lifecycle; call control; ExternalTrunk; TelephonyAddress / DID authority; inbound routing; outbound routing; CallerIdentity; DestinationRef | CORE |
+| DTMF observation/control; media playback; recording control | CORE primitive |
+| Recording storage; IVR workflow | Application concern |
+| Queue/ACD | FUTURE EXTENSION / DEFERRED |
+| Campaigns; lead management; predictive dialing; CRM; carrier billing/settlement | OUT OF CORE |
+| DID purchasing/porting | PROVIDER EXTENSION |
+| SMS/MMS | SEPARATE DOMAIN / OUT OF CURRENT ROADMAP |
 
 ## UI Foundation Track
 
@@ -105,21 +295,23 @@ The first live slice may use Asterisk, but application API and frontend behavior
 
 ## Second Vertical Slice (Extended Scope)
 
-V1 proves the application-neutral, capability-aware call-control and external-connectivity contract once C6, C7, and T6 exist:
+V1 is the bidirectional, application-neutral call-control and
+external-connectivity slice once C6, C7A, C7B, and T6 exist:
 
 ```text
-Authenticated originate request
-  -> canonical call and call-operation records
-  -> outbound route and caller-identity evaluation
-  -> eligible external trunk and runtime selection
-  -> Kamailio signaling execution
-  -> Asterisk call execution
-  -> normalized call and call-leg observations
-  -> capability-aware call control (hold, resume, transfer, hangup)
-  -> canonical termination and audit timeline
+OUTBOUND: authenticated application
+  -> OriginateCall -> outbound route -> caller identity -> external trunk
+  -> runtime -> synthetic external peer -> normalized observations/control
+
+INBOUND: synthetic external peer
+  -> external trunk -> called TelephonyAddress -> inbound route
+  -> DestinationRef -> canonical Call/CallLeg
+  -> selected application/runtime destination -> normalized observations/control
 ```
 
-V1 is retained here so the roadmap does not silently drop the initial plan's call-lifecycle/external-trunk product scope merely because the current conference-first sequence (C5 → T0 → T1 → T2 → T3 → V0) reaches its own vertical slice first.
+V1 is retained here so the roadmap does not silently drop the initial plan's
+call-lifecycle/external-trunk product scope merely because the current
+conference-first sequence reaches its own vertical slice first.
 
 ## Phase-Identifier Reconciliation
 
@@ -132,7 +324,7 @@ The initial plan and the application plan diverge on C- and T-phase numbering fo
 | rtpengine media-plane phase number | `T2 — rtpengine Media Plane` | `T3 — rtpengine and Browser Media` | Repository `T3` is rtpengine browser media (not yet started; next after T2). | Keep repository/application-plan numbering: rtpengine is `T3`. The initial plan's `T2` label for the same capability is superseded — renumbered to `T3` with no scope change. |
 | External trunk live-integration phase number | `T3 — External Trunk Integration and Live Route Projection` | Not explicitly numbered (folded into "later T-phases") | No repository phase currently claims a `T3` identifier for external trunks — repository `T3` is already claimed by rtpengine (see row above). | Cannot reuse `T3` (conflicts with rtpengine). Assigned the next unclaimed sequential T-number: **`T6`**, continuing the existing T0-T5 convention rather than inventing a new naming scheme. Scope (registration-based and IP-authenticated synthetic trunk projection, inbound/outbound route projection, caller-identity projection, credential-reference rotation, draining/disabling/retirement) is preserved verbatim from the initial plan, plus the Kamailio-dispatcher scope carried forward from the T1 reconciliation row above. |
 | Call-lifecycle/call-control domain phase number | `C6 — Call Lifecycle and Normalized Call-Control Domain` | `C6 — Call Lifecycle and Normalized Call-Control Domain` (same number) | Not started; no repository conflict. | No conflict. Kept as `C6`. |
-| External trunk/route/caller-identity authority phase number | `C7 — External Trunk, Route, and Caller-Identity Authority` | `C7` (same number, named in passing) | Not started; no repository conflict. | No conflict. Kept as `C7`. |
+| External trunk/route/caller-identity authority phase number | `C7 — External Trunk, Route, and Caller-Identity Authority` | `C7` (same number, named in passing) | Not started; no repository conflict. | Keep top-level `C7`, executed as **C7A — External Connectivity, Telephony Addressing & Caller Identity** and **C7B — Inbound/Outbound Route & Destination Authority**. |
 | Call-lifecycle/external-trunk vertical slice | `V1 — Call Lifecycle, Call Control, and External Trunk Vertical Slice` | Not present as a named phase | Not started; no repository conflict (no phase currently uses `V1`). | No conflict. Kept as `V1`, resequenced after `T6` (see Phase Order) since it depends on `C6`, `C7`, and `T6` all existing first. |
 | Reference application phase | `A0 — Reference Application Contract` | Not present | Not started; no repository conflict. | No conflict. Kept as `A0`, immediately before `R0`. |
 
@@ -181,6 +373,19 @@ One-cluster-at-a-time standard local edge on `127.0.0.1:80/443`; Gateway API, Tr
 ### K4 - Kubernetes Observability Foundation — Complete
 
 Prometheus Operator, Prometheus, Alertmanager, Grafana, kube-state-metrics, Loki, and Alloy in `utcp-observability` under restricted PSA and K3 NetworkPolicies; metrics, log ingestion, Grafana provisioning, synthetic alert delivery, persistence, gateway/security regression proof. Evidence: `docs/evidence/k4/kubernetes-observability.md`.
+
+### K5 - Multi-Machine Host Visibility and Telephony Placement Awareness — Planned
+
+K5 is a separate infrastructure track for operating UTCP across Kubernetes
+clusters containing multiple physical or virtual machines. The first slice is
+read-only: discover Kubernetes Nodes, present Host inventory and
+Ready/NotReady/basic capacity, associate workload placement with UTCP
+RuntimeNodes, and expose the result in an operator-oriented Admin UI. Kubernetes
+remains authoritative for Node facts and Pod placement; UTCP owns the
+telephony interpretation, including RuntimeNode eligibility and active-call or
+binding impact. Later planned slices cover placement awareness, capacity and
+failure-domain policy, telephony-aware host maintenance/drain, and multi-site
+or cloud placement. See ADR-024.
 
 ### C0 - Control-Plane Application Kernel — Complete
 
@@ -413,9 +618,16 @@ with real login, a canonical RuntimeNode mutation, notification/refetch, and
 reconnect recovery. Evidence:
 `docs/evidence/rt-1/rt-1a-runtime-node-realtime-notification-vertical-slice.md`.
 
-### T4 - FreeSWITCH ESL Adapter Parity — Planned
+### T4 - FreeSWITCH Call-Control Adapter Parity — Planned
 
-Objective: prove the same registration, call-control, bridge, conference, and observation contracts work against a second execution runtime (`FreeSwitchEslClient`, `FreeSwitchCommandAdapter`, `FreeSwitchEventListener`, `FreeSwitchEventNormalizer`, `FreeSwitchHealthInspector`). Critical proof: the same login page, telephony-session API, SIP registration path, conference-admission API, frontend state machine, and normalized domain events; only adapter selection and runtime execution differ. Completion criteria: both nodes register independently; unsupported capabilities are reported explicitly; Kamailio can route to either runtime; V0 behavior reproduces against FreeSWITCH; no FreeSWITCH-specific branch in application-facing services.
+Objective: implement and prove the normalized C6 call-control adapter contract
+through FreeSWITCH ESL. T4 consumes C6 and does not invent alternate call
+semantics. The critical proof is that the same normalized C6 operation contract
+executes through the Asterisk and FreeSWITCH adapters, with adapter-specific
+behavior hidden behind the normalized contract. Existing FreeSWITCH SIP/media
+parity remains valid historical evidence; no ESL call-control implementation is
+claimed before T4 begins. Registration, bridge, conference, observation, and
+unsupported-capability behavior are proven only where defined by C6.
 
 ### T5 - Multi-Runtime Convergence, Failover, and Recovery — Complete
 
@@ -423,27 +635,157 @@ Objective: harden runtime behavior after both runtime adapters work. Implement e
 
 **Status: Complete.** Closure record: [`docs/evidence/t5/t5-phase-closure.md`](../evidence/t5/t5-phase-closure.md) (`T5_COMPLETE`), which reconciles all 21 canonical T5 criteria to `SATISFIED` against the existing evidence corpus without rerunning any proof. T5 evidence proves the multi-RuntimeNode Asterisk topology, deterministic failover and recovery, listener ownership/liveness/degradation/automatic recovery, symmetric degraded/recovered evidence, deterministic capacity-aware placement, pending-no-capacity and automatic retry, recovery metric-event retention with scheduled pruning, and repository Namespace PSA authority reconciliation. The current Kamailio signaling-cutoff item was re-sequenced out of active T5 because T1 Kamailio is registration-only and has no runtime dialog route to cut off. The controlled live Namespace PSA proof is **complete**: `f959f00` recorded the T5-A78 corridor (declarative apply of the canonical `pod-security-labels.yaml`, all five UTCP namespaces at `restricted`/`v1.35` including the `utcp-runtime` version pins, compliant-Pod admission, `restricted:v1.35`-attributed privileged-Pod rejection, migration-Job admissibility, drift introduction and declarative correction, idempotent reapply, and full workload health) against `utcp-local`, satisfying every point of this document's own deferred live acceptance contract. The final phase-closure evidence — the last outstanding T5 item — is now recorded, so **no T5 implementation, live runtime proof, or documentation work remains**. The primary corridor corpus (`T5-A1` through `T5-A78`) remains at its historical path `docs/evidence/t2/multi-node-failover-readiness.md`; the closure document above is the canonical phase-level T5 index and explains that filing anomaly. See also [`docs/evidence/roadmap/t1-t5-roadmap-reconciliation.md`](../evidence/roadmap/t1-t5-roadmap-reconciliation.md).
 
-### C6 - Call Lifecycle and Normalized Call-Control Domain — Planned (extended scope)
+### C6 - Canonical Call Lifecycle and Normalized Call-Control Domain — C6E1 repository-tested; narrow live proof pending
 
-Objective: establish the canonical multi-leg call model and capability-aware call-control contract used by dialers, contact centers, IVRs, automation, conferences, and real runtime adapters. Core concepts: `Call`, `CallLeg`, `CallParticipant`, `CallOperation`, `CallObservation`, `CallRouteDecision`, `CallTermination`, `CallTimelineEntry`. Normalized lifecycle: `REQUESTED -> SELECTING_ROUTE -> ORIGINATING -> RINGING -> EARLY_MEDIA -> ANSWERED -> BRIDGED -> HELD -> TRANSFERRING -> TERMINATING -> COMPLETED / FAILED / CANCELLED`. Initial call-control operations: `originate`, `cancelOrigination`, `answer`, `hangup`, `hold`, `resume`, `bridge`, `unbridge`, `blindTransfer`, `attendedTransfer`, `redirect`, `mute`, `unmute`, `sendDtmf`, `startRecording`, `stopRecording` (not every adapter must support every operation; unsupported behavior returns an explicit capability result). Completion criteria: a call can be requested through a public UTCP API without naming Asterisk/FreeSWITCH; normalized call/call-leg state is visible via API and web UI; supported simulator call-control operations execute through the adapter contract; unsupported operations fail explicitly; duplicate/delayed/stale/out-of-order observations are handled deterministically; call termination/failure classification is auditable; no real carrier, PSTN identity, or production recording is required.
+**C6A status: COMPLETE — canonical model and operation authority implemented.**
+Wave 1 persistence is exactly `calls` and `call_legs`; call operations reuse
+`runtime_operations`, and future call observations reuse `runtime_observations`.
+C6A declares inbound `OFFERED`, DTMF/media operation seams, and opaque C7 route
+seams without runtime execution. `CallParticipant`, durable `Bridge`, and
+`CallTimelineEntry` are not tables. Existing conference participants remain the
+Option-B authority; conference integration is a future bounded cutover. Evidence:
+[`docs/evidence/c6/c6a-canonical-call-model-and-operation-authority-implementation.md`](../evidence/c6/c6a-canonical-call-model-and-operation-authority-implementation.md).
+
+**C6B status: COMPLETE — handlers, capability gating, and simulator execution implemented and tested.**
+The catalog remains the sole C6 operation vocabulary authority. The existing
+`CommandWorker` capability gate dispatches all 19 catalog operations through
+catalog-derived handlers to the existing simulator `RuntimeAdapter`; missing
+capabilities and invalid normalized payloads fail visibly before adapter
+execution. Simulator acceptance records execution evidence in existing
+simulator state only: C6B creates no observations and does not advance
+observation-confirmed Call or CallLeg state. Idempotency remains owned by
+`runtime_operations`; conference handlers and Option-B conference authority
+are unchanged. Evidence:
+[`docs/evidence/c6/c6b-handlers-capability-gating-and-simulator-execution.md`](../evidence/c6/c6b-handlers-capability-gating-and-simulator-execution.md).
+
+**C6C status: COMPLETE — normalized observation ingress, inbound adoption, and stale/duplicate fencing implemented and tested.**
+The existing `runtime_observations` append-only kernel now routes normalized C6
+facts through `CallObservationProcessor` and `CallDomainService`. Offered
+observations allocate or reuse one tenant-owned inbound Call/CallLeg without
+C7, exact runtime-channel identity and the partial unique fence protect
+adoption, and closed-epoch, duplicate, out-of-order, terminal, bridge, and
+conference-owned-channel cases are deterministic. DTMF received remains an
+observation with no business interpretation. The simulator uses the standard
+receipt/normalizer/projection path and does not mutate canonical state as a
+command-side shortcut. Evidence:
+[`docs/evidence/c6/c6c-observation-ingress-inbound-adoption-and-fencing.md`](../evidence/c6/c6c-observation-ingress-inbound-adoption-and-fencing.md).
+
+**C6D status: COMPLETE — public API, authorization, and derived Call timeline implemented and tested.**
+
+**C6D status: COMPLETE — public API, authorization, and derived Call timeline implemented and tested.** The seven normalized routes are tenant-scoped and use explicit provider-neutral Call, CallLeg, RuntimeOperation, and timeline resources. Operation submission delegates to the existing CallDomainService and `runtime_operations` idempotency authority; authorization is checked before operation creation, while runtime capability remains the worker-time gate. The timeline is a bounded read-only projection over runtime operations, normalized observations, and existing audit records, with deterministic ordering and no `call_timeline_entries` table. Inbound Calls adopted by C6C are readable and controllable without C7. No frontend, adapter, C7, conference, RH, or schema changes were introduced. Evidence: [`docs/evidence/c6/c6d-public-api-authorization-and-call-timeline.md`](../evidence/c6/c6d-public-api-authorization-and-call-timeline.md). **Next: C6E — Asterisk generic call execution and bounded live proof.**
+
+**C6E1 status: IMPLEMENTED / TESTED; PostgreSQL deployment blocker fixed; natural Asterisk proof pending.** The
+existing Asterisk `RuntimeAdapter.execute()` path now executes the normalized
+19-operation C6 catalog with honest capability declarations, exact current
+CallLeg runtime-channel fencing, normalized provider-local ARI request mapping,
+and existing RuntimeOperation failure semantics. Generic ARI facts are
+translated into C6 observations and continue through `runtime_observations`,
+`ProjectionService`, `CallObservationProcessor`, and `CallDomainService`; ARI
+command success does not fabricate observation-confirmed Call/CallLeg state.
+Inbound generic `StasisStart` facts use C6C adoption, while conference-owned
+channels remain under conference authority. No new tables, API, frontend,
+FreeSWITCH, C7, RH, or conference changes were introduced. Evidence:
+[`docs/evidence/c6/c6e-asterisk-generic-call-execution-implementation.md`](../evidence/c6/c6e-asterisk-generic-call-execution-implementation.md).
+**C6 PostgreSQL deployment blocker correction (2026-08-16): IMPLEMENTED / TESTED.**
+The C6 call-leg self-referencing bridge FK is added after the `call_legs` table
+and primary key exist, preserving `ON DELETE SET NULL` and the partial
+runtime-channel uniqueness fence. The existing PostgreSQL migration proof now
+checks the C6 tables, constraints, rollback/reapply, and normal six-capability
+identity synchronization. The narrow outbound Asterisk review also corrected
+deterministic originate-channel correlation: the first matching `stasis_start`
+binds the existing outbound CallLeg through normalized observation processing
+instead of entering inbound adoption. No frontend, conference/RH, C7, or
+FreeSWITCH work was introduced. Evidence:
+[`docs/evidence/c6/c6-postgresql-migration-blocker-correction.md`](../evidence/c6/c6-postgresql-migration-blocker-correction.md).
+**Next: C6E narrow natural Asterisk generic-call proof; T4 remains deferred.**
+
+**C6 reference Call UI (2026-08-16): IMPLEMENTED / TESTED; natural frontend proof pending.** The authenticated `/calls` route is a deliberately small reference consumer of the C6D API. It reads tenant-scoped Calls, CallLegs, operations, and derived timeline entries; creates only the bounded pre-C7 outbound Call intent; displays C6C-adopted inbound `OFFERED` Calls; and submits representative normalized operations through the existing operation resource. Command status is displayed separately from observation-confirmed lifecycle state, with no optimistic telephony mutation and no direct provider call. Evidence: [`docs/evidence/c6/c6-reference-call-ui-implementation.md`](../evidence/c6/c6-reference-call-ui-implementation.md). No backend, schema, adapter, conference, RH, C7, or FreeSWITCH changes were introduced. **Next: C6E narrow natural frontend Asterisk proof; T4 remains deferred.**
+
+Objective: establish the canonical multi-leg call model and capability-aware
+call-control contract used by applications, conferences, and real runtime
+adapters. Core concepts remain `Call`, `CallLeg`, `CallParticipant`,
+`CallOperation`, `CallObservation`, `CallRouteDecision`, `CallTermination`,
+and `CallTimelineEntry`. The lifecycle supports outbound origination and an
+inbound entry state for calls first observed/adopted from an external/runtime
+source; inbound calls are not forced through `REQUESTED -> SELECTING_ROUTE ->
+ORIGINATING`. Add normalized DTMF-received observation on a `CallLeg`, plus
+`playMedia` and `stopMedia` primitives. Existing controls including
+`sendDtmf`, recording control, transfer, bridge, hold, resume, and hangup remain
+capability-aware; recording storage/retention is outside this phase. The
+simulator must exercise the contract, and no Asterisk or FreeSWITCH state name
+is prescribed.
 
 ## Future External-Trunk, Route, and Caller-Identity Roadmap
 
-### C7 - External Trunk, Route, and Caller-Identity Authority — Planned (extended scope)
+### C7A - External Connectivity, Telephony Addressing, and Caller Identity — Planned
 
-Objective: create the canonical management authority for external SIP connectivity, inbound/outbound routing, caller-identity policy, runtime projection, readiness, draining, credential rotation, and retirement. Core concepts: `ExternalTrunk`, `TrunkEndpoint`, `TrunkCredentialReference`, `TrunkCapability`, `TrunkHealthPolicy`, `TrunkProjectionTarget`, `TrunkDesiredProjection`, `TrunkObservedSnapshot`, `InboundRoute`, `OutboundRoute`, `RouteConstraint`, `CallerIdentity`, `CallerIdentityPolicy`, `RouteDecision`. Administrative lifecycle: `DRAFT -> VALIDATING -> ACTIVE -> DRAINING -> DISABLED -> RETIRED`, distinct from observed health: `UNKNOWN / READY / DEGRADED / UNAVAILABLE`. Web-admin management is the primary authority; diagnostic CLI commands may inspect/retry but must not become a second management UI. Secrets are references, never returned through normal read APIs. Completion criteria: trunks/routes/caller identities are manageable through web-admin; cross-tenant visibility/mutation is rejected; credential creation/rotation never exposes stored secrets; activation, observed degradation, draining, disabling, and retirement are proven; a simulator-backed outbound route selects an eligible trunk/runtime deterministically; a simulator-backed inbound route resolves to a normalized application destination; caller-identity policy records deterministic selection/rejection reasons; configuration drift is detected and repaired through C3; no public PSTN or commercial carrier account is required.
+Objective: create canonical authority for `ExternalTrunk`, `TrunkEndpoint`,
+`TrunkCredentialReference`, `TelephonyAddress`, `CallerIdentity`, and
+`CallerIdentityPolicy`, including tenant ownership, lifecycle/readiness,
+credential references, eligibility, audit history, draining, and retirement.
+`TelephonyAddress` represents E.164/DID, SIP URI, or supported logical
+extension classes without making DID purchasing, porting, commercial inventory,
+billing, or settlement a UTCP responsibility. Existing lifecycle and observed
+health distinctions, web-admin authority, secret-reference handling, and
+tenant isolation remain. C7A does not own route or destination resolution;
+those belong to C7B.
+
+### C7B - Inbound/Outbound Route and Destination Authority — Planned
+
+Objective: create canonical authority for `InboundRoute`, `OutboundRoute`,
+`RouteConstraint`, `RouteDecision`, and `DestinationRef`. A DestinationRef is
+runtime-neutral and extensible across telephony identity, conference,
+application endpoint, external destination, and a reserved future queue class;
+it contains no Asterisk, FreeSWITCH, or Kamailio runtime-specific field. The
+canonical inbound resolution is `ExternalTrunk -> called TelephonyAddress ->
+InboundRoute -> RouteDecision -> DestinationRef -> Call/CallLeg`; runtime
+adapters and projectors execute the selected result. Outbound selection remains
+`OriginateCall -> outbound route -> caller identity policy -> external trunk ->
+runtime -> Call/CallLeg`, and is not campaign behavior. Web-admin management,
+tenant isolation, deterministic decisions, and C3 projection/reconciliation
+remain the completion boundaries.
 
 ### T6 - External Trunk Integration and Live Route Projection — Planned (extended scope; renumbered from the initial plan's conflicting `T3` — see Phase-Identifier Reconciliation)
 
-Objective: connect the C7 trunk/route/caller-identity authority to real signaling and execution projections, and carry forward the Kamailio dispatcher-routed, SIP-UDP/TCP, and SIPp-synthetic-traffic scope that the initial plan originally placed in its own (superseded) `T1`. Use a deterministic synthetic external SIP peer (SIPp or a second isolated SIP runtime) as a trunk provider — no paid carrier account, public PSTN access, real customer caller identities, or production credentials required. Initial scope: registration-based and IP-authenticated trunk projection, inbound/outbound route projection, caller-identity projection where supported, trunk OPTIONS/adapter-specific readiness, normalized trunk registration/health observations, route/trunk eligibility updates, credential-reference rotation, draining/disabling behavior, removal of retired projections, one synthetic inbound call, one synthetic outbound call. The projected Kamailio new-dialog destination set must be derived from UTCP canonical call intent, route/trunk decision, and eligible runtime selection. Kamailio executes the route but must not become tenant, trunk, caller-identity, or runtime-eligibility management authority; ineligible, fenced, unavailable, retired, or otherwise disallowed destinations must be absent or disabled in the projected route set, and restoration follows canonical recovery/projection. Completion criteria: one registration-based and one IP-authenticated synthetic trunk become ready; inbound/outbound route decisions are deterministic and auditable; a synthetic outbound call uses the selected route/trunk/Asterisk runtime; a synthetic inbound call resolves to a normalized UTCP destination; trunk degradation removes new-call eligibility per policy; draining blocks new calls while existing calls complete; credential rotation reconciles without exposing secrets; disabling/retirement remove active projections; no manual runtime-file edit is required for normal lifecycle operations.
+Objective: connect C7A/C7B canonical resources to real signaling and execution
+projections, including `ExternalTrunk`, `TelephonyAddress` where network or
+runtime projection requires it, `InboundRoute`, `OutboundRoute`,
+`CallerIdentity`, and `DestinationRef` resolution. Use Kamailio and the
+selected runtime adapter where required; canonical C7 APIs remain unchanged by
+runtime choice. Use deterministic synthetic external SIP peers (SIPp or a
+second isolated SIP runtime) for baseline proof; no commercial carrier is
+required. Prove registration-based and IP-authenticated trunk projection,
+route/caller-identity projection, readiness and health observations,
+credential-reference rotation, draining/disabling/retirement, one synthetic
+inbound call, and one synthetic outbound call. Kamailio executes the projected
+route but never owns tenant, trunk, address, caller-identity, route, or
+runtime-eligibility authority. No manual runtime-file edit is required for the
+normal lifecycle.
 
-### V1 - Call Lifecycle, Call Control, and External Trunk Vertical Slice — Planned (extended scope)
+### V1 - Bidirectional External Call Routing and Control — Planned
 
-The second vertical slice (see "Second Vertical Slice" above). Exit criteria: the request does not name Asterisk, PJSIP, ARI, Kamailio dispatcher IDs, or trunk configuration sections; selected route/caller-identity/trunk/runtime are inspectable with decision reasons; ringing/answer/bridge/termination states are proven; at least one supported mid-call control is proven; one unsupported control returns an explicit capability result; duplicate/delayed runtime observations do not corrupt terminal state; a degraded/draining trunk changes new-call selection deterministically; the complete timeline is visible through API and web UI.
+The second vertical slice (see "Second Vertical Slice" above) proves both the
+outbound and inbound corridors. Exit criteria include runtime-neutral route,
+caller-identity, trunk, address, destination, call-leg, normalized control,
+and audit decisions; one supported mid-call control; one explicit unsupported
+capability result; deterministic degraded/draining selection; and a complete
+timeline visible through API and web UI. Requests do not name Asterisk, PJSIP,
+ARI, Kamailio dispatcher IDs, or trunk configuration sections.
 
-### A0 - Reference Application Contract — Planned (extended scope)
+### A0 - Reference Consumers — Planned
 
-Objective: prove that applications can build on UTCP call, route, trunk, registration, and conference contracts without owning infrastructure or vendor integrations, via a small reference dialer (not a production predictive dialer). Application responsibility: campaign membership, contact selection, call-request timing, simple retry policy, disposition. UTCP responsibility: authorized caller identity, route/trunk/runtime selection, telephony operation execution, normalized call lifecycle, call-control capability handling, infrastructure observations and audit history. Explicitly out of scope: predictive pacing, compliance automation, real-PSTN requirement, production lead management, billing, full reporting, answering-machine detection, large-scale campaign scheduling. Completion criteria: dialer uses public UTCP contracts only; dialer does not directly call ARI/AMI/ESL/Kamailio management interfaces or runtime configuration files; dialer does not store or manage trunk credentials; switching runtimes or changing eligible trunks/route priority requires no dialer code change; simulator demonstration works without telephony hardware; optional live demonstration works through V1 contracts.
+Objective: prove that applications can build on UTCP call, route, trunk,
+address, destination, registration, and conference contracts without owning
+infrastructure or vendor integrations. The three consumers are intentionally
+small: an outbound consumer that is not a campaign dialer; an inbound consumer
+that is not a PBX UI; and a minimal IVR consumer that exercises
+`TelephonyAddress -> DestinationRef(application) -> accept/control ->
+playMedia -> DTMF observation -> application-selected DestinationRef ->
+transfer/redirect`. The IVR consumer must not become a menu editor or workflow
+product. Applications own campaign membership, contact selection, request
+timing, simple retry policy, disposition, and workflow meaning. UTCP owns
+authorized identity, route/trunk/runtime selection, normalized execution,
+capability handling, observations, and audit history.
 
 **T3-S2A repository correction at `df79e8f` closes `PRODUCT_DEFECT-12` and `PRODUCT_DEFECT-13` in the repository and is recorded in [`docs/evidence/t3/t3-s2a-websocket-alias-runtime-guard-correction.md`](../evidence/t3/t3-s2a-websocket-alias-runtime-guard-correction.md).** `PRODUCT_DEFECT-12` is corrected by replacing the dead uppercase WebSocket alias guard with the lowercase live `$proto` values `ws` and `wss` only, keeping `add_contact_alias()` after subscriber authentication and before `record_route()`/Asterisk relay. `PRODUCT_DEFECT-13` is corrected by requiring `$du` to be non-empty after `handle_ruri_alias()` in `route[WITHINDLG]`; explicit `400 Bad Request` failures now distinguish `invalid_dialog_contact_alias` from `missing_dialog_contact_alias`, and neither case can fall through to `.invalid` DNS resolution. Static validation and mutation coverage now reject uppercase or mixed-case compatibility guards, missing WS/WSS coverage, UDP aliasing, alias creation outside the authenticated WebSocket branch, missing alias failure exits, empty-destination DNS fallback, fallback destinations, `$du` overwrites, REGISTER aliasing, stale checksums, and regressions in the existing ACK, client-BYE, Record-Route, unavailable-runtime `503`, DNS-policy, rtpengine, and public-surface contracts. No Kubernetes apply was performed. `PRODUCT_DEFECT-11 = ready for final live closure proof`; T3-S2A is ready for browser-bound BYE reproof; T3-S2 media mediation is Not Started; T3 remains In Progress. **The T3-S2 provider-neutral media live proof at `afced8d` is recorded in `docs/evidence/t3/t3-s2-provider-neutral-media-live-proof.md`: SDP-plane mediation and media-session lifecycle are fully proven, but actual RTP/SRTP media flow is not, so T3-S2 remains In Progress.** Exactly two resources were applied — the corrected `kamailio-config` ConfigMap (sha256 `e064cd33...` to `0d788689...`, adding `rtpengine.so`, the `rtpengine_sock` modparam pointed at the existing internal control Service `udp:rtpengine.utcp-platform.svc.cluster.local:2223`, and the generic `MEDIA_OFFER`, `MEDIA_ANSWER`, `MEDIA_DELETE` and `APPLICATION_RUNTIME_MEDIA_REPLY` routes) and the checksum-coupled `kamailio` Deployment (generation 17 to 18) — producing an automatic ~5-second rollout to ReplicaSet revision 18 with no manual restart, zero ERROR lines, running configuration byte-identical across all four authorities, and the rtpengine module binding its control endpoint at startup. Media authority is provider-neutral by evidence: scanned inside the media routes, ARI, AMI, Asterisk channel identifiers, Asterisk CLI, dialplan state, Pod-IP literals, database media state and Redis media state all occur **zero** times, there is no direct-media or `rtpproxy` fallback anywhere, and REGISTER carries zero media operations. Because no WebRTC-capable SIP client exists in the repository, a disposable one was driven inside the real application origin after a **natural first-party login** through the real login form (including the app's own forced password change), with the page obtaining its SIP credential from its own authenticated session and generating a genuine `RTCPeerConnection` offer (real ICE candidates, real DTLS fingerprint, `UDP/TLS/RTP/SAVPF`, `rtcp-mux`, deterministic 440 Hz Web Audio tone). Proven live: **MEDIA_OFFER** runs once per initial SDP INVITE, rtpengine accepts it, one session is created with ports allocated from the committed `40000-40099` range, and the runtime-facing offer is rewritten to `o=`/`c= 10.42.0.166` with `m=audio 40012 RTP/AVP` — ICE candidates, `ice-ufrag`, `fingerprint` and `setup` all stripped and **zero** browser addresses leaked; **MEDIA_ANSWER** runs once via `APPLICATION_RUNTIME_MEDIA_REPLY` and rewrites the runtime's own `c=IN IP4 10.42.2.150 / m=audio 12682 RTP/AVP` answer into `c=IN IP4 10.42.0.166 / m=audio 40092 RTP/SAVPF` with ICE, rtpengine's own DTLS fingerprint, `setup:passive`, `rtcp-mux` and PCMU — accepted by the real browser via `setRemoteDescription`, with the runtime Pod IP absent; **browser-originated BYE** logs `media_delete` with the matching Call-ID, returns `200 OK`, and returns sessions and ports to `0`; **runtime-originated BYE** from a clean CLI stimulus (no `Reason: cause=408`) is alias-routed to the browser, answered `200 OK` with `0` retransmissions, deletes the same media session and terminates both sides; **terminal runtime failure** deletes the created offer state from the failure route and emits the committed `asterisk_unavailable` `503` with no secondary runtime, no fallback and no residual session or port; and **rtpengine unavailability fails closed** with `media_offer_failed`, `no available proxies`, a committed `488 Media Relay Unavailable` to the client, and **no leak to the runtime** (`0 calls processed`). No direct-media path, Pod/node/developer-host address leak, public exposure or durable media authority appeared, and the full-cluster Pod diff contains only the Kamailio rollout plus the two intentional availability tests. **The unproven boundary is actual media flow:** the developer host has no route to the pod CIDR (`ip route get 10.42.0.166` resolves via the default gateway; a TCP probe times out), which is precisely the media containment T3-S1 proved, so a host-side browser cannot complete ICE/DTLS with rtpengine — the browser did receive and attempt rtpengine's candidate (`remoteCandidates ["10.42.0.166:40048"]`, ICE `checking`, DTLS `connecting`) but sent `0` packets. No host route was added, because that would breach a proven containment contract, so ICE completion, DTLS establishment, browser-to-runtime and runtime-to-browser SRTP and echo are reported unproven rather than inferred from SDP. CANCEL remains a bounded fixture limitation. The next step is an **in-cluster** WebRTC-capable media prover on the pod network to close the media-flow gap without weakening containment, after which the bounded FreeSWITCH parity gate applies. Asterisk remains the current reference runtime and runtime-agnostic parity is not yet proven. T3-S2 is In Progress and T3 remains In Progress.
 
@@ -451,9 +793,21 @@ Objective: prove that applications can build on UTCP call, route, trunk, registr
 
 ## Next-Phase Ordering
 
-**T3-S2C FreeSWITCH invite authentication correction is implemented and recorded in [`docs/evidence/t3/t3-s2c-freeswitch-invite-auth-correction.md`](../evidence/t3/t3-s2c-freeswitch-invite-auth-correction.md).** Kamailio now consumes successfully verified browser credentials before the generic application-runtime relay; REGISTER remains unchanged; the FreeSWITCH parity profile uses application-peer domain semantics without blind authentication or downstream credentials; and the pinned image-level smoke test proves a plain INVITE receives SDP-bearing `200 OK`, reaches extension `9900`/Echo, and cleans the channel. PRODUCT_DEFECT-17 through PRODUCT_DEFECT-22 are corrected in the repository. T3-S2C remains ready for live parity continuation, T3-S3 is Not Started, T3 is In Progress, and `UTCP_PHASE=T1`.
+The historical T3 preparation and FreeSWITCH SIP/media proof above remain
+preserved. They do not replace the current post-RH-3 direction. T5 is complete
+and remains complete; it is not reopened or returned to pending work. The next
+executable capability is **C6 — Canonical Call Lifecycle & Normalized Call
+Control**. The bounded sequence is:
 
-T2 is complete, and T5 hardening is now complete as well (closure record: [`docs/evidence/t5/t5-phase-closure.md`](../evidence/t5/t5-phase-closure.md)), both without advancing `UTCP_PHASE` beyond T1 — the marker is a CI-guarded authoritative-completed-phase pin whose advance would require updating all six guards in one coordinated commit. The next actionable target is a bounded T3 preparation audit: T3 is not yet dependency-ready, lacking an rtpengine/media ADR, a version pin, manifests, and RTP NetworkPolicies, and `scripts/security/config-check` and `scripts/gateway/config-check` currently assert the absence of exactly the RTP surface T3 introduces. T3/V0 browser media and internal application-dialog routing therefore remain planned future work, as do T4 FreeSWITCH parity and the C6/C7/T6/V1/A0 extended-scope phases. C6/C7/T6/V1/A0 remain positioned after T5 and before R0 (see Phase Order); they are not scheduled ahead of T3-T5/V0 because no repository evidence, ADR, or `CLAUDE.md` text currently orders them earlier, and doing so would contradict `CLAUDE.md`'s binding sequence for phases already in flight.
+```text
+RT-1 -> C6 -> T4 -> C7A -> C7B -> T6 -> V1 -> A0 -> R0
+```
+
+T4 follows C6 for normalized contract definition and precedes C7 for
+second-real-runtime validation. K5 is intentionally omitted from this primary
+sequence: it is a parallel planned infrastructure track and is not a
+prerequisite for C6 closure, T4, or C7. ADR-024 records its Host/RuntimeNode
+authority boundary and future maintenance direction.
 
 ## Phase R0 — Portfolio Release — Planned
 

@@ -4,6 +4,14 @@ Unified Telephony Control Plane (UTCP) is a vendor-neutral control plane for tel
 
 UTCP owns desired state, tenant and operator policy, normalized runtime contracts, reconciliation decisions, health history, and auditability. It does not replace the live protocol authority of Kamailio, rtpengine, Asterisk, FreeSWITCH, Kubernetes, PostgreSQL, Redis, or Traefik.
 
+UTCP distinguishes a Kubernetes Node/host from a `RuntimeNode`. Kubernetes
+owns machine and workload facts such as Node conditions, capacity, and Pod
+placement. UTCP may associate those facts with telephony runtimes and expose
+their operational consequences—RuntimeNode readiness, active calls and
+bindings, and maintenance eligibility—without becoming a generic Kubernetes
+dashboard. Multi-machine Host visibility is a planned K-series infrastructure
+track; it does not change the current C6 -> T4 mainline.
+
 ## Current Status
 
 This repository has completed the F0-F4, K0-K4, C0-C5, and T0 foundations, proving a PostgreSQL-backed application kernel, identity/tenancy/authorization, a runtime-node registry, a command/event/projection/reconciliation engine, a deterministic simulator adapter, a telephony-session/conference domain, and a live Asterisk ARI adapter boundary end to end. T1 Kamailio SIP-over-WSS signaling is in progress (see below). It contains a Laravel API process, a Vue administration shell, deterministic local container images, disposable Docker Compose compatibility proof, GitHub Actions workflows for the established contracts, a repository-managed local k3d/K3s cluster foundation, Kustomize-managed local Kubernetes application manifests, a Helm-managed Traefik edge exposed through Kubernetes Gateway API, repository-managed Pod Security plus NetworkPolicy boundaries, a restricted local observability stack, PostgreSQL-backed application-kernel primitives, first-party session identity/tenancy/authorization, a PostgreSQL-authoritative tenant-scoped runtime-node registry, PostgreSQL-backed runtime-engine tables for event receipts, observations, projection checkpoints, and reconciliation state, and a deterministic, runtime-neutral simulator adapter selected explicitly through the same authenticated runtime-registry API as every other adapter family.

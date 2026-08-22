@@ -8,6 +8,7 @@ use App\ControlPlane\RuntimeOperations\RuntimeOperationRepository;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\PayloadSafety;
 use App\Identity\IdentityIds;
+use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClient;
 use App\RuntimeAdapters\Asterisk\AsteriskAriClient;
 use App\RuntimeAdapters\Asterisk\AsteriskAriEventListener;
 use App\RuntimeAdapters\Asterisk\AsteriskAriEventNormalizer;
@@ -25,6 +26,8 @@ use App\RuntimeEngine\Listeners\RuntimeListenerLeaseRepository;
 use App\RuntimeEngine\Projection\ProjectionService;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use App\RuntimeEngine\Sources\EventSourceRepository;
+use App\RuntimeProvisioning\ManagedAsteriskProvisioningOperationHandler;
+use App\RuntimeRegistry\RuntimeRegistryService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
@@ -1202,6 +1205,50 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertSame($nodeId, $required->operationPayload['runtime_node_id']);
     }
 
+    public function test_managed_asterisk_reconciliation_converges_capabilities_and_leaves_external_nodes_unchanged(): void
+    {
+        [$tenantId, $managedNodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $managedNodeId);
+        $this->makeManaged($tenantId, $managedNodeId);
+
+        $deployments = [];
+        $kubernetes = $this->mock(KubernetesWorkloadClient::class, function ($mock) use (&$deployments): void {
+            $mock->shouldReceive('applyDeployment')->twice()->andReturnUsing(function (array $desired, string $slug) use (&$deployments): array {
+                $deployments[] = [$desired, $slug];
+
+                return $desired;
+            });
+        });
+        $reconciler = new AsteriskRuntimeNodeReconciler(
+            new AsteriskCatalog,
+            app(RuntimeRegistryService::class),
+            $kubernetes,
+            app(ManagedAsteriskProvisioningOperationHandler::class),
+        );
+        $target = (object) ['target_id' => $managedNodeId, 'last_operation_id' => null];
+        $reconciler->evaluate($target);
+
+        $expected = config('runtime_registry.adapter_keys.asterisk-ari.supported_capabilities');
+        sort($expected);
+        $this->assertSame($expected, DB::table('runtime_node_capabilities')->where('runtime_node_id', $managedNodeId)->orderBy('capability_key')->pluck('capability_key')->all());
+
+        $node = DB::table('runtime_nodes')->where('id', $managedNodeId)->first();
+        DB::table('runtime_nodes')->where('id', $managedNodeId)->update(['observed_configuration_version' => $node->configuration_version]);
+        $reconciler->evaluate($target);
+        $second = DB::table('runtime_nodes')->where('id', $managedNodeId)->first();
+        $this->assertSame((int) $node->configuration_version, (int) $second->configuration_version);
+        $this->assertCount(2, $deployments);
+        $this->assertSame($deployments[0], $deployments[1]);
+        $this->assertSame('asterisk-local-sip-fixtures', $deployments[0][0]['spec']['template']['spec']['volumes'][0]['configMap']['name']);
+        $this->assertSame('/opt/utcp-asterisk-local-config', $deployments[0][0]['spec']['template']['spec']['containers'][0]['volumeMounts'][0]['mountPath']);
+
+        [$externalTenantId, $externalNodeId] = $this->runtimeNode();
+        $this->configureAriNode($externalTenantId, $externalNodeId);
+        $before = DB::table('runtime_node_capabilities')->where('runtime_node_id', $externalNodeId)->orderBy('capability_key')->pluck('capability_key')->all();
+        (new AsteriskRuntimeNodeReconciler(new AsteriskCatalog, app(RuntimeRegistryService::class)))->evaluate((object) ['target_id' => $externalNodeId, 'last_operation_id' => null]);
+        $this->assertSame($before, DB::table('runtime_node_capabilities')->where('runtime_node_id', $externalNodeId)->orderBy('capability_key')->pluck('capability_key')->all());
+    }
+
     public function test_taking_over_a_lease_closes_any_epoch_left_open_by_a_superseded_owner(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode();
@@ -2323,6 +2370,17 @@ final class AsteriskAriAdapterTest extends TestCase
             'reconnect_max_delay_ms' => 30000,
             'created_at' => now(),
             'updated_at' => now(),
+        ]);
+    }
+
+    private function makeManaged(string $tenantId, string $nodeId): void
+    {
+        $targetId = IdentityIds::new();
+        DB::table('deployment_targets')->insert(['id' => $targetId, 'tenant_id' => $tenantId, 'name' => 'Local Kubernetes', 'slug' => 'local-kubernetes', 'kind' => 'local_kubernetes', 'configuration' => null, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('runtime_provisioning_requests')->insert([
+            'id' => IdentityIds::new(), 'tenant_id' => $tenantId, 'deployment_target_id' => $targetId, 'runtime_node_id' => $nodeId,
+            'runtime_family' => 'asterisk', 'adapter_key' => 'asterisk-ari', 'requested_name' => 'Asterisk ARI', 'requested_slug' => 'asterisk-ari',
+            'idempotency_key' => 'managed-'.$nodeId, 'request_fingerprint' => hash('sha256', $nodeId), 'status' => 'active', 'created_at' => now(), 'updated_at' => now(),
         ]);
     }
 

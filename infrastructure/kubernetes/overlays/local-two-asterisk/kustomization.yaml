@@ -4,6 +4,7 @@ resources:
   - service-account.yaml
   - node-a
   - node-b
+  - ../../components/asterisk-sip-fixtures
 images:
   - name: utcp-asterisk-ari
     newName: utcp-local-registry:5000/utcp/asterisk-ari

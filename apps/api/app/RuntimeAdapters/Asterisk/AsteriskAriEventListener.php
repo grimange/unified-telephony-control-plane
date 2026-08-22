@@ -226,6 +226,25 @@ final class AsteriskAriEventListener
         if ($channel !== null) {
             $payload['channel_id'] = is_string($channel['id'] ?? null) ? $channel['id'] : null;
             $payload['channel_name'] = is_string($channel['name'] ?? null) ? $channel['name'] : null;
+            $payload['channel_state'] = is_string($channel['state'] ?? null) ? $channel['state'] : null;
+            $payload['remote_identity'] = is_string($channel['caller']['number'] ?? null) ? $channel['caller']['number'] : null;
+            $payload['connected_identity'] = is_string($channel['connected']['number'] ?? null) ? $channel['connected']['number'] : null;
+        }
+        if (is_string($event['digit'] ?? null)) {
+            $payload['digit'] = $event['digit'];
+        }
+        if (is_int($event['duration_ms'] ?? null) || is_string($event['duration_ms'] ?? null)) {
+            $payload['duration_ms'] = (int) $event['duration_ms'];
+        }
+        if (is_array($bridge['channels'] ?? null)) {
+            $payload['bridge_channel_ids'] = array_values(array_filter(array_map(static fn (mixed $item): ?string => is_string($item) ? $item : (is_array($item) && is_string($item['id'] ?? null) ? $item['id'] : null), $bridge['channels'])));
+        }
+        if (is_array($event['playback'] ?? null)) {
+            $payload['playback_id'] = is_string($event['playback']['id'] ?? null) ? $event['playback']['id'] : null;
+            $payload['media_ref'] = is_string($event['playback']['media_uri'] ?? null) ? $event['playback']['media_uri'] : null;
+        }
+        if (is_array($event['recording'] ?? null)) {
+            $payload['recording_name'] = is_string($event['recording']['name'] ?? null) ? $event['recording']['name'] : null;
         }
 
         if ($type === 'StasisStart') {
@@ -791,6 +810,16 @@ final class AsteriskAriEventListener
             'ChannelDestroyed' => 'channel_destroyed',
             'StasisStart' => 'stasis_start',
             'StasisEnd' => 'stasis_end',
+            'ChannelStateChange' => 'channel_state_change',
+            'ChannelDtmfReceived' => 'channel_dtmf_received',
+            'PlaybackStarted' => 'playback_started',
+            'PlaybackFinished' => 'playback_finished',
+            'RecordingStarted' => 'recording_started',
+            'RecordingFinished' => 'recording_finished',
+            'ChannelHold' => 'channel_hold',
+            'ChannelUnhold' => 'channel_unhold',
+            'ChannelMute' => 'channel_mute',
+            'ChannelUnmute' => 'channel_unmute',
             default => 'unknown_event_observed',
         };
     }

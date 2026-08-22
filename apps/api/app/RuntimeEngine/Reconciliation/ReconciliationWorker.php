@@ -36,6 +36,17 @@ final class ReconciliationWorker
             $operationId = $claim->last_operation_id;
             $result = $reconciler->evaluate($claim);
 
+            if (! $this->repository->isCurrent((string) $claim->id, (string) $claim->lease_token)) {
+                Log::warning('runtime reconciliation claim superseded during evaluation', [
+                    'component' => 'telephony-reconciler',
+                    'result' => 'superseded',
+                    'target_type' => (string) $claim->target_type,
+                    'target_id' => (string) $claim->target_id,
+                ]);
+
+                continue;
+            }
+
             $lastOperationTerminal = false;
             if ($claim->last_operation_id !== null) {
                 $lastOperation = DB::table('runtime_operations')->where('id', $claim->last_operation_id)->first();
@@ -43,7 +54,28 @@ final class ReconciliationWorker
             }
 
             if ($result->status === 'operation_required' && ($claim->last_operation_id === null || $lastOperationTerminal)) {
-                $operationId = DB::transaction(function () use ($result, $claim): string {
+                if (! $this->repository->isCurrent((string) $claim->id, (string) $claim->lease_token)) {
+                    Log::warning('runtime reconciliation claim superseded before operation creation', [
+                        'component' => 'telephony-reconciler',
+                        'result' => 'superseded',
+                        'target_type' => (string) $claim->target_type,
+                        'target_id' => (string) $claim->target_id,
+                    ]);
+
+                    continue;
+                }
+
+                $operationId = DB::transaction(function () use ($result, $claim): ?string {
+                    $current = DB::table('runtime_reconciliation_states')
+                        ->where('id', (string) $claim->id)
+                        ->where('lease_token', (string) $claim->lease_token)
+                        ->where('lease_expires_at', '>', now())
+                        ->lockForUpdate()
+                        ->exists();
+                    if (! $current) {
+                        return null;
+                    }
+
                     $context = ExecutionContext::system(
                         reason: 'runtime reconciliation',
                         tenantId: $claim->tenant_id,
@@ -72,10 +104,28 @@ final class ReconciliationWorker
                         runtimeNodeId: $result->runtimeNodeId ?? ($claim->target_type === 'runtime_node' ? (string) $claim->target_id : null),
                     );
                 });
+
+                if ($operationId === null) {
+                    Log::warning('runtime reconciliation claim superseded before operation creation', [
+                        'component' => 'telephony-reconciler',
+                        'result' => 'superseded',
+                        'target_type' => (string) $claim->target_type,
+                        'target_id' => (string) $claim->target_id,
+                    ]);
+
+                    continue;
+                }
             }
 
             if (! $this->repository->markResult($claim->id, $claim->lease_token, $result, $operationId)) {
-                throw new \RuntimeException('runtime reconciliation fencing token was superseded');
+                Log::warning('runtime reconciliation claim superseded before result commit', [
+                    'component' => 'telephony-reconciler',
+                    'result' => 'superseded',
+                    'target_type' => (string) $claim->target_type,
+                    'target_id' => (string) $claim->target_id,
+                ]);
+
+                continue;
             }
 
             Log::info('runtime reconciliation completed', [

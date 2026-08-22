@@ -34,7 +34,7 @@ final class RuntimeFencingManifestTest extends TestCase
             }
         }
 
-        $this->assertSame([], $ordinaryApiClients);
+        $this->assertSame(['Deployment/utcp-platform/telephony-reconciler'], $ordinaryApiClients);
     }
 
     public function test_canonical_local_overlay_activates_only_the_dedicated_infrastructure_identity(): void
@@ -45,7 +45,10 @@ final class RuntimeFencingManifestTest extends TestCase
         $this->assertSame('utcp-runtime-fencer', $worker['spec']['template']['spec']['serviceAccountName']);
 
         foreach ($objects as $key => $object) {
-            if (($object['kind'] ?? null) !== 'Deployment' || $key === 'Deployment/utcp-platform/utcp-runtime-fence-worker') {
+            if (($object['kind'] ?? null) !== 'Deployment' || in_array($key, [
+                'Deployment/utcp-platform/utcp-runtime-fence-worker',
+                'Deployment/utcp-platform/telephony-reconciler',
+            ], true)) {
                 continue;
             }
 
@@ -55,6 +58,13 @@ final class RuntimeFencingManifestTest extends TestCase
                 $key.' must not use the infrastructure ServiceAccount',
             );
         }
+
+        $reconciler = $objects['Deployment/utcp-platform/telephony-reconciler'];
+        $this->assertSame('utcp-runtime-fencer', $reconciler['spec']['template']['spec']['serviceAccountName']);
+        $this->assertSame('true', $reconciler['spec']['template']['metadata']['labels']['utcp.io/kubernetes-api-client']);
+        $this->assertFalse($reconciler['spec']['template']['spec']['automountServiceAccountToken']);
+        $this->assertSame('/var/run/secrets/kubernetes.io/serviceaccount', $reconciler['spec']['template']['spec']['containers'][0]['volumeMounts'][0]['mountPath']);
+        $this->assertSame('kubernetes-api-credentials', $reconciler['spec']['template']['spec']['volumes'][0]['name']);
     }
 
     public function test_common_worker_egress_is_reused_without_duplicate_data_service_policy(): void

@@ -42,11 +42,15 @@ final class ManagedAsteriskProvisioningOperationTest extends TestCase
             })->andReturn([]);
             $mock->shouldReceive('applyDeployment')->once()->withArgs(function (array $desired, string $slug): bool {
                 $ports = $desired['spec']['template']['spec']['containers'][0]['ports'];
+                $container = $desired['spec']['template']['spec']['containers'][0];
+                $volumes = $desired['spec']['template']['spec']['volumes'];
 
                 return $slug === 'managed-asterisk'
                     && $desired['metadata']['namespace'] === 'utcp-runtime'
-                    && $desired['spec']['template']['spec']['containers'][0]['envFrom'][0]['secretRef']['name'] === $desired['metadata']['name'].'-credentials'
-                    && in_array(['name' => 'sip', 'containerPort' => 5060, 'protocol' => 'UDP'], $ports, true);
+                    && $container['envFrom'][0]['secretRef']['name'] === $desired['metadata']['name'].'-credentials'
+                    && in_array(['name' => 'sip', 'containerPort' => 5060, 'protocol' => 'UDP'], $ports, true)
+                    && in_array(['name' => 'asterisk-local-config', 'mountPath' => '/opt/utcp-asterisk-local-config', 'readOnly' => true], $container['volumeMounts'], true)
+                    && in_array(['name' => 'asterisk-local-config', 'configMap' => ['name' => 'asterisk-local-sip-fixtures', 'optional' => true]], $volumes, true);
             })->andReturn([]);
             $mock->shouldReceive('applyService')->once()->withArgs(function (array $desired, string $slug): bool {
                 return $slug === 'managed-asterisk'
@@ -92,7 +96,10 @@ final class ManagedAsteriskProvisioningOperationTest extends TestCase
                 ->pluck('purpose')
                 ->all(),
         );
-        $this->assertSame(4, DB::table('runtime_node_capabilities')->where('runtime_node_id', $nodeId)->count());
+        $this->assertSame(
+            count(config('runtime_registry.adapter_keys.asterisk-ari.supported_capabilities')),
+            DB::table('runtime_node_capabilities')->where('runtime_node_id', $nodeId)->count(),
+        );
         $this->assertDatabaseHas('asterisk_ari_profiles', ['runtime_node_id' => $nodeId]);
 
         $operationPayload = (string) DB::table('runtime_operations')->where('id', $operation->id)->value('payload');

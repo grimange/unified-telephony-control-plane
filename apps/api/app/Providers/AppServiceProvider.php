@@ -24,7 +24,9 @@ use App\RuntimeProvisioning\ManagedAsteriskDeprovisioningOperationHandler;
 use App\RuntimeProvisioning\ManagedAsteriskProvisioningOperationHandler;
 use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationRegistry;
 use App\RuntimeRegistry\RuntimeNodeDecommissionOperationHandler;
+use App\RuntimeRegistry\RuntimeRegistryService;
 use App\Simulator\Commands\SimulatorApplyConfigurationHandler;
+use App\Simulator\Commands\SimulatorCallOperationHandler;
 use App\Simulator\Commands\SimulatorRuntimeAdapter;
 use App\Simulator\Events\SimulatorEventNormalizer;
 use App\Simulator\Reconciliation\SimulatorRuntimeNodeReconciler;
@@ -32,6 +34,8 @@ use App\Simulator\SimulatorAdapterConfigurationHandler;
 use App\Simulator\SimulatorCatalog;
 use App\Support\Health\ConfiguredReadinessChecker;
 use App\Support\Health\ReadinessChecker;
+use App\TelephonyDomain\CallOperationCatalog;
+use App\TelephonyDomain\Reconciliation\CallOriginationReconciler;
 use App\TelephonyDomain\Reconciliation\ConferenceParticipantReconciler;
 use App\TelephonyDomain\Reconciliation\ConferenceReconciler;
 use App\TelephonyDomain\Reconciliation\SignalingRegistrationReconciler;
@@ -55,20 +59,28 @@ class AppServiceProvider extends ServiceProvider
             $app->make(SimulatorRuntimeAdapter::class),
             $app->make(AsteriskRuntimeAdapter::class),
         ]));
-        $this->app->singleton(RuntimeOperationHandlerRegistry::class, fn ($app): RuntimeOperationHandlerRegistry => new RuntimeOperationHandlerRegistry([
-            $app->make(GenericRuntimeNodeInspectHandler::class),
-            $app->make(SimulatorApplyConfigurationHandler::class),
-            new ConferenceOperationHandler((string) config('telephony_domain.operation_types.conference_ensure'), (string) config('telephony_domain.runtime_capabilities.conference_lifecycle')),
-            new ConferenceOperationHandler((string) config('telephony_domain.operation_types.conference_close'), (string) config('telephony_domain.runtime_capabilities.conference_lifecycle')),
-            new ConferenceOperationHandler((string) config('telephony_domain.operation_types.participant_ensure'), (string) config('telephony_domain.runtime_capabilities.conference_participation')),
-            new ConferenceOperationHandler((string) config('telephony_domain.operation_types.participant_remove'), (string) config('telephony_domain.runtime_capabilities.conference_participation')),
-            new ConferenceOperationHandler((string) config('telephony_domain.operation_types.verify_conference_absent'), (string) config('telephony_domain.runtime_capabilities.conference_lifecycle')),
-            $app->make(RuntimeFenceOperationHandler::class),
-            $app->make(RuntimeNodeRestoreOperationHandler::class),
-            $app->make(RuntimeNodeDecommissionOperationHandler::class),
-            $app->make(ManagedAsteriskProvisioningOperationHandler::class),
-            $app->make(ManagedAsteriskDeprovisioningOperationHandler::class),
-        ]));
+        $this->app->singleton(RuntimeOperationHandlerRegistry::class, function ($app): RuntimeOperationHandlerRegistry {
+            $handlers = [
+                $app->make(GenericRuntimeNodeInspectHandler::class),
+                $app->make(SimulatorApplyConfigurationHandler::class),
+            ];
+            foreach (array_keys(CallOperationCatalog::all()) as $operationType) {
+                $handlers[] = new SimulatorCallOperationHandler($operationType);
+            }
+
+            return new RuntimeOperationHandlerRegistry(array_merge($handlers, [
+                new ConferenceOperationHandler((string) config('telephony_domain.operation_types.conference_ensure'), (string) config('telephony_domain.runtime_capabilities.conference_lifecycle')),
+                new ConferenceOperationHandler((string) config('telephony_domain.operation_types.conference_close'), (string) config('telephony_domain.runtime_capabilities.conference_lifecycle')),
+                new ConferenceOperationHandler((string) config('telephony_domain.operation_types.participant_ensure'), (string) config('telephony_domain.runtime_capabilities.conference_participation')),
+                new ConferenceOperationHandler((string) config('telephony_domain.operation_types.participant_remove'), (string) config('telephony_domain.runtime_capabilities.conference_participation')),
+                new ConferenceOperationHandler((string) config('telephony_domain.operation_types.verify_conference_absent'), (string) config('telephony_domain.runtime_capabilities.conference_lifecycle')),
+                $app->make(RuntimeFenceOperationHandler::class),
+                $app->make(RuntimeNodeRestoreOperationHandler::class),
+                $app->make(RuntimeNodeDecommissionOperationHandler::class),
+                $app->make(ManagedAsteriskProvisioningOperationHandler::class),
+                $app->make(ManagedAsteriskDeprovisioningOperationHandler::class),
+            ]));
+        });
         $this->app->singleton(EventNormalizerRegistry::class, function ($app): EventNormalizerRegistry {
             $catalog = $app->make(SimulatorCatalog::class);
             $asterisk = $app->make(AsteriskCatalog::class);
@@ -85,6 +97,7 @@ class AppServiceProvider extends ServiceProvider
                 new SimulatorEventNormalizer($catalog, $catalog->eventType('participant_joined')),
                 new SimulatorEventNormalizer($catalog, $catalog->eventType('participant_left')),
                 new SimulatorEventNormalizer($catalog, $catalog->eventType('participant_failed')),
+                new SimulatorEventNormalizer($catalog, $catalog->eventType('call_observation')),
                 new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('connection_opened')),
                 new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('connection_closed')),
                 new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('runtime_info_observed')),
@@ -99,6 +112,16 @@ class AppServiceProvider extends ServiceProvider
                 new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('channel_destroyed')),
                 new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('stasis_start')),
                 new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('stasis_end')),
+                new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('channel_state_change')),
+                new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('channel_dtmf_received')),
+                new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('playback_started')),
+                new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('playback_finished')),
+                new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('recording_started')),
+                new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('recording_finished')),
+                new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('channel_hold')),
+                new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('channel_unhold')),
+                new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('channel_mute')),
+                new AsteriskAriEventNormalizer($asterisk, $asterisk->eventType('channel_unmute')),
                 new KamailioRegistrationEventNormalizer('kamailio.registration.accepted'),
                 new KamailioRegistrationEventNormalizer('kamailio.registration.refreshed'),
                 new KamailioRegistrationEventNormalizer('kamailio.registration.replaced'),
@@ -108,13 +131,19 @@ class AppServiceProvider extends ServiceProvider
         });
         $this->app->singleton(ReconcilerRegistry::class, fn ($app): ReconcilerRegistry => new ReconcilerRegistry([
             new RuntimeNodeReconciler([
-                $app->make(AsteriskRuntimeNodeReconciler::class),
+                new AsteriskRuntimeNodeReconciler(
+                    $app->make(AsteriskCatalog::class),
+                    $app->make(RuntimeRegistryService::class),
+                    $app->make(KubernetesWorkloadClient::class),
+                    $app->make(ManagedAsteriskProvisioningOperationHandler::class),
+                ),
                 $app->make(SimulatorRuntimeNodeReconciler::class),
             ]),
             $app->make(RuntimeNodeDrainCoordinator::class),
             $app->make(ConferenceReconciler::class),
             $app->make(ConferenceParticipantReconciler::class),
             $app->make(SignalingRegistrationReconciler::class),
+            $app->make(CallOriginationReconciler::class),
         ]));
         $this->app->singleton(AdapterConfigurationRegistry::class, fn ($app): AdapterConfigurationRegistry => new AdapterConfigurationRegistry([
             $app->make(SimulatorAdapterConfigurationHandler::class),

@@ -95,7 +95,23 @@ final class ManagedAsteriskProvisioningOperationHandler implements RunsWithoutRu
         $labels = ['app.kubernetes.io/part-of' => 'utcp', 'app.kubernetes.io/component' => 'asterisk-ari', 'app.kubernetes.io/instance' => $names['deployment'], 'utcp.dev/runtime-node' => $slug];
         $probe = ['exec' => ['command' => ['/usr/local/bin/utcp-asterisk-readiness']], 'periodSeconds' => 15, 'timeoutSeconds' => 5, 'failureThreshold' => 3];
 
-        return ['apiVersion' => 'apps/v1', 'kind' => 'Deployment', 'metadata' => ['name' => $names['deployment'], 'namespace' => 'utcp-runtime', 'labels' => $labels], 'spec' => ['replicas' => 1, 'selector' => ['matchLabels' => ['app.kubernetes.io/part-of' => 'utcp', 'app.kubernetes.io/component' => 'asterisk-ari', 'utcp.dev/runtime-node' => $slug]], 'template' => ['metadata' => ['labels' => [...$labels, 'utcp.io/network-role' => 'asterisk-ari']], 'spec' => ['automountServiceAccountToken' => false, 'terminationGracePeriodSeconds' => 30, 'securityContext' => ['runAsNonRoot' => true, 'seccompProfile' => ['type' => 'RuntimeDefault']], 'containers' => [['name' => 'asterisk', 'image' => $image, 'imagePullPolicy' => 'Always', 'ports' => [['name' => 'ari', 'containerPort' => 8088, 'protocol' => 'TCP'], ['name' => 'sip', 'containerPort' => 5060, 'protocol' => 'UDP']], 'envFrom' => [['secretRef' => ['name' => $names['secret']]]], 'resources' => ['requests' => ['cpu' => '50m', 'memory' => '128Mi'], 'limits' => ['cpu' => '500m', 'memory' => '384Mi']], 'securityContext' => ['allowPrivilegeEscalation' => false, 'capabilities' => ['drop' => ['ALL']]], 'startupProbe' => [...$probe, 'initialDelaySeconds' => 15, 'failureThreshold' => 12], 'readinessProbe' => $probe, 'livenessProbe' => ['exec' => ['command' => ['/usr/sbin/asterisk', '-C', '/tmp/utcp-asterisk/asterisk.conf', '-rx', 'core show uptime']], 'initialDelaySeconds' => 20, 'periodSeconds' => 20, 'timeoutSeconds' => 5, 'failureThreshold' => 3]]]]]]];
+        return ['apiVersion' => 'apps/v1', 'kind' => 'Deployment', 'metadata' => ['name' => $names['deployment'], 'namespace' => 'utcp-runtime', 'labels' => $labels], 'spec' => ['replicas' => 1, 'selector' => ['matchLabels' => ['app.kubernetes.io/part-of' => 'utcp', 'app.kubernetes.io/component' => 'asterisk-ari', 'utcp.dev/runtime-node' => $slug]], 'template' => ['metadata' => ['labels' => [...$labels, 'utcp.io/network-role' => 'asterisk-ari']], 'spec' => ['automountServiceAccountToken' => false, 'terminationGracePeriodSeconds' => 30, 'securityContext' => ['runAsNonRoot' => true, 'seccompProfile' => ['type' => 'RuntimeDefault']], 'containers' => [['name' => 'asterisk', 'image' => $image, 'imagePullPolicy' => 'Always', 'ports' => [['name' => 'ari', 'containerPort' => 8088, 'protocol' => 'TCP'], ['name' => 'sip', 'containerPort' => 5060, 'protocol' => 'UDP']], 'envFrom' => [['secretRef' => ['name' => $names['secret']]]], 'volumeMounts' => [['name' => 'asterisk-local-config', 'mountPath' => '/opt/utcp-asterisk-local-config', 'readOnly' => true]], 'resources' => ['requests' => ['cpu' => '50m', 'memory' => '128Mi'], 'limits' => ['cpu' => '500m', 'memory' => '384Mi']], 'securityContext' => ['allowPrivilegeEscalation' => false, 'capabilities' => ['drop' => ['ALL']]], 'startupProbe' => [...$probe, 'initialDelaySeconds' => 15, 'failureThreshold' => 12], 'readinessProbe' => $probe, 'livenessProbe' => ['exec' => ['command' => ['/usr/sbin/asterisk', '-C', '/tmp/utcp-asterisk/asterisk.conf', '-rx', 'core show uptime']], 'initialDelaySeconds' => 20, 'periodSeconds' => 20, 'timeoutSeconds' => 5, 'failureThreshold' => 3]]], 'volumes' => [['name' => 'asterisk-local-config', 'configMap' => ['name' => 'asterisk-local-sip-fixtures', 'optional' => true]]]]]]];
+    }
+
+    /**
+     * Return the canonical system-owned Deployment projection for a managed node.
+     * Provisioning and existing-node reconciliation must use the same builder.
+     *
+     * @return array<string, mixed>
+     */
+    public function desiredDeployment(string $runtimeNodeId, string $slug): array
+    {
+        $image = (string) config('asterisk_ari.managed_image', '');
+        if (! self::isQualifiedImageReference($image)) {
+            throw new \InvalidArgumentException('managed Asterisk image configuration is invalid');
+        }
+
+        return $this->deployment(ManagedAsteriskResourceIdentity::names($slug, $runtimeNodeId), $slug, $image);
     }
 
     private static function isQualifiedImageReference(string $image): bool

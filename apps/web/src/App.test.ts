@@ -446,8 +446,8 @@ const runtimeCatalog = {
   },
   desired_states: {},
   endpoint_purposes: {},
-  endpoint_transports: {},
-  endpoint_tls_modes: {},
+  endpoint_transports: ['http', 'https', 'tcp', 'tls', 'udp', 'ws', 'wss'],
+  endpoint_tls_modes: ['disabled', 'opportunistic', 'required', 'verify'],
 } satisfies RuntimeManagementCatalog
 
 const roleCatalog = {

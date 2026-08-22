@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import runtimeNodesViewSource from './RuntimeNodesView.vue?raw'
 import { managedDeprovisioningLabel, managedProvisioningLabel, runtimeNodePrimaryStatus } from './runtimeNodeManagementPresentation'
+import { catalogOptions } from './runtimeCatalogPresentation'
 import platformSource from '../api/platform.ts?raw'
 import type { RuntimeOperationStatus } from '../api/platform'
 
@@ -14,6 +15,28 @@ const operation = (status: RuntimeOperationStatus, id: string) => ({
 })
 
 describe('RNP-5 managed RuntimeNode Admin UI contract', () => {
+  it('loads endpoint transport and TLS options from the backend catalog without a fallback list', () => {
+    expect(runtimeNodesViewSource).toContain('endpointTransportOptions')
+    expect(runtimeNodesViewSource).toContain('endpointTlsModeOptions')
+    expect(runtimeNodesViewSource).toContain('runtimeCatalog.value?.endpoint_transports')
+    expect(runtimeNodesViewSource).not.toContain('<option value="https">')
+    expect(runtimeNodesViewSource).not.toContain('<option value="wss">')
+    expect(runtimeNodesViewSource).not.toContain('<option value="tcp">')
+    expect(runtimeNodesViewSource).not.toContain('<option value="insecure">')
+    expect(runtimeNodesViewSource).not.toContain('Object.entries(catalog')
+  })
+  it('renders array-shaped backend transport and TLS catalog values, not array indexes', () => {
+    expect(catalogOptions(['http', 'https', 'ws'])).toEqual([
+      { key: 'http', label: 'http' },
+      { key: 'https', label: 'https' },
+      { key: 'ws', label: 'ws' },
+    ])
+    expect(catalogOptions(['disabled', 'required'])).toEqual([
+      { key: 'disabled', label: 'disabled' },
+      { key: 'required', label: 'required' },
+    ])
+    expect(catalogOptions(['http', 'https', 'ws']).map((option) => option.key)).not.toEqual(['0', '1', '2'])
+  })
   it('keeps managed onboarding inside the existing Runtime Nodes surface', () => {
     expect(runtimeNodesViewSource).toContain('title="Add runtime"')
     expect(runtimeNodesViewSource).toContain('Create a new runtime')

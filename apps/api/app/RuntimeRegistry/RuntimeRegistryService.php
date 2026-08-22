@@ -103,6 +103,14 @@ final class RuntimeRegistryService
         }
     }
 
+    public function isManagedNode(string $tenantId, string $nodeId): bool
+    {
+        return DB::table('runtime_provisioning_requests')
+            ->where('tenant_id', $tenantId)
+            ->where('runtime_node_id', $nodeId)
+            ->exists();
+    }
+
     /**
      * @return list<array<string, mixed>>
      */

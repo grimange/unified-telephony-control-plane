@@ -88,6 +88,8 @@ Runtime family (`asterisk`, `freeswitch`) identifies the external technology fam
 
 Desired lifecycle state is administrator intent (`draft`, `active`, `draining`, `disabled`). Backend catalog authority provides safe runtime families, adapter keys, adapter capability support, endpoint requirements, credential requirements, and adapter-configuration availability to the web UI. C3 owns runtime observation, projection, command execution, and reconciliation. Observed state changes only through projection services that reference runtime-event evidence or stale-observation derivation; there is no administrative mark-ready path.
 
+`RuntimeNode` is a telephony runtime concept, not a Kubernetes machine. Kubernetes remains authoritative for Node existence and conditions, addresses, capacity, labels, taints, cordon state, and Pod placement. A Kubernetes Node may host zero, one, or multiple RuntimeNodes. Future Host views may associate those Kubernetes facts with RuntimeNodes and show telephony impact, while UTCP retains authority over RuntimeNode eligibility, active-call impact, draining readiness, and placement policy.
+
 Endpoints are normalized configuration records for `control`, `events`, and `health` purposes. Credentials are separate encrypted write-only records. API responses expose safe credential metadata and fingerprints only; plaintext and ciphertext are excluded from logs, audit metadata, outbox payloads, status output, and UI detail views.
 
 ## Current Runtime Engine Boundary
@@ -175,6 +177,11 @@ processing continue during an outage. Only immediate browser updates may be
 delayed. After automatic reconnect, the browser resynchronizes from canonical
 APIs because transient notifications may have been missed. Manual
 reconciliation or projection is not normal recovery.
+
+Future Host and Runtime infrastructure views follow the same boundary:
+canonical Kubernetes/UTCP state changes invalidate through Reverb, and the
+frontend refetches canonical API state. Reverb is not infrastructure state
+authority.
 
 RT-1 is RuntimeNode-first: lifecycle/state changes, runtime operation progress,
 readiness and observed-state projection, drain, retirement, and managed

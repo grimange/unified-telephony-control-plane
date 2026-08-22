@@ -59,6 +59,57 @@ run_artisan() {
 run_artisan migrate --force
 run_artisan migrate --force
 
+identity_sync_migration="$(find apps/api/database/migrations -maxdepth 1 -type f -name '*sync_c6_identity_catalog.php' -printf '%f\n' | sort | tail -1)"
+[ -n "$identity_sync_migration" ] || { printf 'missing C6 identity catalog forward migration\n' >&2; exit 1; }
+
+"${compose[@]}" exec -T postgres psql -U "${UTCP_POSTGRES_USER:-utcp}" -d "$db_name" -v ON_ERROR_STOP=1 <<SQL
+DELETE FROM role_capabilities WHERE capability_key LIKE 'telephony.calls.%';
+DELETE FROM capabilities WHERE key LIKE 'telephony.calls.%';
+DELETE FROM migrations WHERE migration = '${identity_sync_migration%.php}';
+DO \$\$
+BEGIN
+  IF EXISTS (SELECT 1 FROM capabilities WHERE key LIKE 'telephony.calls.%') THEN
+    RAISE EXCEPTION 'legacy fixture was not prepared before C6 catalog migration';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM capabilities WHERE key = 'tenant.memberships.view') THEN
+    RAISE EXCEPTION 'unrelated legacy catalog capability is missing';
+  END IF;
+END
+\$\$;
+SQL
+
+run_artisan migrate --path="database/migrations/$identity_sync_migration" --force
+
+"${compose[@]}" exec -T postgres psql -U "${UTCP_POSTGRES_USER:-utcp}" -d "$db_name" -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+DECLARE
+  c6_count integer;
+BEGIN
+  SELECT count(*) INTO c6_count FROM capabilities WHERE key LIKE 'telephony.calls.%';
+  IF c6_count <> 6 THEN
+    RAISE EXCEPTION 'already-migrated catalog did not receive six configured C6 capabilities';
+  END IF;
+  IF (SELECT count(*) FROM role_capabilities WHERE role_key = 'tenant-admin' AND capability_key LIKE 'telephony.calls.%') <> 6 THEN
+    RAISE EXCEPTION 'already-migrated catalog did not assign C6 capabilities to tenant-admin';
+  END IF;
+  IF EXISTS (SELECT 1 FROM role_capabilities WHERE role_key = 'tenant-member' AND capability_key LIKE 'telephony.calls.%') THEN
+    RAISE EXCEPTION 'tenant-member gained C6 capabilities';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM capabilities WHERE key = 'tenant.memberships.view') THEN
+    RAISE EXCEPTION 'unrelated legacy catalog capability was lost';
+  END IF;
+END
+$$;
+SQL
+
+${compose[@]} exec -T postgres psql -U "${UTCP_POSTGRES_USER:-utcp}" -d "$db_name" -At -c "DELETE FROM migrations WHERE migration = '${identity_sync_migration%.php}' RETURNING migration" | grep -Fxq "${identity_sync_migration%.php}" || {
+  printf 'could not prepare C6 catalog migration idempotency rerun\n' >&2
+  exit 1
+}
+run_artisan migrate --path="database/migrations/$identity_sync_migration" --force
+
+"${compose[@]}" exec -T postgres psql -U "${UTCP_POSTGRES_USER:-utcp}" -d "$db_name" -v ON_ERROR_STOP=1 -c "SELECT count(*) = 6 AS c6_idempotent FROM capabilities WHERE key LIKE 'telephony.calls.%';" | grep -Fq 't'
+
 "${compose[@]}" exec -T postgres psql -U "${UTCP_POSTGRES_USER:-utcp}" -d "$db_name" -v ON_ERROR_STOP=1 <<'SQL'
 SELECT to_regclass('public.runtime_operations') IS NOT NULL AS runtime_operations_exists;
 SELECT to_regclass('public.control_plane_outbox_messages') IS NOT NULL AS outbox_exists;
@@ -73,6 +124,85 @@ SELECT indexname FROM pg_indexes WHERE indexname IN (
   'audit_subject_idx'
 ) ORDER BY indexname;
 SELECT tgname FROM pg_trigger WHERE tgname = 'control_plane_audit_no_update';
+DO $$
+BEGIN
+  IF to_regclass('public.calls') IS NULL OR to_regclass('public.call_legs') IS NULL THEN
+    RAISE EXCEPTION 'C6 calls/call_legs tables are missing';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'public.call_legs'::regclass
+      AND contype = 'p'
+      AND pg_get_constraintdef(oid) = 'PRIMARY KEY (id)'
+  ) THEN
+    RAISE EXCEPTION 'call_legs.id primary key is missing';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'public.call_legs'::regclass
+      AND conname = 'call_legs_bridged_to_leg_fk'
+      AND confrelid = 'public.call_legs'::regclass
+      AND pg_get_constraintdef(oid) = 'FOREIGN KEY (bridged_to_leg_id) REFERENCES call_legs(id) ON DELETE SET NULL'
+  ) THEN
+    RAISE EXCEPTION 'call_legs self-referencing bridge foreign key is incorrect or missing';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_class index_class
+    JOIN pg_index index_record ON index_record.indexrelid = index_class.oid
+    WHERE index_class.relname = 'call_legs_runtime_channel_unique'
+      AND index_record.indpred IS NOT NULL
+  ) THEN
+    RAISE EXCEPTION 'call_legs runtime-channel partial unique index is missing';
+  END IF;
+  IF (
+    SELECT count(*)
+    FROM capabilities
+    WHERE key IN ('telephony.calls.view', 'telephony.calls.view_own', 'telephony.calls.originate', 'telephony.calls.control', 'telephony.calls.record', 'telephony.calls.manage')
+  ) <> 6 THEN
+    RAISE EXCEPTION 'C6 identity capability catalog is incomplete';
+  END IF;
+  IF (
+    SELECT count(*)
+    FROM role_capabilities
+    WHERE role_key = 'tenant-admin'
+      AND capability_key IN ('telephony.calls.view', 'telephony.calls.view_own', 'telephony.calls.originate', 'telephony.calls.control', 'telephony.calls.record', 'telephony.calls.manage')
+  ) <> 6 THEN
+    RAISE EXCEPTION 'tenant-admin C6 capability assignment is incomplete';
+  END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM role_capabilities
+    WHERE role_key = 'tenant-member'
+      AND capability_key LIKE 'telephony.calls.%'
+  ) THEN
+    RAISE EXCEPTION 'tenant-member unexpectedly has C6 call capabilities';
+  END IF;
+END
+$$;
+SQL
+
+run_artisan migrate:rollback --step=1 --force
+run_artisan migrate --force
+
+"${compose[@]}" exec -T postgres psql -U "${UTCP_POSTGRES_USER:-utcp}" -d "$db_name" -v ON_ERROR_STOP=1 <<'SQL'
+DO $$
+BEGIN
+  IF to_regclass('public.calls') IS NULL OR to_regclass('public.call_legs') IS NULL THEN
+    RAISE EXCEPTION 'C6 tables did not reapply after rollback';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'public.call_legs'::regclass
+      AND conname = 'call_legs_bridged_to_leg_fk'
+  ) THEN
+    RAISE EXCEPTION 'C6 self-referencing foreign key did not reapply';
+  END IF;
+END
+$$;
 SQL
 
 printf 'control-plane-migrate-proof: empty PostgreSQL migration and repeated lifecycle passed without Redis authority\n'

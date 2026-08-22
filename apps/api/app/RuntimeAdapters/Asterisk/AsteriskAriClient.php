@@ -312,6 +312,125 @@ class AsteriskAriClient
         return $summary;
     }
 
+    /**
+     * Execute a normalized C6 operation using only provider-local ARI details.
+     * Canonical Call/CallLeg state is intentionally not changed here; ARI facts
+     * return through the normalized observation ingress.
+     *
+     * @param  array<string, mixed>  $payload
+     * @param  list<array{id:string,call_id:string,runtime_channel_id:string}>  $legs
+     * @return array<string, mixed>
+     */
+    public function executeCallOperation(string $tenantId, string $runtimeNodeId, string $operationType, array $payload, array $legs): array
+    {
+        $profile = $this->profiles->requiredProfile($tenantId, $runtimeNodeId);
+        $timeout = (int) $profile['request_timeout_ms'];
+        $channels = array_values(array_filter(array_map(static fn (array $leg): string => $leg['runtime_channel_id'], $legs)));
+        $channel = $channels[0] ?? null;
+        $callId = (string) ($payload['call_id'] ?? ($legs[0]['call_id'] ?? ''));
+
+        $request = function (string $method, string $resource, array $query = [], array $statuses = [200, 201, 202, 204]) use ($runtimeNodeId, $timeout): array {
+            return $this->ariRequest($runtimeNodeId, $method, $resource, $query, $timeout, $statuses);
+        };
+
+        if ($operationType === 'call.leg.originate') {
+            $destination = $this->asteriskEndpoint((string) ($payload['destination_ref'] ?? ''));
+            $legId = (string) ($payload['leg_id'] ?? ($legs[0]['id'] ?? ''));
+            if ($legId === '') {
+                throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_call_leg_missing', 'A normalized originate operation requires a CallLeg target.');
+            }
+            $runtimeChannelId = self::callLegChannelId($legId);
+            $request('POST', 'channels', [
+                'endpoint' => $destination,
+                'app' => (string) config('asterisk_ari.defaults.application_name', 'utcp-t0-observation'),
+                'timeout' => (string) ($payload['timeout_seconds'] ?? 30),
+                'channelId' => $runtimeChannelId,
+            ], [200, 201, 202]);
+
+            return ['provider_action' => 'channels.originate', 'destination_ref' => (string) ($payload['destination_ref'] ?? ''), 'runtime_channel_id' => $runtimeChannelId];
+        }
+
+        if ($channel === null) {
+            throw new AsteriskAriException(FailureClass::Conflict, 'ari_channel_unbound', 'The normalized CallLeg has no current ARI channel.');
+        }
+
+        if ($operationType === 'call.hangup') {
+            foreach ($channels as $runtimeChannelId) {
+                $request('DELETE', 'channels/'.rawurlencode($runtimeChannelId));
+            }
+
+            return ['provider_action' => 'channels.hangup', 'runtime_channel_ids' => $channels];
+        }
+
+        $resource = 'channels/'.rawurlencode($channel);
+        $action = match ($operationType) {
+            'call.leg.cancel_origination', 'call.leg.hangup' => ['DELETE', $resource, [], 'channels.hangup'],
+            'call.leg.answer' => ['POST', $resource.'/answer', [], 'channels.answer'],
+            'call.leg.hold' => ['POST', $resource.'/hold', [], 'channels.hold'],
+            'call.leg.resume' => ['POST', $resource.'/unhold', [], 'channels.resume'],
+            'call.leg.mute' => ['POST', $resource.'/mute', ['direction' => 'both'], 'channels.mute'],
+            'call.leg.unmute' => ['DELETE', $resource.'/mute', ['direction' => 'both'], 'channels.unmute'],
+            'call.leg.send_dtmf' => ['POST', $resource.'/dtmf', ['dtmf' => (string) ($payload['digit'] ?? '')], 'channels.dtmf'],
+            'call.leg.redirect', 'call.leg.blind_transfer' => ['POST', $resource.'/redirect', ['endpoint' => $this->asteriskEndpoint((string) ($payload['destination_ref'] ?? ''))], 'channels.redirect'],
+            'call.leg.play_media' => ['POST', $resource.'/play', ['media' => $this->asteriskMedia((string) ($payload['media_ref'] ?? ''))], 'channels.play'],
+            'call.leg.stop_media' => ['DELETE', 'playbacks/'.rawurlencode((string) ($payload['playback_id'] ?? '')), [], 'playbacks.stop'],
+            'call.leg.start_recording' => ['POST', $resource.'/record', ['name' => $this->safeRuntimeReference((string) ($payload['recording_name'] ?? ($legs[0]['id'] ?? 'recording'))), 'format' => 'wav', 'ifExists' => 'overwrite'], 'channels.record'],
+            'call.leg.stop_recording' => ['DELETE', 'recordings/live/'.rawurlencode($this->safeRuntimeReference((string) ($payload['recording_name'] ?? ($legs[0]['id'] ?? 'recording')))), [], 'recordings.stop'],
+            default => null,
+        };
+
+        if ($operationType === 'call.legs.bridge' || $operationType === 'call.legs.unbridge' || $operationType === 'call.leg.attended_transfer') {
+            if (count($channels) !== 2) {
+                throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_relationship_requires_two_channels', 'The normalized relationship requires two current ARI channels.');
+            }
+            $bridgeId = 'utcp-call-'.$this->safeRuntimeReference($callId);
+            if ($operationType === 'call.legs.bridge') {
+                $request('POST', 'bridges', ['bridgeId' => $bridgeId, 'type' => 'mixing', 'name' => 'UTCP call '.$callId], [200, 201, 204]);
+                $request('POST', 'bridges/'.rawurlencode($bridgeId).'/addChannel', ['channel' => implode(',', $channels)], [200, 204]);
+
+                return ['provider_action' => 'bridges.add_channel', 'runtime_bridge_id' => $bridgeId];
+            }
+            if ($operationType === 'call.legs.unbridge') {
+                $request('POST', 'bridges/'.rawurlencode($bridgeId).'/removeChannel', ['channel' => implode(',', $channels)], [200, 204, 404]);
+
+                return ['provider_action' => 'bridges.remove_channel', 'runtime_bridge_id' => $bridgeId];
+            }
+            $request('POST', 'channels/'.rawurlencode($channels[0]).'/redirect', ['endpoint' => 'channel:'.$channels[1]], [200, 204]);
+
+            return ['provider_action' => 'channels.attended_transfer', 'related_runtime_channel_id' => $channels[1]];
+        }
+
+        if ($action === null) {
+            throw new AsteriskAriException(FailureClass::UnsupportedCapability, 'asterisk_call_operation_unsupported', 'Normalized C6 operation has no deterministic ARI mapping.');
+        }
+
+        [$method, $target, $query, $providerAction] = $action;
+        $request($method, $target, $query);
+
+        return ['provider_action' => $providerAction, 'runtime_channel_id' => $channel];
+    }
+
+    private function asteriskEndpoint(string $destination): string
+    {
+        if (str_starts_with($destination, 'tel:')) {
+            return 'PJSIP/'.substr($destination, 4);
+        }
+        if (str_starts_with($destination, 'sip:')) {
+            return 'PJSIP/'.substr($destination, 4);
+        }
+
+        throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_destination_invalid', 'DestinationRef is not a supported normalized telephony address.');
+    }
+
+    private function asteriskMedia(string $mediaRef): string
+    {
+        if (! str_starts_with($mediaRef, 'utcp:media/')) {
+            throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_media_reference_invalid', 'Media reference is not a supported normalized media reference.');
+        }
+
+        return 'sound:'.substr($mediaRef, strlen('utcp:media/'));
+    }
+
     private function participantRuntimeChannelId(string $participantId): ?string
     {
         $channelId = DB::table('conference_participants')->where('id', $participantId)->value('runtime_channel_id');
@@ -725,6 +844,23 @@ class AsteriskAriClient
         return mb_substr(preg_replace('/[^A-Za-z0-9_.:-]/', '_', $value) ?: 'unknown', 0, 80);
     }
 
+    public static function callLegChannelId(string $legId): string
+    {
+        return 'utcp-call-leg-'.mb_substr(preg_replace('/[^A-Za-z0-9_.:-]/', '_', $legId) ?: 'unknown', 0, 80);
+    }
+
+    public static function callLegIdFromChannelId(string $channelId): ?string
+    {
+        $prefix = 'utcp-call-leg-';
+        if (! str_starts_with($channelId, $prefix)) {
+            return null;
+        }
+
+        $legId = substr($channelId, strlen($prefix));
+
+        return $legId === '' ? null : $legId;
+    }
+
     /**
      * @param  list<string>  $headers
      * @return array{status:int,body:string}
@@ -821,6 +957,10 @@ class AsteriskAriClient
             'args' => $this->sanitizeAriArguments($event['args'] ?? null),
             'bridge' => is_array($event['bridge'] ?? null) ? $this->sanitizeAriObject($event['bridge']) : null,
             'channel' => is_array($event['channel'] ?? null) ? $this->sanitizeAriObject($event['channel']) : null,
+            'digit' => is_string($event['digit'] ?? null) ? mb_substr($event['digit'], 0, 8) : null,
+            'duration_ms' => is_numeric($event['duration_ms'] ?? null) ? (int) $event['duration_ms'] : null,
+            'playback' => is_array($event['playback'] ?? null) ? $this->sanitizeAriObject($event['playback']) : null,
+            'recording' => is_array($event['recording'] ?? null) ? $this->sanitizeAriObject($event['recording']) : null,
         ];
     }
 
@@ -848,6 +988,14 @@ class AsteriskAriClient
         return [
             'id' => is_string($value['id'] ?? null) ? mb_substr($value['id'], 0, 120) : null,
             'name' => is_string($value['name'] ?? null) ? mb_substr(preg_replace('/[^A-Za-z0-9_.:-]/', '_', $value['name']) ?: 'unknown', 0, 120) : null,
+            'state' => is_string($value['state'] ?? null) ? mb_substr($value['state'], 0, 64) : null,
+            'caller' => is_array($value['caller'] ?? null) ? ['number' => is_string($value['caller']['number'] ?? null) ? mb_substr($value['caller']['number'], 0, 120) : null] : null,
+            'connected' => is_array($value['connected'] ?? null) ? ['number' => is_string($value['connected']['number'] ?? null) ? mb_substr($value['connected']['number'], 0, 120) : null] : null,
+            'media_uri' => is_string($value['media_uri'] ?? null) ? mb_substr($value['media_uri'], 0, 240) : null,
+            'channels' => is_array($value['channels'] ?? null) ? array_values(array_filter(array_map(
+                static fn (mixed $channel): ?string => is_string($channel) ? mb_substr($channel, 0, 120) : (is_array($channel) && is_string($channel['id'] ?? null) ? mb_substr($channel['id'], 0, 120) : null),
+                $value['channels'],
+            ))) : null,
         ];
     }
 }

@@ -184,7 +184,7 @@ wait_migration() {
 }
 
 wait_platform() {
-  for deployment in api worker scheduler reverb web gateway telephony-command-worker telephony-event-normalizer telephony-reconciler simulator-event-source asterisk-ari-events kamailio; do
+  for deployment in api asterisk-ari-events control-plane-outbox-dispatcher gateway kamailio kamailio-registration-observer reverb rtpengine scheduler simulator-event-source telephony-command-worker telephony-event-normalizer telephony-reconciler utcp-runtime-fence-worker web worker; do
     kube -n "$K8S_PLATFORM_NAMESPACE" rollout status "deployment/$deployment" --timeout=240s
   done
 }

@@ -9,6 +9,7 @@ use App\RuntimeEngine\Commands\RuntimeConferenceInspectionResult;
 use App\RuntimeEngine\Events\RuntimeEventReceiptRepository;
 use App\Simulator\SimulatorCatalog;
 use App\Simulator\SimulatorScheduledEventRepository;
+use App\TelephonyDomain\CallOperationCatalog;
 use Illuminate\Support\Facades\DB;
 
 final class SimulatorRuntimeAdapter implements RuntimeAdapter, RuntimeConferenceInspectionAdapter
@@ -82,6 +83,10 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter, RuntimeConference
                 ];
             }
 
+            if (isset(CallOperationCatalog::all()[$operationType])) {
+                return $this->executeCallOperation($node, $state, $operationType, (string) $operation['aggregate_type'], $payload);
+            }
+
             match ($scenario) {
                 'duplicate-observation' => $this->scheduleDuplicateReady($node, $profile, $targetGeneration),
                 'disconnect-reconnect' => $this->scheduleDisconnectReconnect($node, $profile, $targetGeneration),
@@ -105,6 +110,82 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter, RuntimeConference
                 ],
             ];
         });
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function executeCallOperation(object $node, object $state, string $operationType, string $aggregateType, array $payload): array
+    {
+        $statePayload = $this->statePayload($state);
+        $statePayload['call_operations'] ??= [];
+        $statePayload['call_operations'][] = [
+            'operation_type' => $operationType,
+            'aggregate_type' => $aggregateType,
+            'call_id' => (string) ($payload['call_id'] ?? ''),
+            'leg_id' => (string) ($payload['leg_id'] ?? ''),
+            'leg_ids' => $payload['leg_ids'] ?? [],
+            'executed_at' => now()->toISOString(),
+        ];
+        DB::table('simulator_states')->where('runtime_node_id', $node->id)->update([
+            'state_payload' => json_encode($statePayload, JSON_THROW_ON_ERROR),
+            'current_phase' => 'call_operation_executed',
+            'updated_at' => now(),
+        ]);
+
+        $this->scheduleCallObservations($node, $operationType, $aggregateType, $payload);
+
+        return [
+            'status' => 'completed',
+            'event_type' => 'runtime_operation.simulator_call_completed',
+            'event_payload' => [
+                'adapter_key' => $this->adapterKey(),
+                'operation_type' => $operationType,
+                'call_id' => $payload['call_id'] ?? null,
+                'leg_id' => $payload['leg_id'] ?? null,
+            ],
+        ];
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function scheduleCallObservations(object $node, string $operationType, string $aggregateType, array $payload): void
+    {
+        $legId = is_string($payload['leg_id'] ?? null) ? $payload['leg_id'] : null;
+        $channelId = is_string($payload['runtime_channel_id'] ?? null) ? $payload['runtime_channel_id'] : null;
+        if ($channelId === null && $legId !== null) {
+            $channelId = 'simulator-call-'.$legId;
+        }
+        if ($legId === null || $channelId === null) {
+            return;
+        }
+        $epoch = $this->openEpoch($node);
+        $subjectType = 'call_leg';
+        $subjectId = $legId;
+        $observations = match ($operationType) {
+            'call.leg.originate' => [
+                ['type' => 'call.leg.ringing', 'state' => 'ringing', 'delay' => 1],
+                ['type' => 'call.leg.answered', 'state' => 'answered', 'delay' => 2],
+            ],
+            'call.leg.answer' => [['type' => 'call.leg.answered', 'state' => 'answered', 'delay' => 0]],
+            'call.leg.hold' => [['type' => 'call.leg.held', 'state' => 'held', 'delay' => 0]],
+            'call.leg.resume' => [['type' => 'call.leg.resumed', 'state' => 'answered', 'delay' => 0]],
+            'call.leg.hangup', 'call.leg.cancel_origination' => [['type' => 'call.leg.terminated', 'state' => 'completed', 'delay' => 0, 'reason' => 'requested']],
+            default => [],
+        };
+        foreach ($observations as $observation) {
+            $this->events->schedule($node->tenant_id, $node->id, $epoch, $this->catalog->eventType('call_observation'), 1, [
+                'observation_type' => $observation['type'],
+                'subject_type' => $subjectType,
+                'subject_id' => $subjectId,
+                'observed_state' => $observation['state'],
+                'runtime_channel_id' => $channelId,
+                'observation_payload' => array_filter([
+                    'call_id' => $payload['call_id'] ?? null,
+                    'leg_id' => $legId,
+                    'runtime_channel_id' => $channelId,
+                    'termination_reason' => $observation['reason'] ?? null,
+                ], static fn (mixed $value): bool => $value !== null),
+                'occurred_at' => now()->addSeconds((int) $observation['delay'])->toISOString(),
+            ], (int) $observation['delay']);
+        }
     }
 
     public function inspectConferenceRuntime(string $tenantId, string $runtimeNodeId, string $conferenceId, ?string $participantId = null): RuntimeConferenceInspectionResult

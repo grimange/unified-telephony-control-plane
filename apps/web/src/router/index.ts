@@ -9,6 +9,7 @@ import {
 import AppShell from '../layouts/AppShell.vue'
 import AuditRecordsView from '../views/AuditRecordsView.vue'
 import ChangePasswordView from '../views/ChangePasswordView.vue'
+import CallConsoleView from '../views/CallConsoleView.vue'
 import ConferenceOperationsView from '../views/ConferenceOperationsView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import ForbiddenView from '../views/ForbiddenView.vue'
@@ -46,6 +47,7 @@ export const routes = [
     children: [
       { path: 'dashboard', name: 'dashboard', component: DashboardView, meta: { requiresAuth: true, title: 'Dashboard' } },
       { path: 'dialer', name: 'reference-dialer', component: ReferenceDialerView, meta: { requiresAuth: true, title: 'Reference dialer', capability: 'telephony.sessions.view_own', requiresActiveTenant: true } },
+      { path: 'calls', name: 'calls', component: CallConsoleView, meta: { requiresAuth: true, title: 'Calls', capability: 'telephony.calls.view', requiresActiveTenant: true } },
       { path: 'admin/tenants', name: 'admin-tenants', component: TenantsView, meta: { requiresAuth: true, title: 'Tenants', capability: 'platform.tenants.view' } },
       { path: 'admin/memberships', name: 'admin-memberships', component: MembershipsView, meta: { requiresAuth: true, title: 'Memberships', capability: 'tenant.memberships.view' } },
       { path: 'admin/audit-records', name: 'admin-audit-records', component: AuditRecordsView, meta: { requiresAuth: true, title: 'Audit records', capability: 'tenant.memberships.manage', requiresActiveTenant: true } },

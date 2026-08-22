@@ -9,6 +9,7 @@ use App\ControlPlane\Shared\PayloadSafety;
 use App\ControlPlane\Shared\StableJson;
 use App\RuntimeEngine\EngineIds;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
+use App\TelephonyDomain\CallObservationProcessor;
 use Illuminate\Support\Facades\DB;
 
 final class ProjectionService
@@ -97,6 +98,10 @@ final class ProjectionService
 
                 if ($inserted === 1 && $observation['observation_type'] === 'runtime.capability.observed' && $observation['subject_type'] === 'runtime_node') {
                     $this->projectObservedCapabilities($receipt, $observation, $observationId, $tenantId);
+                }
+
+                if ($inserted === 1 && (str_starts_with((string) ($observation['observation_type'] ?? ''), 'call.leg.') || str_starts_with((string) ($observation['observation_type'] ?? ''), 'call.legs.'))) {
+                    app(CallObservationProcessor::class)->process($receipt, $observation);
                 }
 
                 $this->advanceCheckpoint(

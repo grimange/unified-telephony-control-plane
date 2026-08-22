@@ -33,6 +33,32 @@ final class SimulatorEventNormalizer implements EventNormalizer
         $generation = isset($payload['configuration_generation']) ? (int) $payload['configuration_generation'] : null;
         $observedAt = is_string($payload['occurred_at'] ?? null) ? $payload['occurred_at'] : now();
 
+        if ($this->eventType === $this->catalog->eventType('call_observation')) {
+            $observationType = is_string($payload['observation_type'] ?? null) ? $payload['observation_type'] : '';
+            $subjectType = is_string($payload['subject_type'] ?? null) ? $payload['subject_type'] : '';
+            $subjectId = is_string($payload['subject_id'] ?? null) ? $payload['subject_id'] : '';
+            if ($observationType === '' || $subjectType === '' || $subjectId === '') {
+                return [];
+            }
+
+            $normalizedPayload = is_array($payload['observation_payload'] ?? null) ? $payload['observation_payload'] : [];
+            $normalizedPayload['runtime_node_id'] = (string) $receipt->runtime_node_id;
+            if (isset($payload['runtime_channel_id'])) {
+                $normalizedPayload['runtime_channel_id'] = $payload['runtime_channel_id'];
+            }
+
+            return [[
+                'observation_type' => $observationType,
+                'observation_version' => 1,
+                'subject_type' => $subjectType,
+                'subject_id' => $subjectId,
+                'observed_state' => $state,
+                'configuration_version' => $generation,
+                'observed_at' => $observedAt,
+                'payload' => $normalizedPayload,
+            ]];
+        }
+
         if (in_array($this->eventType, [
             $this->catalog->eventType('conference_ready'),
             $this->catalog->eventType('conference_closed'),

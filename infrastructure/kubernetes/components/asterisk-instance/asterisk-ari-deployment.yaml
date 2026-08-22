@@ -42,6 +42,10 @@ spec:
           envFrom:
             - secretRef:
                 name: utcp-local-asterisk-ari-credentials
+          volumeMounts:
+            - name: asterisk-local-config
+              mountPath: /opt/utcp-asterisk-local-config
+              readOnly: true
           resources:
             requests:
               cpu: 50m
@@ -83,3 +87,8 @@ spec:
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 3
+      volumes:
+        - name: asterisk-local-config
+          configMap:
+            name: asterisk-local-sip-fixtures
+            optional: true

@@ -808,6 +808,17 @@ Artisan::command('telephony-domain:ensure-targets', function (ReconciliationRepo
                 $count++;
             });
     }
+    if (Schema::hasTable('call_legs')) {
+        DB::table('call_legs')
+            ->where('direction', 'outbound')
+            ->whereNotIn('observed_state', ['completed', 'failed', 'cancelled'])
+            ->orderBy('id')
+            ->get()
+            ->each(function (object $leg) use ($repository, &$count): void {
+                $repository->ensureTarget((string) $leg->tenant_id, 'call_leg_origination', (string) $leg->id, 1);
+                $count++;
+            });
+    }
     $this->line('telephony_domain_reconciliation_targets_ensured='.$count);
 
     return 0;
