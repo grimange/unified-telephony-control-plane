@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# shellcheck source=scripts/kubernetes/lib
+. "$ROOT/scripts/kubernetes/lib"
+
+valid_digest='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+if [ "$(printf 'Docker-Content-Digest: %s\r\n' "$valid_digest" | extract_registry_manifest_digest)" != "$valid_digest" ]; then
+  printf 'expected a valid registry digest to be extracted\n' >&2
+  exit 1
+fi
+for headers in \
+  '' \
+  'Docker-Content-Digest: sha256:short' \
+  'Docker-Content-Digest: sha512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'; do
+  if printf '%s\n' "$headers" | extract_registry_manifest_digest >/dev/null 2>&1; then
+    printf 'expected invalid registry digest headers to fail: %s\n' "$headers" >&2
+    exit 1
+  fi
+done
+
+projection_root="$TMP/projection"
+mkdir -p "$projection_root/infrastructure/kubernetes/overlays/local/platform"
+cp "$ROOT/infrastructure/kubernetes/overlays/local/application-config.properties" \
+  "$projection_root/infrastructure/kubernetes/overlays/local/application-config.properties"
+cp "$ROOT/infrastructure/kubernetes/overlays/local/platform/application-config.properties" \
+  "$projection_root/infrastructure/kubernetes/overlays/local/platform/application-config.properties"
+project_managed_freeswitch_image "utcp-local-registry:5000/utcp/freeswitch@$valid_digest" "$projection_root"
+if ! diff -u \
+  <(grep '^UTCP_MANAGED_FREESWITCH_IMAGE=' "$projection_root/infrastructure/kubernetes/overlays/local/application-config.properties") \
+  <(grep '^UTCP_MANAGED_FREESWITCH_IMAGE=' "$projection_root/infrastructure/kubernetes/overlays/local/platform/application-config.properties") >/dev/null; then
+  printf 'expected local and platform projections to agree\n' >&2
+  exit 1
+fi
+
+stub_bin="$TMP/bin"
+mkdir -p "$stub_bin"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  'if [ "${1:-}" = push ] && [ "${FAIL_PUSH:-0}" = 1 ]; then printf "failing push\\n" >&2; exit 1; fi' \
+  'exit 0' >"$stub_bin/docker"
+chmod +x "$stub_bin/docker"
+export PATH="$stub_bin:$PATH"
+hash -r
+
+source "$ROOT/scripts/kubernetes/image-push"
+registry_manifest_digest() { printf '%s\n' "$valid_digest"; }
+project_managed_freeswitch_image() { printf '%s\n' "$1" >"$TMP/projected-image"; }
+
+push_images >/dev/null
+if [ "$(sed -n '1p' "$TMP/projected-image")" != "utcp-local-registry:5000/utcp/freeswitch@$valid_digest" ]; then
+  printf 'expected successful publication to project the registry digest\n' >&2
+  exit 1
+fi
+
+rm -f "$TMP/projected-image"
+export FAIL_PUSH=1
+if push_images >/dev/null 2>&1; then
+  printf 'expected image push failure to fail publication\n' >&2
+  exit 1
+fi
+if [ -e "$TMP/projected-image" ]; then
+  printf 'push failure must not update the desired image projection\n' >&2
+  exit 1
+fi
+
+unset FAIL_PUSH
+registry_manifest_digest() { return 1; }
+if push_images >/dev/null 2>&1; then
+  printf 'expected digest resolution failure to fail publication\n' >&2
+  exit 1
+fi
+if [ -e "$TMP/projected-image" ]; then
+  printf 'digest resolution failure must not update the desired image projection\n' >&2
+  exit 1
+fi
+
+printf 'Kubernetes immutable image publication tests passed\n'

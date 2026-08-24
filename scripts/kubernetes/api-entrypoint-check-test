@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ENTRYPOINT="$ROOT/infrastructure/docker/api/entrypoint"
+DEPLOYMENT="$ROOT/infrastructure/kubernetes/base/platform/freeswitch-esl-events-deployment.yaml"
+
+grep -Fq 'freeswitch-esl-events)' "$ENTRYPOINT" || {
+  printf 'missing freeswitch-esl-events API process role\n' >&2
+  exit 1
+}
+grep -Fq 'exec php artisan freeswitch-esl:events "$@"' "$ENTRYPOINT" || {
+  printf 'freeswitch-esl-events role does not invoke the ESL Artisan command\n' >&2
+  exit 1
+}
+grep -Fq 'args: ["freeswitch-esl-events"]' "$DEPLOYMENT" || {
+  printf 'FreeSWITCH event Deployment does not use the explicit process role\n' >&2
+  exit 1
+}
+grep -Fq 'asterisk-ari-events)' "$ENTRYPOINT" || {
+  printf 'existing Asterisk event process role is missing\n' >&2
+  exit 1
+}
+grep -Fq 'exec php artisan asterisk-ari:events "$@"' "$ENTRYPOINT" || {
+  printf 'existing Asterisk event process role changed unexpectedly\n' >&2
+  exit 1
+}
+
+set +e
+unknown_output="$($ENTRYPOINT unknown-role 2>&1)"
+unknown_status=$?
+set -e
+if [ "$unknown_status" -ne 64 ] || ! grep -Fq 'Unknown UTCP API process role: unknown-role' <<<"$unknown_output"; then
+  printf 'unknown API process role no longer fails with exit 64\n' >&2
+  exit 1
+fi
+
+printf 'API entrypoint process-role regression check passed\n'

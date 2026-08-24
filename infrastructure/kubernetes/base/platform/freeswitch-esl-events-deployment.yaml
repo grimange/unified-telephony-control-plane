@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: freeswitch-esl-events
+  namespace: utcp-platform
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: freeswitch-esl-events
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: utcp
+      app.kubernetes.io/component: freeswitch-esl-events
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: utcp
+        app.kubernetes.io/component: freeswitch-esl-events
+        utcp.io/network-role: freeswitch-esl-events
+    spec:
+      serviceAccountName: utcp-platform-app
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33
+        runAsGroup: 33
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: freeswitch-esl-events
+          image: utcp-api
+          imagePullPolicy: Always
+          args: ["freeswitch-esl-events"]
+          env:
+            - name: BROADCAST_CONNECTION
+              value: log
+          envFrom:
+            - configMapRef:
+                name: utcp-application-config
+            - secretRef:
+                name: utcp-local-data-credentials
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          readinessProbe:
+            exec:
+              command: [php, artisan, about]
+            periodSeconds: 30
+          livenessProbe:
+            exec:
+              command: [php, artisan, about]
+            periodSeconds: 30

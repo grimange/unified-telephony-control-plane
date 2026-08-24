@@ -1,0 +1,8 @@
+<configuration name="acl.conf" description="UTCP runtime network ACL">
+  <network-lists>
+    <list name="utcp-runtime" default="deny">
+      <node type="allow" cidr="10.42.0.0/16"/>
+      <node type="allow" cidr="127.0.0.1/32"/>
+    </list>
+  </network-lists>
+</configuration>

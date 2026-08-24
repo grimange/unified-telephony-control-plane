@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CHECK="$ROOT/scripts/kubernetes/application-config-check.py"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+kubectl kustomize "$ROOT/infrastructure/kubernetes/overlays/local" >"$TMP/local.yaml"
+kubectl kustomize "$ROOT/infrastructure/kubernetes/overlays/local/platform" >"$TMP/platform.yaml"
+
+python3 "$CHECK" "$TMP/local.yaml" "$TMP/platform.yaml" >/dev/null
+
+sed -i '/UTCP_MANAGED_FREESWITCH_IMAGE:/d' "$TMP/local.yaml"
+if python3 "$CHECK" "$TMP/local.yaml" "$TMP/platform.yaml" >/dev/null 2>&1; then
+  printf 'expected missing FreeSWITCH managed image projection to fail\n' >&2
+  exit 1
+fi
+
+kubectl kustomize "$ROOT/infrastructure/kubernetes/overlays/local" >"$TMP/local.yaml"
+sed -i 's#utcp-local-registry:5000/utcp/freeswitch@sha256:[0-9a-f]*#utcp-local-registry:5000/utcp/freeswitch:0.1.0-k1-dev#' "$TMP/local.yaml"
+if python3 "$CHECK" "$TMP/local.yaml" "$TMP/platform.yaml" >/dev/null 2>&1; then
+  printf 'expected mutable FreeSWITCH image projection to fail\n' >&2
+  exit 1
+fi
+
+printf 'Kubernetes managed image projection mutation tests passed\n'
