@@ -35,10 +35,13 @@ return [
         'freeswitch-esl' => [
             'runtime_family' => 'freeswitch',
             'display_name' => 'FreeSWITCH ESL',
-            'description' => 'Planned FreeSWITCH ESL adapter',
-            'supported_capabilities' => [],
+            'description' => 'Managed FreeSWITCH ESL runtime adapter',
+            'supported_capabilities' => ['call.origination', 'call.control', 'call.hold', 'call.dtmf.send', 'media.playback'],
             'required_capabilities' => [],
-            'endpoint_requirements' => [],
+            'endpoint_requirements' => [
+                ['purpose' => 'control', 'transports' => ['tcp', 'tls'], 'required' => true],
+                ['purpose' => 'sip', 'transports' => ['udp'], 'required' => true],
+            ],
             'credentials_required' => true,
             'adapter_configuration_available' => false,
         ],

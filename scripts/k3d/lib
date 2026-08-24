@@ -145,6 +145,29 @@ wait_for_system_pods() {
   kube -n kube-system wait --for=condition=Ready pods --all --timeout=180s >/dev/null
 }
 
+telephony_workload_check() {
+  local workload_file="$1"
+
+  awk '
+    function canonical_utcp_workload(namespace, part_of, component, network_role) {
+      return (namespace == "utcp-platform" || namespace == "utcp-runtime") &&
+        part_of == "utcp" &&
+        (component != "<none>" || network_role != "<none>")
+    }
+
+    {
+      workload = tolower($0)
+      if (workload ~ /freeswitch|confbridge|(^|[^a-z])(sip|sips|srtp|pbx|pjsip)([^a-z]|$)/ &&
+        !canonical_utcp_workload($1, $3, $4, $5)) {
+        print $0
+        invalid = 1
+      }
+    }
+
+    END { exit invalid ? 1 : 0 }
+  ' "$workload_file"
+}
+
 compose_state() {
   docker compose ls --format json 2>/dev/null | grep '"Name":"utcp"' || true
 }

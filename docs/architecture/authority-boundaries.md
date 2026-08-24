@@ -42,6 +42,37 @@ UTCP must not silently transfer authority from one component to another.
 - rtpengine relays media. UTCP owns desired media-resource registration and health policy.
 - Asterisk and FreeSWITCH execute calls behind adapter contracts. Vendor-specific concepts should be normalized or exposed as explicit optional capabilities.
 
+## Unified Call Transfer & Handoff (planned)
+
+The application decides where the business interaction should go. UTCP
+determines how the telephony path is established and maintained. Applications
+own campaign and lead policy, qualification, agent/team or skill selection, CRM
+state, scripting, transfer UI, disposition, pacing, and business metrics. UTCP
+does not become a campaign engine, ACD, CRM, or predictive dialer because it
+orchestrates transfer.
+
+The future canonical abstraction is **runtime handoff**. Inter-runtime means
+moving or extending a logical Call between RuntimeNodes; inter-provider is the
+subset where those RuntimeNodes use different providers. Asterisk RuntimeNode A
+to Asterisk RuntimeNode B is inter-runtime and same-provider. Asterisk to
+FreeSWITCH is inter-runtime and inter-provider. A handoff normally remains one
+logical `Call` with source, consultation, and target `CallLeg` records.
+
+This is a planned consumer of the C6 normalized primitives, not a second call
+control catalog. `runtime_operations` remains command authority,
+`runtime_observations` remains provider-fact authority, and `CallDomainService`
+remains canonical Call/CallLeg mutation authority. Provider adapters execute and
+listeners normalize; neither directly mutates canonical lifecycle state.
+Destination selection will depend on the C7 `DestinationRef` and, where
+appropriate, `TelephonyAddress` authority. Provider/runtime selection belongs to
+UTCP routing, readiness, capability, placement, and failure-domain policy, not
+ordinary dialer logic. The original working leg should remain until an explicit
+provider-appropriate commit point where technically possible; failures reconcile
+actual provider state and never fabricate rollback.
+
+The feature is planned under ADR-025 and must not be treated as implemented or
+as changing the current T4C1 live-proof next step.
+
 Application services must use normalized runtime contracts such as `TelephonyRuntimeAdapter`, `ConferenceRuntimeAdapter`, `RegistrationObservation`, and `ConferenceMembershipObservation`. Controllers and workflows must not branch directly on `asterisk` or `freeswitch`; runtime-specific commands stay inside adapters.
 
 C0 does not implement those adapters. It only provides the runtime-neutral kernel that later registry, command/event, simulator, and telephony phases must use.

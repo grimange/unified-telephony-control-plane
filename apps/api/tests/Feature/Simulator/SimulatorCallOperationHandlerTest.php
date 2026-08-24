@@ -7,7 +7,9 @@ use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\IdempotencyKey;
 use App\Identity\IdentityIds;
 use App\RuntimeEngine\Commands\CommandWorker;
+use App\RuntimeEngine\Commands\RuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeOperationHandlerRegistry;
+use App\Simulator\Commands\SimulatorCallOperationHandler;
 use App\TelephonyDomain\CallOperationCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -16,6 +18,42 @@ use Tests\TestCase;
 final class SimulatorCallOperationHandlerTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_any_registered_runtime_adapter_implementation_is_accepted(): void
+    {
+        $adapter = new class implements RuntimeAdapter
+        {
+            public bool $called = false;
+
+            public function adapterKey(): string
+            {
+                return 'test-third-adapter';
+            }
+
+            public function execute(array $operation): array
+            {
+                $this->called = true;
+
+                return ['status' => 'completed'];
+            }
+        };
+        $result = (new SimulatorCallOperationHandler('call.leg.hold'))->execute([
+            'operation_type' => 'call.leg.hold', 'aggregate_type' => 'call_leg', 'aggregate_id' => 'leg-1',
+            'payload' => ['call_id' => 'call-1', 'leg_id' => 'leg-1'],
+        ], $adapter);
+        $this->assertSame('completed', $result['status']);
+        $this->assertTrue($adapter->called);
+    }
+
+    public function test_null_adapter_still_fails_as_unregistered(): void
+    {
+        $result = (new SimulatorCallOperationHandler('call.leg.hold'))->execute([
+            'operation_type' => 'call.leg.hold', 'aggregate_type' => 'call_leg', 'aggregate_id' => 'leg-1',
+            'payload' => ['call_id' => 'call-1', 'leg_id' => 'leg-1'],
+        ], null);
+        $this->assertSame('terminal_failure', $result['status']);
+        $this->assertSame('call_adapter_not_registered', $result['failure_code']);
+    }
 
     public function test_every_catalog_operation_has_one_registered_handler_and_executes_through_the_simulator(): void
     {

@@ -138,7 +138,7 @@ final class RuntimeEngineTest extends TestCase
             ->count());
 
         $unsupportedAdapterNode = $this->runtimeNode('active', 'adapterless')[1];
-        DB::table('runtime_nodes')->where('id', $unsupportedAdapterNode)->update(['tenant_id' => $tenantId, 'adapter_key' => 'freeswitch-esl']);
+        DB::table('runtime_nodes')->where('id', $unsupportedAdapterNode)->update(['tenant_id' => $tenantId, 'adapter_key' => 'unknown-test-adapter']);
         $unsupportedAdapterId = $operations->create('test.operation.success', 'runtime_node', $unsupportedAdapterNode, ['safe' => true], $context, runtimeNodeId: $unsupportedAdapterNode);
 
         $this->assertSame(0, $worker->workOnce('command-worker-b', batchSize: 1));

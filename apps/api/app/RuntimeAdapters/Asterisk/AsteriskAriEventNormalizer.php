@@ -3,7 +3,10 @@
 namespace App\RuntimeAdapters\Asterisk;
 
 use App\RuntimeEngine\Events\EventNormalizer;
+use App\TelephonyDomain\MediaReference;
+use App\TelephonyDomain\RuntimeChannelIdentity;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 
 final class AsteriskAriEventNormalizer implements EventNormalizer
 {
@@ -171,7 +174,7 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
 
         $leg = DB::table('call_legs')->where('tenant_id', (string) $receipt->tenant_id)->where('runtime_node_id', (string) $receipt->runtime_node_id)->where('runtime_channel_id', $channelId)->first();
         if ($leg === null && $type === 'call.leg.offered') {
-            $correlatedLegId = AsteriskAriClient::callLegIdFromChannelId($channelId);
+            $correlatedLegId = RuntimeChannelIdentity::callLegId($channelId);
             if ($correlatedLegId !== null) {
                 $leg = DB::table('call_legs')
                     ->where('tenant_id', (string) $receipt->tenant_id)
@@ -195,6 +198,13 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
         }
         if (isset($payload['duration_ms']) && is_int($payload['duration_ms'])) {
             $safe['duration_ms'] = $payload['duration_ms'];
+        }
+        if (in_array($type, ['call.leg.media_started', 'call.leg.media_stopped'], true)) {
+            $mediaRef = MediaReference::canonicalFromProviderReference(is_string($payload['media_ref'] ?? null) ? $payload['media_ref'] : null);
+            if ($mediaRef === null) {
+                throw new InvalidArgumentException('Asterisk playback event is missing a resolvable media reference.');
+            }
+            $safe['media_ref'] = $mediaRef;
         }
         if (in_array($type, ['call.legs.bridged', 'call.legs.unbridged'], true)) {
             $safe['runtime_channel_ids'] = count($channels) === 2 ? $channels : [];

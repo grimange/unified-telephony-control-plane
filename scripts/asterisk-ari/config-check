@@ -37,7 +37,7 @@ for file in \
   apps/api/app/RuntimeEngine/Commands/GenericRuntimeNodeInspectHandler.php \
   apps/api/app/RuntimeEngine/Listeners/RuntimeListenerLeaseRepository.php \
   infrastructure/docker/asterisk/Dockerfile \
-  infrastructure/kubernetes/overlays/local/runtime/extensions.local.conf \
+  infrastructure/kubernetes/components/asterisk-sip-fixtures/extensions.local.conf \
   infrastructure/kubernetes/components/asterisk-instance/kustomization.yaml \
   infrastructure/kubernetes/overlays/local-two-asterisk/kustomization.yaml \
   infrastructure/kubernetes/base/platform/asterisk-ari-events-deployment.yaml \
@@ -54,9 +54,11 @@ do
   [ -s "$file" ] || fail "missing required T0 file: $file"
 done
 
-grep -q '^exten => c6-generic-proof,1,' infrastructure/kubernetes/overlays/local/runtime/extensions.local.conf || fail "missing C6 generic inbound proof destination"
-grep -q 'Stasis(utcp-t0-observation,c6-generic-proof)' infrastructure/kubernetes/overlays/local/runtime/extensions.local.conf || fail "C6 generic proof destination must enter the existing Stasis application"
-if grep -A4 -q '^exten => c6-generic-proof,1,.*Echo' infrastructure/kubernetes/overlays/local/runtime/extensions.local.conf; then
+grep -Fq '/var/lib/asterisk/sounds/reference-tone.wav' infrastructure/docker/asterisk/Dockerfile || fail "validation playback asset is not projected into Asterisk"
+
+grep -q '^exten => c6-generic-proof,1,' infrastructure/kubernetes/components/asterisk-sip-fixtures/extensions.local.conf || fail "missing C6 generic inbound proof destination"
+grep -q 'Stasis(utcp-t0-observation,c6-generic-proof)' infrastructure/kubernetes/components/asterisk-sip-fixtures/extensions.local.conf || fail "C6 generic proof destination must enter the existing Stasis application"
+if grep -A4 -q '^exten => c6-generic-proof,1,.*Echo' infrastructure/kubernetes/components/asterisk-sip-fixtures/extensions.local.conf; then
   fail "C6 generic proof destination must not use the T3 Echo fixture"
 fi
 

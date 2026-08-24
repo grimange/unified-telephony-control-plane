@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest'
 import runtimeNodesViewSource from './RuntimeNodesView.vue?raw'
 import { managedDeprovisioningLabel, managedProvisioningLabel, runtimeNodePrimaryStatus } from './runtimeNodeManagementPresentation'
 import { catalogOptions } from './runtimeCatalogPresentation'
+import { managedRuntimeOptions } from './runtimeManagedOptions'
 import platformSource from '../api/platform.ts?raw'
-import type { RuntimeOperationStatus } from '../api/platform'
+import type { RuntimeManagementCatalog, RuntimeOperationStatus } from '../api/platform'
 
 const operation = (status: RuntimeOperationStatus, id: string) => ({
   id,
@@ -44,15 +45,68 @@ describe('RNP-5 managed RuntimeNode Admin UI contract', () => {
     expect(runtimeNodesViewSource).not.toContain('Managed Runtimes')
   })
 
-  it('offers only the canonical Asterisk managed runtime and backend targets', () => {
-    expect(runtimeNodesViewSource).toContain("runtimeCatalog?.adapter_keys?.['asterisk-ari']")
+  const catalog = (adapterKeys: RuntimeManagementCatalog['adapter_keys']): RuntimeManagementCatalog => ({
+    catalog_version: 'test',
+    runtime_families: {
+      asterisk: { display_name: 'Asterisk', description: null, adapters: adapterKeys['asterisk-ari'] ? ['asterisk-ari'] : [] },
+      freeswitch: { display_name: 'FreeSWITCH', description: null, adapters: adapterKeys['freeswitch-esl'] ? ['freeswitch-esl'] : [] },
+      simulator: { display_name: 'Deterministic simulator', description: null, adapters: adapterKeys['simulator-deterministic'] ? ['simulator-deterministic'] : [] },
+    },
+    adapter_keys: adapterKeys,
+    runtime_capabilities: {},
+    desired_states: {},
+    endpoint_purposes: {},
+    endpoint_transports: [],
+    endpoint_tls_modes: [],
+  })
+
+  const adapter = (runtimeFamily: string, displayName: string, credentialsRequired: boolean) => ({
+    runtime_family: runtimeFamily,
+    display_name: displayName,
+    description: null,
+    supported_capabilities: [],
+    required_capabilities: [],
+    endpoint_requirements: [],
+    credentials_required: credentialsRequired,
+    adapter_configuration_available: false,
+  })
+
+  it('derives managed choices from the backend catalog and removes the Asterisk gate', () => {
+    const options = managedRuntimeOptions(catalog({
+      'asterisk-ari': adapter('asterisk', 'Asterisk ARI', true),
+      'freeswitch-esl': adapter('freeswitch', 'FreeSWITCH ESL', true),
+      'simulator-deterministic': adapter('simulator', 'Deterministic simulator', false),
+    }))
+    expect(options.map(({ runtimeFamily, adapterKey }) => ({ runtimeFamily, adapterKey }))).toEqual([
+      { runtimeFamily: 'asterisk', adapterKey: 'asterisk-ari' },
+      { runtimeFamily: 'freeswitch', adapterKey: 'freeswitch-esl' },
+    ])
+    expect(runtimeNodesViewSource).toContain('managedRuntimeOptions.length > 0')
+    expect(runtimeNodesViewSource).toContain('managedRuntimeOptions.length > 1')
+    expect(runtimeNodesViewSource).not.toContain("runtimeCatalog?.adapter_keys?.['asterisk-ari']")
+    expect(runtimeNodesViewSource).not.toContain("runtimeFamily: 'asterisk'")
+    expect(runtimeNodesViewSource).not.toContain("adapterKey: 'asterisk-ari'")
+    expect(runtimeNodesViewSource).toContain('runtime_family: managedRuntimeForm.value.runtimeFamily')
+    expect(runtimeNodesViewSource).toContain('adapter_key: managedRuntimeForm.value.adapterKey')
+    expect(runtimeNodesViewSource).toContain('selectManagedRuntimeOption()')
     expect(runtimeNodesViewSource).toContain('deploymentTargetsResource')
-    expect(runtimeNodesViewSource).not.toContain('FreeSWITCH')
     expect(platformSource).toContain("'/api/v1/admin/deployment-targets'")
   })
 
+  it('handles zero, one, and FreeSWITCH-only managed catalogs deterministically', () => {
+    const asterisk = adapter('asterisk', 'Asterisk ARI', true)
+    const freeswitch = adapter('freeswitch', 'FreeSWITCH ESL', true)
+    expect(managedRuntimeOptions(catalog({}))).toEqual([])
+    expect(managedRuntimeOptions(catalog({ 'asterisk-ari': asterisk }))).toHaveLength(1)
+    expect(managedRuntimeOptions(catalog({ 'freeswitch-esl': freeswitch }))).toEqual([
+      expect.objectContaining({ runtimeFamily: 'freeswitch', adapterKey: 'freeswitch-esl', providerLabel: 'FreeSWITCH' }),
+    ])
+    expect(managedRuntimeOptions(catalog({ 'asterisk-ari': asterisk, 'freeswitch-esl': freeswitch }))).toHaveLength(2)
+  })
+
   it('keeps the normal managed form to business intent without exposing infrastructure or credentials', () => {
-    expect(runtimeNodesViewSource).toContain('Asterisk ·')
+    expect(runtimeNodesViewSource).toContain('selectedManagedRuntimeOption?.providerLabel')
+    expect(runtimeNodesViewSource).not.toContain('Asterisk ·')
     expect(runtimeNodesViewSource).toContain('UTCP will configure credentials, endpoints, and infrastructure automatically.')
     expect(runtimeNodesViewSource).not.toContain('Review generated configuration')
     expect(runtimeNodesViewSource).not.toContain('managed-runtime-slug')

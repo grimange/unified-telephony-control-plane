@@ -13,4 +13,39 @@ if ! rg -n "grep -Ev '\^kube-system\[\[:space:\]\]\+\.\*svclb-traefik'" "$ROOT/s
   exit 1
 fi
 
+# The verifier must allow only telephony workloads carrying the established
+# UTCP ownership metadata, not every workload whose name contains a provider
+# or telephony term.
+# shellcheck source=scripts/k3d/lib
+. "$ROOT/scripts/k3d/lib"
+
+fixtures="$(mktemp)"
+trap 'rm -f "$fixtures"' EXIT
+
+cat >"$fixtures" <<'EOF'
+utcp-platform deployment.apps/freeswitch-esl-events utcp freeswitch-esl-events freeswitch-esl-events
+utcp-runtime deployment.apps/freeswitch-runtime-a1 utcp freeswitch-esl freeswitch-esl
+utcp-platform deployment.apps/asterisk-ari-events utcp asterisk-ari-events asterisk-ari-events
+EOF
+if ! telephony_workload_check "$fixtures"; then
+  printf 'canonical UTCP telephony workload fixtures were rejected\n' >&2
+  exit 1
+fi
+
+cat >"$fixtures" <<'EOF'
+default deployment.apps/freeswitch-stray <none> <none> <none>
+EOF
+if telephony_workload_check "$fixtures"; then
+  printf 'stray FreeSWITCH workload was accepted\n' >&2
+  exit 1
+fi
+
+cat >"$fixtures" <<'EOF'
+default deployment.apps/pbx-stray <none> <none> <none>
+EOF
+if telephony_workload_check "$fixtures"; then
+  printf 'stray PBX/SIP workload was accepted\n' >&2
+  exit 1
+fi
+
 printf 'k3d verifier command-order regression check passed\n'

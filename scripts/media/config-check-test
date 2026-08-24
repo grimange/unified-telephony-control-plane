@@ -224,6 +224,17 @@ elif mutation == "runtime-missing-identity-label":
             labels = (peer.get("podSelector") or {}).get("matchLabels") or {}
             if labels.get("utcp.io/network-role") == "asterisk-ari":
                 labels.pop("app.kubernetes.io/component", None)
+elif mutation == "freeswitch-static-node-pin":
+    for rule in docs[0]["spec"].get("ingress") or []:
+        for peer in rule.get("from") or []:
+            labels = (peer.get("podSelector") or {}).get("matchLabels") or {}
+            if labels.get("utcp.io/network-role") == "freeswitch-esl":
+                labels["utcp.dev/runtime-node"] = "local-freeswitch-esl"
+    for rule in docs[0]["spec"].get("egress") or []:
+        for peer in rule.get("to") or []:
+            labels = (peer.get("podSelector") or {}).get("matchLabels") or {}
+            if labels.get("utcp.io/network-role") == "freeswitch-esl":
+                labels["utcp.dev/runtime-node"] = "local-freeswitch-esl"
 else:
     raise SystemExit(f"unknown mutation: {mutation}")
 
@@ -261,6 +272,7 @@ corridor_wide_peer="$(copy_security corridor-wide-peer)"
 corridor_ipblock="$(copy_security corridor-ipblock)"
 corridor_static_node_pin="$(copy_security corridor-static-node-pin)"
 corridor_missing_identity_label="$(copy_security corridor-missing-identity-label)"
+corridor_freeswitch_static_node_pin="$(copy_security corridor-freeswitch-static-node-pin)"
 
 cp "$SOURCE_DOCKERFILE" "$corrected"
 sed 's/+0\./+0~/g' "$SOURCE_DOCKERFILE" >"$tilde"
@@ -296,6 +308,7 @@ mutate_yaml "$corridor_wide_peer/platform/allow-rtpengine-media.yaml" runtime-wi
 mutate_yaml "$corridor_ipblock/platform/allow-rtpengine-media.yaml" runtime-ipblock
 mutate_yaml "$corridor_static_node_pin/platform/allow-rtpengine-media.yaml" runtime-static-node-pin
 mutate_yaml "$corridor_missing_identity_label/platform/allow-rtpengine-media.yaml" runtime-missing-identity-label
+mutate_yaml "$corridor_freeswitch_static_node_pin/platform/allow-rtpengine-media.yaml" freeswitch-static-node-pin
 
 pass_case "corrected Dockerfile" "$corrected"
 fail_case "tilde package separator" "$tilde" "uses '+0~'; expected convention is +0.mr26.0.1.19"
@@ -327,5 +340,6 @@ fail_case "wide runtime peer rejected" "$corrected" "rtpengine egress must targe
 fail_case "media ipBlock rejected" "$corrected" "rtpengine egress must target the runtime RTP listener range" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$corridor_ipblock"
 fail_case "static RuntimeNode pin rejected" "$corrected" "rtpengine egress must target the runtime RTP listener range" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$corridor_static_node_pin"
 fail_case "missing canonical Asterisk identity rejected" "$corrected" "rtpengine egress must target the runtime RTP listener range" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$corridor_missing_identity_label"
+fail_case "static FreeSWITCH RuntimeNode pin rejected" "$corrected" "managed FreeSWITCH media on UDP 40000-40099" "$SOURCE_ENTRYPOINT" "$SOURCE_DEPLOYMENT" "$corridor_freeswitch_static_node_pin"
 
 printf 'media config check regression tests passed\n'

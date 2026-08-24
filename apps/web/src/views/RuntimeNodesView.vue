@@ -38,7 +38,7 @@
         class="choice-grid"
       >
         <UiButton
-          v-if="runtimeCatalog?.adapter_keys?.['asterisk-ari']"
+          v-if="managedRuntimeOptions.length > 0"
           type="button"
           variant="secondary"
           @click="selectManagedOnboarding()"
@@ -166,6 +166,31 @@
         @submit.prevent="runManagedProvisioning()"
       >
         <UiFormField
+          v-if="managedRuntimeOptions.length > 1"
+          id="managed-runtime-provider"
+          label="Runtime"
+          required
+        >
+          <template #default="{ id, describedBy, invalid }">
+            <UiSelect
+              :id="id"
+              :model-value="managedRuntimeForm.adapterKey"
+              :aria-describedby="describedBy"
+              :invalid="invalid"
+              required
+              @update:model-value="selectManagedRuntimeOption(String($event))"
+            >
+              <option
+                v-for="option in managedRuntimeOptions"
+                :key="option.adapterKey"
+                :value="option.adapterKey"
+              >
+                {{ option.providerLabel }} · {{ option.adapterLabel }}
+              </option>
+            </UiSelect>
+          </template>
+        </UiFormField>
+        <UiFormField
           v-if="deploymentTargets.length > 1"
           id="managed-deployment-target"
           label="Location"
@@ -223,7 +248,7 @@
         v-if="onboardingPath === 'managed'"
         class="meta"
       >
-        Asterisk · {{ deploymentTargets.length === 1 ? 'Local environment' : 'Choose a location' }}. UTCP will configure credentials, endpoints, and infrastructure automatically.
+        {{ selectedManagedRuntimeOption?.providerLabel ?? 'Managed runtime' }} · {{ deploymentTargets.length === 1 ? 'Local environment' : 'Choose a location' }}. UTCP will configure credentials, endpoints, and infrastructure automatically.
       </p>
       <UiAlert
         v-if="deploymentTargetsResource.state.status === 'error' || deploymentTargetsResource.state.status === 'forbidden'"
@@ -1001,6 +1026,7 @@ import { identityApi, type RuntimeNode } from '../api/platform'
 import { router } from '../router'
 import { managedDeprovisioningLabel, managedProvisioningLabel, runtimeNodePrimaryStatus } from './runtimeNodeManagementPresentation'
 import { catalogOptions } from './runtimeCatalogPresentation'
+import { managedRuntimeOptions as deriveManagedRuntimeOptions } from './runtimeManagedOptions'
 import {
   disconnectRuntimeNodeRealtime,
   resynchronizeRuntimeNodeRealtime,
@@ -1073,8 +1099,8 @@ const managedProvisionActionKey = 'runtime-node:managed-provision'
 const onboardingPath = ref<'managed' | 'external' | null>(null)
 const managedProvisioningIdempotencyKey = ref('')
 const managedRuntimeForm = ref({
-  runtimeFamily: 'asterisk',
-  adapterKey: 'asterisk-ari',
+  runtimeFamily: '',
+  adapterKey: '',
   deploymentTargetId: '',
   name: '',
 })
@@ -1102,6 +1128,25 @@ const runtimeNodeRealtimeStatusCategory = computed((): 'success' | 'warning' | '
 
 const endpointTransportOptions = computed(() => catalogOptions(runtimeCatalog.value?.endpoint_transports))
 const endpointTlsModeOptions = computed(() => catalogOptions(runtimeCatalog.value?.endpoint_tls_modes))
+const managedRuntimeOptions = computed(() => deriveManagedRuntimeOptions(runtimeCatalog.value))
+const selectedManagedRuntimeOption = computed(() => managedRuntimeOptions.value.find((option) =>
+  option.runtimeFamily === managedRuntimeForm.value.runtimeFamily && option.adapterKey === managedRuntimeForm.value.adapterKey,
+) ?? managedRuntimeOptions.value[0] ?? null)
+
+function selectManagedRuntimeOption(adapterKey?: string): void {
+  const option = managedRuntimeOptions.value.find((candidate) => candidate.adapterKey === (adapterKey ?? managedRuntimeForm.value.adapterKey))
+    ?? managedRuntimeOptions.value[0]
+  if (!option) {
+    managedRuntimeForm.value.runtimeFamily = ''
+    managedRuntimeForm.value.adapterKey = ''
+    return
+  }
+
+  managedRuntimeForm.value.runtimeFamily = option.runtimeFamily
+  managedRuntimeForm.value.adapterKey = option.adapterKey
+}
+
+watch(managedRuntimeOptions, () => selectManagedRuntimeOption())
 
 function runtimeStatusCategory(status: string): 'success' | 'warning' | 'danger' | 'neutral' | 'information' {
   if (['active', 'ready', 'healthy', 'observed'].includes(status)) return 'success'
@@ -1132,6 +1177,7 @@ function runtimeManagement(node: RuntimeNode): NonNullable<RuntimeNode['manageme
 function selectManagedOnboarding(): void {
   onboardingPath.value = 'managed'
   managedProvisioningIdempotencyKey.value = ''
+  selectManagedRuntimeOption()
   if (deploymentTargetsResource.state.status === 'idle' || deploymentTargetsResource.state.status === 'error') {
     void deploymentTargetsResource.load().then(() => {
       if (deploymentTargets.value.length === 1) managedRuntimeForm.value.deploymentTargetId = deploymentTargets.value[0].id
@@ -1144,8 +1190,8 @@ function selectManagedOnboarding(): void {
 function resetOnboardingPath(): void {
   onboardingPath.value = null
   managedRuntimeForm.value = {
-    runtimeFamily: 'asterisk',
-    adapterKey: 'asterisk-ari',
+    runtimeFamily: '',
+    adapterKey: '',
     deploymentTargetId: '',
     name: '',
   }
@@ -1174,8 +1220,8 @@ async function runManagedProvisioning(): Promise<void> {
     onboardingPath.value = null
     managedProvisioningIdempotencyKey.value = ''
     managedRuntimeForm.value = {
-      runtimeFamily: 'asterisk',
-      adapterKey: 'asterisk-ari',
+      runtimeFamily: '',
+      adapterKey: '',
       deploymentTargetId: '',
       name: '',
     }

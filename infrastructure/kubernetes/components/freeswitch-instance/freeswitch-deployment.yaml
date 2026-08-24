@@ -21,7 +21,7 @@ spec:
         app.kubernetes.io/component: freeswitch
         utcp.dev/runtime-node: local-freeswitch-esl
         utcp.dev/runtime-selection: selected-application-runtime
-        utcp.io/network-role: freeswitch-sip
+        utcp.io/network-role: freeswitch-esl
     spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30

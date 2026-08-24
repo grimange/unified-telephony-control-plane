@@ -714,9 +714,19 @@ F0 Repository contract
 → T3 rtpengine browser media
 → V0 Natural login, SIP registration, and conference admission
 → T4 FreeSWITCH parity
-→ T5 Convergence, failover, and recovery
+→ C7A External connectivity, telephony addressing, and caller identity
+→ C7B Inbound/outbound route and destination authority
+→ T6 External trunk and route projection
+→ V1 Bidirectional external routing and control
+→ A0 Minimal reference consumers
 → R0 Portfolio release
 ```
+
+`T5` is complete and remains historical/runtime-control-plane closure; it is
+not a current next phase. `K5` Host visibility and `C8` Unified Call Transfer
+and Inter-Runtime Handoff are parallel or post-R0 tracks unless evidence adds a
+specific dependency to the mainline. The browser Reference Dialer is a
+Reference Telephony Client and acceptance vehicle, not UTCP's product.
 
 Do not infer completion from this list. Read the current phase marker and phase-status document.
 

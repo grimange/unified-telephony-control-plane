@@ -181,7 +181,7 @@ Participant abstraction" this packet is required to reject.
 Evidence: the repository already has a durable bridge-like aggregate for the
 multi-party case (`conferences` + `conference_runtime_bindings`), and two-party
 bridging carries no state that a symmetric `bridged_to_leg_id` + `bridged_at`
-relationship plus a `call.leg.bridged` observation cannot express. A durable Bridge
+relationship plus a `call.legs.bridged` observation cannot express. A durable Bridge
 aggregate would duplicate the conference aggregate for N-way cases and add an empty
 row for every two-party call.
 
@@ -233,7 +233,10 @@ Legend — every transition is exactly one of:
 * **O = OBSERVATION-CONFIRMED** — a fenced `runtime_observations` row moved observed
   state. `ORIGINATING→RINGING`, `→EARLY_MEDIA`, `→ANSWERED`, `→BRIDGED`, `→COMPLETED`,
   `→FAILED`, DTMF, media and recording status.
-* **R = CANONICAL RECONCILIATION** — a UTCP worker decided.
+* **CC = COMMAND-CONFIRMED** — a successful provider execution completed a local
+  command transition. Local Hold/Resume use this source; they do not synthesize a
+  runtime observation.
+* **R = CANONICAL-RECONCILIATION** — a UTCP worker decided.
   `SELECTING_ROUTE→ORIGINATING` (route + runtime eligibility resolved),
   stale-leg convergence, grace expiry, orphan cleanup, `→FAILED` when a runtime
   vanishes without a terminal event.
@@ -327,10 +330,10 @@ the adapter return value.
 | `call.leg.answer` | CALL LEG | `call.control` | `execute(op)` | Yes | `call.leg.answered` | Conflict, InvalidRequest |
 | `call.leg.hangup` | CALL LEG | `call.control` | `execute(op)` | Yes | `call.leg.terminated` | RuntimeUnavailable |
 | `call.hangup` | CALL | `call.control` | fan-out to legs | Yes | all legs terminated | RuntimeUnavailable |
-| `call.leg.hold` | CALL LEG | `call.hold` | `execute(op)` | Yes | `call.leg.held` | UnsupportedCapability, Conflict |
-| `call.leg.resume` | CALL LEG | `call.hold` | `execute(op)` | Yes | `call.leg.resumed` | UnsupportedCapability, Conflict |
-| `call.legs.bridge` | RELATIONSHIP (two legs) | `call.control` | `execute(op)` | Yes | `call.leg.bridged` ×2 | Conflict, InvalidRequest |
-| `call.legs.unbridge` | RELATIONSHIP | `call.control` | `execute(op)` | Yes | `call.leg.unbridged` ×2 | Conflict |
+| `call.leg.hold` | CALL LEG | `call.hold` | `execute(op)` | Yes | Successful RuntimeOperation + `command-confirmed` local transition to `held`; remote provider fact remains `observation-confirmed` | UnsupportedCapability, Conflict |
+| `call.leg.resume` | CALL LEG | `call.hold` | `execute(op)` | Yes | Successful RuntimeOperation + `command-confirmed` local transition to `answered`; remote provider fact remains `observation-confirmed` | UnsupportedCapability, Conflict |
+| `call.legs.bridge` | RELATIONSHIP (two legs) | `call.control` | `execute(op)` | Yes | `call.legs.bridged` ×2 | Conflict, InvalidRequest |
+| `call.legs.unbridge` | RELATIONSHIP | `call.control` | `execute(op)` | Yes | `call.legs.unbridged` ×2 | Conflict |
 | `call.leg.blind_transfer` | CALL LEG | `call.transfer` | `execute(op)` | Yes | transferor `terminated(transferred)` + new leg adopted | UnsupportedCapability, InvalidRequest |
 | `call.leg.attended_transfer` | RELATIONSHIP | `call.transfer` | `execute(op)` | Yes | surviving legs `bridged`, transferor terminated | UnsupportedCapability, Conflict |
 | `call.leg.redirect` | CALL LEG | `call.transfer` | `execute(op)` | Yes | `call.leg.redirected` | UnsupportedCapability, InvalidRequest |
@@ -352,7 +355,7 @@ preconditions before the adapter is called.
     subject_type      'call' | 'call_leg'
     subject_id        canonical UTCP id (never a provider channel name)
     observation_type  'call.leg.offered' | 'ringing' | 'early_media' | 'answered'
-                      | 'bridged' | 'unbridged' | 'held' | 'resumed' | 'muted'
+                      | 'call.legs.bridged' | 'call.legs.unbridged' | 'held' | 'resumed' | 'muted'
                       | 'unmuted' | 'redirected' | 'dtmf_received' | 'dtmf_sent'
                       | 'media_started' | 'media_finished' | 'media_stopped'
                       | 'recording_started' | 'recording_stopped'

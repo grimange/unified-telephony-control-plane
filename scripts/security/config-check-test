@@ -370,6 +370,152 @@ asterisk_dns_fail_case() {
   fi
 }
 
+listener_data_check() {
+  local rendered_security="$1"
+
+  python3 - "$rendered_security" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import yaml
+
+
+docs = [
+    doc
+    for doc in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    if isinstance(doc, dict)
+]
+def fail(message: str) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def policy(name: str) -> dict:
+    for doc in docs:
+        metadata = doc.get("metadata") or {}
+        if doc.get("kind") == "NetworkPolicy" and metadata.get("namespace") == "utcp-data" and metadata.get("name") == name:
+            return doc
+    fail(f"missing data policy {name}")
+
+
+def source_roles(name: str, port: int) -> list[str]:
+    spec = policy(name).get("spec") or {}
+    ingress = spec.get("ingress") or []
+    if len(ingress) != 1 or ingress[0].get("ports") != [{"protocol": "TCP", "port": port}]:
+        fail(f"{name} must retain its exact data port")
+    roles = []
+    for source in ingress[0].get("from") or []:
+        if (source.get("namespaceSelector") or {}).get("matchLabels") != {"kubernetes.io/metadata.name": "utcp-platform"}:
+            fail(f"{name} source namespace is not bounded")
+        labels = (source.get("podSelector") or {}).get("matchLabels") or {}
+        if set(labels) != {"utcp.io/network-role"}:
+            fail(f"{name} source must select one explicit role")
+        roles.append(labels["utcp.io/network-role"])
+    return roles
+
+
+postgres_roles = source_roles("allow-postgres-from-backend-roles", 5432)
+redis_roles = source_roles("allow-redis-from-backend-roles", 6379)
+for service, roles in (("PostgreSQL", postgres_roles), ("Redis", redis_roles)):
+    if "asterisk-ari-events" not in roles:
+        fail(f"{service} must retain Asterisk listener ingress")
+    if "freeswitch-esl-events" not in roles:
+        fail(f"{service} must authorize the FreeSWITCH event listener")
+PY
+}
+
+listener_data_pass_case() {
+  local name="$1"
+  local rendered_security="$2"
+
+  if ! listener_data_check "$rendered_security" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
+    printf 'expected reciprocal data-ingress check to pass: %s\n' "$name" >&2
+    cat "$TMP_DIR/err" >&2
+    exit 1
+  fi
+}
+
+listener_data_fail_case() {
+  local name="$1"
+  local expected="$2"
+  local rendered_security="$3"
+
+  if listener_data_check "$rendered_security" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
+    printf 'expected reciprocal data-ingress check to fail: %s\n' "$name" >&2
+    cat "$TMP_DIR/out" >&2
+    exit 1
+  fi
+  if ! grep -Fq "$expected" "$TMP_DIR/err"; then
+    printf 'expected failure for %s to include: %s\n' "$name" "$expected" >&2
+    cat "$TMP_DIR/err" >&2
+    exit 1
+  fi
+}
+
+worker_freeswitch_egress_check() {
+  local rendered_security="$1"
+
+  python3 - "$rendered_security" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import yaml
+
+docs = [doc for doc in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8")) if isinstance(doc, dict)]
+policy = next(
+    (
+        doc for doc in docs
+        if doc.get("kind") == "NetworkPolicy"
+        and (doc.get("metadata") or {}).get("namespace") == "utcp-platform"
+        and (doc.get("metadata") or {}).get("name") == "allow-command-worker-to-freeswitch-esl"
+    ),
+    None,
+)
+if policy is None:
+    raise SystemExit("security render must include allow-command-worker-to-freeswitch-esl")
+
+expected_spec = {
+    "podSelector": {"matchLabels": {"utcp.io/network-role": "worker"}},
+    "policyTypes": ["Egress"],
+    "egress": [{
+        "to": [{
+            "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+            "podSelector": {"matchLabels": {"utcp.io/network-role": "freeswitch-esl"}},
+        }],
+        "ports": [{"protocol": "TCP", "port": 8021}],
+    }],
+}
+if policy.get("spec") != expected_spec:
+    raise SystemExit("allow-command-worker-to-freeswitch-esl has an invalid least-privilege contract")
+PY
+}
+
+worker_freeswitch_egress_pass_case() {
+  local name="$1"
+  local rendered_security="$2"
+
+  if ! worker_freeswitch_egress_check "$rendered_security" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
+    printf 'expected FreeSWITCH worker egress check to pass: %s\n' "$name" >&2
+    cat "$TMP_DIR/err" >&2
+    exit 1
+  fi
+}
+
+worker_freeswitch_egress_fail_case() {
+  local name="$1"
+  local rendered_security="$2"
+
+  if worker_freeswitch_egress_check "$rendered_security" >"$TMP_DIR/out" 2>"$TMP_DIR/err"; then
+    printf 'expected FreeSWITCH worker egress check to fail: %s\n' "$name" >&2
+    cat "$TMP_DIR/out" >&2
+    exit 1
+  fi
+}
+
 mutate_security_render() {
   local file="$1"
   local mutation="$2"
@@ -399,6 +545,16 @@ asterisk = policy("utcp-runtime", "allow-asterisk-sip-from-kamailio")
 asterisk_spec = asterisk["spec"]
 kamailio = policy("utcp-platform", "allow-kamailio-signaling-required-traffic")
 kamailio_spec = kamailio["spec"]
+
+
+def remove_data_source(policy_name: str, role: str) -> None:
+    data_policy = policy("utcp-data", policy_name)
+    for rule in data_policy["spec"].get("ingress") or []:
+        rule["from"] = [
+            source
+            for source in rule.get("from") or []
+            if (source.get("podSelector") or {}).get("matchLabels", {}).get("utcp.io/network-role") != role
+        ]
 
 
 def asterisk_dns_rule() -> dict:
@@ -459,6 +615,27 @@ elif mutation == "widen-sip-egress":
     asterisk_sip_rule()["to"][0].pop("podSelector", None)
 elif mutation == "kamailio-dns-drift":
     kamailio_dns_rule()["to"][0]["podSelector"]["matchLabels"]["k8s-app"] = "coredns"
+elif mutation == "remove-freeswitch-postgres-source":
+    remove_data_source("allow-postgres-from-backend-roles", "freeswitch-esl-events")
+elif mutation == "remove-freeswitch-redis-source":
+    remove_data_source("allow-redis-from-backend-roles", "freeswitch-esl-events")
+elif mutation == "remove-freeswitch-worker-egress":
+    docs = [
+        doc for doc in docs
+        if not (
+            doc.get("kind") == "NetworkPolicy"
+            and (doc.get("metadata") or {}).get("namespace") == "utcp-platform"
+            and (doc.get("metadata") or {}).get("name") == "allow-command-worker-to-freeswitch-esl"
+        )
+    ]
+elif mutation == "change-freeswitch-worker-port":
+    policy("utcp-platform", "allow-command-worker-to-freeswitch-esl")["spec"]["egress"][0]["ports"][0]["port"] = 8022
+elif mutation == "widen-freeswitch-worker-destination":
+    policy("utcp-platform", "allow-command-worker-to-freeswitch-esl")["spec"]["egress"][0]["to"][0].pop("podSelector", None)
+elif mutation == "change-freeswitch-worker-source":
+    policy("utcp-platform", "allow-command-worker-to-freeswitch-esl")["spec"]["podSelector"]["matchLabels"]["utcp.io/network-role"] = "api"
+elif mutation == "change-freeswitch-worker-protocol":
+    policy("utcp-platform", "allow-command-worker-to-freeswitch-esl")["spec"]["egress"][0]["ports"][0]["protocol"] = "UDP"
 else:
     raise SystemExit(f"unknown security mutation: {mutation}")
 
@@ -519,6 +696,34 @@ do
       ;;
   esac
   asterisk_dns_fail_case "$mutation rejected" "$expected" "$mutated"
+done
+
+listener_data_pass_case "Asterisk and FreeSWITCH listeners have reciprocal data ingress" "$security_correct"
+worker_freeswitch_egress_pass_case "canonical worker to FreeSWITCH ESL egress" "$security_correct"
+
+postgres_without_freeswitch="$TMP_DIR/security.remove-freeswitch-postgres-source.yaml"
+cp "$security_correct" "$postgres_without_freeswitch"
+mutate_security_render "$postgres_without_freeswitch" remove-freeswitch-postgres-source
+listener_data_fail_case "missing FreeSWITCH PostgreSQL ingress rejected" \
+  "PostgreSQL must authorize the FreeSWITCH event listener" "$postgres_without_freeswitch"
+
+redis_without_freeswitch="$TMP_DIR/security.remove-freeswitch-redis-source.yaml"
+cp "$security_correct" "$redis_without_freeswitch"
+mutate_security_render "$redis_without_freeswitch" remove-freeswitch-redis-source
+listener_data_fail_case "missing FreeSWITCH Redis ingress rejected" \
+  "Redis must authorize the FreeSWITCH event listener" "$redis_without_freeswitch"
+
+for mutation in \
+  remove-freeswitch-worker-egress \
+  change-freeswitch-worker-port \
+  widen-freeswitch-worker-destination \
+  change-freeswitch-worker-source \
+  change-freeswitch-worker-protocol
+do
+  mutated="$TMP_DIR/security.$mutation.yaml"
+  cp "$security_correct" "$mutated"
+  mutate_security_render "$mutated" "$mutation"
+  worker_freeswitch_egress_fail_case "$mutation rejected" "$mutated"
 done
 
 route_identity_ip="$TMP_DIR/kamailio-configmap.ip-route.yaml"

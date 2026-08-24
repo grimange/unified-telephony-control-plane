@@ -173,6 +173,10 @@ def selector_labels(selector: dict[str, Any]) -> dict[str, Any]:
     return selector.get("matchLabels") or {}
 
 
+def selector_matches(labels: dict[str, str], selector: dict[str, str]) -> bool:
+    return all(labels.get(label) == value for label, value in selector.items())
+
+
 def selector_expressions(selector: dict[str, Any]) -> list[dict[str, Any]]:
     return selector.get("matchExpressions") or []
 
@@ -426,6 +430,9 @@ media_runtime_labels = {
     "app.kubernetes.io/component": "asterisk-ari",
     "utcp.io/network-role": "asterisk-ari",
 }
+freeswitch_media_labels = {
+    "utcp.io/network-role": "freeswitch-esl",
+}
 rtpengine_labels = {
     "app.kubernetes.io/component": "rtpengine",
     "utcp.io/network-role": "rtpengine-media",
@@ -452,6 +459,16 @@ if not has_exact_policy_rule(
     pod_labels=rtpengine_labels, end_port=20000
 ):
     fail("runtime ingress must accept rtpengine on runtime range 10000-20000")
+if not has_exact_policy_rule(
+    ingress, "ingress", "utcp-runtime", "UDP", 40000,
+    pod_labels=freeswitch_media_labels, end_port=40099
+):
+    fail("rtpengine ingress must accept managed FreeSWITCH media on UDP 40000-40099")
+if not has_exact_policy_rule(
+    egress, "egress", "utcp-runtime", "UDP", 21000,
+    pod_labels=freeswitch_media_labels, end_port=21099
+):
+    fail("rtpengine egress must target managed FreeSWITCH media on UDP 21000-21099")
 for peer in [peer for rule in ingress + egress for peer in (rule.get("from") or rule.get("to") or [])]:
     if "ipBlock" in peer:
         fail("media corridor peers must not use ipBlock")
@@ -466,6 +483,7 @@ for required in (
     "utcp.io/network-role: rtpengine-media",
     "utcp.io/network-role: kamailio-signaling",
     "utcp.io/network-role: asterisk-ari",
+    "utcp.io/network-role: freeswitch-esl",
     "app.kubernetes.io/name",
     "prometheus",
     "port: 2223",
@@ -494,6 +512,31 @@ asterisk_egress_media = [
 ]
 if len(asterisk_egress_media) != 1 or asterisk_egress_media[0].get("to") != [canonical_asterisk_media_peer]:
     fail("allow-rtpengine-media Asterisk egress must select canonical Asterisk workloads")
+
+canonical_freeswitch_media_peer = {
+    "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+    "podSelector": {"matchLabels": freeswitch_media_labels},
+}
+freeswitch_ingress_media = [
+    rule for rule in ingress
+    if rule.get("ports") == [{"protocol": "UDP", "port": 40000, "endPort": 40099}]
+    and rule.get("from") == [canonical_freeswitch_media_peer]
+]
+if len(freeswitch_ingress_media) != 1:
+    fail("allow-rtpengine-media FreeSWITCH ingress must select managed freeswitch-esl workloads")
+freeswitch_egress_media = [
+    rule for rule in egress
+    if rule.get("ports") == [{"protocol": "UDP", "port": 21000, "endPort": 21099}]
+    and rule.get("to") == [canonical_freeswitch_media_peer]
+]
+if len(freeswitch_egress_media) != 1:
+    fail("allow-rtpengine-media FreeSWITCH egress must select managed freeswitch-esl workloads")
+if not selector_matches({**freeswitch_media_labels, "utcp.dev/runtime-node": "managed-freeswitch-a"}, freeswitch_media_labels):
+    fail("allow-rtpengine-media canonical selector must match managed FreeSWITCH node A")
+if not selector_matches({**freeswitch_media_labels, "utcp.dev/runtime-node": "managed-freeswitch-b"}, freeswitch_media_labels):
+    fail("allow-rtpengine-media canonical selector must match managed FreeSWITCH node B")
+if selector_matches({"app.kubernetes.io/component": "worker", "utcp.io/network-role": "worker"}, freeswitch_media_labels):
+    fail("allow-rtpengine-media canonical FreeSWITCH selector must exclude unrelated workloads")
 if not has_exact_policy_rule(
     ingress,
     "ingress",

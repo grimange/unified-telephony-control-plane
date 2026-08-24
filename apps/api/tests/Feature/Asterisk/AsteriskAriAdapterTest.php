@@ -40,6 +40,74 @@ final class AsteriskAriAdapterTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_asterisk_playback_resolves_generic_media_and_rejects_invalid_syntax_before_ari_execution(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([['status' => 204]]);
+        $legs = [['id' => 'leg-1', 'call_id' => 'call-1', 'runtime_channel_id' => 'channel-1']];
+
+        $result = $client->executeCallOperation($tenantId, $nodeId, 'call.leg.play_media', ['media_ref' => 'utcp:media/reference-tone'], $legs);
+        $this->assertSame('channels.play', $result['provider_action']);
+        $this->assertSame('channels/channel-1/play', $client->requests[0]['resource']);
+
+        $generic = $this->ariClientWithResponses([['status' => 204]]);
+        $generic->executeCallOperation($tenantId, $nodeId, 'call.leg.play_media', ['media_ref' => 'utcp:media/welcome'], $legs);
+        $this->assertSame('channels/channel-1/play', $generic->requests[0]['resource']);
+
+        $invalid = $this->ariClientWithResponses([]);
+        try {
+            $invalid->executeCallOperation($tenantId, $nodeId, 'call.leg.play_media', ['media_ref' => 'sound:welcome'], $legs);
+            $this->fail('invalid media syntax should fail before ARI execution');
+        } catch (AsteriskAriException $exception) {
+            $this->assertSame('invalid_media_ref', $exception->failureCode);
+        }
+        $this->assertSame([], $invalid->requests);
+    }
+
+    public function test_call_control_and_recording_routes_match_asterisk_ari_resource_contract(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([
+            ['status' => 204],
+            ['status' => 204],
+            ['status' => 204],
+            ['status' => 204],
+            ['status' => 204],
+            ['status' => 204],
+        ]);
+        $legs = [[
+            'id' => 'leg-1',
+            'call_id' => 'call-1',
+            'runtime_channel_id' => 'channel-1',
+        ]];
+
+        $expected = [
+            ['call.leg.hold', 'POST', 'channels/channel-1/hold', 'channels.hold'],
+            ['call.leg.resume', 'DELETE', 'channels/channel-1/hold', 'channels.resume'],
+            ['call.leg.mute', 'POST', 'channels/channel-1/mute', 'channels.mute'],
+            ['call.leg.unmute', 'DELETE', 'channels/channel-1/mute', 'channels.unmute'],
+            ['call.leg.start_recording', 'POST', 'channels/channel-1/record', 'channels.record'],
+            ['call.leg.stop_recording', 'POST', 'recordings/live/leg-1/stop', 'recordings.stop'],
+        ];
+
+        foreach ($expected as [$operationType, $method, $resource, $providerAction]) {
+            $result = $client->executeCallOperation($tenantId, $nodeId, $operationType, [], $legs);
+
+            $this->assertSame($providerAction, $result['provider_action']);
+            $this->assertSame($method, $client->requests[array_key_last($client->requests)]['method']);
+            $this->assertSame($resource, $client->requests[array_key_last($client->requests)]['resource']);
+        }
+
+        $resources = implode('\n', array_column($client->requests, 'resource'));
+        $this->assertStringNotContainsString('/unhold', $resources);
+        $this->assertCount(0, array_filter(
+            $client->requests,
+            static fn (array $request): bool => $request['method'] === 'DELETE' && $request['resource'] === 'recordings/live/leg-1',
+        ));
+    }
+
     public function test_asterisk_adapter_rejects_unknown_conference_management_operations(): void
     {
         $catalog = new AsteriskCatalog;

@@ -300,47 +300,75 @@ second_security = yaml.safe_dump_all(namespace_documents(render("infrastructure/
 if first_security != second_security:
     fail("repeated security rendering changed namespace labels")
 
-redis_policy = security_objects.get("NetworkPolicy/utcp-data/allow-redis-from-backend-roles")
-if not redis_policy:
-    fail("security render must include Redis ingress policy")
+def validate_data_ingress(
+    policy_name: str,
+    service_role: str,
+    port: int,
+    expected_roles: list[str],
+) -> None:
+    policy = security_objects.get(f"NetworkPolicy/utcp-data/{policy_name}")
+    if not policy:
+        fail(f"security render must include {policy_name}")
 
-redis_spec = redis_policy.get("spec") or {}
-if (redis_spec.get("podSelector") or {}).get("matchLabels") != {"utcp.io/network-role": "redis"}:
-    fail("Redis policy must target only Redis pods")
+    spec = policy.get("spec") or {}
+    if (spec.get("podSelector") or {}).get("matchLabels") != {"utcp.io/network-role": service_role}:
+        fail(f"{policy_name} must target only {service_role} pods")
 
-redis_ingress = redis_spec.get("ingress") or []
-if len(redis_ingress) != 1:
-    fail("Redis policy must define one bounded ingress rule")
+    ingress = spec.get("ingress") or []
+    if len(ingress) != 1:
+        fail(f"{policy_name} must define one bounded ingress rule")
 
-redis_ports = redis_ingress[0].get("ports") or []
-if redis_ports != [{"protocol": "TCP", "port": 6379}]:
-    fail("Redis policy must allow only TCP port 6379")
+    if (ingress[0].get("ports") or []) != [{"protocol": "TCP", "port": port}]:
+        fail(f"{policy_name} must allow only TCP port {port}")
 
-redis_sources = redis_ingress[0].get("from") or []
-redis_roles = []
-for source in redis_sources:
-    namespace_selector = (source.get("namespaceSelector") or {}).get("matchLabels") or {}
-    pod_selector = source.get("podSelector") or {}
-    match_labels = pod_selector.get("matchLabels") or {}
-    if namespace_selector != {"kubernetes.io/metadata.name": "utcp-platform"}:
-        fail("Redis ingress source must be bounded to the platform namespace")
-    if not match_labels:
-        fail("Redis ingress source must not permit all Pods")
-    role = match_labels.get("utcp.io/network-role")
-    if not role:
-        fail("Redis ingress source must select an explicit network role")
-    redis_roles.append(role)
+    roles = []
+    for source in ingress[0].get("from") or []:
+        namespace_selector = (source.get("namespaceSelector") or {}).get("matchLabels") or {}
+        match_labels = (source.get("podSelector") or {}).get("matchLabels") or {}
+        if namespace_selector != {"kubernetes.io/metadata.name": "utcp-platform"}:
+            fail(f"{policy_name} ingress source must be bounded to the platform namespace")
+        if not match_labels:
+            fail(f"{policy_name} ingress source must not permit all Pods")
+        role = match_labels.get("utcp.io/network-role")
+        if not role:
+            fail(f"{policy_name} ingress source must select an explicit network role")
+        roles.append(role)
 
-if sorted(redis_roles) != [
-    "api",
-    "asterisk-ari-events",
-    "migration",
-    "reverb",
-    "scheduler",
-    "simulator-event-source",
-    "worker",
-]:
-    fail("Redis ingress roles must preserve approved clients and include reverb")
+    if sorted(roles) != expected_roles:
+        fail(f"{policy_name} ingress roles must preserve approved clients")
+
+
+validate_data_ingress(
+    "allow-postgres-from-backend-roles",
+    "postgres",
+    5432,
+    [
+        "api",
+        "asterisk-ari-events",
+        "freeswitch-esl-events",
+        "kamailio-registration-observer",
+        "kamailio-signaling",
+        "migration",
+        "scheduler",
+        "simulator-event-source",
+        "worker",
+    ],
+)
+validate_data_ingress(
+    "allow-redis-from-backend-roles",
+    "redis",
+    6379,
+    [
+        "api",
+        "asterisk-ari-events",
+        "freeswitch-esl-events",
+        "migration",
+        "reverb",
+        "scheduler",
+        "simulator-event-source",
+        "worker",
+    ],
+)
 
 for label, path in workload_renders.items():
     rendered_docs = render(path)
@@ -412,7 +440,9 @@ for required in \
   allow-worker-required-egress \
   allow-reverb-required-traffic \
   allow-asterisk-ari-events-required-egress \
+  allow-freeswitch-esl-events-required-egress \
   allow-command-worker-to-asterisk-ari \
+  allow-command-worker-to-freeswitch-esl \
   allow-kamailio-signaling-required-traffic \
   allow-rtpengine-media \
   allow-scheduler-required-egress \
@@ -471,6 +501,63 @@ if not kamailio_policy:
 asterisk_sip_policy = objects.get("NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio")
 if not asterisk_sip_policy:
     fail("security render must include allow-asterisk-sip-from-kamailio")
+freeswitch_listener_policy = objects.get("NetworkPolicy/utcp-platform/allow-freeswitch-esl-events-required-egress")
+if not freeswitch_listener_policy:
+    fail("security render must include allow-freeswitch-esl-events-required-egress")
+freeswitch_ingress_policy = objects.get("NetworkPolicy/utcp-runtime/allow-freeswitch-esl-from-utcp-workers")
+if not freeswitch_ingress_policy:
+    fail("security render must include allow-freeswitch-esl-from-utcp-workers")
+freeswitch_worker_egress_policy = objects.get("NetworkPolicy/utcp-platform/allow-command-worker-to-freeswitch-esl")
+if not freeswitch_worker_egress_policy:
+    fail("security render must include allow-command-worker-to-freeswitch-esl")
+
+worker_egress_spec = freeswitch_worker_egress_policy.get("spec") or {}
+if (worker_egress_spec.get("podSelector") or {}).get("matchLabels") != {"utcp.io/network-role": "worker"}:
+    fail("allow-command-worker-to-freeswitch-esl must target only command workers")
+if worker_egress_spec.get("policyTypes") != ["Egress"]:
+    fail("allow-command-worker-to-freeswitch-esl must remain egress-only")
+if worker_egress_spec.get("egress") != [{
+    "to": [{
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+        "podSelector": {"matchLabels": {"utcp.io/network-role": "freeswitch-esl"}},
+    }],
+    "ports": [{"protocol": "TCP", "port": 8021}],
+}]:
+    fail("allow-command-worker-to-freeswitch-esl must allow only worker TCP 8021 to managed FreeSWITCH")
+
+listener_spec = freeswitch_listener_policy.get("spec") or {}
+if (listener_spec.get("podSelector") or {}).get("matchLabels") != {"utcp.io/network-role": "freeswitch-esl-events"}:
+    fail("allow-freeswitch-esl-events-required-egress must target only the FreeSWITCH listener")
+if listener_spec.get("policyTypes") != ["Ingress", "Egress"] or listener_spec.get("ingress") != []:
+    fail("allow-freeswitch-esl-events-required-egress must enforce isolated listener ingress and egress")
+expected_listener_egress = [
+    ({"kubernetes.io/metadata.name": "kube-system"}, {"k8s-app": "kube-dns"}, [("UDP", 53), ("TCP", 53)]),
+    ({"kubernetes.io/metadata.name": "utcp-data"}, {"utcp.io/network-role": "postgres"}, [("TCP", 5432)]),
+    ({"kubernetes.io/metadata.name": "utcp-data"}, {"utcp.io/network-role": "redis"}, [("TCP", 6379)]),
+    ({"kubernetes.io/metadata.name": "utcp-runtime"}, {"utcp.io/network-role": "freeswitch-esl"}, [("TCP", 8021)]),
+]
+actual_listener_egress = listener_spec.get("egress") or []
+if len(actual_listener_egress) != len(expected_listener_egress):
+    fail("allow-freeswitch-esl-events-required-egress must define exactly four destination rules")
+for rule, (namespace_labels, pod_labels, ports) in zip(actual_listener_egress, expected_listener_egress):
+    expected_to = [{"namespaceSelector": {"matchLabels": namespace_labels}, "podSelector": {"matchLabels": pod_labels}}]
+    expected_ports = [{"protocol": protocol, "port": port} for protocol, port in ports]
+    if rule.get("to") != expected_to or rule.get("ports") != expected_ports:
+        fail("allow-freeswitch-esl-events-required-egress contains an unexpected destination or port")
+
+runtime_spec = freeswitch_ingress_policy.get("spec") or {}
+if (runtime_spec.get("podSelector") or {}).get("matchLabels") != {"utcp.io/network-role": "freeswitch-esl"}:
+    fail("allow-freeswitch-esl-from-utcp-workers must target only FreeSWITCH runtime Pods")
+if runtime_spec.get("policyTypes") != ["Ingress"]:
+    fail("allow-freeswitch-esl-from-utcp-workers must remain ingress-only")
+if runtime_spec.get("ingress") != [{
+    "from": [
+        {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}}, "podSelector": {"matchLabels": {"utcp.io/network-role": "worker"}}},
+        {"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}}, "podSelector": {"matchLabels": {"utcp.io/network-role": "freeswitch-esl-events"}}},
+    ],
+    "ports": [{"protocol": "TCP", "port": 8021}],
+}]:
+    fail("allow-freeswitch-esl-from-utcp-workers must retain least-privilege worker and listener ingress")
 
 spec = policy.get("spec") or {}
 if (spec.get("podSelector") or {}).get("matchLabels") != {"utcp.io/network-role": "rtpengine-media"}:
@@ -533,7 +620,7 @@ if "utcp.io/network-role: kamailio-signaling" not in rendered:
     fail("allow-rtpengine-media must bound ng control to Kamailio signaling")
 if "utcp.io/network-role: asterisk-ari" not in rendered:
     fail("allow-rtpengine-media must bound in-cluster media to the selected runtime role")
-if "app.kubernetes.io/component: freeswitch" not in rendered or "utcp.io/network-role: freeswitch-sip" not in rendered:
+if "utcp.io/network-role: freeswitch-esl" not in rendered:
     fail("allow-rtpengine-media must bound FreeSWITCH media to the canonical runtime role")
 if "port: 21000" not in rendered or "endPort: 21099" not in rendered:
     fail("allow-rtpengine-media must bound FreeSWITCH media egress to UDP 21000-21099")
@@ -580,9 +667,7 @@ if asterisk_egress_peers != [
 if not any(rule.get("to") == [{
     "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
     "podSelector": {"matchLabels": {
-        "app.kubernetes.io/component": "freeswitch",
-        "utcp.io/network-role": "freeswitch-sip",
-        "utcp.dev/runtime-node": "local-freeswitch-esl",
+        "utcp.io/network-role": "freeswitch-esl",
     }},
 }] for rule in kamailio_asterisk_egress):
     fail("Kamailio FreeSWITCH SIP egress must use the exact canonical FreeSWITCH selector")

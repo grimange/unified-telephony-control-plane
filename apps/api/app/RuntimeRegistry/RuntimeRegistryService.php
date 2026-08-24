@@ -526,6 +526,7 @@ final class RuntimeRegistryService
             payload: [
                 'provisioning_request_id' => (string) $provisioningRequest->id,
                 'runtime_node_id' => $nodeId,
+                'adapter_key' => (string) $provisioningRequest->adapter_key,
             ],
             context: $context,
             idempotencyKey: IdempotencyKey::fromString('runtime-node-deprovision:'.$provisioningRequest->id),

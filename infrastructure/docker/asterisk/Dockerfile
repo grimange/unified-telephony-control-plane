@@ -6,9 +6,13 @@ RUN mkdir -p /opt/utcp-asterisk-config
 COPY infrastructure/docker/asterisk/config/ /opt/utcp-asterisk-config/
 COPY infrastructure/docker/asterisk/entrypoint /usr/local/bin/utcp-asterisk-entrypoint
 COPY infrastructure/docker/asterisk/readiness /usr/local/bin/utcp-asterisk-readiness
+COPY infrastructure/docker/media/reference-tone.wav.base64 /tmp/utcp-reference-tone.wav.base64
 
 RUN chmod 0755 /usr/local/bin/utcp-asterisk-entrypoint /usr/local/bin/utcp-asterisk-readiness \
-    && chown -R asterisk:asterisk /opt/utcp-asterisk-config
+    && mkdir -p /var/lib/asterisk/sounds \
+    && base64 -d /tmp/utcp-reference-tone.wav.base64 > /var/lib/asterisk/sounds/reference-tone.wav \
+    && chown -R asterisk:asterisk /opt/utcp-asterisk-config /var/lib/asterisk/sounds \
+    && rm /tmp/utcp-reference-tone.wav.base64
 
 USER 1000:1000
 EXPOSE 8088

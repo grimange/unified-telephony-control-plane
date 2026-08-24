@@ -78,13 +78,17 @@ test: api-test web-test ## Run backend and frontend tests.
 
 check: repository-hygiene media-config-check media-config-check-test media-edge-config-check media-edge-config-check-test media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test media-edge-containment-check media-edge-failure-proof-test t3-media-candidate-assertions-test rtpengine-advertised-address-check freeswitch-config-check freeswitch-config-check-test freeswitch-overlay-check t3-media-prover-config-check t3-media-prover-config-check-test t3-media-prover-host-check security-config-check-test kamailio-signaling-config-check api-check web-lint web-typecheck ## Run repository, backend, frontend, media, security, and Kamailio signaling static checks.
 
-.PHONY: rtpengine-advertised-address-check media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test media-edge-apply media-edge-failure-proof-overlay-test t3-media-prover-host-check t3-media-prover-host-check-test k3d-config-check-test k3d-verifier-check-test
+.PHONY: rtpengine-advertised-address-check media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test media-edge-apply media-edge-failure-proof-overlay-test t3-media-prover-host-check t3-media-prover-host-check-test k3d-config-check-test k3d-verifier-check-test api-entrypoint-check-test
+.PHONY: k8s-config-check-test
 
 k3d-config-check-test: ## Run canonical utcp-local RTP publication mutation checks.
 	@./scripts/k3d/config-check-test
 
 k3d-verifier-check-test: ## Run canonical k3d verifier command-order regression checks.
 	@./scripts/k3d/verifier-check-test
+
+api-entrypoint-check-test: ## Run API container process-role regression checks.
+	@./scripts/kubernetes/api-entrypoint-check-test
 
 k3d-media-edge-config-check: k3d-config-check ## Validate canonical utcp-local media-edge publication.
 
@@ -289,11 +293,17 @@ k3d-delete: ## Delete only the UTCP-owned k3d cluster, registry, and repository 
 k8s-config-check: ## Render and validate the local K1 Kustomize overlay without mutating the cluster.
 	@./scripts/kubernetes/config-check
 
+k8s-config-check-test: ## Run managed image projection mutation checks.
+	@./scripts/kubernetes/config-check-test
+
 k8s-image-build: ## Build API, web, and gateway images for local Kubernetes.
 	@./scripts/kubernetes/image-build
 
 k8s-image-push: ## Push K1 images to the UTCP local k3d registry.
 	@./scripts/kubernetes/image-push
+
+k8s-image-push-test: ## Test immutable managed FreeSWITCH image publication and projection.
+	@./scripts/kubernetes/image-push-test
 
 k8s-apply: ## Deploy the K1 application base to the utcp-local k3d cluster.
 	@./scripts/kubernetes/apply

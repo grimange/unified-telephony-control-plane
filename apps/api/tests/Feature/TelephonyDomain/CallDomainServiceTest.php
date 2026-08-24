@@ -53,6 +53,87 @@ final class CallDomainServiceTest extends TestCase
         $this->assertDatabaseHas('runtime_reconciliation_states', ['target_type' => 'call_leg_origination', 'target_id' => $result['leg_id']]);
     }
 
+    public function test_additional_outbound_leg_inherits_call_runtime_and_is_idempotent(): void
+    {
+        $tenantId = $this->tenant();
+        $service = app(CallDomainService::class);
+        $runtimeId = Str::uuid()->toString();
+        DB::table('runtime_nodes')->insert([
+            'id' => $runtimeId,
+            'tenant_id' => $tenantId,
+            'name' => 'runtime-default',
+            'slug' => 'runtime-default-'.str_replace('-', '', $runtimeId),
+            'runtime_family' => 'asterisk',
+            'adapter_key' => 'asterisk-ari',
+            'desired_state' => 'active',
+            'observed_state' => 'ready',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $call = $service->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId));
+        DB::table('calls')->where('id', $call['call_id'])->update(['runtime_node_id' => $runtimeId]);
+
+        $key = IdempotencyKey::fromString('additional-leg-001');
+        $first = $service->createOutboundLeg($tenantId, ExecutionContext::system(tenantId: $tenantId), $call['call_id'], $key, null, 'opaque:second');
+        $second = $service->createOutboundLeg($tenantId, ExecutionContext::system(tenantId: $tenantId), $call['call_id'], $key, null, 'opaque:second');
+
+        $this->assertSame($first, $second);
+        $this->assertSame($runtimeId, DB::table('call_legs')->where('id', $first['leg_id'])->value('runtime_node_id'));
+        $this->assertSame(CallDomainService::runtimeChannelId($first['leg_id']), DB::table('call_legs')->where('id', $first['leg_id'])->value('runtime_channel_id'));
+        $this->assertSame(2, DB::table('call_legs')->where('call_id', $call['call_id'])->count());
+        $this->assertSame(2, DB::table('runtime_operations')->where('operation_type', 'call.leg.originate')->where('tenant_id', $tenantId)->count());
+        $operation = DB::table('runtime_operations')->where('id', $first['operation_id'])->first();
+        $payload = json_decode($operation->payload, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame('call.leg.originate', $operation->operation_type);
+        $this->assertSame('call_leg', $operation->aggregate_type);
+        $this->assertSame($first['leg_id'], $operation->aggregate_id);
+        $this->assertSame($runtimeId, $operation->runtime_node_id);
+        $this->assertSame($call['call_id'], $payload['call_id']);
+        $this->assertSame($first['leg_id'], $payload['leg_id']);
+        $this->assertSame($runtimeId, $payload['runtime_node_id']);
+        $this->assertSame('opaque:second', $payload['destination_ref']);
+        $this->assertSame(CallDomainService::runtimeChannelId($first['leg_id']), $payload['runtime_channel_id']);
+    }
+
+    public function test_additional_outbound_leg_can_use_an_explicit_other_runtime_without_handoff(): void
+    {
+        $tenantId = $this->tenant();
+        $runtimeA = Str::uuid()->toString();
+        $runtimeB = Str::uuid()->toString();
+        foreach ([$runtimeA, $runtimeB] as $runtime) {
+            DB::table('runtime_nodes')->insert([
+                'id' => $runtime,
+                'tenant_id' => $tenantId,
+                'name' => 'runtime-'.$runtime,
+                'slug' => 'runtime-'.str_replace('-', '', $runtime),
+                'runtime_family' => 'asterisk',
+                'adapter_key' => 'asterisk-ari',
+                'desired_state' => 'active',
+                'observed_state' => 'ready',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+        $service = app(CallDomainService::class);
+        $call = $service->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId), null, $runtimeA, 'opaque:first');
+        $leg = $service->createOutboundLeg($tenantId, ExecutionContext::system(tenantId: $tenantId), $call['call_id'], null, $runtimeB, 'opaque:second');
+
+        $this->assertSame($runtimeA, DB::table('call_legs')->where('id', $call['leg_id'])->value('runtime_node_id'));
+        $this->assertSame($runtimeB, DB::table('call_legs')->where('id', $leg['leg_id'])->value('runtime_node_id'));
+        $this->assertSame($call['call_id'], DB::table('call_legs')->where('id', $leg['leg_id'])->value('call_id'));
+    }
+
+    public function test_additional_leg_rejects_terminal_call(): void
+    {
+        $tenantId = $this->tenant();
+        $service = app(CallDomainService::class);
+        $call = $service->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId));
+        DB::table('calls')->where('id', $call['call_id'])->update(['observed_state' => CallState::Completed->value]);
+
+        $this->expectException(InvalidArgumentException::class);
+        $service->createOutboundLeg($tenantId, ExecutionContext::system(tenantId: $tenantId), $call['call_id'], null, null, 'opaque:closed');
+    }
+
     public function test_accepted_origination_without_observation_times_out_once_and_observation_progression_wins(): void
     {
         $tenantId = $this->tenant();

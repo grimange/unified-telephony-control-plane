@@ -13,15 +13,28 @@ use App\RuntimeAdapters\Asterisk\AsteriskAriEventNormalizer;
 use App\RuntimeAdapters\Asterisk\AsteriskCatalog;
 use App\RuntimeAdapters\Asterisk\AsteriskRuntimeAdapter;
 use App\RuntimeAdapters\Asterisk\AsteriskRuntimeNodeReconciler;
+use App\RuntimeAdapters\FreeSwitch\FreeSwitchCatalog;
+use App\RuntimeAdapters\FreeSwitch\FreeSwitchEslEventListener;
+use App\RuntimeAdapters\FreeSwitch\FreeSwitchEslEventTransport;
+use App\RuntimeAdapters\FreeSwitch\FreeSwitchEslTransport;
+use App\RuntimeAdapters\FreeSwitch\FreeSwitchEventNormalizer;
+use App\RuntimeAdapters\FreeSwitch\FreeSwitchRuntimeAdapter;
+use App\RuntimeAdapters\FreeSwitch\FreeSwitchRuntimeNodeReconciler;
+use App\RuntimeAdapters\FreeSwitch\SocketFreeSwitchEslTransport;
 use App\RuntimeEngine\Commands\GenericRuntimeNodeInspectHandler;
 use App\RuntimeEngine\Commands\RuntimeAdapterRegistry;
 use App\RuntimeEngine\Commands\RuntimeOperationHandlerRegistry;
 use App\RuntimeEngine\Events\EventNormalizerRegistry;
+use App\RuntimeEngine\Events\RuntimeEventReceiptRepository;
+use App\RuntimeEngine\Listeners\RuntimeListenerLeaseRepository;
 use App\RuntimeEngine\Reconciliation\ReconcilerRegistry;
 use App\RuntimeEngine\Reconciliation\RuntimeNodeDrainCoordinator;
 use App\RuntimeEngine\Reconciliation\RuntimeNodeReconciler;
 use App\RuntimeProvisioning\ManagedAsteriskDeprovisioningOperationHandler;
 use App\RuntimeProvisioning\ManagedAsteriskProvisioningOperationHandler;
+use App\RuntimeProvisioning\ManagedFreeSwitchProvisioningOperationHandler;
+use App\RuntimeProvisioning\ManagedRuntimeDeprovisioningOperationHandler;
+use App\RuntimeProvisioning\ManagedRuntimeProvisioningOperationHandler;
 use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationRegistry;
 use App\RuntimeRegistry\RuntimeNodeDecommissionOperationHandler;
 use App\RuntimeRegistry\RuntimeRegistryService;
@@ -50,6 +63,14 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->bind(FreeSwitchEslTransport::class, fn ($app): FreeSwitchEslTransport => $app->make(SocketFreeSwitchEslTransport::class));
+        $this->app->bind(FreeSwitchEslEventTransport::class, fn ($app): FreeSwitchEslEventTransport => $app->make(SocketFreeSwitchEslTransport::class));
+        $this->app->bind(FreeSwitchEslEventListener::class, fn ($app): FreeSwitchEslEventListener => new FreeSwitchEslEventListener(
+            $app->make(FreeSwitchCatalog::class),
+            $app->make(RuntimeEventReceiptRepository::class),
+            $app->make(RuntimeListenerLeaseRepository::class),
+            $app->make(FreeSwitchEslEventTransport::class),
+        ));
         $this->app->bind(ReadinessChecker::class, ConfiguredReadinessChecker::class);
         $this->app->bind(KubernetesWorkloadClient::class, HttpKubernetesWorkloadClient::class);
         $this->app->singleton(InfrastructureAdapterRegistry::class, fn ($app): InfrastructureAdapterRegistry => new InfrastructureAdapterRegistry([
@@ -58,6 +79,7 @@ class AppServiceProvider extends ServiceProvider
         $this->app->singleton(RuntimeAdapterRegistry::class, fn ($app): RuntimeAdapterRegistry => new RuntimeAdapterRegistry([
             $app->make(SimulatorRuntimeAdapter::class),
             $app->make(AsteriskRuntimeAdapter::class),
+            $app->make(FreeSwitchRuntimeAdapter::class),
         ]));
         $this->app->singleton(RuntimeOperationHandlerRegistry::class, function ($app): RuntimeOperationHandlerRegistry {
             $handlers = [
@@ -77,13 +99,20 @@ class AppServiceProvider extends ServiceProvider
                 $app->make(RuntimeFenceOperationHandler::class),
                 $app->make(RuntimeNodeRestoreOperationHandler::class),
                 $app->make(RuntimeNodeDecommissionOperationHandler::class),
-                $app->make(ManagedAsteriskProvisioningOperationHandler::class),
-                $app->make(ManagedAsteriskDeprovisioningOperationHandler::class),
+                new ManagedRuntimeProvisioningOperationHandler([
+                    $app->make(ManagedAsteriskProvisioningOperationHandler::class),
+                    $app->make(ManagedFreeSwitchProvisioningOperationHandler::class),
+                ]),
+                new ManagedRuntimeDeprovisioningOperationHandler([
+                    $app->make(ManagedAsteriskDeprovisioningOperationHandler::class),
+                    $app->make(ManagedFreeSwitchProvisioningOperationHandler::class),
+                ]),
             ]));
         });
         $this->app->singleton(EventNormalizerRegistry::class, function ($app): EventNormalizerRegistry {
             $catalog = $app->make(SimulatorCatalog::class);
             $asterisk = $app->make(AsteriskCatalog::class);
+            $freeswitch = $app->make(FreeSwitchCatalog::class);
 
             return new EventNormalizerRegistry([
                 new SimulatorEventNormalizer($catalog, $catalog->eventType('connection_opened')),
@@ -127,6 +156,17 @@ class AppServiceProvider extends ServiceProvider
                 new KamailioRegistrationEventNormalizer('kamailio.registration.replaced'),
                 new KamailioRegistrationEventNormalizer('kamailio.registration.removed'),
                 new KamailioRegistrationEventNormalizer('kamailio.registration.expired'),
+                new FreeSwitchEventNormalizer($freeswitch, 'CHANNEL_CREATE'),
+                new FreeSwitchEventNormalizer($freeswitch, 'CHANNEL_ANSWER'),
+                new FreeSwitchEventNormalizer($freeswitch, 'CHANNEL_HOLD'),
+                new FreeSwitchEventNormalizer($freeswitch, 'CHANNEL_UNHOLD'),
+                new FreeSwitchEventNormalizer($freeswitch, 'CHANNEL_BRIDGE'),
+                new FreeSwitchEventNormalizer($freeswitch, 'CHANNEL_UNBRIDGE'),
+                new FreeSwitchEventNormalizer($freeswitch, 'CHANNEL_HANGUP_COMPLETE'),
+                new FreeSwitchEventNormalizer($freeswitch, 'DTMF'),
+                new FreeSwitchEventNormalizer($freeswitch, 'PLAYBACK_START'),
+                new FreeSwitchEventNormalizer($freeswitch, 'PLAYBACK_STOP'),
+                new FreeSwitchEventNormalizer($freeswitch, 'runtime.readiness.observed'),
             ]);
         });
         $this->app->singleton(ReconcilerRegistry::class, fn ($app): ReconcilerRegistry => new ReconcilerRegistry([
@@ -136,6 +176,12 @@ class AppServiceProvider extends ServiceProvider
                     $app->make(RuntimeRegistryService::class),
                     $app->make(KubernetesWorkloadClient::class),
                     $app->make(ManagedAsteriskProvisioningOperationHandler::class),
+                ),
+                new FreeSwitchRuntimeNodeReconciler(
+                    $app->make(FreeSwitchCatalog::class),
+                    $app->make(RuntimeRegistryService::class),
+                    $app->make(KubernetesWorkloadClient::class),
+                    $app->make(ManagedFreeSwitchProvisioningOperationHandler::class),
                 ),
                 $app->make(SimulatorRuntimeNodeReconciler::class),
             ]),

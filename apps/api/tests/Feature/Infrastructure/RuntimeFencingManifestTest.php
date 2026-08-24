@@ -85,11 +85,29 @@ final class RuntimeFencingManifestTest extends TestCase
 
         $this->assertArrayHasKey('NetworkPolicy/utcp-platform/allow-worker-required-egress', $workerPolicies);
         $this->assertArrayHasKey('NetworkPolicy/utcp-platform/allow-command-worker-to-asterisk-ari', $workerPolicies);
-        $this->assertCount(2, $workerPolicies);
+        $this->assertArrayHasKey('NetworkPolicy/utcp-platform/allow-command-worker-to-freeswitch-esl', $workerPolicies);
+        $this->assertCount(3, $workerPolicies);
 
         $ports = $this->networkPolicyPorts($workerPolicies['NetworkPolicy/utcp-platform/allow-worker-required-egress']);
         sort($ports);
         $this->assertSame(['TCP:53', 'TCP:5432', 'TCP:6379', 'TCP:8080', 'UDP:53'], $ports);
+
+        $freeswitchPolicy = $workerPolicies['NetworkPolicy/utcp-platform/allow-command-worker-to-freeswitch-esl'];
+        $this->assertSame(['Egress'], $freeswitchPolicy['spec']['policyTypes']);
+        $this->assertSame(['utcp.io/network-role' => 'worker'], $freeswitchPolicy['spec']['podSelector']['matchLabels']);
+        $this->assertSame(
+            ['TCP:8021'],
+            $this->networkPolicyPorts($freeswitchPolicy),
+        );
+        $this->assertSame(
+            [
+                [
+                    'namespaceSelector' => ['matchLabels' => ['kubernetes.io/metadata.name' => 'utcp-runtime']],
+                    'podSelector' => ['matchLabels' => ['utcp.io/network-role' => 'freeswitch-esl']],
+                ],
+            ],
+            $freeswitchPolicy['spec']['egress'][0]['to'],
+        );
     }
 
     public function test_fencer_api_policy_is_endpoint_only_and_fencer_selected(): void

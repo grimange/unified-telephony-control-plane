@@ -181,7 +181,7 @@ final class RuntimeProvisioningApiTest extends TestCase
             ->assertJsonPath('message', 'This runtime is managed by UTCP. Its generated runtime configuration cannot be edited manually.');
     }
 
-    public function test_conflicting_idempotency_and_unsupported_runtime_are_rejected_without_success_events(): void
+    public function test_conflicting_idempotency_is_rejected_and_managed_freeswitch_is_accepted(): void
     {
         [$admin, $tenantId] = $this->createTenantAdmin('rnp-validation-admin@utcp.local.test', 'rnp-validation');
         $session = ['user_session_version' => 1, 'active_tenant_id' => $tenantId];
@@ -206,14 +206,13 @@ final class RuntimeProvisioningApiTest extends TestCase
             ->assertJsonPath('message', 'Idempotency key conflict.');
 
         $this->actingAs($admin)->withSession($session)
-            ->postJson('/api/v1/admin/runtime-provisioning', [...$payload, 'runtime_family' => 'freeswitch', 'adapter_key' => 'freeswitch-esl'], ['Idempotency-Key' => 'rnp-unsupported-1'])
-            ->assertUnprocessable()
-            ->assertJsonPath('message', 'Unsupported managed runtime. RNP-1 supports Asterisk with the asterisk-ari adapter.');
+            ->postJson('/api/v1/admin/runtime-provisioning', [...$payload, 'runtime_family' => 'freeswitch', 'adapter_key' => 'freeswitch-esl', 'name' => 'Managed FreeSWITCH', 'slug' => 'managed-freeswitch'], ['Idempotency-Key' => 'rnp-freeswitch-1'])
+            ->assertAccepted();
 
-        $this->assertSame($beforeAudit, DB::table('control_plane_audit_records')->where('action', 'runtime_provisioning.requested')->count());
-        $this->assertSame($beforeOutbox, DB::table('control_plane_outbox_messages')->where('event_type', 'runtime_provisioning.requested')->count());
-        $this->assertDatabaseCount('runtime_provisioning_requests', 1);
-        $this->assertDatabaseCount('runtime_nodes', 1);
+        $this->assertSame($beforeAudit + 1, DB::table('control_plane_audit_records')->where('action', 'runtime_provisioning.requested')->count());
+        $this->assertSame($beforeOutbox + 1, DB::table('control_plane_outbox_messages')->where('event_type', 'runtime_provisioning.requested')->count());
+        $this->assertDatabaseCount('runtime_provisioning_requests', 2);
+        $this->assertDatabaseCount('runtime_nodes', 2);
     }
 
     public function test_cross_tenant_target_and_request_are_not_available(): void

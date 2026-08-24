@@ -50,6 +50,18 @@ Browser SIP registration uses SIP over secure WebSocket. SIP-over-WSS and applic
 
 This foundation does not implement real SIP signaling, media relay, PSTN access, production telephony behavior, distributed tracing, application OpenTelemetry instrumentation, runtime command execution, health reconciliation, telephony sessions, conference behavior, or other telephony business-domain workflows.
 
+## Planned Unified Call Transfer & Handoff
+
+Applications choose the business destination; UTCP owns the provider-neutral
+telephony mechanism required to reach it. The planned runtime-handoff model
+keeps one logical `Call` with source, consultation, and target `CallLeg` records
+where possible, and can span RuntimeNodes and providers without exposing ARI,
+ESL, SIP REFER, provider channel IDs, or media-routing details to the consuming
+application. It orchestrates existing C6 call-control primitives and reuses
+runtime operations, observations, audit, and the future C7 `DestinationRef` /
+`TelephonyAddress` authority. This is roadmap direction only; see
+[`ADR-025`](../decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md).
+
 ## Current Application Kernel Boundary
 
 C0 keeps the backend as a modular monolith and adds explicit kernel modules under `App\ControlPlane`: `Shared`, `RuntimeOperations`, `Messaging`, `Idempotency`, and `Audit`. Domain services do not depend on HTTP controllers, Kubernetes, ARI, ESL, SIP, or PBX libraries. PostgreSQL is authoritative for runtime-operation lifecycle, worker leases and fencing, outbox, inbox, idempotency, and audit records. Redis remains a queue/cache/transient coordination component and does not determine operation ownership.

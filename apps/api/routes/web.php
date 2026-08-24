@@ -100,6 +100,7 @@ Route::prefix('api/v1')->middleware(['identity.session'])->group(function (): vo
     Route::post('/calls', [CallController::class, 'store']);
     Route::get('/calls/{call}', [CallController::class, 'show']);
     Route::get('/calls/{call}/legs', [CallController::class, 'legs']);
+    Route::post('/calls/{call}/legs', [CallController::class, 'storeLeg']);
     Route::post('/calls/{call}/operations', [CallController::class, 'storeOperation']);
     Route::get('/calls/{call}/operations', [CallController::class, 'operations']);
     Route::get('/calls/{call}/timeline', [CallController::class, 'timeline']);

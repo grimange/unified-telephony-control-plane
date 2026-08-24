@@ -3,8 +3,11 @@
 namespace App\RuntimeAdapters\Asterisk;
 
 use App\ControlPlane\RuntimeOperations\FailureClass;
+use App\TelephonyDomain\MediaReference;
+use App\TelephonyDomain\RuntimeChannelIdentity;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 use JsonException;
 
 class AsteriskAriClient
@@ -339,7 +342,7 @@ class AsteriskAriClient
             if ($legId === '') {
                 throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_call_leg_missing', 'A normalized originate operation requires a CallLeg target.');
             }
-            $runtimeChannelId = self::callLegChannelId($legId);
+            $runtimeChannelId = RuntimeChannelIdentity::forCallLeg($legId);
             $request('POST', 'channels', [
                 'endpoint' => $destination,
                 'app' => (string) config('asterisk_ari.defaults.application_name', 'utcp-t0-observation'),
@@ -367,7 +370,7 @@ class AsteriskAriClient
             'call.leg.cancel_origination', 'call.leg.hangup' => ['DELETE', $resource, [], 'channels.hangup'],
             'call.leg.answer' => ['POST', $resource.'/answer', [], 'channels.answer'],
             'call.leg.hold' => ['POST', $resource.'/hold', [], 'channels.hold'],
-            'call.leg.resume' => ['POST', $resource.'/unhold', [], 'channels.resume'],
+            'call.leg.resume' => ['DELETE', $resource.'/hold', [], 'channels.resume'],
             'call.leg.mute' => ['POST', $resource.'/mute', ['direction' => 'both'], 'channels.mute'],
             'call.leg.unmute' => ['DELETE', $resource.'/mute', ['direction' => 'both'], 'channels.unmute'],
             'call.leg.send_dtmf' => ['POST', $resource.'/dtmf', ['dtmf' => (string) ($payload['digit'] ?? '')], 'channels.dtmf'],
@@ -375,7 +378,7 @@ class AsteriskAriClient
             'call.leg.play_media' => ['POST', $resource.'/play', ['media' => $this->asteriskMedia((string) ($payload['media_ref'] ?? ''))], 'channels.play'],
             'call.leg.stop_media' => ['DELETE', 'playbacks/'.rawurlencode((string) ($payload['playback_id'] ?? '')), [], 'playbacks.stop'],
             'call.leg.start_recording' => ['POST', $resource.'/record', ['name' => $this->safeRuntimeReference((string) ($payload['recording_name'] ?? ($legs[0]['id'] ?? 'recording'))), 'format' => 'wav', 'ifExists' => 'overwrite'], 'channels.record'],
-            'call.leg.stop_recording' => ['DELETE', 'recordings/live/'.rawurlencode($this->safeRuntimeReference((string) ($payload['recording_name'] ?? ($legs[0]['id'] ?? 'recording')))), [], 'recordings.stop'],
+            'call.leg.stop_recording' => ['POST', 'recordings/live/'.rawurlencode($this->safeRuntimeReference((string) ($payload['recording_name'] ?? ($legs[0]['id'] ?? 'recording')))).'/stop', [], 'recordings.stop'],
             default => null,
         };
 
@@ -424,11 +427,12 @@ class AsteriskAriClient
 
     private function asteriskMedia(string $mediaRef): string
     {
-        if (! str_starts_with($mediaRef, 'utcp:media/')) {
-            throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_media_reference_invalid', 'Media reference is not a supported normalized media reference.');
+        try {
+            return MediaReference::parse($mediaRef)->providerReference('asterisk');
+        } catch (InvalidArgumentException $exception) {
+            $code = $exception->getMessage() === 'media_ref_unresolved' ? 'media_ref_unresolved' : 'invalid_media_ref';
+            throw new AsteriskAriException(FailureClass::InvalidRequest, $code, $exception->getMessage());
         }
-
-        return 'sound:'.substr($mediaRef, strlen('utcp:media/'));
     }
 
     private function participantRuntimeChannelId(string $participantId): ?string
@@ -842,23 +846,6 @@ class AsteriskAriClient
     private function safeRuntimeReference(string $value): string
     {
         return mb_substr(preg_replace('/[^A-Za-z0-9_.:-]/', '_', $value) ?: 'unknown', 0, 80);
-    }
-
-    public static function callLegChannelId(string $legId): string
-    {
-        return 'utcp-call-leg-'.mb_substr(preg_replace('/[^A-Za-z0-9_.:-]/', '_', $legId) ?: 'unknown', 0, 80);
-    }
-
-    public static function callLegIdFromChannelId(string $channelId): ?string
-    {
-        $prefix = 'utcp-call-leg-';
-        if (! str_starts_with($channelId, $prefix)) {
-            return null;
-        }
-
-        $legId = substr($channelId, strlen($prefix));
-
-        return $legId === '' ? null : $legId;
     }
 
     /**

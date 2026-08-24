@@ -9,9 +9,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app.kubernetes.io/component: freeswitch
-      utcp.io/network-role: freeswitch-sip
-      utcp.dev/runtime-node: local-freeswitch-esl
+      utcp.io/network-role: freeswitch-esl
   policyTypes:
     - Ingress
     - Egress

@@ -216,6 +216,7 @@ final class ReverbRealtimeInfrastructureTest extends TestCase
         $this->assertSame([
             'api',
             'asterisk-ari-events',
+            'freeswitch-esl-events',
             'migration',
             'reverb',
             'scheduler',

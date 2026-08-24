@@ -5,22 +5,32 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/kubernetes/lib
 . "$SCRIPT_DIR/lib"
 
-required_tools
-ensure_registry
-check_k1_tag
+push_images() {
+  for local_image in "$API_LOCAL_IMAGE" "$WEB_LOCAL_IMAGE" "$GATEWAY_LOCAL_IMAGE" "$ASTERISK_LOCAL_IMAGE" "$RTPENGINE_LOCAL_IMAGE" "$FREESWITCH_LOCAL_IMAGE"; do
+    docker image inspect "$local_image" >/dev/null
+  done
 
-for local_image in "$API_LOCAL_IMAGE" "$WEB_LOCAL_IMAGE" "$GATEWAY_LOCAL_IMAGE" "$ASTERISK_LOCAL_IMAGE" "$RTPENGINE_LOCAL_IMAGE"; do
-  docker image inspect "$local_image" >/dev/null
-done
+  docker tag "$API_LOCAL_IMAGE" "$API_HOST_IMAGE"
+  docker tag "$WEB_LOCAL_IMAGE" "$WEB_HOST_IMAGE"
+  docker tag "$GATEWAY_LOCAL_IMAGE" "$GATEWAY_HOST_IMAGE"
+  docker tag "$ASTERISK_LOCAL_IMAGE" "$ASTERISK_HOST_IMAGE"
+  docker tag "$RTPENGINE_LOCAL_IMAGE" "$RTPENGINE_HOST_IMAGE"
+  docker tag "$FREESWITCH_LOCAL_IMAGE" "$FREESWITCH_HOST_IMAGE"
 
-docker tag "$API_LOCAL_IMAGE" "$API_HOST_IMAGE"
-docker tag "$WEB_LOCAL_IMAGE" "$WEB_HOST_IMAGE"
-docker tag "$GATEWAY_LOCAL_IMAGE" "$GATEWAY_HOST_IMAGE"
-docker tag "$ASTERISK_LOCAL_IMAGE" "$ASTERISK_HOST_IMAGE"
-docker tag "$RTPENGINE_LOCAL_IMAGE" "$RTPENGINE_HOST_IMAGE"
+  for image in "$API_HOST_IMAGE" "$WEB_HOST_IMAGE" "$GATEWAY_HOST_IMAGE" "$ASTERISK_HOST_IMAGE" "$RTPENGINE_HOST_IMAGE" "$FREESWITCH_HOST_IMAGE"; do
+    docker push "$image" >/dev/null || return 1
+    docker pull "$image" >/dev/null || return 1
+    printf 'pushed=%s\n' "$image"
+  done
 
-for image in "$API_HOST_IMAGE" "$WEB_HOST_IMAGE" "$GATEWAY_HOST_IMAGE" "$ASTERISK_HOST_IMAGE" "$RTPENGINE_HOST_IMAGE"; do
-  docker push "$image" >/dev/null
-  docker pull "$image" >/dev/null
-  printf 'pushed=%s\n' "$image"
-done
+  FREESWITCH_DIGEST="$(registry_manifest_digest "$FREESWITCH_HOST_IMAGE")" || return 1
+  project_managed_freeswitch_image "$CLUSTER_REGISTRY/utcp/freeswitch@$FREESWITCH_DIGEST" || return 1
+  printf 'projected=%s/utcp/freeswitch@%s\n' "$CLUSTER_REGISTRY" "$FREESWITCH_DIGEST"
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  required_tools
+  ensure_registry
+  check_k1_tag
+  push_images
+fi

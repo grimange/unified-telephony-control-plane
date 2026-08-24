@@ -7,6 +7,8 @@ use App\Identity\UserAccess\ResetUserPasswordService;
 use App\Infrastructure\RuntimeFencing\InfrastructureConnectivityProbe;
 use App\RuntimeAdapters\Asterisk\AsteriskAriEventListener;
 use App\RuntimeAdapters\Asterisk\AsteriskCatalog;
+use App\RuntimeAdapters\FreeSwitch\FreeSwitchCatalog;
+use App\RuntimeAdapters\FreeSwitch\FreeSwitchEslEventListener;
 use App\RuntimeEngine\Commands\CommandWorker;
 use App\RuntimeEngine\ConferenceRecoveryMetricEventPruner;
 use App\RuntimeEngine\Events\EventNormalizerWorker;
@@ -601,6 +603,29 @@ Artisan::command('asterisk-ari:events {--once : Claim active nodes and process o
     return 0;
 })->purpose('Run the Asterisk ARI event listener with dynamic RuntimeNode discovery.');
 
+Artisan::command('freeswitch-esl:ensure-targets', function (ReconciliationRepository $repository, FreeSwitchCatalog $catalog): int {
+    $count = 0;
+    DB::table('runtime_nodes')->where('adapter_key', $catalog->adapterKey())->whereIn('desired_state', ['active', 'draining'])->orderBy('id')->get()->each(function (object $node) use ($repository, &$count): void {
+        $repository->ensureTarget((string) $node->tenant_id, 'runtime_node', (string) $node->id, (int) $node->configuration_version);
+        $count++;
+    });
+    $this->line('freeswitch_esl_reconciliation_targets_ensured='.$count);
+
+    return 0;
+})->purpose('Automatically ensure reconciliation targets for managed FreeSWITCH ESL runtime nodes.');
+
+Artisan::command('freeswitch-esl:events {--once : Claim active nodes and process one listener cycle}', function (FreeSwitchEslEventListener $listener): int {
+    $workerId = gethostname().':freeswitch-esl-events:'.getmypid();
+    do {
+        $listener->workOnce($workerId);
+        if (! $this->option('once')) {
+            sleep(5);
+        }
+    } while (! $this->option('once'));
+
+    return 0;
+})->purpose('Run the FreeSWITCH ESL event listener with dynamic RuntimeNode discovery.');
+
 Artisan::command('asterisk-ari:status', function (AsteriskCatalog $catalog): int {
     if (! Schema::hasTable('runtime_nodes')) {
         $this->line('asterisk_nodes=missing');
@@ -961,6 +986,7 @@ Schedule::command('runtime-engine:prune-conference-recovery-metric-events --once
 Schedule::command('simulator:ensure-targets')->everyMinute()->withoutOverlapping();
 Schedule::command('simulator:event-source --once')->everyMinute()->withoutOverlapping();
 Schedule::command('asterisk-ari:ensure-targets')->everyMinute()->withoutOverlapping();
+Schedule::command('freeswitch-esl:ensure-targets')->everyMinute()->withoutOverlapping();
 Schedule::command('telephony-domain:expire-sessions')->everyMinute()->withoutOverlapping();
 Schedule::command('telephony-domain:expire-recoverable-participants')->everyMinute()->withoutOverlapping();
 Schedule::command('telephony-domain:ensure-targets')->everyMinute()->withoutOverlapping();

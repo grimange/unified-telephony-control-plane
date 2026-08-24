@@ -41,9 +41,7 @@ spec:
               kubernetes.io/metadata.name: utcp-runtime
           podSelector:
             matchLabels:
-              app.kubernetes.io/component: freeswitch
-              utcp.io/network-role: freeswitch-sip
-              utcp.dev/runtime-node: local-freeswitch-esl
+              utcp.io/network-role: freeswitch-esl
       ports:
         - protocol: UDP
           port: 5060
@@ -97,9 +95,7 @@ spec:
               kubernetes.io/metadata.name: utcp-runtime
           podSelector:
             matchLabels:
-              app.kubernetes.io/component: freeswitch
-              utcp.io/network-role: freeswitch-sip
-              utcp.dev/runtime-node: local-freeswitch-esl
+              utcp.io/network-role: freeswitch-esl
       ports:
         - protocol: UDP
           port: 5060

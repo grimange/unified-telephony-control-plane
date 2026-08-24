@@ -11,6 +11,7 @@ use App\RuntimeAdapters\Asterisk\AsteriskRuntimeAdapter;
 use App\RuntimeEngine\Events\RuntimeEventReceiptRepository;
 use App\RuntimeEngine\Projection\ProjectionService;
 use App\TelephonyDomain\CallOperationCatalog;
+use App\TelephonyDomain\RuntimeChannelIdentity;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -136,8 +137,8 @@ final class C6EGenericCallExecutionTest extends TestCase
         DB::table('calls')->insert(['id' => $callId, 'tenant_id' => $tenantId, 'direction' => 'outbound', 'observed_state' => 'requested', 'created_at' => $now, 'updated_at' => $now]);
         DB::table('call_legs')->insert(['id' => $legId, 'tenant_id' => $tenantId, 'call_id' => $callId, 'runtime_node_id' => $nodeId, 'runtime_channel_id' => null, 'direction' => 'outbound', 'role' => 'source', 'observed_state' => 'requested', 'created_at' => $now, 'updated_at' => $now]);
 
-        $channelId = AsteriskAriClient::callLegChannelId($legId);
-        $this->assertSame($legId, AsteriskAriClient::callLegIdFromChannelId($channelId));
+        $channelId = RuntimeChannelIdentity::forCallLeg($legId);
+        $this->assertSame($legId, RuntimeChannelIdentity::callLegId($channelId));
         $receipts = app(RuntimeEventReceiptRepository::class);
         $epoch = $receipts->openEpoch($tenantId, $nodeId, 'asterisk-ari', 'c6e-correlation-epoch');
         $accepted = $receipts->ingest($tenantId, $nodeId, 'asterisk-ari', $epoch, 'ari:stasis-start-correlation', 'asterisk.ari.channel.stasis_start', 1, []);

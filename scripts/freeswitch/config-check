@@ -15,10 +15,11 @@ modules_xml="${UTCP_FREESWITCH_MODULES_XML:-$ROOT/infrastructure/docker/freeswit
 switch_xml="${UTCP_FREESWITCH_SWITCH_XML:-$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/switch.conf.xml}"
 sofia_xml="${UTCP_FREESWITCH_SOFIA_XML:-$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/sofia.conf.xml}"
 event_socket_xml="${UTCP_FREESWITCH_EVENT_SOCKET_XML:-$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/event_socket.conf.xml}"
+acl_xml="${UTCP_FREESWITCH_ACL_XML:-$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/acl.conf.xml}"
 startup_smoke="${UTCP_FREESWITCH_STARTUP_SMOKE:-$ROOT/scripts/freeswitch/startup-smoke-test}"
 sip_probe="${UTCP_FREESWITCH_SIP_PROBE:-$ROOT/scripts/freeswitch/sip-invite-smoke.py}"
 
-for file in "$dockerfile" "$freeswitch_xml" "$internal_xml" "$dialplan" "$entrypoint" "$healthcheck" "$modules_xml" "$switch_xml" "$sofia_xml" "$event_socket_xml" "$startup_smoke" "$sip_probe"; do
+for file in "$dockerfile" "$freeswitch_xml" "$internal_xml" "$dialplan" "$entrypoint" "$healthcheck" "$modules_xml" "$switch_xml" "$sofia_xml" "$event_socket_xml" "$acl_xml" "$startup_smoke" "$sip_probe"; do
   [ -s "$file" ] || fail "required FreeSWITCH file is missing: $file"
 done
 
@@ -40,6 +41,13 @@ grep -Fq 'inbound-codec-prefs" value="PCMU' "$internal_xml" || fail "minimal PCM
 grep -Fq 'destination_number" expression="^9900$"' "$dialplan" || fail "9900 Echo fixture is missing"
 grep -Fq 'application="answer"' "$dialplan" || fail "Echo fixture must answer"
 grep -Fq 'application="echo"' "$dialplan" || fail "Echo fixture must echo media"
+fixture_count="$(grep -Fc 'destination_number" expression="^9901$"' "$dialplan")"
+[ "$fixture_count" -eq 1 ] || fail "9901 ringing fixture must exist exactly once"
+fixture_block="$(awk '/<extension name="utcp-ring">/ { found=1 } found { print } /<\/extension>/ && found { exit }' "$dialplan")"
+[ -n "$fixture_block" ] || fail "9901 ringing fixture definition is missing"
+printf '%s\n' "$fixture_block" | grep -Fq 'application="ring_ready"' || fail "9901 fixture must signal ringing"
+printf '%s\n' "$fixture_block" | grep -Fq 'application="sleep" data="60000"' || fail "9901 fixture must use the bounded 60000ms wait"
+if printf '%s\n' "$fixture_block" | grep -Fq 'application="answer"'; then fail "9901 fixture must not answer automatically"; fi
 grep -Fq '<document type="freeswitch/xml">' "$freeswitch_xml" || fail "official XML document root is missing"
 grep -Fq '<section name="configuration"' "$freeswitch_xml" || fail "configuration section is missing"
 grep -Fq '<section name="dialplan"' "$freeswitch_xml" || fail "dialplan section is missing"
@@ -51,12 +59,20 @@ grep -Fq '<load module="mod_dialplan_xml"' "$modules_xml" || fail "mod_dialplan_
 grep -Fq '<load module="mod_dptools"' "$modules_xml" || fail "mod_dptools is missing"
 grep -Fq '<load module="mod_sofia"' "$modules_xml" || fail "mod_sofia is missing"
 grep -Fq '<load module="mod_event_socket"' "$modules_xml" || fail "mod_event_socket is missing"
+grep -Fq '<load module="mod_sndfile"' "$modules_xml" || fail "mod_sndfile is missing"
+grep -Fq 'reference-tone.wav' "$dockerfile" || fail "validation playback asset is not projected"
+grep -Fq '/usr/share/freeswitch/sounds/reference-tone.wav' "$dockerfile" || fail "validation playback asset path is not canonical"
 grep -Fq '../sip_profiles/*.xml' "$sofia_xml" || fail "normal Sofia profile include is missing"
-grep -Fq 'listen-ip" value="127.0.0.1' "$event_socket_xml" || fail "Event Socket must bind loopback"
+grep -Fq 'listen-ip" value="0.0.0.0' "$event_socket_xml" || fail "Event Socket must bind the Pod interface"
 grep -Fq 'utcp_esl_password' "$event_socket_xml" || fail "Event Socket must use the injected secret"
 grep -Fq 'exec-set' "$entrypoint" || fail "Event Socket secret expansion is missing"
 test -x "$healthcheck" || fail "healthcheck must be executable"
-if grep -Eiq 'ClueCon|listen-ip" value="(0\.0\.0\.0|::)' "$event_socket_xml"; then fail "unsafe Event Socket configuration"; fi
+grep -Fq 'apply-inbound-acl" value="utcp-runtime"' "$event_socket_xml" || fail "Event Socket ACL is not the managed runtime ACL"
+if grep -Fq 'utcp-runtime.auto' "$event_socket_xml" "$acl_xml"; then fail "stale automatic runtime ACL reference remains"; fi
+grep -Fq '<list name="utcp-runtime" default="deny">' "$acl_xml" || fail "managed runtime ACL must default to deny"
+grep -Fq 'cidr="10.42.0.0/16"' "$acl_xml" || fail "managed Pod-network ACL is missing"
+grep -Fq 'cidr="127.0.0.1/32"' "$acl_xml" || fail "managed healthcheck loopback ACL is missing"
+grep -Fq 'fs_cli -q -H 127.0.0.1' "$healthcheck" || fail "healthcheck must use the canonical loopback fs_cli source"
 if grep -Eiq 'accept-blind-auth|accept-blind-reg|407[[:space:]]+retry|Authorization:|Proxy-Authorization:|auth[_-](user(name)?|pass(word)?)' "$internal_xml" "$ROOT/infrastructure/kubernetes/base/platform/kamailio-configmap.yaml"; then fail "downstream or blind authentication is forbidden"; fi
 if grep -Fq 'tcpSocket' "$ROOT/infrastructure/kubernetes/components/freeswitch-instance/freeswitch-deployment.yaml"; then fail "TCP probes cannot target UDP SIP"; fi
 if grep -Fq -- '-c /etc/freeswitch' "$entrypoint" || grep -Fq -- '-nf' "$entrypoint"; then fail "invalid startup flags remain"; fi
@@ -125,9 +141,10 @@ def has_rule(rules: list[dict[str, Any]], side: str, namespace: str, pod: dict[s
 
 fs_pod = {
     "app.kubernetes.io/component": "freeswitch",
-    "utcp.io/network-role": "freeswitch-sip",
+    "utcp.io/network-role": "freeswitch-esl",
     "utcp.dev/runtime-node": "local-freeswitch-esl",
 }
+fs_policy_pod = {"utcp.io/network-role": "freeswitch-esl"}
 fs_template_labels = {
     "app.kubernetes.io/part-of": "utcp",
     **fs_pod,
@@ -182,7 +199,7 @@ kamailio_policy = security_objects.get("NetworkPolicy/utcp-platform/allow-kamail
 if not fs_policy or not rtp_policy or not kamailio_policy:
     fail("FreeSWITCH reciprocal and Kamailio policies are required")
 spec = fs_policy.get("spec") or {}
-if (spec.get("podSelector") or {}).get("matchLabels") != fs_pod:
+if (spec.get("podSelector") or {}).get("matchLabels") != fs_policy_pod:
     fail("FreeSWITCH policy selector must be exact")
 if not has_rule(spec.get("ingress") or [], "from", "utcp-platform", kamailio_pod, 5060):
     fail("FreeSWITCH ingress from Kamailio UDP 5060 is missing")
@@ -193,13 +210,13 @@ if not has_rule(spec.get("ingress") or [], "from", "utcp-platform", rtp_pod, 210
 if not has_rule(spec.get("egress") or [], "to", "utcp-platform", rtp_pod, 40000, 40099):
     fail("FreeSWITCH egress to rtpengine must use destination media range 40000-40099")
 rtp_spec = rtp_policy.get("spec") or {}
-if not has_rule(rtp_spec.get("ingress") or [], "from", "utcp-runtime", fs_pod, 40000, 40099):
+if not has_rule(rtp_spec.get("ingress") or [], "from", "utcp-runtime", fs_policy_pod, 40000, 40099):
     fail("rtpengine ingress from FreeSWITCH is missing")
-if not has_rule(rtp_spec.get("egress") or [], "to", "utcp-runtime", fs_pod, 21000, 21099):
+if not has_rule(rtp_spec.get("egress") or [], "to", "utcp-runtime", fs_policy_pod, 21000, 21099):
     fail("rtpengine egress to FreeSWITCH must use FreeSWITCH destination range")
-if not has_rule((kamailio_policy.get("spec") or {}).get("ingress") or [], "from", "utcp-runtime", fs_pod, 5060):
+if not has_rule((kamailio_policy.get("spec") or {}).get("ingress") or [], "from", "utcp-runtime", fs_policy_pod, 5060):
     fail("Kamailio ingress from FreeSWITCH is missing")
-if not has_rule((kamailio_policy.get("spec") or {}).get("egress") or [], "to", "utcp-runtime", fs_pod, 5060):
+if not has_rule((kamailio_policy.get("spec") or {}).get("egress") or [], "to", "utcp-runtime", fs_policy_pod, 5060):
     fail("Kamailio egress to FreeSWITCH is missing")
 
 kamailio = (root / "infrastructure/kubernetes/base/platform/kamailio-configmap.yaml").read_text()

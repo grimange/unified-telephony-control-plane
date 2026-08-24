@@ -13,6 +13,8 @@ cp "$ROOT/infrastructure/docker/freeswitch/config/dialplan/utcp.xml" "$TMP/dialp
 cp "$ROOT/infrastructure/docker/freeswitch/entrypoint" "$TMP/entrypoint"
 cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/switch.conf.xml" "$TMP/switch.xml"
 cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/event_socket.conf.xml" "$TMP/event_socket.xml"
+cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/acl.conf.xml" "$TMP/acl.xml"
+cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/modules.conf.xml" "$TMP/modules.xml"
 cp "$ROOT/scripts/freeswitch/startup-smoke-test" "$TMP/startup-smoke-test"
 cp "$ROOT/scripts/freeswitch/sip-invite-smoke.py" "$TMP/sip-invite-smoke.py"
 
@@ -24,6 +26,8 @@ run_check() {
   UTCP_FREESWITCH_ENTRYPOINT="$TMP/entrypoint" \
   UTCP_FREESWITCH_SWITCH_XML="$TMP/switch.xml" \
   UTCP_FREESWITCH_EVENT_SOCKET_XML="$TMP/event_socket.xml" \
+  UTCP_FREESWITCH_ACL_XML="$TMP/acl.xml" \
+  UTCP_FREESWITCH_MODULES_XML="$TMP/modules.xml" \
   UTCP_FREESWITCH_STARTUP_SMOKE="$TMP/startup-smoke-test" \
   UTCP_FREESWITCH_SIP_PROBE="$TMP/sip-invite-smoke.py" \
   "$CHECK" >/dev/null
@@ -41,6 +45,8 @@ restore() {
   cp "$ROOT/infrastructure/docker/freeswitch/entrypoint" "$TMP/entrypoint"
   cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/switch.conf.xml" "$TMP/switch.xml"
   cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/event_socket.conf.xml" "$TMP/event_socket.xml"
+  cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/acl.conf.xml" "$TMP/acl.xml"
+  cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/modules.conf.xml" "$TMP/modules.xml"
   cp "$ROOT/scripts/freeswitch/startup-smoke-test" "$TMP/startup-smoke-test"
   cp "$ROOT/scripts/freeswitch/sip-invite-smoke.py" "$TMP/sip-invite-smoke.py"
 }
@@ -62,7 +68,18 @@ sed -i 's/5060/5080/' "$TMP/profile.xml"; fail_case 'wrong SIP port'; restore
 sed -i 's/9900/9901/g' "$TMP/dialplan.xml"; fail_case 'missing 9900'; restore
 sed -i '/application="echo"/d' "$TMP/dialplan.xml"; fail_case 'missing Echo'; restore
 sed -i '/application="answer"/d' "$TMP/dialplan.xml"; fail_case 'missing answer'; restore
-sed -i 's/listen-ip" value="127.0.0.1/listen-ip" value="0.0.0.0/' "$TMP/event_socket.xml"; fail_case 'public Event Socket'; restore
+sed -i '/<extension name="utcp-ring">/,/<\/extension>/d' "$TMP/dialplan.xml"; fail_case 'missing 9901 ringing fixture'; restore
+sed -i '/<extension name="utcp-ring">/,/<\/extension>/ s/application="ring_ready"/application="answer"/' "$TMP/dialplan.xml"; fail_case '9901 auto-answer'; restore
+sed -i '/<extension name="utcp-ring">/,/<\/extension>/ { /application="sleep"/d; }' "$TMP/dialplan.xml"; fail_case '9901 missing bounded wait'; restore
+sed -i '/<extension name="utcp-ring">/,/<\/extension>/ s/9901/9902/' "$TMP/dialplan.xml"; fail_case '9901 destination drift'; restore
+sed -i '/<extension name="utcp-ring">/,/<\/extension>/ s/data="60000"/data="0"/' "$TMP/dialplan.xml"; fail_case '9901 unbounded or invalid wait'; restore
+sed -i 's/listen-ip" value="0.0.0.0/listen-ip" value="127.0.0.1/' "$TMP/event_socket.xml"; fail_case 'loopback-only Event Socket'; restore
+sed -i 's/apply-inbound-acl" value="utcp-runtime"/apply-inbound-acl" value="utcp-runtime.auto"/' "$TMP/event_socket.xml"; fail_case 'stale automatic Event Socket ACL'; restore
+sed -i '/cidr="127.0.0.1\/32"/d' "$TMP/acl.xml"; fail_case 'missing healthcheck loopback ACL'; restore
+sed -i 's/default="deny"/default="allow"/' "$TMP/acl.xml"; fail_case 'permissive runtime ACL default'; restore
+sed -i '/cidr="10.42.0.0\/16"/d' "$TMP/acl.xml"; fail_case 'missing managed Pod-network ACL'; restore
+sed -i '/mod_sndfile/d' "$TMP/modules.xml"; fail_case 'missing mod_sndfile'; restore
+sed -i '/reference-tone.wav/d' "$TMP/Dockerfile"; fail_case 'missing validation playback asset'; restore
 sed -i 's/alias="false"/alias="true"/' "$TMP/profile.xml"; fail_case 'registered-endpoint domain aliasing'; restore
 sed -i '/scripts\/freeswitch\/sip-invite-smoke.py/d' "$TMP/startup-smoke-test"; fail_case 'missing real INVITE smoke'; restore
 sed -i '/Content-Type: application\/sdp/d' "$TMP/sip-invite-smoke.py"; fail_case 'missing SDP smoke offer'; restore

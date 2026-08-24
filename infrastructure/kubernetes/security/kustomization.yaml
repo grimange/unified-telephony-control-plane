@@ -10,7 +10,9 @@ resources:
   - platform/allow-worker.yaml
   - platform/allow-simulator-event-source.yaml
   - platform/allow-asterisk-ari-events.yaml
+  - platform/allow-freeswitch-esl-events.yaml
   - platform/allow-asterisk-ari-egress.yaml
+  - platform/allow-freeswitch-esl-egress.yaml
   - platform/allow-kamailio-signaling.yaml
   - platform/allow-kamailio-registration-observer-egress.yaml
   - platform/allow-rtpengine-media.yaml
@@ -23,6 +25,7 @@ resources:
   - traefik/allow-traefik.yaml
   - empty-namespaces/default-deny-runtime.yaml
   - runtime/allow-asterisk-ari-ingress.yaml
+  - runtime/allow-freeswitch-esl-ingress.yaml
   - runtime/allow-asterisk-sip-from-kamailio.yaml
   - runtime/allow-freeswitch-sip-from-kamailio.yaml
   - empty-namespaces/default-deny-observability.yaml

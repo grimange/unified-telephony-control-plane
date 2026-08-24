@@ -6,6 +6,7 @@ FROM ${FREESWITCH_BASE_IMAGE}
 COPY infrastructure/docker/freeswitch/config/ /etc/freeswitch/
 COPY infrastructure/docker/freeswitch/entrypoint /usr/local/bin/utcp-freeswitch-entrypoint
 COPY infrastructure/docker/freeswitch/healthcheck /usr/local/bin/utcp-freeswitch-healthcheck
+COPY infrastructure/docker/media/reference-tone.wav.base64 /tmp/utcp-reference-tone.wav.base64
 
 RUN chmod 0755 /usr/local/bin/utcp-freeswitch-entrypoint /usr/local/bin/utcp-freeswitch-healthcheck \
     && test -s /etc/freeswitch/freeswitch.xml \
@@ -13,13 +14,19 @@ RUN chmod 0755 /usr/local/bin/utcp-freeswitch-entrypoint /usr/local/bin/utcp-fre
     && test -s /etc/freeswitch/autoload_configs/switch.conf.xml \
     && test -s /etc/freeswitch/autoload_configs/sofia.conf.xml \
     && test -s /etc/freeswitch/autoload_configs/event_socket.conf.xml \
+    && test -s /etc/freeswitch/autoload_configs/acl.conf.xml \
     && test -s /etc/freeswitch/sip_profiles/utcp-internal.xml \
     && test -s /etc/freeswitch/dialplan/utcp.xml \
-    && for module in mod_console mod_commands mod_dialplan_xml mod_dptools mod_sofia mod_event_socket; do \
+    && mkdir -p /usr/share/freeswitch/sounds \
+    && base64 -d /tmp/utcp-reference-tone.wav.base64 > /usr/share/freeswitch/sounds/reference-tone.wav \
+    && chown 1000:1000 /usr/share/freeswitch/sounds/reference-tone.wav \
+    && rm /tmp/utcp-reference-tone.wav.base64 \
+    && for module in mod_console mod_commands mod_dialplan_xml mod_dptools mod_sofia mod_event_socket mod_sndfile; do \
          test -s "/usr/lib/freeswitch/mod/${module}.so"; \
        done
 
 USER 1000:1000
 EXPOSE 5060/udp
+EXPOSE 8021/tcp
 EXPOSE 21000-21099/udp
 ENTRYPOINT ["/usr/local/bin/utcp-freeswitch-entrypoint"]

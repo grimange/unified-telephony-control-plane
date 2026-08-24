@@ -16,6 +16,7 @@ use App\TelephonyDomain\CallQueryService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use InvalidArgumentException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 final class CallController extends Controller
@@ -39,7 +40,11 @@ final class CallController extends Controller
         $data = $request->validate(['direction' => ['required', Rule::in(['outbound'])], 'runtime_node_id' => ['nullable', 'uuid'], 'destination_ref' => ['required', 'string', 'max:255']]);
         $context = $this->context($request, $tenant);
         $key = $this->idempotency($request);
-        $result = $this->calls->createOutboundCall($tenant, $context, $key, $data['runtime_node_id'] ?? null, $data['destination_ref']);
+        try {
+            $result = $this->calls->createOutboundCall($tenant, $context, $key, $data['runtime_node_id'] ?? null, $data['destination_ref']);
+        } catch (InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
         $call = $this->queries->call($tenant, $result['call_id']);
 
         return (new CallResource($call))->response()->setStatusCode(201);
@@ -93,10 +98,30 @@ final class CallController extends Controller
         if ($aggregateType === 'relationship' && $runtimeNodeId === null && isset($payload['leg_ids'][0])) {
             $runtimeNodeId = DB::table('call_legs')->where('id', $payload['leg_ids'][0])->value('runtime_node_id');
         }
-        $operationId = $this->calls->requestOperation($tenant, $this->context($request, $tenant), $type, $aggregateType, $aggregateId, $payload, $this->idempotency($request), $runtimeNodeId);
+        try {
+            $operationId = $this->calls->requestOperation($tenant, $this->context($request, $tenant), $type, $aggregateType, $aggregateId, $payload, $this->idempotency($request), $runtimeNodeId);
+        } catch (InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
         $operation = DB::table('runtime_operations')->where('tenant_id', $tenant)->where('id', $operationId)->first();
 
         return (new CallOperationResource($operation))->response()->setStatusCode(202);
+    }
+
+    public function storeLeg(Request $request, string $call)
+    {
+        $tenant = $this->tenant($request, 'telephony.calls.originate');
+        $data = $request->validate(['runtime_node_id' => ['nullable', 'uuid'], 'destination_ref' => ['required', 'string', 'max:255']]);
+
+        try {
+            $result = $this->calls->createOutboundLeg($tenant, $this->context($request, $tenant), $call, $this->idempotency($request), $data['runtime_node_id'] ?? null, $data['destination_ref']);
+        } catch (InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
+        $leg = DB::table('call_legs')->where('tenant_id', $tenant)->where('id', $result['leg_id'])->first();
+
+        return (new CallLegResource($leg))->response()->setStatusCode(201);
     }
 
     public function operations(Request $request, string $call)

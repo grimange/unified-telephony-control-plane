@@ -3,7 +3,6 @@
 namespace App\Simulator\Commands;
 
 use App\ControlPlane\RuntimeOperations\FailureClass;
-use App\RuntimeAdapters\Asterisk\AsteriskRuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeOperationHandler;
 use App\TelephonyDomain\CallOperationCatalog;
@@ -36,7 +35,7 @@ final class SimulatorCallOperationHandler implements RuntimeOperationHandler
 
     public function execute(array $operation, ?RuntimeAdapter $adapter): array
     {
-        if (! $adapter instanceof SimulatorRuntimeAdapter && ! $adapter instanceof AsteriskRuntimeAdapter) {
+        if (! $adapter instanceof RuntimeAdapter) {
             return $this->failure(FailureClass::UnsupportedCapability, 'call_adapter_not_registered', 'C6 operations require a registered call-capable runtime adapter');
         }
 

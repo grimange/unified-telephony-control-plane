@@ -10,13 +10,37 @@ use App\RuntimeEngine\Commands\RuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeOperationHandler;
 use Illuminate\Support\Facades\DB;
 
-final class ManagedAsteriskDeprovisioningOperationHandler implements RunsWithoutRuntimeAdapter, RuntimeOperationHandler
+final class ManagedAsteriskDeprovisioningOperationHandler implements ManagedRuntimeProvisioningProvider, RunsWithoutRuntimeAdapter, RuntimeOperationHandler
 {
     public function __construct(private readonly KubernetesWorkloadClient $kubernetes) {}
 
     public function operationType(): string
     {
         return (string) config('telephony_domain.operation_types.runtime_node_deprovision', 'runtime.node.deprovision');
+    }
+
+    public function adapterKey(): string
+    {
+        return (string) config('asterisk_ari.adapter_key', 'asterisk-ari');
+    }
+
+    public function provisionOperation(array $operation, ?RuntimeAdapter $adapter): array
+    {
+        unset($operation, $adapter);
+
+        return ['status' => 'failed', 'failure_class' => FailureClass::UnsupportedCapability->value, 'failure_code' => 'managed_provision_provider_mismatch', 'failure_message' => 'Asterisk deprovisioning provider cannot provision through the deprovisioning handler.'];
+    }
+
+    public function deprovisionOperation(array $operation, ?RuntimeAdapter $adapter): array
+    {
+        return $this->execute($operation, $adapter);
+    }
+
+    public function desiredDeployment(string $runtimeNodeId, string $slug): array
+    {
+        unset($runtimeNodeId, $slug);
+
+        return [];
     }
 
     public function payloadVersion(): int

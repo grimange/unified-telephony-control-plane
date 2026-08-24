@@ -64,6 +64,11 @@ final class CallDomainService
         }
 
         return DB::transaction(function () use ($tenantId, $context, $idempotencyKey, $runtimeNodeId, $destinationRef): array {
+            $existing = $this->existingOrigination($tenantId, $idempotencyKey);
+            if ($existing !== null) {
+                return $existing;
+            }
+
             $callId = TelephonyDomainIds::new();
             $legId = TelephonyDomainIds::new();
             $now = now();
@@ -104,6 +109,68 @@ final class CallDomainService
                 'runtime_channel_id' => self::runtimeChannelId($legId),
             ], $idempotencyKey, $runtimeNodeId);
             $this->applyCallTransition($tenantId, $callId, CallState::Originating, 'command-requested');
+            $this->applyLegTransition($tenantId, $legId, CallState::Originating, 'command-requested');
+            $this->reconciliation->ensureTarget($tenantId, 'call_leg_origination', $legId, 1);
+
+            return ['call_id' => $callId, 'leg_id' => $legId, 'operation_id' => $operationId];
+        });
+    }
+
+    /** @return array{call_id:string, leg_id:string, operation_id:string} */
+    public function createOutboundLeg(
+        string $tenantId,
+        ExecutionContext $context,
+        string $callId,
+        ?IdempotencyKey $idempotencyKey = null,
+        ?string $runtimeNodeId = null,
+        ?string $destinationRef = null,
+    ): array {
+        if ($context->tenantId !== null && $context->tenantId !== $tenantId) {
+            throw new InvalidArgumentException('execution context tenant does not match call tenant');
+        }
+
+        return DB::transaction(function () use ($tenantId, $context, $callId, $idempotencyKey, $runtimeNodeId, $destinationRef): array {
+            $call = DB::table('calls')->where('tenant_id', $tenantId)->where('id', $callId)->lockForUpdate()->first();
+            if ($call === null) {
+                throw new InvalidArgumentException('call aggregate not found for tenant');
+            }
+            if (CallState::from($call->observed_state)->terminal()) {
+                throw new InvalidArgumentException('call is not eligible for an additional outbound leg');
+            }
+
+            $selectedRuntimeNodeId = $runtimeNodeId ?? $call->runtime_node_id;
+            if ($selectedRuntimeNodeId !== null && DB::table('runtime_nodes')->where('id', $selectedRuntimeNodeId)->where('tenant_id', $tenantId)->doesntExist()) {
+                throw new InvalidArgumentException('runtime node is not available for this tenant');
+            }
+
+            $existing = $this->existingOrigination($tenantId, $idempotencyKey, $callId, $selectedRuntimeNodeId, $destinationRef);
+            if ($existing !== null) {
+                return $existing;
+            }
+
+            $legId = TelephonyDomainIds::new();
+            $now = now();
+            DB::table('call_legs')->insert([
+                'id' => $legId,
+                'tenant_id' => $tenantId,
+                'call_id' => $callId,
+                'runtime_node_id' => $selectedRuntimeNodeId,
+                'runtime_channel_id' => self::runtimeChannelId($legId),
+                'direction' => CallDirection::Outbound->value,
+                'role' => CallLegRole::Destination->value,
+                'desired_state' => 'active',
+                'observed_state' => CallState::Requested->value,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+
+            $operationId = $this->requestOperation($tenantId, $context, 'call.leg.originate', 'call_leg', $legId, [
+                'call_id' => $callId,
+                'leg_id' => $legId,
+                'runtime_node_id' => $selectedRuntimeNodeId,
+                'destination_ref' => $destinationRef,
+                'runtime_channel_id' => self::runtimeChannelId($legId),
+            ], $idempotencyKey, $selectedRuntimeNodeId);
             $this->applyLegTransition($tenantId, $legId, CallState::Originating, 'command-requested');
             $this->reconciliation->ensureTarget($tenantId, 'call_leg_origination', $legId, 1);
 
@@ -535,6 +602,49 @@ final class CallDomainService
         }
 
         return $row;
+    }
+
+    /** @return array{call_id:string, leg_id:string, operation_id:string}|null */
+    private function existingOrigination(
+        string $tenantId,
+        ?IdempotencyKey $idempotencyKey,
+        ?string $expectedCallId = null,
+        ?string $runtimeNodeId = null,
+        ?string $destinationRef = null,
+    ): ?array {
+        if ($idempotencyKey === null) {
+            return null;
+        }
+
+        $operation = DB::table('runtime_operations')
+            ->where('tenant_id', $tenantId)
+            ->where('operation_type', 'call.leg.originate')
+            ->where('idempotency_key', $idempotencyKey->value())
+            ->lockForUpdate()
+            ->first();
+        if ($operation === null) {
+            return null;
+        }
+
+        $payload = json_decode((string) $operation->payload, true, 512, JSON_THROW_ON_ERROR);
+        $existingCallId = is_string($payload['call_id'] ?? null) ? $payload['call_id'] : null;
+        $existingLegId = is_string($payload['leg_id'] ?? null) ? $payload['leg_id'] : null;
+        if ($existingCallId === null || $existingLegId === null || $operation->aggregate_type !== 'call_leg') {
+            throw new InvalidArgumentException('idempotency key is already used for an incompatible origination operation');
+        }
+        if ($expectedCallId !== null && $existingCallId !== $expectedCallId) {
+            throw new InvalidArgumentException('idempotency key is already used for another call');
+        }
+        if ($expectedCallId !== null && (($payload['runtime_node_id'] ?? null) !== $runtimeNodeId || ($payload['destination_ref'] ?? null) !== $destinationRef)) {
+            throw new InvalidArgumentException('idempotency key is reused with a different leg request');
+        }
+
+        $leg = DB::table('call_legs')->where('tenant_id', $tenantId)->where('id', $existingLegId)->where('call_id', $existingCallId)->first();
+        if ($leg === null) {
+            throw new InvalidArgumentException('idempotent origination leg is missing');
+        }
+
+        return ['call_id' => $existingCallId, 'leg_id' => $existingLegId, 'operation_id' => (string) $operation->id];
     }
 
     private function advanceCallFromLeg(string $tenantId, string $callId, CallState $legState, string $source = 'observation-confirmed'): void

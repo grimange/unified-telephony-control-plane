@@ -19,7 +19,11 @@ final class RuntimeOperationHandlerRegistry
 
     public function register(RuntimeOperationHandler $handler): void
     {
-        $this->handlers[$handler->operationType().':'.$handler->payloadVersion()] = $handler;
+        $key = $handler->operationType().':'.$handler->payloadVersion();
+        if (isset($this->handlers[$key])) {
+            throw new \LogicException('Duplicate runtime operation handler registration: '.$key);
+        }
+        $this->handlers[$key] = $handler;
     }
 
     public function get(string $operationType, int $payloadVersion): ?RuntimeOperationHandler

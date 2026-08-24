@@ -6,5 +6,6 @@
     <load module="mod_dptools"/>
     <load module="mod_sofia"/>
     <load module="mod_event_socket"/>
+    <load module="mod_sndfile"/>
   </modules>
 </configuration>

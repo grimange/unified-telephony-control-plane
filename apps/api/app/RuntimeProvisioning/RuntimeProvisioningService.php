@@ -25,10 +25,10 @@ final class RuntimeProvisioningService
 
     private const LOCAL_TARGET_SLUG = 'local-kubernetes';
 
-    /** @var array<string, string> */
-    private const MANAGED_RUNTIME = [
-        'runtime_family' => 'asterisk',
-        'adapter_key' => 'asterisk-ari',
+    /** @var array<string, array{runtime_family:string, adapter_key:string}> */
+    private const MANAGED_RUNTIMES = [
+        'asterisk-ari' => ['runtime_family' => 'asterisk', 'adapter_key' => 'asterisk-ari'],
+        'freeswitch-esl' => ['runtime_family' => 'freeswitch', 'adapter_key' => 'freeswitch-esl'],
     ];
 
     public function __construct(
@@ -80,8 +80,9 @@ final class RuntimeProvisioningService
     {
         $runtimeFamily = (string) ($input['runtime_family'] ?? '');
         $adapterKey = (string) ($input['adapter_key'] ?? '');
-        if ($runtimeFamily !== self::MANAGED_RUNTIME['runtime_family'] || $adapterKey !== self::MANAGED_RUNTIME['adapter_key']) {
-            throw new InvalidArgumentException('Unsupported managed runtime. RNP-1 supports Asterisk with the asterisk-ari adapter.');
+        $managedRuntime = self::MANAGED_RUNTIMES[$adapterKey] ?? null;
+        if ($managedRuntime === null || $runtimeFamily !== $managedRuntime['runtime_family']) {
+            throw new InvalidArgumentException('Unsupported managed runtime family and adapter combination.');
         }
 
         $name = trim((string) ($input['name'] ?? ''));
@@ -182,6 +183,7 @@ final class RuntimeProvisioningService
                 'provisioning_request_id' => (string) $provisioningRequest->id,
                 'deployment_target_id' => (string) $provisioningRequest->deployment_target_id,
                 'runtime_node_id' => (string) $provisioningRequest->runtime_node_id,
+                'adapter_key' => (string) $provisioningRequest->adapter_key,
             ],
             context: IdentityContext::fromRequest($request, $tenantId),
             idempotencyKey: IdempotencyKey::fromString('runtime-node-provision:'.$provisioningRequest->id),

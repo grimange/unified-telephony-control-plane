@@ -9,7 +9,7 @@ required_tools
 ensure_kubeconfig
 check_k1_tag
 
-grep -Fq 'for deployment in api asterisk-ari-events control-plane-outbox-dispatcher gateway kamailio kamailio-registration-observer reverb rtpengine scheduler simulator-event-source telephony-command-worker telephony-event-normalizer telephony-reconciler utcp-runtime-fence-worker web worker;' "$SCRIPT_DIR/apply" || {
+grep -Fq 'for deployment in api asterisk-ari-events freeswitch-esl-events control-plane-outbox-dispatcher gateway kamailio kamailio-registration-observer reverb rtpengine scheduler simulator-event-source telephony-command-worker telephony-event-normalizer telephony-reconciler utcp-runtime-fence-worker web worker;' "$SCRIPT_DIR/apply" || {
   printf 'Kubernetes config check failed: local apply must enumerate the canonical platform deployments for freshness\n' >&2
   exit 1
 }
@@ -32,6 +32,7 @@ kubectl kustomize "$K8S_PLATFORM_OVERLAY" > "$platform_tmp"
 
 kube apply --dry-run=client -f "$tmp" >/dev/null
 "$SCRIPT_DIR/static-check" "$tmp"
+python3 "$SCRIPT_DIR/application-config-check.py" "$tmp" "$platform_tmp"
 python3 - "$migration_tmp" "$tmp" "$platform_tmp" <<'PY'
 from __future__ import annotations
 
@@ -81,21 +82,8 @@ def validate_reverb_allowed_origin(label: str, rendered_objects: dict[str, Any])
         fail(f"{label} REVERB_ALLOWED_ORIGIN must be a host-only Reverb origin pattern")
 
 
-def validate_managed_asterisk_image(label: str, rendered_objects: dict[str, Any]) -> None:
-    config = rendered_objects.get("ConfigMap/utcp-platform/utcp-application-config")
-    image = ((config or {}).get("data") or {}).get("UTCP_MANAGED_ASTERISK_IMAGE")
-    if not image:
-        fail(f"{label} application ConfigMap must define UTCP_MANAGED_ASTERISK_IMAGE")
-    if "/" not in image or (":" not in image.rsplit("/", 1)[-1] and "@sha256:" not in image):
-        fail(f"{label} UTCP_MANAGED_ASTERISK_IMAGE must be a qualified image with an explicit tag or digest")
-    if any(character.isspace() for character in image):
-        fail(f"{label} UTCP_MANAGED_ASTERISK_IMAGE must not contain whitespace")
-
-
 validate_reverb_allowed_origin("local", local_objects)
 validate_reverb_allowed_origin("platform", platform_objects)
-validate_managed_asterisk_image("local", local_objects)
-validate_managed_asterisk_image("platform", platform_objects)
 
 REVERB_SECRET = "utcp-local-reverb-credentials"
 REVERB_CONFIG_KEYS = {"REVERB_HOST", "REVERB_PORT", "REVERB_SCHEME"}

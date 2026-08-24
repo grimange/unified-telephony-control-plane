@@ -6,5 +6,11 @@
         <action application="echo"/>
       </condition>
     </extension>
+    <extension name="utcp-ring">
+      <condition field="destination_number" expression="^9901$">
+        <action application="ring_ready"/>
+        <action application="sleep" data="60000"/>
+      </condition>
+    </extension>
   </context>
 </include>

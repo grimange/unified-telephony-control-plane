@@ -4,6 +4,7 @@ namespace Tests\Feature\TelephonyDomain;
 
 use App\Identity\IdentityIds;
 use App\Models\User;
+use App\TelephonyDomain\CallDomainService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -50,6 +51,83 @@ final class CallApiTest extends TestCase
         $this->attachRole($viewer->id, $tenant, 'tenant-call-viewer', ['telephony.calls.view']);
         $this->actingAs($viewer)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenant])->postJson('/api/v1/calls/'.$call['id'].'/operations', ['operation_type' => 'call.hangup'])->assertForbidden();
         $this->assertSame(1, DB::table('runtime_operations')->where('tenant_id', $tenant)->count());
+    }
+
+    public function test_additional_leg_uses_same_call_authority_and_idempotent_retry(): void
+    {
+        [$admin, $tenant] = $this->admin('c6d-legs');
+        $session = ['user_session_version' => 1, 'active_tenant_id' => $tenant];
+        $call = $this->actingAs($admin)->withSession($session)
+            ->postJson('/api/v1/calls', ['direction' => 'outbound', 'destination_ref' => 'opaque:first'])
+            ->assertCreated()->json('data');
+
+        $first = $this->actingAs($admin)->withSession($session)
+            ->postJson('/api/v1/calls/'.$call['id'].'/legs', ['destination_ref' => 'opaque:second'], ['Idempotency-Key' => 'c6d-leg-1'])
+            ->assertCreated()->json('data');
+        $second = $this->actingAs($admin)->withSession($session)
+            ->postJson('/api/v1/calls/'.$call['id'].'/legs', ['destination_ref' => 'opaque:second'], ['Idempotency-Key' => 'c6d-leg-1'])
+            ->assertCreated()->json('data');
+
+        $this->assertSame($first['id'], $second['id']);
+        $this->assertSame($call['id'], $first['call_id']);
+        $this->assertSame($tenant, DB::table('call_legs')->where('id', $first['id'])->value('tenant_id'));
+        $this->assertSame('outbound', $first['direction']);
+        $this->assertSame('destination', $first['role']);
+        $this->assertSame(CallDomainService::runtimeChannelId($first['id']), $first['runtime_channel_id']);
+        $this->assertSame(2, DB::table('call_legs')->where('call_id', $call['id'])->count());
+        $this->assertSame(2, DB::table('runtime_operations')->where('tenant_id', $tenant)->where('operation_type', 'call.leg.originate')->count());
+    }
+
+    public function test_same_call_bridge_relationship_is_reachable_and_cross_call_is_unprocessable(): void
+    {
+        [$admin, $tenant] = $this->admin('c6d-bridge');
+        $session = ['user_session_version' => 1, 'active_tenant_id' => $tenant];
+        $call = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/calls', ['direction' => 'outbound', 'destination_ref' => 'opaque:first'])->assertCreated()->json('data');
+        $second = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/calls/'.$call['id'].'/legs', ['destination_ref' => 'opaque:second'], ['Idempotency-Key' => 'c6d-bridge-leg'])->assertCreated()->json('data');
+        $legs = [DB::table('call_legs')->where('call_id', $call['id'])->orderBy('created_at')->pluck('id')->first(), $second['id']];
+
+        $this->actingAs($admin)->withSession($session)
+            ->postJson('/api/v1/calls/'.$call['id'].'/operations', ['operation_type' => 'call.legs.bridge', 'leg_ids' => $legs], ['Idempotency-Key' => 'c6d-bridge-op'])
+            ->assertAccepted();
+
+        $otherCall = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/calls', ['direction' => 'outbound', 'destination_ref' => 'opaque:other'])->assertCreated()->json('data');
+        $otherLeg = DB::table('call_legs')->where('call_id', $otherCall['id'])->value('id');
+        $this->actingAs($admin)->withSession($session)
+            ->postJson('/api/v1/calls/'.$call['id'].'/operations', ['operation_type' => 'call.legs.bridge', 'leg_ids' => [$legs[0], $otherLeg]], ['Idempotency-Key' => 'c6d-cross-call-bridge'])
+            ->assertStatus(422);
+    }
+
+    public function test_cross_tenant_bridge_relationship_is_unprocessable_without_leaking_the_other_leg(): void
+    {
+        [$admin, $tenant] = $this->admin('c6d-bridge-tenant-a');
+        [$otherAdmin, $otherTenant] = $this->admin('c6d-bridge-tenant-b');
+        $session = ['user_session_version' => 1, 'active_tenant_id' => $tenant];
+        $otherSession = ['user_session_version' => 1, 'active_tenant_id' => $otherTenant];
+
+        $call = $this->actingAs($admin)->withSession($session)
+            ->postJson('/api/v1/calls', ['direction' => 'outbound', 'destination_ref' => 'opaque:tenant-a'])
+            ->assertCreated()->json('data');
+        $callLeg = DB::table('call_legs')->where('call_id', $call['id'])->value('id');
+        $otherCall = $this->actingAs($otherAdmin)->withSession($otherSession)
+            ->postJson('/api/v1/calls', ['direction' => 'outbound', 'destination_ref' => 'opaque:tenant-b'])
+            ->assertCreated()->json('data');
+        $otherLeg = DB::table('call_legs')->where('call_id', $otherCall['id'])->value('id');
+
+        $this->actingAs($admin)->withSession($session)
+            ->postJson('/api/v1/calls/'.$call['id'].'/operations', ['operation_type' => 'call.legs.bridge', 'leg_ids' => [$callLeg, $otherLeg]], ['Idempotency-Key' => 'c6d-cross-tenant-bridge'])
+            ->assertStatus(422);
+    }
+
+    public function test_terminal_call_cannot_receive_an_additional_leg(): void
+    {
+        [$admin, $tenant] = $this->admin('c6d-terminal-leg');
+        $session = ['user_session_version' => 1, 'active_tenant_id' => $tenant];
+        $call = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/calls', ['direction' => 'outbound', 'destination_ref' => 'opaque:closed'])->assertCreated()->json('data');
+        DB::table('calls')->where('id', $call['id'])->update(['observed_state' => 'completed']);
+
+        $this->actingAs($admin)->withSession($session)
+            ->postJson('/api/v1/calls/'.$call['id'].'/legs', ['destination_ref' => 'opaque:rejected'], ['Idempotency-Key' => 'c6d-terminal-leg'])
+            ->assertStatus(422);
     }
 
     /** @return array{0:User,1:string} */

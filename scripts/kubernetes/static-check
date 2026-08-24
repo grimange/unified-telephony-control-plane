@@ -23,7 +23,7 @@ if grep -Eq '^kind:[[:space:]]*(Ingress|Gateway|HTTPRoute|GRPCRoute|TCPRoute|TLS
   exit 1
 fi
 
-if grep -Eiq 'freeswitch|confbridge|(^|[^a-z])(sips|srtp|pbx|pjsip)([^a-z]|$)|hostNetwork:[[:space:]]*true|hostPID:[[:space:]]*true|hostPort:|privileged:[[:space:]]*true|hostPath:' "$manifest"; then
+if grep -Eiq 'confbridge|(^|[^a-z])(sips|srtp|pbx|pjsip)([^a-z]|$)|hostNetwork:[[:space:]]*true|hostPID:[[:space:]]*true|hostPort:|privileged:[[:space:]]*true|hostPath:' "$manifest"; then
   printf 'Kubernetes manifest includes prohibited ingress, telephony, host, or privileged configuration\n' >&2
   exit 1
 fi

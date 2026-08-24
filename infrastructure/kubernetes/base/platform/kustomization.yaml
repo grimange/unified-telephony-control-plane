@@ -14,6 +14,7 @@ resources:
   - telephony-reconciler-deployment.yaml
   - simulator-event-source-deployment.yaml
   - asterisk-ari-events-deployment.yaml
+  - freeswitch-esl-events-deployment.yaml
   - kamailio-registration-observer-deployment.yaml
   - kamailio-configmap.yaml
   - kamailio-deployment.yaml

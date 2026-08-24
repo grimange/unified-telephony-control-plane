@@ -72,8 +72,10 @@ fi
 
 telephony_workloads="$(mktemp)"
 trap 'rm -f "$telephony_workloads"' EXIT
-kube get pods,deployments,statefulsets,daemonsets,jobs,cronjobs -A --ignore-not-found 2>/dev/null >"$telephony_workloads"
-if grep -Eiq 'freeswitch|confbridge|(^|[^a-z])(sip|sips|srtp|pbx|pjsip)([^a-z]|$)' "$telephony_workloads"; then
+kube get pods,deployments,statefulsets,daemonsets,jobs,cronjobs -A --ignore-not-found --no-headers \
+  -o 'custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name,PART_OF:.metadata.labels.app\.kubernetes\.io/part-of,COMPONENT:.metadata.labels.app\.kubernetes\.io/component,NETWORK_ROLE:.metadata.labels.utcp\.io/network-role' \
+  2>/dev/null >"$telephony_workloads"
+if ! telephony_workload_check "$telephony_workloads"; then
   printf 'telephony-specific workload unexpectedly exists\n' >&2
   exit 1
 fi

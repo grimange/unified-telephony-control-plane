@@ -751,6 +751,10 @@ final class RuntimeRegistryTest extends TestCase
         $this->assertContains('event.stream', $catalog['adapter_keys']['asterisk-ari']['supported_capabilities']);
         $this->assertContains('runtime.observation', $catalog['adapter_keys']['asterisk-ari']['supported_capabilities']);
         $this->assertNotContains('conference.execution', $catalog['adapter_keys']['asterisk-ari']['supported_capabilities']);
+        $this->assertSame(['call.origination', 'call.control', 'call.hold', 'call.dtmf.send', 'media.playback'], $catalog['adapter_keys']['freeswitch-esl']['supported_capabilities']);
+        foreach (['call.transfer', 'recording', 'event.stream', 'runtime.observation', 'conference.lifecycle', 'conference.participation'] as $unsupportedCapability) {
+            $this->assertNotContains($unsupportedCapability, $catalog['adapter_keys']['freeswitch-esl']['supported_capabilities']);
+        }
         $this->assertArrayNotHasKey('implementation_class', $catalog['adapter_keys']['asterisk-ari']);
         $this->assertContains('sip', $catalog['endpoint_purposes']);
         $this->assertContains('udp', $catalog['endpoint_transports']);

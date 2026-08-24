@@ -40,11 +40,87 @@ WEB_LOCAL_IMAGE="${UTCP_WEB_IMAGE:-utcp-web:dev}"
 GATEWAY_LOCAL_IMAGE="${UTCP_GATEWAY_IMAGE:-utcp-gateway:dev}"
 ASTERISK_LOCAL_IMAGE="${UTCP_ASTERISK_IMAGE:-utcp-asterisk-ari:dev}"
 RTPENGINE_LOCAL_IMAGE="${UTCP_RTPENGINE_IMAGE:-utcp-rtpengine:dev}"
+FREESWITCH_LOCAL_IMAGE="${UTCP_FREESWITCH_IMAGE:-utcp-freeswitch:dev}"
 API_HOST_IMAGE="$HOST_REGISTRY/utcp/api:$K1_IMAGE_TAG"
 WEB_HOST_IMAGE="$HOST_REGISTRY/utcp/web:$K1_IMAGE_TAG"
 GATEWAY_HOST_IMAGE="$HOST_REGISTRY/utcp/gateway:$K1_IMAGE_TAG"
 ASTERISK_HOST_IMAGE="$HOST_REGISTRY/utcp/asterisk-ari:$K1_IMAGE_TAG"
 RTPENGINE_HOST_IMAGE="$HOST_REGISTRY/utcp/rtpengine:$K1_IMAGE_TAG"
+FREESWITCH_HOST_IMAGE="$HOST_REGISTRY/utcp/freeswitch:$K1_IMAGE_TAG"
+
+extract_registry_manifest_digest() {
+  local digest
+  digest="$(awk 'BEGIN { IGNORECASE = 1 } /^Docker-Content-Digest:[[:space:]]*/ { sub(/\r$/, "", $2); print $2; exit }')"
+  if ! printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+    printf 'registry manifest did not return a valid Docker-Content-Digest\n' >&2
+    return 1
+  fi
+  printf '%s\n' "$digest"
+}
+
+registry_manifest_digest() {
+  local image="$1"
+  local registry image_path repository reference
+
+  case "$image" in
+    */*:*) ;;
+    *)
+      printf 'registry image reference must include a registry, repository, and tag: %s\n' "$image" >&2
+      return 1
+      ;;
+  esac
+
+  registry="${image%%/*}"
+  image_path="${image#*/}"
+  repository="${image_path%:*}"
+  reference="${image_path##*:}"
+
+  curl --fail --silent --show-error --dump-header - --output /dev/null \
+    -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+    -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+    "http://${registry}/v2/${repository}/manifests/${reference}" \
+    | extract_registry_manifest_digest
+}
+
+project_managed_freeswitch_image() {
+  local image="$1"
+  local projection_root="${2:-$ROOT}"
+  local local_properties="$projection_root/infrastructure/kubernetes/overlays/local/application-config.properties"
+  local platform_properties="$projection_root/infrastructure/kubernetes/overlays/local/platform/application-config.properties"
+  local local_tmp platform_tmp
+
+  if ! printf '%s' "$image" | grep -Eq '^[^/]+/utcp/freeswitch@sha256:[0-9a-f]{64}$'; then
+    printf 'managed FreeSWITCH image must be an immutable sha256 reference: %s\n' "$image" >&2
+    return 1
+  fi
+  local properties
+  for properties in "$local_properties" "$platform_properties"; do
+    if [ ! -f "$properties" ]; then
+      printf 'managed FreeSWITCH image projection is missing: %s\n' "$properties" >&2
+      return 1
+    fi
+  done
+
+  local_tmp="$(mktemp "${local_properties}.tmp.XXXXXX")"
+  platform_tmp="$(mktemp "${platform_properties}.tmp.XXXXXX")"
+  if ! awk -v value="UTCP_MANAGED_FREESWITCH_IMAGE=$image" \
+    '/^UTCP_MANAGED_FREESWITCH_IMAGE=/ { print value; found = 1; next } { print } END { if (!found) exit 2 }' \
+    "$local_properties" >"$local_tmp"; then
+    rm -f "$local_tmp" "$platform_tmp"
+    printf 'local managed FreeSWITCH image projection key is missing\n' >&2
+    return 1
+  fi
+  if ! awk -v value="UTCP_MANAGED_FREESWITCH_IMAGE=$image" \
+    '/^UTCP_MANAGED_FREESWITCH_IMAGE=/ { print value; found = 1; next } { print } END { if (!found) exit 2 }' \
+    "$platform_properties" >"$platform_tmp"; then
+    rm -f "$local_tmp" "$platform_tmp"
+    printf 'platform managed FreeSWITCH image projection key is missing\n' >&2
+    return 1
+  fi
+
+  mv "$local_tmp" "$local_properties"
+  mv "$platform_tmp" "$platform_properties"
+}
 
 required_tools() {
   local missing=0
@@ -184,7 +260,7 @@ wait_migration() {
 }
 
 wait_platform() {
-  for deployment in api asterisk-ari-events control-plane-outbox-dispatcher gateway kamailio kamailio-registration-observer reverb rtpengine scheduler simulator-event-source telephony-command-worker telephony-event-normalizer telephony-reconciler utcp-runtime-fence-worker web worker; do
+  for deployment in api asterisk-ari-events freeswitch-esl-events control-plane-outbox-dispatcher gateway kamailio kamailio-registration-observer reverb rtpengine scheduler simulator-event-source telephony-command-worker telephony-event-normalizer telephony-reconciler utcp-runtime-fence-worker web worker; do
     kube -n "$K8S_PLATFORM_NAMESPACE" rollout status "deployment/$deployment" --timeout=240s
   done
 }
