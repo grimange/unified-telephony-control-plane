@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$ROOT/scripts/simulator/lib"
+
+IMAGE="${ASTERISK_EXTERNAL_TRUNK_IMAGE:-utcp-asterisk-ari:dev}"
+SUFFIX="$(date +%s)"
+SLUG="t6-asterisk-${SUFFIX}"
+ADDRESS_VALUE="+120255${SUFFIX: -6}"
+TMP_DIR="$(mktemp -d)"
+CONTAINER="utcp-t6-asterisk-${SUFFIX}"
+TRUNK_ID=""
+
+cleanup() {
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  if [ -n "$TRUNK_ID" ] && [ -n "${SIM_CSRF:-}" ]; then
+    sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/desired-state" '{"desired_state":"disabled"}' >/dev/null 2>&1 || true
+  fi
+  rm -rf "$TMP_DIR"
+}
+trap cleanup EXIT
+
+json_field() {
+  local key="$1"
+  php -r '$d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); foreach (explode(".", $argv[2]) as $p) { $d=is_array($d) ? ($d[$p] ?? null) : null; } if (is_scalar($d)) echo $d; else echo json_encode($d, JSON_UNESCAPED_SLASHES);' "$SIM_BODY_FILE" "$key"
+}
+
+expect_api() {
+  local expected="$1" description="$2" code="$3"
+  if [ "$code" != "$expected" ]; then
+    printf 'api_failure description=%s expected=%s actual=%s\n' "$description" "$expected" "$code" >&2
+    cat "$SIM_BODY_FILE" >&2
+    exit 1
+  fi
+}
+
+wait_artifact() {
+  local state="$1"
+  sim_wait_until "asterisk_artifact_${state}" 45 3 "select count(*) from external_trunk_projection_artifacts where external_trunk_id = '${TRUNK_ID}' and provider = 'asterisk' and desired_state = '${state}' and observed_state = 'projected'"
+}
+
+write_config() {
+  local representation_json="$1"
+  rm -rf "$TMP_DIR/config"
+  mkdir -p "$TMP_DIR/config"
+  cp "$ROOT/infrastructure/docker/asterisk/config/asterisk.conf" "$TMP_DIR/config/"
+  cp "$ROOT/infrastructure/docker/asterisk/config/modules.conf" "$TMP_DIR/config/"
+  cp "$ROOT/infrastructure/docker/asterisk/config/logger.conf" "$TMP_DIR/config/"
+  cp "$ROOT/infrastructure/docker/asterisk/config/extensions.conf" "$TMP_DIR/config/"
+  printf '%s\n' "$representation_json" > "$TMP_DIR/representation.json"
+  php -r '
+    $representation=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR);
+    $p=$representation["pjsip"] ?? [];
+    $out="[global]\ntype=global\nendpoint_identifier_order=anonymous\n\n[transport-udp-internal]\ntype=transport\nprotocol=udp\nbind=0.0.0.0:5060\n\n[anonymous]\ntype=endpoint\ntransport=transport-udp-internal\ncontext=from-kamailio\ndirect_media=no\ndisallow=all\nallow=ulaw\n";
+    foreach (["endpoint", "aor"] as $kind) {
+      if (!isset($p[$kind])) continue;
+      $obj=$p[$kind]; $id=$kind === "endpoint" ? ($representation["endpoint_id"] ?? "") : ($representation["aor_id"] ?? "");
+      if ($id === "") continue;
+      $out .= "\n[{$id}]\n";
+      foreach ($obj as $key=>$value) { $out .= $key."=".$value."\n"; }
+    }
+    file_put_contents($argv[2], $out);
+  ' "$TMP_DIR/representation.json" "$TMP_DIR/config/pjsip.conf"
+}
+
+representation() {
+  sim_psql "select coalesce(artifact::text, '{}') from external_trunk_projection_artifacts where external_trunk_id = '${TRUNK_ID}' and provider = 'asterisk' limit 1"
+}
+
+asterisk_endpoint_check() {
+  local expected="$1"
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  docker run -d --name "$CONTAINER" --network none --entrypoint /usr/sbin/asterisk -v "$TMP_DIR/config:/tmp/utcp-asterisk:ro" "$IMAGE" -f -C /tmp/utcp-asterisk/asterisk.conf >/dev/null
+  local result="" attempt
+  for attempt in $(seq 1 20); do
+    result="$(docker exec "$CONTAINER" /usr/sbin/asterisk -C /tmp/utcp-asterisk/asterisk.conf -rx "pjsip show endpoint ${PROVIDER_ENDPOINT_ID}" 2>&1 || true)"
+    if [ "$expected" = "present" ] && grep -Fq "Endpoint:  ${PROVIDER_ENDPOINT_ID}" <<<"$result"; then
+      printf 'asterisk_runtime_endpoint=%s state=present\n' "$PROVIDER_ENDPOINT_ID"
+      return 0
+    fi
+    if [ "$expected" = "absent" ] && ! grep -Fq "Endpoint:  ${PROVIDER_ENDPOINT_ID}" <<<"$result"; then
+      printf 'asterisk_runtime_endpoint=%s state=absent\n' "$PROVIDER_ENDPOINT_ID"
+      return 0
+    fi
+    sleep 1
+  done
+  printf 'asterisk_runtime_endpoint_check_failed expected=%s endpoint=%s\n%s\n' "$expected" "$PROVIDER_ENDPOINT_ID" "$result" >&2
+  docker logs "$CONTAINER" >&2 || true
+  exit 1
+}
+
+sim_login
+code="$(sim_api POST /api/v1/admin/telephony-addresses "$(php -r 'echo json_encode(["address_type"=>"e164","value"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$ADDRESS_VALUE")" --header "Idempotency-Key: ${SLUG}-address")"
+expect_api 201 address "$code"
+ADDRESS_ID="$(json_field telephony_address.id)"
+code="$(sim_api POST /api/v1/admin/external-trunks "$(php -r 'echo json_encode(["name"=>$argv[1],"slug"=>$argv[1],"supported_directions"=>["inbound"]], JSON_UNESCAPED_SLASHES);' "$SLUG")" --header "Idempotency-Key: ${SLUG}-trunk")"
+expect_api 201 trunk "$code"
+TRUNK_ID="$(json_field external_trunk.id)"
+code="$(sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/credentials" '{"credential_type":"sip","identifier":"synthetic-user","secret":"synthetic-secret-asterisk"}' --header "Idempotency-Key: ${SLUG}-credential")"
+expect_api 201 credential "$code"
+CREDENTIAL_ID="$(json_field credential_reference.id)"
+code="$(sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/endpoints" "$(php -r 'echo json_encode(["endpoint_uri"=>"sip:synthetic-peer.t6.invalid:5060","transport"=>"udp","authentication_mode"=>"credentials","credential_reference_id"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$CREDENTIAL_ID")")"
+expect_api 201 endpoint "$code"
+expect_api 200 address_activation "$(sim_api POST "/api/v1/admin/telephony-addresses/${ADDRESS_ID}/desired-state" '{"desired_state":"active"}')"
+expect_api 201 address_attachment "$(sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/addresses" "{\"telephony_address_id\":\"${ADDRESS_ID}\",\"direction\":\"inbound\"}")"
+expect_api 200 trunk_activation "$(sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/desired-state" '{"desired_state":"active"}')"
+expect_api 201 inbound_route "$(sim_api POST /api/v1/admin/inbound-routes "$(php -r 'echo json_encode(["name"=>$argv[1],"slug"=>$argv[1],"external_trunk_id"=>$argv[2],"telephony_address_id"=>$argv[3],"destination_ref"=>"telephony_address:".$argv[3]], JSON_UNESCAPED_SLASHES);' "$SLUG" "$TRUNK_ID" "$ADDRESS_ID")" --header "Idempotency-Key: ${SLUG}-route")"
+ROUTE_ID="$(json_field inbound_route.id)"
+expect_api 200 route_activation "$(sim_api POST "/api/v1/admin/inbound-routes/${ROUTE_ID}/desired-state" '{"desired_state":"active"}')"
+
+wait_artifact active
+ACTIVE_REPRESENTATION="$(representation)"
+PROVIDER_ENDPOINT_ID="$(php -r '$d=json_decode($argv[1], true, 512, JSON_THROW_ON_ERROR); echo $d["provider_representation"]["endpoint_id"] ?? "";' "$ACTIVE_REPRESENTATION")"
+[ -n "$PROVIDER_ENDPOINT_ID" ] || { printf 'projection_failure=missing_asterisk_provider_representation\n' >&2; exit 1; }
+write_config "$(php -r '$d=json_decode($argv[1], true, 512, JSON_THROW_ON_ERROR); echo json_encode($d["provider_representation"], JSON_UNESCAPED_SLASHES);' "$ACTIVE_REPRESENTATION")"
+asterisk_endpoint_check present
+printf 'asterisk_runtime_active=pass trunk=%s route=%s address=%s\n' "$TRUNK_ID" "$ROUTE_ID" "$ADDRESS_ID"
+
+expect_api 200 trunk_disable "$(sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/desired-state" '{"desired_state":"disabled"}')"
+wait_artifact removed
+DISABLED_REPRESENTATION="$(representation)"
+write_config "$(php -r '$d=json_decode($argv[1], true, 512, JSON_THROW_ON_ERROR); echo json_encode($d["provider_representation"] ?? null, JSON_UNESCAPED_SLASHES);' "$DISABLED_REPRESENTATION")"
+asterisk_endpoint_check absent
+printf 'asterisk_runtime_disabled=pass\n'
+
+expect_api 200 trunk_reactivation "$(sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/desired-state" '{"desired_state":"active"}')"
+wait_artifact active
+write_config "$(php -r '$d=json_decode($argv[1], true, 512, JSON_THROW_ON_ERROR); echo json_encode($d["provider_representation"], JSON_UNESCAPED_SLASHES);' "$(representation)")"
+asterisk_endpoint_check present
+printf 'asterisk_runtime_reactivated=pass\n'
+printf 'asterisk_external_trunk_runtime_proof=pass trunk=%s endpoint=%s route=%s address=%s\n' "$TRUNK_ID" "$PROVIDER_ENDPOINT_ID" "$ROUTE_ID" "$ADDRESS_ID"

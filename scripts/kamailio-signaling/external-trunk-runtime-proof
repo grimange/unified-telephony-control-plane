@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$ROOT/scripts/simulator/lib"
+
+KAMAILIO_SIP_HOST="kamailio-sip-internal.utcp-platform.svc.cluster.local"
+KAMAILIO_SIP_PORT=5060
+SUFFIX="$(date +%s)"
+ADDRESS_VALUE="+1202555${SUFFIX: -7}"
+SLUG="t6-kamailio-${SUFFIX}"
+
+json_field() {
+  local key="$1"
+  php -r '$d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); foreach (explode(".", $argv[2]) as $p) { $d = is_array($d) ? ($d[$p] ?? null) : null; } if (is_scalar($d)) echo $d; else echo json_encode($d, JSON_UNESCAPED_SLASHES);' "$SIM_BODY_FILE" "$key"
+}
+
+expect_api() {
+  local expected="$1" description="$2" code="$3"
+  if [ "$code" != "$expected" ]; then
+    printf 'api_failure description=%s expected=%s actual=%s\n' "$description" "$expected" "$code" >&2
+    cat "$SIM_BODY_FILE" >&2
+    exit 1
+  fi
+}
+
+wait_projection() {
+  local trunk_id="$1" state="$2"
+  sim_wait_until "kamailio_projection_${state}" 45 3 "select count(*) from external_trunk_projection_artifacts where external_trunk_id = '${trunk_id}' and provider = 'kamailio' and desired_state = '${state}' and observed_state = 'projected'"
+}
+
+wait_view_rows() {
+  local description="$1"
+  sim_wait_until "$description" 45 3 "select count(*) from kamailio_external_trunk_route_view where canonical_external_trunk_id = '${TRUNK_ID}' and normalized_address = '${ADDRESS_VALUE}' and route_id = '${ROUTE_ID}'"
+}
+
+wait_view_empty() {
+  local description="$1"
+  sim_wait_until "$description" 45 3 "select case when count(*) = 0 then 1 else 0 end from kamailio_external_trunk_route_view where canonical_external_trunk_id = '${TRUNK_ID}' and normalized_address = '${ADDRESS_VALUE}' and route_id = '${ROUTE_ID}'"
+}
+
+view_rows() {
+  sim_psql "select count(*) from kamailio_external_trunk_route_view where canonical_external_trunk_id = '${TRUNK_ID}' and normalized_address = '${ADDRESS_VALUE}' and route_id = '${ROUTE_ID}'"
+}
+
+send_options() {
+  CALL_ID="t6-kamailio-${SUFFIX}-${1}@synthetic.invalid"
+  local pod
+  pod="$(kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" -n utcp-runtime get pod -l app.kubernetes.io/component=asterisk-ari,utcp.io/network-role=asterisk-ari -o jsonpath='{.items[0].metadata.name}')"
+  kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" -n utcp-runtime exec "$pod" -- python3 -c 'import socket,sys; address,call_id,host,port=sys.argv[1:]; crlf=chr(13)+chr(10); payload=(f"OPTIONS sip:{address}@external.utcp.local.test SIP/2.0{crlf}" f"Via: SIP/2.0/UDP synthetic.t6.invalid;branch=z9hG4bK{call_id}{crlf}" f"Max-Forwards: 70{crlf}" f"From: <sip:synthetic@t6.invalid>;tag={call_id}{crlf}" f"To: <sip:{address}@external.utcp.local.test>{crlf}" f"Call-ID: {call_id}{crlf}" f"CSeq: 1 OPTIONS{crlf}" f"Contact: <sip:synthetic@t6.invalid>{crlf}" f"Content-Length: 0{crlf}{crlf}"); sock=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); sock.sendto(payload.encode(),(host,int(port))); sock.close()' "$ADDRESS_VALUE" "$CALL_ID" "$KAMAILIO_SIP_HOST" "$KAMAILIO_SIP_PORT"
+}
+
+assert_kamailio_result() {
+  local result="$1"
+  local description="$2"
+  local attempt logs
+  for attempt in $(seq 1 15); do
+    logs="$(kubectl --kubeconfig "$KUBECONFIG_FILE" --context "$KUBE_CONTEXT" -n utcp-platform logs deployment/kamailio --since=2m 2>&1)"
+        if grep -Fq "call_id=${CALL_ID}" <<<"$logs" && grep -Fq "result=${result}" <<<"$logs"; then
+      printf 'kamailio_runtime_result description=%s result=%s call_id=%s\n' "$description" "$result" "$CALL_ID"
+      return 0
+    fi
+    sleep 1
+  done
+  printf 'runtime_failure description=%s expected_result=%s call_id=%s\n%s\n' "$description" "$result" "$CALL_ID" "$logs" >&2
+  exit 1
+}
+
+sim_login
+
+code="$(sim_api POST /api/v1/admin/telephony-addresses "$(php -r 'echo json_encode(["address_type"=>"e164","value"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$ADDRESS_VALUE")" --header "Idempotency-Key: ${SLUG}-address")"
+expect_api 201 address "$code"
+ADDRESS_ID="$(json_field telephony_address.id)"
+
+code="$(sim_api POST /api/v1/admin/external-trunks "$(php -r 'echo json_encode(["name"=>$argv[1],"slug"=>$argv[1],"supported_directions"=>["inbound"]], JSON_UNESCAPED_SLASHES);' "$SLUG")" --header "Idempotency-Key: ${SLUG}-trunk")"
+expect_api 201 trunk "$code"
+TRUNK_ID="$(json_field external_trunk.id)"
+
+code="$(sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/credentials" '{"credential_type":"sip","identifier":"synthetic-user","secret":"synthetic-secret-123"}' --header "Idempotency-Key: ${SLUG}-credential")"
+expect_api 201 credential "$code"
+CREDENTIAL_ID="$(json_field credential_reference.id)"
+
+endpoint_payload="$(php -r 'echo json_encode(["endpoint_uri"=>"sip:synthetic-peer.t6.invalid:5060","transport"=>"udp","authentication_mode"=>"credentials","credential_reference_id"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$CREDENTIAL_ID")"
+code="$(sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/endpoints" "$endpoint_payload")"
+expect_api 201 endpoint "$code"
+
+code="$(sim_api POST /api/v1/admin/telephony-addresses/${ADDRESS_ID}/desired-state '{"desired_state":"active"}')"
+expect_api 200 address_activation "$code"
+code="$(sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/addresses" "{\"telephony_address_id\":\"${ADDRESS_ID}\",\"direction\":\"inbound\"}")"
+expect_api 201 address_attachment "$code"
+code="$(sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/desired-state" '{"desired_state":"active"}')"
+expect_api 200 trunk_activation "$code"
+
+route_payload="$(php -r 'echo json_encode(["name"=>$argv[1],"slug"=>$argv[1],"external_trunk_id"=>$argv[2],"telephony_address_id"=>$argv[3],"destination_ref"=>"telephony_address:".$argv[3]], JSON_UNESCAPED_SLASHES);' "$SLUG" "$TRUNK_ID" "$ADDRESS_ID")"
+code="$(sim_api POST /api/v1/admin/inbound-routes "$route_payload" --header "Idempotency-Key: ${SLUG}-route")"
+expect_api 201 inbound_route "$code"
+ROUTE_ID="$(json_field inbound_route.id)"
+code="$(sim_api POST "/api/v1/admin/inbound-routes/${ROUTE_ID}/desired-state" '{"desired_state":"active"}')"
+expect_api 200 route_activation "$code"
+
+wait_view_rows kamailio_provider_view_active
+if [ "$(view_rows | tr -d '[:space:]')" != "1" ]; then
+  printf 'view_failure expected_active_row=1\n' >&2
+  exit 1
+fi
+printf 'view_active trunk=%s route=%s address=%s\n' "$TRUNK_ID" "$ROUTE_ID" "$ADDRESS_ID"
+
+send_options active
+assert_kamailio_result matched active_options
+printf 'runtime_active=pass\n'
+
+code="$(sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/desired-state" '{"desired_state":"disabled"}')"
+expect_api 200 trunk_disable "$code"
+wait_projection "$TRUNK_ID" removed
+wait_view_empty kamailio_provider_view_disabled
+if [ "$(view_rows | tr -d '[:space:]')" != "0" ]; then
+  printf 'view_failure expected_disabled_row=0\n' >&2
+  exit 1
+fi
+send_options disabled
+assert_kamailio_result route_not_found disabled_options
+printf 'runtime_disabled=pass\n'
+
+code="$(sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/desired-state" '{"desired_state":"active"}')"
+expect_api 200 trunk_reactivation "$code"
+wait_view_rows kamailio_provider_view_reactivated
+if [ "$(view_rows | tr -d '[:space:]')" != "1" ]; then
+  printf 'view_failure expected_reactivated_row=1\n' >&2
+  exit 1
+fi
+send_options reactivated
+assert_kamailio_result matched reactivated_options
+printf 'runtime_reactivated=pass\n'
+
+printf 'kamailio_external_trunk_runtime_proof=pass trunk=%s route=%s address=%s\n' "$TRUNK_ID" "$ROUTE_ID" "$ADDRESS_ID"

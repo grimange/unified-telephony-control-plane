@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/k3d/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+
+if [ "$(cluster_state)" != "RUNNING" ]; then
+  printf 'utcp-local must be running before applying CoreDNS custom configuration\n' >&2
+  exit 1
+fi
+
+repo_context="$(KUBECONFIG="$KUBECONFIG_FILE" kubectl config current-context)"
+if [ "$repo_context" != "$K3D_CONTEXT_NAME" ]; then
+  printf 'repository kubeconfig context mismatch: %s\n' "$repo_context" >&2
+  exit 1
+fi
+
+kube -n kube-system get configmap coredns -o jsonpath='{.data.Corefile}' |
+  grep -Fq 'import /etc/coredns/custom/*.server' || {
+    printf 'installed CoreDNS Corefile does not import custom .server blocks\n' >&2
+    exit 1
+  }
+
+kube apply --dry-run=server -f "$ROOT/infrastructure/k3d/coredns-custom.yaml" >/dev/null
+kube apply -f "$ROOT/infrastructure/k3d/coredns-custom.yaml"
+kube -n kube-system get configmap coredns-custom >/dev/null
+kube -n kube-system rollout restart deployment/coredns >/dev/null
+kube -n kube-system rollout status deployment/coredns --timeout=180s >/dev/null
+kube -n kube-system wait --for=condition=Ready pods -l k8s-app=kube-dns --timeout=180s >/dev/null
+
+printf 'CoreDNS custom configuration applied and ready for %s\n' "$K3D_CLUSTER_NAME"

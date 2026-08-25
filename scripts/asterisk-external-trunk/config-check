@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+require_file() {
+  [ -f "$1" ] || { printf 'missing_file=%s\n' "$1" >&2; exit 1; }
+}
+
+require_file "$ROOT/apps/api/app/TelephonyDomain/Projection/AsteriskExternalTrunkProjection.php"
+require_file "$ROOT/apps/api/app/TelephonyDomain/Projection/ExternalTrunkProjectionService.php"
+require_file "$ROOT/scripts/asterisk-external-trunk/runtime-proof"
+require_file "$ROOT/infrastructure/docker/asterisk/config/pjsip.conf"
+require_file "$ROOT/infrastructure/docker/asterisk/config/modules.conf"
+
+grep -Fq "AsteriskExternalTrunkProjection" "$ROOT/apps/api/app/TelephonyDomain/Projection/ExternalTrunkProjectionService.php"
+grep -Fq "transport-udp-internal" "$ROOT/infrastructure/docker/asterisk/config/pjsip.conf"
+grep -Fq "load = res_pjsip.so" "$ROOT/infrastructure/docker/asterisk/config/modules.conf"
+grep -Fq "load = chan_pjsip.so" "$ROOT/infrastructure/docker/asterisk/config/modules.conf"
+
+if grep -Fq "res_pjsip_realtime" "$ROOT/infrastructure/docker/asterisk/config/modules.conf"; then
+  printf 'invalid_authority=res_pjsip_realtime_not_part_of_managed_file_backed_seam\n' >&2
+  exit 1
+fi
+if rg -n "asterisk_trunks|/admin/asterisk-trunks|ps_endpoints|ps_aors|ps_auths" "$ROOT/apps/api/app" "$ROOT/apps/api/routes" >/dev/null; then
+  printf 'invalid_authority=asterisk_specific_canonical_management_found\n' >&2
+  exit 1
+fi
+
+php -l "$ROOT/apps/api/app/TelephonyDomain/Projection/AsteriskExternalTrunkProjection.php" >/dev/null
+php -l "$ROOT/apps/api/app/TelephonyDomain/Projection/ExternalTrunkProjectionService.php" >/dev/null
+
+printf 'asterisk_external_trunk_config_check=pass seam=file-backed-pjsip projection=derived provider=asterisk\n'

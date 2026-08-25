@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+FIXTURE="$ROOT/infrastructure/test-fixtures/external-sip-peer"
+
+required=(Dockerfile modules.conf logger.conf rtp.conf extensions.conf entrypoint readiness)
+for file in "${required[@]}"; do
+  test -s "$FIXTURE/$file"
+done
+
+grep -Fq 'EXPOSE 5060/udp' "$FIXTURE/Dockerfile"
+grep -Fq 'transport-udp-external' "$FIXTURE/entrypoint"
+grep -Fq 'EXTERNAL_SIP_PEER_INBOUND' "$FIXTURE/extensions.conf"
+grep -Fq 'EXTERNAL_SIP_PEER_OUTBOUND' "$FIXTURE/extensions.conf"
+grep -Fq 'external-sip-peer-entrypoint' "$FIXTURE/Dockerfile"
+test ! -e "$FIXTURE/pjsip.conf"
+
+if rg -n -i 'APNTalk|external[-_ ]asterisk|RuntimeNode|ExternalTrunk|InboundRoute|OutboundRoute|RouteDecision|private key|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|synthetic-secret|password[[:space:]]*=[[:space:]]*(synthetic|secret|changeme)' "$FIXTURE"; then
+  printf 'fixture configuration contains forbidden product authority or secret material\n' >&2
+  exit 1
+fi
+
+for file in "$FIXTURE/entrypoint" "$FIXTURE/readiness" "$ROOT/scripts/v1/external-sip-peer-config-check" "$ROOT/scripts/v1/external-sip-peer-smoke"; do
+  test -x "$file"
+done
+
+bash -n "$FIXTURE/entrypoint" "$FIXTURE/readiness" "$ROOT/scripts/v1/external-sip-peer-config-check" "$ROOT/scripts/v1/external-sip-peer-smoke"
+printf 'external_sip_peer_config_check=pass role=external-sip-peer implementation=asterisk fixture_only=true\n'

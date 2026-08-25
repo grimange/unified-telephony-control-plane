@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=/tmp/external-sip-peer
+asterisk -C "$ROOT/asterisk.conf" -rx 'core show version' >/dev/null 2>&1
+asterisk -C "$ROOT/asterisk.conf" -rx 'pjsip show transport transport-udp-external' | grep -Fq '0.0.0.0:5060'
+asterisk -C "$ROOT/asterisk.conf" -rx 'dialplan show from-utcp' | grep -Fq 'EXTERNAL_SIP_PEER_INBOUND'

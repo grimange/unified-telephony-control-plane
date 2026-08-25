@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/k3d/lib
+. "$SCRIPT_DIR/lib"
+
+required_tools
+ensure_kubeconfig
+
+state="$(cluster_state)"
+case "$state" in
+  ABSENT)
+    printf 'k3d cluster is absent: %s\n' "$K3D_CLUSTER_NAME" >&2
+    exit 1
+    ;;
+  STOPPED)
+    printf 'k3d cluster is stopped: %s\n' "$K3D_CLUSTER_NAME" >&2
+    exit 1
+    ;;
+  RUNNING)
+    ;;
+  *)
+    printf 'unknown k3d cluster state: %s\n' "$state" >&2
+    exit 1
+    ;;
+esac
+
+current_context="$(kube config current-context 2>/dev/null || true)"
+if [ "$current_context" != "$K3D_CONTEXT_NAME" ]; then
+  printf 'unexpected Kubernetes context: expected=%s actual=%s\n' "$K3D_CONTEXT_NAME" "$current_context" >&2
+  exit 1
+fi
+
+current_namespace="$(kube config view --minify --output='jsonpath={..namespace}' 2>/dev/null || true)"
+if [ "${current_namespace:-default}" != "utcp-platform" ]; then
+  printf 'unexpected Kubernetes namespace: expected=utcp-platform actual=%s\n' "${current_namespace:-default}" >&2
+  exit 1
+fi
+
+node_count="$(kube get nodes --no-headers 2>/dev/null | awk '$2 == "Ready" || $3 == "Ready" {count++} END {print count + 0}')"
+expected_node_count=$((K3D_SERVER_COUNT + K3D_AGENT_COUNT))
+if [ "$node_count" -lt "$expected_node_count" ]; then
+  printf 'Kubernetes nodes are not ready: expected_at_least=%s actual=%s\n' "$expected_node_count" "$node_count" >&2
+  exit 1
+fi
+
+wait_for_nodes
+
+printf 'k3d runtime readiness passed: %s (%s ready nodes)\n' "$K3D_CLUSTER_NAME" "$node_count"

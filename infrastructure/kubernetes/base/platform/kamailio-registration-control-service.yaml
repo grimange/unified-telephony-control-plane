@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kamailio-registration-control
+  namespace: utcp-platform
+  labels:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: kamailio-registration-control
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/part-of: utcp
+    app.kubernetes.io/component: kamailio
+  ports:
+    - name: jsonrpc
+      protocol: TCP
+      port: 8090
+      targetPort: reg-control

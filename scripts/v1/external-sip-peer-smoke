@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+. "$ROOT/scripts/simulator/lib"
+
+IMAGE="${EXTERNAL_SIP_PEER_IMAGE:-utcp-external-sip-peer:dev}"
+SUFFIX="$(date +%s)"
+CONTAINER="utcp-external-sip-peer-${SUFFIX}"
+SLUG="v1-external-peer-${SUFFIX}"
+USERNAME="peer-${SUFFIX}"
+PASSWORD="$(printf 'v1-%s-%s' "$SUFFIX" "${RANDOM}")"
+TRUNK_ID=""
+
+cleanup() {
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  if [ -n "$TRUNK_ID" ] && [ -n "${SIM_CSRF:-}" ]; then
+    sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/desired-state" '{"desired_state":"disabled"}' >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+
+json_field() {
+  php -r '$d=json_decode(file_get_contents($argv[1]), true, 512, JSON_THROW_ON_ERROR); foreach (explode(".", $argv[2]) as $p) { $d=is_array($d) ? ($d[$p] ?? null) : null; } if (is_scalar($d)) echo $d;' "$SIM_BODY_FILE" "$1"
+}
+
+expect_api() {
+  local expected="$1" description="$2" code="$3"
+  if [ "$code" != "$expected" ]; then
+    printf 'api_failure description=%s expected=%s actual=%s\n' "$description" "$expected" "$code" >&2
+    cat "$SIM_BODY_FILE" >&2
+    exit 1
+  fi
+}
+
+docker build --quiet --tag "$IMAGE" "$ROOT/infrastructure/test-fixtures/external-sip-peer" >/dev/null
+docker run -d --name "$CONTAINER" --network bridge \
+  --env "EXTERNAL_SIP_PEER_USERNAME=$USERNAME" \
+  --env "EXTERNAL_SIP_PEER_PASSWORD=$PASSWORD" \
+  "$IMAGE" >/dev/null
+for attempt in $(seq 1 20); do
+  if docker exec "$CONTAINER" /usr/local/bin/external-sip-peer-readiness >/dev/null 2>&1; then
+    printf 'fixture_ready=pass container=%s\n' "$CONTAINER"
+    break
+  fi
+  if [ "$attempt" = 20 ]; then
+    docker logs "$CONTAINER" >&2 || true
+    exit 1
+  fi
+  sleep 1
+done
+
+sim_login
+ADDRESS_VALUE="+120255${SUFFIX: -6}"
+expect_api 201 address "$(sim_api POST /api/v1/admin/telephony-addresses "$(php -r 'echo json_encode(["address_type"=>"e164","value"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$ADDRESS_VALUE")" --header "Idempotency-Key: ${SLUG}-address")"
+ADDRESS_ID="$(json_field telephony_address.id)"
+expect_api 201 trunk "$(sim_api POST /api/v1/admin/external-trunks "$(php -r 'echo json_encode(["name"=>$argv[1],"slug"=>$argv[1],"supported_directions"=>["inbound","outbound"]], JSON_UNESCAPED_SLASHES);' "$SLUG")" --header "Idempotency-Key: ${SLUG}-trunk")"
+TRUNK_ID="$(json_field external_trunk.id)"
+expect_api 201 credential "$(sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/credentials" "$(php -r 'echo json_encode(["credential_type"=>"sip","identifier"=>$argv[1],"secret"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$USERNAME" "$PASSWORD")" --header "Idempotency-Key: ${SLUG}-credential")"
+CREDENTIAL_ID="$(json_field credential_reference.id)"
+expect_api 201 endpoint "$(sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/endpoints" "$(php -r 'echo json_encode(["endpoint_uri"=>"sip:external-sip-peer.invalid:5060","transport"=>"udp","authentication_mode"=>"credentials","credential_reference_id"=>$argv[1]], JSON_UNESCAPED_SLASHES);' "$CREDENTIAL_ID")")"
+expect_api 200 address_activation "$(sim_api POST "/api/v1/admin/telephony-addresses/${ADDRESS_ID}/desired-state" '{"desired_state":"active"}')"
+expect_api 201 caller_identity "$(sim_api POST /api/v1/admin/caller-identities "$(php -r 'echo json_encode(["name"=>$argv[1],"telephony_address_id"=>$argv[2]], JSON_UNESCAPED_SLASHES);' "$SLUG" "$ADDRESS_ID")" --header "Idempotency-Key: ${SLUG}-caller")"
+CALLER_IDENTITY_ID="$(json_field caller_identity.id)"
+expect_api 200 caller_activation "$(sim_api POST "/api/v1/admin/caller-identities/${CALLER_IDENTITY_ID}/desired-state" '{"desired_state":"active"}')"
+expect_api 201 caller_policy "$(sim_api POST "/api/v1/admin/caller-identities/${CALLER_IDENTITY_ID}/policies" "{\"external_trunk_id\":\"${TRUNK_ID}\"}" --header "Idempotency-Key: ${SLUG}-caller-policy")"
+expect_api 201 address_attachment "$(sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/addresses" "{\"telephony_address_id\":\"${ADDRESS_ID}\",\"direction\":\"both\"}")"
+expect_api 200 trunk_activation "$(sim_api POST "/api/v1/admin/external-trunks/${TRUNK_ID}/desired-state" '{"desired_state":"active"}')"
+expect_api 201 outbound_route "$(sim_api POST /api/v1/admin/outbound-routes "$(php -r 'echo json_encode(["name"=>$argv[1],"slug"=>$argv[1],"external_trunk_id"=>$argv[2],"telephony_address_id"=>$argv[3],"caller_identity_id"=>$argv[4],"priority"=>100], JSON_UNESCAPED_SLASHES);' "$SLUG" "$TRUNK_ID" "$ADDRESS_ID" "$CALLER_IDENTITY_ID")" --header "Idempotency-Key: ${SLUG}-outbound")"
+OUTBOUND_ROUTE_ID="$(json_field outbound_route.id)"
+expect_api 200 outbound_activation "$(sim_api POST "/api/v1/admin/outbound-routes/${OUTBOUND_ROUTE_ID}/desired-state" '{"desired_state":"active"}')"
+expect_api 201 inbound_route "$(sim_api POST /api/v1/admin/inbound-routes "$(php -r 'echo json_encode(["name"=>$argv[1],"slug"=>$argv[1],"external_trunk_id"=>$argv[2],"telephony_address_id"=>$argv[3],"destination_ref"=>"telephony_address:".$argv[3]], JSON_UNESCAPED_SLASHES);' "$SLUG" "$TRUNK_ID" "$ADDRESS_ID")" --header "Idempotency-Key: ${SLUG}-inbound")"
+INBOUND_ROUTE_ID="$(json_field inbound_route.id)"
+expect_api 200 inbound_activation "$(sim_api POST "/api/v1/admin/inbound-routes/${INBOUND_ROUTE_ID}/desired-state" '{"desired_state":"active"}')"
+
+sim_wait_until "external_sip_peer_t6_projection" 60 3 "select case when count(*) >= 2 and sum(case when desired_state = 'active' and observed_state = 'projected' then 1 else 0 end) >= 2 then 1 else 0 end from external_trunk_projection_artifacts where external_trunk_id = '${TRUNK_ID}'"
+if docker logs "$CONTAINER" 2>&1 | grep -Fq "$PASSWORD"; then
+  printf 'fixture_secret_leak=detected\n' >&2
+  exit 1
+fi
+printf 'canonical_setup=pass tenant=%s trunk=%s address=%s outbound_route=%s inbound_route=%s\n' "$SIM_TENANT_ID" "$TRUNK_ID" "$ADDRESS_ID" "$OUTBOUND_ROUTE_ID" "$INBOUND_ROUTE_ID"
+printf 't6_projection=pass automatic=true manual_projection=false\n'
+printf 'fixture_cleanup=pass\n'
+printf 'v1_external_sip_peer_smoke=pass preparation_only=true natural_external_call_proof=deferred\n'

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  utcp-lan.server: |
+    lan:53 {
+        template ANY ANY {
+            rcode NXDOMAIN
+        }
+    }

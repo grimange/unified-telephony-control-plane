@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+fail() {
+  printf 'V1 external SIP edge config check failed: %s\n' "$1" >&2
+  exit 1
+}
+
+command -v kubectl >/dev/null 2>&1 || fail 'kubectl is required'
+rendered_platform="$(mktemp)"
+rendered_security="$(mktemp)"
+trap 'rm -f "$rendered_platform" "$rendered_security"' EXIT
+kubectl kustomize infrastructure/kubernetes/base/platform >"$rendered_platform"
+kubectl kustomize infrastructure/kubernetes/security >"$rendered_security"
+
+python3 - "$rendered_platform" "$rendered_security" <<'PY'
+from pathlib import Path
+import sys
+import yaml
+
+platform = [doc for doc in yaml.safe_load_all(Path(sys.argv[1]).read_text()) if isinstance(doc, dict)]
+security = [doc for doc in yaml.safe_load_all(Path(sys.argv[2]).read_text()) if isinstance(doc, dict)]
+
+def fail(message):
+    print(f"V1 external SIP edge config check failed: {message}", file=sys.stderr)
+    raise SystemExit(1)
+
+services = [doc for doc in platform if doc.get("kind") == "Service"]
+external = [doc for doc in services if doc.get("metadata", {}).get("name") == "kamailio-sip-external"]
+if len(external) != 1:
+    fail("exactly one kamailio-sip-external Service is required")
+service = external[0]
+spec = service.get("spec") or {}
+if spec.get("type") != "NodePort" or spec.get("externalTrafficPolicy") != "Cluster":
+    fail("external SIP Service must be the bounded Cluster-policy NodePort")
+if spec.get("selector") != {
+    "app.kubernetes.io/part-of": "utcp",
+    "app.kubernetes.io/component": "kamailio",
+    "utcp.io/network-role": "kamailio-signaling",
+}:
+    fail("external SIP Service must select the existing Kamailio workload")
+if spec.get("ports") != [{
+    "name": "sip-udp", "protocol": "UDP", "port": 5060,
+    "targetPort": "sip-udp", "nodePort": 30560,
+}]:
+    fail("external SIP Service must expose exactly UDP/5060 through NodePort 30560")
+
+for doc in platform:
+    raw = str(doc)
+    pod_spec = (doc.get("spec") or {}).get("template", {}).get("spec", {})
+    if pod_spec.get("hostNetwork") or "hostPort" in raw:
+        fail("hostNetwork and hostPort are forbidden")
+    if doc.get("kind") == "Service" and doc is not service and doc.get("spec", {}).get("type") in {"NodePort", "LoadBalancer"}:
+        fail(f"unrelated public Service found: {doc.get('metadata', {}).get('name')}")
+
+policy = next((doc for doc in security if doc.get("metadata", {}).get("name") == "allow-kamailio-signaling-required-traffic"), None)
+if not policy:
+    fail("Kamailio signaling NetworkPolicy is missing")
+matching = [rule for rule in (policy.get("spec") or {}).get("ingress", [])
+            if rule.get("ports") == [{"protocol": "UDP", "port": 5060}]
+            and any(peer.get("ipBlock", {}).get("cidr") == "38.146.161.46/32" for peer in rule.get("from", []))]
+if len(matching) != 1:
+    fail("external ingress must be restricted to 38.146.161.46/32 on UDP/5060")
+if any(doc.get("kind") == "NetworkPolicy" and "0.0.0.0/0" in str(doc) for doc in security):
+    fail("broad public NetworkPolicy ingress is forbidden")
+
+kamailio = next(doc for doc in platform if doc.get("metadata", {}).get("name") == "kamailio-config")
+if "5060" not in str(kamailio) and "5060" not in str(platform):
+    fail("native SIP Kamailio listener configuration is missing")
+PY
+
+grep -Fq 'port: 0.0.0.0:5060:30560/udp' infrastructure/k3d/cluster.yaml || fail 'k3d must publish only the approved UDP/5060 edge'
+if grep -Eq 'port: .*:5061:|port: .*:5060:.*\/(tcp|TCP)' infrastructure/k3d/cluster.yaml; then
+  fail 'TCP/5060 or TLS/5061 publication is forbidden'
+fi
+grep -Fq 'kamailio-sip-internal' infrastructure/kubernetes/base/platform/kustomization.yaml || fail 'internal Kamailio Service was removed'
+grep -Fq 'name: sip-wss' infrastructure/kubernetes/gateway-api/httproute-sip.yaml || fail 'existing WSS route was removed'
+git check-ignore -q .env-external-pbx-sip-credentials || fail 'external PBX credential file is not ignored'
+if git ls-files --error-unmatch .env-external-pbx-sip-credentials >/dev/null 2>&1; then
+  fail 'external PBX credential file is tracked'
+fi
+if git grep -n -I -F '.env-external-pbx-sip-credentials' -- ':!.gitignore' ':!docs/evidence/v1/v1-level2-external-sip-lab-edge-implementation.md' >/dev/null 2>&1; then
+  fail 'external credential file is referenced outside the evidence record'
+fi
+
+printf 'V1 external SIP edge config check passed\n'

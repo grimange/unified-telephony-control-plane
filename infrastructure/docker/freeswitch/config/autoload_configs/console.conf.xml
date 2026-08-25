@@ -1,0 +1,6 @@
+<configuration name="console.conf" description="UTCP Kubernetes console logging">
+  <settings>
+    <param name="colorize" value="false"/>
+    <param name="loglevel" value="debug"/>
+  </settings>
+</configuration>

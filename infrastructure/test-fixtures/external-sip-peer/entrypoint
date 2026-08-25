@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=/tmp/external-sip-peer
+
+: "${EXTERNAL_SIP_PEER_USERNAME:?EXTERNAL_SIP_PEER_USERNAME is required}"
+: "${EXTERNAL_SIP_PEER_PASSWORD:?EXTERNAL_SIP_PEER_PASSWORD is required}"
+
+mkdir -p "$ROOT"/{var,keys,data,agi-bin,spool,run,log}
+printf '%s\n' '[general]' 'enabled = no' > /etc/asterisk/ari.conf
+
+{
+  printf '%s\n' '[global]' 'type=global' 'endpoint_identifier_order=username,anonymous'
+  printf '%s\n' '[transport-udp-external]' 'type=transport' 'protocol=udp' 'bind=0.0.0.0:5060'
+  printf '%s\n' '[utcp-peer-auth]' 'type=auth' 'auth_type=userpass' "username=${EXTERNAL_SIP_PEER_USERNAME}" "password=${EXTERNAL_SIP_PEER_PASSWORD}"
+  printf '%s\n' '[utcp-peer]' 'type=aor' 'max_contacts=1' 'remove_existing=yes'
+  printf '%s\n' '[utcp-peer]' 'type=endpoint' 'transport=transport-udp-external' 'aors=utcp-peer' 'auth=utcp-peer-auth' 'context=from-utcp' 'direct_media=no' 'disallow=all' 'allow=ulaw'
+  if [ -n "${UTCP_SIGNALING_IP:-}" ]; then
+    printf '%s\n' '[utcp-peer-identify]' 'type=identify' 'endpoint=utcp-peer' "match=${UTCP_SIGNALING_IP}"
+  fi
+} > /etc/asterisk/pjsip.conf
+
+exec /usr/local/bin/entrypoint.sh /usr/sbin/asterisk -f -U asterisk -p

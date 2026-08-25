@@ -1,0 +1,120 @@
+<?php
+
+namespace Tests\Feature\TelephonyDomain;
+
+use App\ControlPlane\Messaging\InboxRepository;
+use App\ControlPlane\Messaging\OutboxRepository;
+use App\Identity\IdentityIds;
+use App\Models\User;
+use App\RuntimeEngine\Outbox\OutboxDispatcher;
+use App\TelephonyDomain\C7bService;
+use App\TelephonyDomain\Projection\ExternalTrunkProjectionService;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Tests\TestCase;
+
+final class T6ExternalTrunkProjectionTest extends TestCase
+{
+    use RefreshDatabase;
+
+    public function test_canonical_authority_converges_to_idempotent_provider_artifacts_and_route_execution_intent(): void
+    {
+        [$admin, $tenant] = $this->tenantAdmin('t6-projection@utcp.local.test', 't6-projection');
+        $session = ['user_session_version' => 1, 'active_tenant_id' => $tenant];
+        $address = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/admin/telephony-addresses', ['address_type' => 'e164', 'value' => '+1 202 555 0199'])->assertCreated()->json('telephony_address');
+        $trunk = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/admin/external-trunks', ['name' => 'T6 Carrier', 'slug' => 't6-carrier', 'supported_directions' => ['outbound']])->assertCreated()->json('external_trunk');
+        $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/external-trunks/{$trunk['id']}/addresses", ['telephony_address_id' => $address['id'], 'direction' => 'both'])->assertCreated();
+        $credential = $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/external-trunks/{$trunk['id']}/credentials", ['credential_type' => 'sip', 'identifier' => 'synthetic-user', 'secret' => 'synthetic-secret-123'])->assertCreated()->json('credential_reference');
+        $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/external-trunks/{$trunk['id']}/endpoints", ['endpoint_uri' => 'sip:carrier.example.test', 'authentication_mode' => 'credentials', 'credential_reference_id' => $credential['id']])->assertCreated();
+        $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/external-trunks/{$trunk['id']}/desired-state", ['desired_state' => 'active'])->assertOk();
+        DB::table('external_trunks')->where('id', $trunk['id'])->update(['observed_health' => 'ready']);
+        $identity = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/admin/caller-identities', ['name' => 'T6 Caller', 'telephony_address_id' => $address['id']])->assertCreated()->json('caller_identity');
+        $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/caller-identities/{$identity['id']}/desired-state", ['desired_state' => 'active'])->assertOk();
+        $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/caller-identities/{$identity['id']}/policies", ['external_trunk_id' => $trunk['id']])->assertCreated();
+        $route = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/admin/outbound-routes', ['name' => 'T6 outbound', 'slug' => 't6-outbound', 'external_trunk_id' => $trunk['id'], 'telephony_address_id' => $address['id'], 'caller_identity_id' => $identity['id'], 'priority' => 10])->assertCreated()->json('outbound_route');
+        $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/outbound-routes/{$route['id']}/desired-state", ['desired_state' => 'active'])->assertOk();
+
+        $dispatcher = new OutboxDispatcher(new OutboxRepository, new InboxRepository);
+        $dispatcher->dispatchOnce('t6-projection-worker', 100);
+        $projection = app(ExternalTrunkProjectionService::class);
+        $first = $projection->projectTenant($tenant);
+        $second = $projection->projectTenant($tenant);
+
+        $this->assertCount(2, $first);
+        $this->assertSame(array_column($first, 'artifact_hash'), array_column($second, 'artifact_hash'));
+        $this->assertDatabaseCount('external_trunk_projection_artifacts', 2);
+        $artifact = json_decode((string) $first[1]['artifact'], true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame('utcp.t6.projection.v1', $artifact['schema']);
+        $this->assertSame($trunk['id'], $artifact['external_trunk_id']);
+        $this->assertSame($credential['id'], $artifact['endpoints'][0]['credential_reference_id']);
+        $this->assertSame($route['id'], $artifact['routes'][0]['route_id']);
+        $this->assertSame($address['id'], $artifact['routes'][0]['address_id']);
+        $this->assertStringNotContainsString('synthetic-secret-123', json_encode($artifact, JSON_THROW_ON_ERROR));
+        $this->assertStringContainsString('utcp-', $artifact['provider_local_trunk_id']);
+
+        $asterisk = $artifact['provider_representation'];
+        $this->assertSame($trunk['id'], $asterisk['canonical_external_trunk_id']);
+        $this->assertSame($artifact['provider_local_trunk_id'], $asterisk['endpoint_id']);
+        $this->assertSame($artifact['provider_local_trunk_id'].'-aor', $asterisk['aor_id']);
+        $this->assertSame($route['id'], $asterisk['route_correlations'][0]['route_id']);
+        $this->assertSame($address['id'], $asterisk['route_correlations'][0]['telephony_address_id']);
+        $this->assertSame($identity['id'], $asterisk['route_correlations'][0]['caller_identity_id']);
+        $this->assertSame('telephony_address:'.$address['id'], $asterisk['route_correlations'][0]['destination_ref']);
+        $this->assertArrayNotHasKey('password', $asterisk);
+        $this->assertArrayNotHasKey('secret', $asterisk);
+
+        $decision = app(C7bService::class)->evaluateOutbound($tenant, 'telephony_address:'.$address['id']);
+        $intent = $projection->executionIntent($tenant, $decision, 'asterisk');
+        $this->assertSame($route['id'], $intent['route_id']);
+        $this->assertSame($trunk['id'], $decision->toArray()['external_trunk_id']);
+        $this->assertSame('asterisk', $intent['provider']);
+        $this->assertSame($artifact['schema'], $intent['artifact_schema']);
+        $this->assertArrayNotHasKey('endpoint_uri', $intent);
+        $this->assertStringNotContainsString('carrier.example.test', json_encode($intent, JSON_THROW_ON_ERROR));
+
+        $replacement = $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/external-trunks/{$trunk['id']}/credentials", ['credential_type' => 'sip', 'identifier' => 'synthetic-user', 'secret' => 'synthetic-secret-456'])->assertCreated()->json('credential_reference');
+        $dispatcher->dispatchOnce('t6-credential-rotation-worker', 100);
+        $rotated = app(ExternalTrunkProjectionService::class)->projectTenant($tenant);
+        $rotatedArtifact = json_decode((string) $rotated[1]['artifact'], true, 512, JSON_THROW_ON_ERROR);
+        $endpoint = DB::table('trunk_endpoints')->where('id', $artifact['endpoints'][0]['endpoint_id'])->first();
+        $this->assertSame($replacement['id'], $endpoint->credential_reference_id);
+        $this->assertSame($replacement['id'], $rotatedArtifact['endpoints'][0]['credential_reference_id']);
+        $this->assertSame((int) $replacement['version'], $rotatedArtifact['endpoints'][0]['credential_version']);
+        $this->assertSame($replacement['id'], $rotatedArtifact['provider_representation']['credential_reference_id']);
+        $this->assertSame((int) $replacement['version'], $rotatedArtifact['provider_representation']['credential_version']);
+        $this->assertDatabaseHas('trunk_credential_references', ['id' => $credential['id'], 'status' => 'retired']);
+        $this->assertStringNotContainsString('synthetic-secret-', json_encode($rotatedArtifact, JSON_THROW_ON_ERROR));
+    }
+
+    public function test_disabled_and_retired_authority_is_cut_off_without_deleting_projection_evidence(): void
+    {
+        [$admin, $tenant] = $this->tenantAdmin('t6-lifecycle@utcp.local.test', 't6-lifecycle');
+        $session = ['user_session_version' => 1, 'active_tenant_id' => $tenant];
+        $trunk = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/admin/external-trunks', ['name' => 'Lifecycle Carrier', 'slug' => 'lifecycle-carrier'])->assertCreated()->json('external_trunk');
+        $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/external-trunks/{$trunk['id']}/desired-state", ['desired_state' => 'disabled'])->assertOk();
+
+        $rows = app(ExternalTrunkProjectionService::class)->projectTenant($tenant);
+        $this->assertCount(2, $rows);
+        $asteriskRow = collect($rows)->firstWhere('provider', 'asterisk');
+        $this->assertNotNull($asteriskRow);
+        $this->assertSame('removed', $asteriskRow['desired_state']);
+        $artifact = json_decode((string) $asteriskRow['artifact'], true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame('removed', $artifact['desired_state']);
+        $this->assertNull($artifact['provider_representation']);
+        $this->assertDatabaseHas('external_trunk_projection_artifacts', ['external_trunk_id' => $trunk['id'], 'desired_state' => 'removed', 'observed_state' => 'projected']);
+    }
+
+    private function tenantAdmin(string $email, string $slug): array
+    {
+        $userId = IdentityIds::new();
+        $tenantId = IdentityIds::new();
+        $membershipId = IdentityIds::new();
+        DB::table('users')->insert(['id' => $userId, 'email' => $email, 'normalized_email' => strtolower($email), 'display_name' => 'T6 Admin', 'password' => Hash::make('correct-password-123'), 'status' => 'active', 'password_change_required' => false, 'session_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('tenants')->insert(['id' => $tenantId, 'slug' => $slug, 'display_name' => 'T6 Tenant', 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('tenant_memberships')->insert(['id' => $membershipId, 'user_id' => $userId, 'tenant_id' => $tenantId, 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('tenant_role_assignments')->insert(['id' => IdentityIds::new(), 'membership_id' => $membershipId, 'role_key' => 'tenant-admin', 'assigned_by_user_id' => null, 'created_at' => now()]);
+
+        return [User::findOrFail($userId), $tenantId];
+    }
+}

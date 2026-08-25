@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+./scripts/kamailio-signaling/config-check >/dev/null
+
+(cd apps/api && php artisan test --filter='V1ARegistrationExternalTrunkTest' --testsuite=Feature)
+
+printf 'kamailio_registration_projection_runtime_proof=pass\n'
+printf 'real_external_registrar=not_used\n'
