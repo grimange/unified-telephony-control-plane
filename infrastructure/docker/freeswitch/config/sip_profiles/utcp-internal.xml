@@ -11,6 +11,7 @@
     <param name="dialplan" value="XML"/>
     <param name="sip-ip" value="$${local_ip_v4}"/>
     <param name="rtp-ip" value="$${local_ip_v4}"/>
+    <param name="rtp-timer-name" value="soft"/>
     <param name="sip-port" value="5060"/>
     <param name="bind-params" value="transport=udp"/>
     <param name="auth-calls" value="false"/>

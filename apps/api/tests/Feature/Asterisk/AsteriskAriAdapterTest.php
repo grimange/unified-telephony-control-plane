@@ -27,6 +27,7 @@ use App\RuntimeEngine\Projection\ProjectionService;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use App\RuntimeEngine\Sources\EventSourceRepository;
 use App\RuntimeProvisioning\ManagedAsteriskProvisioningOperationHandler;
+use App\RuntimeRegistry\RuntimeExecutionContract;
 use App\RuntimeRegistry\RuntimeRegistryService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
@@ -1315,6 +1316,44 @@ final class AsteriskAriAdapterTest extends TestCase
         $before = DB::table('runtime_node_capabilities')->where('runtime_node_id', $externalNodeId)->orderBy('capability_key')->pluck('capability_key')->all();
         (new AsteriskRuntimeNodeReconciler(new AsteriskCatalog, app(RuntimeRegistryService::class)))->evaluate((object) ['target_id' => $externalNodeId, 'last_operation_id' => null]);
         $this->assertSame($before, DB::table('runtime_node_capabilities')->where('runtime_node_id', $externalNodeId)->orderBy('capability_key')->pluck('capability_key')->all());
+    }
+
+    public function test_managed_asterisk_reconciler_observes_running_image_digest_and_requires_matching_execution_contract(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $this->makeManaged($tenantId, $nodeId);
+        $digest = RuntimeExecutionContract::digest((string) config('asterisk_ari.managed_image'));
+        $this->assertNotNull($digest);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'labels' => json_encode(['kubernetes_workload' => ['namespace' => 'utcp-runtime', 'deployment' => 'asterisk-ari']], JSON_THROW_ON_ERROR),
+        ]);
+
+        $this->mock(KubernetesWorkloadClient::class, function ($mock) use ($digest): void {
+            $mock->shouldReceive('applyDeployment')->twice()->andReturn([]);
+            $mock->shouldReceive('listOwnedPods')->twice()->andReturn([[
+                'status' => ['containerStatuses' => [['name' => 'asterisk', 'imageID' => 'docker-pullable://registry.example.test/utcp/asterisk-ari@'.$digest]]],
+            ]]);
+        });
+        $reconciler = new AsteriskRuntimeNodeReconciler(
+            new AsteriskCatalog,
+            app(RuntimeRegistryService::class),
+            app(KubernetesWorkloadClient::class),
+            app(ManagedAsteriskProvisioningOperationHandler::class),
+        );
+        $target = (object) ['target_id' => $nodeId, 'last_operation_id' => null];
+
+        $first = $reconciler->evaluate($target);
+        $this->assertSame('operation_required', $first->status);
+        $this->assertSame($digest, DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_execution_image'));
+        $node = DB::table('runtime_nodes')->where('id', $nodeId)->first();
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'observed_state' => 'ready',
+            'observed_configuration_version' => $node->configuration_version,
+        ]);
+
+        $second = $reconciler->evaluate($target);
+        $this->assertSame('converged', $second->status);
     }
 
     public function test_taking_over_a_lease_closes_any_epoch_left_open_by_a_superseded_owner(): void

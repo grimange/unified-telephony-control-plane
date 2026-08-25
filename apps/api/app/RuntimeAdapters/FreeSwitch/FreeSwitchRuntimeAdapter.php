@@ -39,6 +39,22 @@ final class FreeSwitchRuntimeAdapter implements RuntimeAdapter
                 return $this->failure(FailureClass::Conflict, 'freeswitch_call_channel_unbound', 'CallLeg has no current FreeSWITCH channel.');
             }
             $legs[] = ['id' => (string) $leg->id, 'call_id' => (string) $leg->call_id, 'runtime_channel_id' => (string) ($leg->runtime_channel_id ?? '')];
+
+            if ($type === 'call.leg.stop_media' && ! is_string($payload['media_ref'] ?? null)) {
+                $previous = DB::table('runtime_operations')
+                    ->where('tenant_id', $tenant)
+                    ->where('aggregate_type', 'call_leg')
+                    ->where('aggregate_id', (string) $leg->id)
+                    ->where('operation_type', 'call.leg.play_media')
+                    ->where('status', 'succeeded')
+                    ->orderByDesc('created_at')
+                    ->first();
+                $previousPayload = $previous === null ? [] : json_decode((string) $previous->payload, true);
+                if (! is_array($previousPayload) || ! is_string($previousPayload['media_ref'] ?? null)) {
+                    return $this->failure(FailureClass::Conflict, 'freeswitch_active_media_missing', 'No canonical active media reference is available for FreeSWITCH stop.');
+                }
+                $payload['media_ref'] = $previousPayload['media_ref'];
+            }
         } elseif ($target === 'call') {
             $call = DB::table('calls')->where('tenant_id', $tenant)->where('id', (string) ($operation['aggregate_id'] ?? ''))->first();
             if ($call === null) {

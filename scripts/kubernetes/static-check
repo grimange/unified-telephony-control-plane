@@ -13,11 +13,6 @@ if grep -Eq '(^|[[:space:]])image:[[:space:]].*:latest([[:space:]]|$)' "$manifes
   exit 1
 fi
 
-if grep -Eq '^[[:space:]]*type:[[:space:]]*(NodePort|LoadBalancer)[[:space:]]*$' "$manifest"; then
-  printf 'Kubernetes manifest exposes NodePort or LoadBalancer service\n' >&2
-  exit 1
-fi
-
 if grep -Eq '^kind:[[:space:]]*(Ingress|Gateway|HTTPRoute|GRPCRoute|TCPRoute|TLSRoute|UDPRoute)[[:space:]]*$' "$manifest"; then
   printf 'Kubernetes manifest includes ingress or Gateway API resources\n' >&2
   exit 1
@@ -66,6 +61,21 @@ def fail(message: str) -> None:
 def key(doc: dict[str, Any]) -> str:
     meta = doc.get("metadata") or {}
     return f"{doc.get('kind')}/{meta.get('namespace')}/{meta.get('name')}"
+
+
+for doc in docs:
+    if doc.get("kind") != "Service":
+        continue
+    spec = doc.get("spec") or {}
+    if spec.get("type") == "LoadBalancer":
+        fail(f"unapproved LoadBalancer Service {key(doc)}")
+    if spec.get("type") == "NodePort" and key(doc) != "Service/utcp-platform/kamailio-sip-external":
+        fail(f"unapproved NodePort Service {key(doc)}")
+    if key(doc) == "Service/utcp-platform/kamailio-sip-external":
+        if spec.get("type") != "NodePort" or spec.get("externalTrafficPolicy") != "Cluster":
+            fail("external Kamailio SIP Service must use the bounded NodePort contract")
+        if spec.get("ports") != [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-udp", "nodePort": 30560}]:
+            fail("external Kamailio SIP Service must expose only UDP/5060 through NodePort 30560")
 
 
 objects = {key(doc): doc for doc in docs}

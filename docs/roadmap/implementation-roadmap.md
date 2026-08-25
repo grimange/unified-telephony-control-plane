@@ -26,6 +26,14 @@ carrier inventory system. Applications own campaigns, lead lists, pacing,
 agent assignment, dispositions, CRM workflow, business interpretation of
 DTMF, IVR menu trees, business hours, and presentation-specific state.
 
+UTCP is Kubernetes-first because its long-term product purpose includes
+operating distributed telephony infrastructure across machines, host failure
+domains, sites, and eventually hybrid/cloud environments. Kubernetes supplies
+the workload and infrastructure orchestration substrate; UTCP adds
+telephony-aware interpretation, eligibility, lifecycle, placement intent, and
+reconciliation above that substrate. UTCP is not Kubernetes and does not
+replace Kubernetes scheduling.
+
 The browser implementation historically called the **Reference Dialer** is
 the **Reference Telephony Client** in current product and roadmap prose. It is
 a consumer and acceptance vehicle for authentication, SIP registration,
@@ -70,30 +78,45 @@ must agree with the current mainline here and is not a second status ledger.
 
 ## Current state and executable order
 
-**Current phase:** T4 — FreeSWITCH call-control adapter parity.
+**Current phase:** V1 — Bidirectional external call routing and control.
 
 **Current status:** T4A/T4B are implemented and tested; T4C1/T4C2 are
-implemented, tested, live-proven, and frozen. The current bounded media
-playback slice is implemented/tested and its live proof remains pending.
-Recording remains separate. T4D is not a phase. See
-[`docs/evidence/t4/t4-media-reference-and-freeswitch-playback-implementation.md`](../evidence/t4/t4-media-reference-and-freeswitch-playback-implementation.md).
+implemented, tested, live-proven, and frozen. The timer-backed media playback
+slice is implemented, tested, and **live-proven** end to end on a naturally
+originated managed CallLeg, so **T4 is complete**. Recording remains separate.
+T4D is not a phase. See
+[`docs/evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** run the canonical narrow live proof for the
-implemented T4 media.playback slice. After that proof closes T4, begin C7A.
+**Exactly one next action:** run the narrow natural V1 external inbound/outbound
+proof through the prepared UTCP-owned External SIP Peer fixture. The fixture
+and preparation harness are implemented and tested; T6 provider-consumption
+for Kamailio and Asterisk is implemented and synthetically verified. See
+[`V1 fixture preparation evidence`](../evidence/v1/v1-external-sip-peer-fixture-preparation.md).
+Live external SIP acceptance remains V1 scope.
+C7B closed on 2026-08-24 after its focused route-authority tests and
+provider-neutrality checks passed.
 
 ```text
 T4 closure
-  -> C7A
+  -> C7A closure
   -> C7B
   -> T6
   -> V1
   -> A0
-  -> R0
+           \
+            \
+             R0
+            /
+           /
+K5A -> K5B -> K5C -> K5D -> K5E
 ```
 
-C8 and K5 are valid control-plane/infrastructure tracks but do not enter this
-critical path unless a later evidence-backed dependency proves they are needed
-for the R0 baseline.
+The top line is the serial telephony control track. K5 is a planned parallel,
+R0-critical distributed-infrastructure track; it does not serially gate C7A.
+C7A may begin after T4 closes even while K5 is incomplete, but R0 cannot close
+until both tracks satisfy their bounded exit criteria. C8 and other deferred
+domains remain outside this convergence unless later evidence changes the
+release boundary.
 
 ## Capability tracks
 
@@ -136,11 +159,62 @@ making the reference client a management authority.
 [`docs/evidence/rnp/rnp-6-natural-managed-runtime-lifecycle-live-proof.md`](../evidence/rnp/rnp-6-natural-managed-runtime-lifecycle-live-proof.md),
 and the phase-specific F/K/C/RN/RT evidence establish the completed slices.
 
-**K5 side track:** Host visibility and telephony placement awareness remains
-planned under [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md).
-It is read-only infrastructure direction—Node discovery, Host inventory,
-readiness/capacity, placement visibility, and RuntimeNode association—and is
-not a T4, C7, T6, V1, or R0 prerequisite on current evidence.
+### K5 — Distributed Telephony Infrastructure, Placement & Host Lifecycle
+
+**Status:** Planned / Parallel / R0-Critical. K5 is a UTCP core capability
+track, not generic deferred or post-R0 work. It does not serially gate T4 or
+C7A.
+
+**Objective:** build the bounded distributed-infrastructure corridor over which
+UTCP can correlate Kubernetes host facts with RuntimeNode lifecycle, telephony
+eligibility, placement/failure-domain policy, maintenance draining, and
+restoration without replacing Kubernetes authority.
+
+**Authority / responsibility:** Kubernetes remains authoritative for Nodes,
+Pods, Deployments, Services, node conditions, scheduling mechanics, resource
+requests/limits, restart behavior, and workload placement facts. UTCP owns
+RuntimeNode identity and lifecycle, telephony readiness and load/bindings,
+telephony eligibility and selection, placement intent, failure-domain
+interpretation, maintenance coordination, reconciliation, audit, and
+provider-neutral telephony consequences. No new durable Host, Site, Cluster,
+or DeploymentTarget authority is implied by this documentation update.
+
+**K5A — Host / Kubernetes Node Visibility:** read-only discovery and
+correlation of Kubernetes Nodes, readiness, basic capacity, labels/topology,
+workload placement, and the RuntimeNode-to-workload-to-host relationship.
+
+**K5B — Telephony Placement Awareness:** interpret the existing deployment and
+workload relationship in telephony terms, including RuntimeNode location and
+failure-domain association, without copying Kubernetes into a competing
+database authority.
+
+**K5C — Capacity and Failure-Domain Policy:** combine Kubernetes facts with
+RuntimeNode readiness, declared capability, telephony load, capacity, and
+failure-domain constraints to determine telephony eligibility and selection.
+UTCP must not reimplement the Kubernetes scheduler.
+
+**K5D — Telephony-Aware Host Maintenance:** identify affected RuntimeNodes,
+exclude them from new telephony work, move them through the existing
+`ACTIVE -> DRAINING -> DRAINED` lifecycle as canonical work converges, and
+coordinate Kubernetes-owned maintenance through normal authorized,
+reconciled boundaries. This is planned, not implemented here.
+
+**K5E — Distributed Infrastructure Live Proof:** prove that UTCP can operate
+telephony RuntimeNodes across at least two distinct Kubernetes host or failure
+domains and correlate placement, runtime readiness, telephony eligibility,
+new-work exclusion during failure or maintenance, drain behavior, and automatic
+restoration. Full multi-cluster federation is not an R0 requirement; K5 must
+remain compatible with a future direction of multi-machine, multi-host,
+multi-site/hybrid, and potential multi-cluster operation.
+
+**Dependencies / exit criteria:** K5A through K5E progress independently where
+practical, building on existing RNP deployment/workload identity and RuntimeNode
+authorities. R0 requires the bounded K5E proof in addition to the telephony
+track; no K5 implementation or proof is claimed by this roadmap update.
+
+**Evidence links:** [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md)
+and existing RNP/RNM/runtime evidence; K5 implementation evidence is not yet
+claimed.
 
 ### Telephony Core — C6, C7A, C7B
 
@@ -160,7 +234,7 @@ and the C6 evidence index.
 
 #### C7A — External Connectivity, Telephony Addressing, and Caller Identity
 
-**Status:** Planned; first post-T4 implementation phase.
+**Status:** Complete; first post-T4 implementation phase.
 
 **Objective:** establish canonical, tenant-scoped `ExternalTrunk`, endpoint and
 credential-reference lifecycle, `TelephonyAddress`, `CallerIdentity`, and
@@ -179,12 +253,11 @@ the identity/connectivity facts needed by C7A.
 tenant isolation, lifecycle/readiness policy, normalized APIs and tests,
 idempotent writes, audit history, and provider-neutral contract evidence.
 
-**Evidence links:** product and phase contracts in the initial implementation
-plans; implementation evidence will be added when C7A begins.
+**Evidence links:** [`C7A implementation evidence`](../evidence/c7a/c7a-external-connectivity-address-caller-identity-implementation.md).
 
 #### C7B — Inbound/Outbound Route and Destination Authority
 
-**Status:** Planned; follows C7A.
+**Status:** Complete; follows C7A and precedes T6.
 
 **Objective:** establish `InboundRoute`, `OutboundRoute`, constraints,
 `RouteDecision`, and runtime-neutral `DestinationRef` authority.
@@ -202,8 +275,7 @@ route decisions, normalized destination classes, authorization, idempotency,
 audit, negative/conflict tests, and evidence for both inbound and outbound
 resolution.
 
-**Evidence links:** C6 contract evidence and the initial implementation plans;
-no C7B implementation evidence is claimed yet.
+**Evidence links:** [`C7B implementation evidence`](../evidence/c7b/c7b-route-and-destination-authority-implementation.md).
 
 ### Runtime / Execution Adapters — T0–T6
 
@@ -213,7 +285,8 @@ the control-plane contracts above. T6 is the future live projection phase:
 
 #### T6 — External Trunk Integration and Live Route Projection
 
-**Status:** Planned; follows C7A and C7B.
+**Status:** Complete; Kamailio and Asterisk provider-consumption seams are
+implemented and synthetically verified.
 
 **Objective:** project canonical trunks, addresses, routes, caller identity,
 and destination decisions through Kamailio and selected runtime adapters using
@@ -225,13 +298,13 @@ PBX configuration, a second route authority, or silent provider/runtime
 fallback.
 
 **Exit criteria:** canonical projection is deterministic and idempotent;
-inbound and outbound synthetic SIP paths are observable; failures are explicit;
+provider-consumption seams are synthetically observable; failures are explicit;
 runtime and signaling adapters remain provider-neutral; audit and cleanup are
-proven.
+proven. Natural external SIP acceptance is V1 scope.
 
 **Evidence links:** existing adapter and runtime evidence under
-`docs/evidence/t0/`–`docs/evidence/t5/`; T6 implementation evidence is not yet
-claimed.
+`docs/evidence/t0/`–`docs/evidence/t5/`; see
+[`T6 implementation evidence`](../evidence/t6/t6-external-trunk-and-live-route-projection-implementation.md).
 
 ### Acceptance Slices — V0, V1
 
@@ -242,14 +315,16 @@ standalone telephony products.
 and retained as the existing browser acceptance slice. Its browser/client
 history is evidence, not product scope. See `docs/evidence/v0/`.
 
-**V1 — Bidirectional external call routing and control:** planned after T6.
-It proves outbound application -> route -> caller identity -> external trunk ->
-runtime and inbound external peer -> address -> route -> destination ->
-canonical Call/CallLeg -> application/runtime, including normalized control,
+**V1 — Bidirectional external call routing and control:** active after T6.
+The External SIP Peer fixture and reusable preparation harness are implemented;
+the remaining acceptance is the natural outbound/inbound proof: outbound
+application -> route -> caller identity -> external trunk -> runtime and
+inbound external peer -> address -> route -> destination -> canonical
+Call/CallLeg -> application/runtime, including normalized control,
 observations, audit, and failure behavior.
 
-**Evidence links:** none yet; the acceptance contract is defined by C6, C7,
-and the initial implementation plans.
+**Evidence links:** [`V1 External SIP Peer fixture preparation`](../evidence/v1/v1-external-sip-peer-fixture-preparation.md); the remaining natural
+acceptance contract is defined by C6, C7, and the initial implementation plans.
 
 ### Reference Consumers — A0
 
@@ -272,14 +347,23 @@ owns business meaning; UTCP owns reusable telephony control and lifecycle.
 **Objective:** deliver a finite portfolio release proving the core control-plane
 contract, not every future telephony application domain.
 
-**Critical path:** `T4 closure -> C7A -> C7B -> T6 -> V1 -> A0 -> R0`.
+**Converging tracks:**
 
-**R0 exit criteria:** the mainline phases have their repository and required
-live evidence; canonical trunk/address/route/caller-identity authority is
-tenant-safe and idempotent; bidirectional synthetic external routing and
-normalized call control are proven; at least the three minimal consumers can
-consume UTCP; documentation and evidence links are current; no application or
-provider-specific authority has displaced UTCP.
+```text
+Telephony:   T4 closure -> C7A closure -> C7B -> T6 -> V1 -> A0
+Distributed: K5A -> K5B -> K5C -> K5D -> K5E
+                         both tracks converge at R0
+```
+
+**R0 exit criteria:** both the telephony capability track and bounded K5
+distributed-infrastructure track have their required repository/live evidence;
+canonical trunk/address/route/caller-identity authority is tenant-safe and
+idempotent; bidirectional synthetic external routing and normalized call
+control are proven; at least the three minimal consumers can consume UTCP;
+K5E proves operation across distinct host/failure domains with readiness,
+eligibility, exclusion, drain, and restoration behavior; documentation and
+evidence links are current; no application, provider, or Kubernetes scheduler
+authority has displaced UTCP's bounded responsibilities.
 
 **Evidence links:** release evidence is collected from the completed mainline
 phases; no R0 completion evidence is claimed yet.
@@ -294,8 +378,14 @@ inter-runtime handoff, inter-provider handoff, and rollback/recovery
 orchestration are post-R0/R1 by default. C8 does not duplicate C6 operations or
 make the Reference Telephony Client authoritative.
 
-**K5:** parallel infrastructure direction under ADR-024; post-R0 unless a
-demonstrated T4/C7/T6/V1 dependency changes the release boundary.
+**K5:** planned parallel and R0-critical under ADR-024. K5 does not block the
+serial T4/C7/T6/V1 telephony sequence, but K5E must be proven before R0 closes.
+
+**Future Media Processing architecture:** UTCP preserves a future
+provider-neutral Media Processing Plane boundary for DSP, speech processing,
+transcription, synthesis, and interactive media participants. No implementation
+phase is scheduled before current R0; this is architecture-only and is not an
+R0 gate.
 
 **Queue/ACD, campaign behavior, advanced IVR workflow, billing/settlement,
 number purchasing/porting, SMS/MMS, and commercial carrier operations:** future
@@ -314,7 +404,7 @@ roadmap.
 
 ## Next
 
-Run the canonical narrow live proof for the implemented T4 media.playback
-slice. Once it passes, update `phase-status.md` to close T4 and start the
-bounded C7A implementation. No runtime change is part of this roadmap
-reconciliation.
+Prepare the V1 external SIP peer/PBX fixture and narrow natural inbound/outbound
+proof. C7A and C7B implementation/evidence are complete, and both T6 provider
+consumption seams are synthetically verified; live external connectivity remains
+V1 scope.

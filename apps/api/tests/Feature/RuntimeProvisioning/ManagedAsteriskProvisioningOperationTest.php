@@ -7,6 +7,7 @@ use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClient;
 use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClientException;
 use App\Models\User;
 use App\RuntimeEngine\Commands\CommandWorker;
+use App\RuntimeProvisioning\ManagedAsteriskProvisioningOperationHandler;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -111,7 +112,7 @@ final class ManagedAsteriskProvisioningOperationTest extends TestCase
 
     public function test_configured_managed_asterisk_image_is_used_without_source_changes(): void
     {
-        config(['asterisk_ari.managed_image' => 'registry.example.test/utcp/asterisk-ari:test-123']);
+        config(['asterisk_ari.managed_image' => 'registry.example.test/utcp/asterisk-ari@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb']);
         [$admin, $tenantId] = $this->tenantAdmin('rnp6-image@utcp.local.test', 'rnp6-image');
         $session = ['user_session_version' => 1, 'active_tenant_id' => $tenantId];
         $target = $this->actingAs($admin)->withSession($session)->getJson('/api/v1/admin/deployment-targets')->json('deployment_targets.0');
@@ -123,13 +124,24 @@ final class ManagedAsteriskProvisioningOperationTest extends TestCase
         $this->mock(KubernetesWorkloadClient::class, function (MockInterface $mock): void {
             $mock->shouldReceive('applySecret')->once()->andReturn([]);
             $mock->shouldReceive('applyDeployment')->once()->withArgs(function (array $desired): bool {
-                return $desired['spec']['template']['spec']['containers'][0]['image'] === 'registry.example.test/utcp/asterisk-ari:test-123';
+                return $desired['spec']['template']['spec']['containers'][0]['image'] === 'registry.example.test/utcp/asterisk-ari@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
             })->andReturn([]);
             $mock->shouldReceive('applyService')->once()->andReturn([]);
         });
 
         $this->assertSame(1, app(CommandWorker::class)->workOnce('rnp6-image-test', 10, 60, ['runtime.node.provision']));
         $this->assertDatabaseHas('runtime_nodes', ['id' => $response->json('provisioning_request.runtime_node.id'), 'desired_state' => 'active']);
+    }
+
+    public function test_mutable_managed_asterisk_image_reference_is_rejected(): void
+    {
+        config(['asterisk_ari.managed_image' => 'registry.example.test/utcp/asterisk-ari:0.1.0-k1-dev']);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('managed Asterisk image configuration is invalid');
+
+        app(ManagedAsteriskProvisioningOperationHandler::class)
+            ->desiredDeployment('11111111-2222-3333-4444-555555555555', 'managed-node');
     }
 
     public function test_request_and_operation_are_idempotent_and_retry_reuses_credential_after_partial_secret_apply(): void

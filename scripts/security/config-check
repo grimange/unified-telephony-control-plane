@@ -649,7 +649,7 @@ if rtpengine_peers != [
 kamailio_asterisk_egress = [
     rule
     for rule in kamailio_spec.get("egress") or []
-    if rule.get("ports") == [{"protocol": "UDP", "port": 5060}]
+    if rule.get("ports") == [{"protocol": "UDP", "port": 5060}] and rule.get("to")
 ]
 if len(kamailio_asterisk_egress) != 2:
     fail("allow-kamailio-signaling-required-traffic must include exactly the Asterisk and FreeSWITCH UDP 5060 egress rules")
@@ -671,6 +671,17 @@ if not any(rule.get("to") == [{
     }},
 }] for rule in kamailio_asterisk_egress):
     fail("Kamailio FreeSWITCH SIP egress must use the exact canonical FreeSWITCH selector")
+kamailio_external_sip_egress = [
+    rule
+    for rule in kamailio_spec.get("egress") or []
+    if rule.get("ports") == [{"protocol": "UDP", "port": 5060}] and "to" not in rule
+]
+if kamailio_external_sip_egress != [{"ports": [{"protocol": "UDP", "port": 5060}]}]:
+    fail("Kamailio must include exactly one destination-agnostic external UDP 5060 capability")
+if any("to" not in rule for rule in kamailio_spec.get("egress") or [] if rule not in kamailio_external_sip_egress):
+    fail("Kamailio must not include unrelated destination-agnostic egress rules")
+if any("ipBlock" in peer for rule in kamailio_spec.get("egress") or [] for peer in rule.get("to", [])):
+    fail("Kamailio egress must not contain provider-specific ipBlocks")
 
 dns_ports = [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}]
 kamailio_dns_egress = [
@@ -772,7 +783,16 @@ for policy_name, policy_doc in {
     "allow-asterisk-sip-from-kamailio": asterisk_sip_policy,
 }.items():
     rendered_policy = yaml.safe_dump(policy_doc, sort_keys=True)
-    if "ipBlock" in rendered_policy:
+    if policy_name == "allow-kamailio-signaling-required-traffic":
+        ip_blocks = [
+            peer.get("ipBlock", {}).get("cidr")
+            for rule in (policy_doc.get("spec") or {}).get("ingress", [])
+            for peer in rule.get("from", [])
+            if "ipBlock" in peer
+        ]
+        if ip_blocks != ["38.146.161.46/32"]:
+            fail(f"{policy_name} must use only the approved external PBX ipBlock")
+    elif "ipBlock" in rendered_policy:
         fail(f"{policy_name} must not use ipBlock for internal SIP authority")
     if "0.0.0.0/0" in rendered_policy or "::/0" in rendered_policy:
         fail(f"{policy_name} must not allow broad egress")

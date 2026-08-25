@@ -16,10 +16,13 @@ switch_xml="${UTCP_FREESWITCH_SWITCH_XML:-$ROOT/infrastructure/docker/freeswitch
 sofia_xml="${UTCP_FREESWITCH_SOFIA_XML:-$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/sofia.conf.xml}"
 event_socket_xml="${UTCP_FREESWITCH_EVENT_SOCKET_XML:-$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/event_socket.conf.xml}"
 acl_xml="${UTCP_FREESWITCH_ACL_XML:-$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/acl.conf.xml}"
+console_xml="${UTCP_FREESWITCH_CONSOLE_XML:-$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/console.conf.xml}"
+freeswitch_adapter="${UTCP_FREESWITCH_ADAPTER:-$ROOT/apps/api/app/RuntimeAdapters/FreeSwitch/FreeSwitchEslClient.php}"
+reference_tone_check="${UTCP_REFERENCE_TONE_CHECK:-$ROOT/scripts/media/reference-tone-check}"
 startup_smoke="${UTCP_FREESWITCH_STARTUP_SMOKE:-$ROOT/scripts/freeswitch/startup-smoke-test}"
 sip_probe="${UTCP_FREESWITCH_SIP_PROBE:-$ROOT/scripts/freeswitch/sip-invite-smoke.py}"
 
-for file in "$dockerfile" "$freeswitch_xml" "$internal_xml" "$dialplan" "$entrypoint" "$healthcheck" "$modules_xml" "$switch_xml" "$sofia_xml" "$event_socket_xml" "$acl_xml" "$startup_smoke" "$sip_probe"; do
+for file in "$dockerfile" "$freeswitch_xml" "$internal_xml" "$dialplan" "$entrypoint" "$healthcheck" "$modules_xml" "$console_xml" "$switch_xml" "$sofia_xml" "$event_socket_xml" "$acl_xml" "$freeswitch_adapter" "$reference_tone_check" "$startup_smoke" "$sip_probe"; do
   [ -s "$file" ] || fail "required FreeSWITCH file is missing: $file"
 done
 
@@ -29,7 +32,7 @@ grep -Fq '21000-21099/udp' "$dockerfile" || fail "image must expose the canonica
 grep -Eq '^exec (/usr/bin/)?freeswitch \\' "$entrypoint" || fail "entrypoint must exec FreeSWITCH"
 grep -Eq '^[[:space:]]+-c[[:space:]]*\\$' "$entrypoint" || fail "-c must be argument-less"
 grep -Fq -- '-conf /etc/freeswitch' "$entrypoint" || fail "-conf must point to the config directory"
-grep -Fq -- '-log /var/log/freeswitch' "$entrypoint" || fail "-log directory is missing"
+grep -Fq -- '-log /var/run/freeswitch' "$entrypoint" || fail "-log must use the ephemeral runtime directory"
 grep -Fq -- '-db /var/lib/freeswitch/db' "$entrypoint" || fail "-db directory is missing"
 grep -Fq -- '-run /var/run/freeswitch' "$entrypoint" || fail "-run directory is missing"
 grep -Fq 'rtp-start-port" value="21000' "$switch_xml" || fail "explicit RTP start is missing"
@@ -38,6 +41,8 @@ grep -Fq 'sip-port" value="5060' "$internal_xml" || fail "internal SIP listener 
 grep -Fq '<domain name="all" alias="false" parse="false"/>' "$internal_xml" || fail "application-peer domain semantics are missing"
 if grep -Fq '<domain name="all" alias="true"' "$internal_xml"; then fail "registered-endpoint domain aliasing is forbidden"; fi
 grep -Fq 'inbound-codec-prefs" value="PCMU' "$internal_xml" || fail "minimal PCMU codec contract is missing"
+grep -Fq '<param name="rtp-timer-name" value="soft"/>' "$internal_xml" || fail "internal Sofia profile must select the soft RTP timer"
+grep -Fq 'timer_name=soft' "$freeswitch_adapter" || fail "managed FreeSWITCH CallLeg origination must set timer_name=soft"
 grep -Fq 'destination_number" expression="^9900$"' "$dialplan" || fail "9900 Echo fixture is missing"
 grep -Fq 'application="answer"' "$dialplan" || fail "Echo fixture must answer"
 grep -Fq 'application="echo"' "$dialplan" || fail "Echo fixture must echo media"
@@ -60,6 +65,14 @@ grep -Fq '<load module="mod_dptools"' "$modules_xml" || fail "mod_dptools is mis
 grep -Fq '<load module="mod_sofia"' "$modules_xml" || fail "mod_sofia is missing"
 grep -Fq '<load module="mod_event_socket"' "$modules_xml" || fail "mod_event_socket is missing"
 grep -Fq '<load module="mod_sndfile"' "$modules_xml" || fail "mod_sndfile is missing"
+grep -Fq '<configuration name="console.conf"' "$console_xml" || fail "FreeSWITCH console configuration is missing"
+grep -Fq 'colorize" value="false"' "$console_xml" || fail "FreeSWITCH console colorization must be disabled"
+grep -Fq 'loglevel" value="debug"' "$console_xml" || fail "FreeSWITCH console debug loglevel is missing"
+if grep -Eq -- '-log /(tmp|opt|usr|etc)/' "$entrypoint" || grep -Fq 'freeswitch-log' "$ROOT/infrastructure/kubernetes/components/freeswitch-instance/freeswitch-deployment.yaml"; then
+  fail "FreeSWITCH logging must use container stdout/stderr, not a logfile authority"
+fi
+test -x "$reference_tone_check" || fail "reference tone validator must be executable"
+UTCP_REFERENCE_TONE_ASSET="${UTCP_REFERENCE_TONE_ASSET:-$ROOT/infrastructure/docker/media/reference-tone.wav.base64}" "$reference_tone_check" >/dev/null || fail "reference tone is invalid, silent, or the wrong duration"
 grep -Fq 'reference-tone.wav' "$dockerfile" || fail "validation playback asset is not projected"
 grep -Fq '/usr/share/freeswitch/sounds/reference-tone.wav' "$dockerfile" || fail "validation playback asset path is not canonical"
 grep -Fq '../sip_profiles/*.xml' "$sofia_xml" || fail "normal Sofia profile include is missing"
@@ -180,11 +193,11 @@ if not str(container.get("image", "")).endswith("/freeswitch:0.1.0-t3-s2c"):
 if (container.get("securityContext") or {}).get("readOnlyRootFilesystem") is not True:
     fail("FreeSWITCH root filesystem must be read-only")
 volume_mounts = {mount.get("mountPath"): mount.get("name") for mount in container.get("volumeMounts") or []}
-for path in ("/var/log/freeswitch", "/var/run/freeswitch", "/var/lib/freeswitch"):
+for path in ("/var/run/freeswitch", "/var/lib/freeswitch"):
     if path not in volume_mounts:
         fail(f"FreeSWITCH writable path is not mounted: {path}")
 volume_names = {volume.get("name") for volume in pod_spec.get("volumes") or [] if volume.get("emptyDir") is not None}
-if not volume_names or any(volume_mounts[path] not in volume_names for path in ("/var/log/freeswitch", "/var/run/freeswitch", "/var/lib/freeswitch")):
+if not volume_names or any(volume_mounts[path] not in volume_names for path in ("/var/run/freeswitch", "/var/lib/freeswitch")):
     fail("FreeSWITCH writable state must use bounded emptyDir storage")
 if not (container.get("startupProbe") or {}).get("exec", {}).get("command") == ["/usr/local/bin/utcp-freeswitch-healthcheck"]:
     fail("FreeSWITCH startup probe must use the executable healthcheck")

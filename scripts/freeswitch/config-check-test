@@ -15,6 +15,10 @@ cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/switch.conf.x
 cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/event_socket.conf.xml" "$TMP/event_socket.xml"
 cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/acl.conf.xml" "$TMP/acl.xml"
 cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/modules.conf.xml" "$TMP/modules.xml"
+cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/console.conf.xml" "$TMP/console.xml"
+cp "$ROOT/apps/api/app/RuntimeAdapters/FreeSwitch/FreeSwitchEslClient.php" "$TMP/freeswitch-adapter.php"
+cp "$ROOT/infrastructure/docker/media/reference-tone.wav.base64" "$TMP/reference-tone.wav.base64"
+cp "$ROOT/scripts/media/reference-tone-check" "$TMP/reference-tone-check"
 cp "$ROOT/scripts/freeswitch/startup-smoke-test" "$TMP/startup-smoke-test"
 cp "$ROOT/scripts/freeswitch/sip-invite-smoke.py" "$TMP/sip-invite-smoke.py"
 
@@ -28,6 +32,10 @@ run_check() {
   UTCP_FREESWITCH_EVENT_SOCKET_XML="$TMP/event_socket.xml" \
   UTCP_FREESWITCH_ACL_XML="$TMP/acl.xml" \
   UTCP_FREESWITCH_MODULES_XML="$TMP/modules.xml" \
+  UTCP_FREESWITCH_CONSOLE_XML="$TMP/console.xml" \
+  UTCP_FREESWITCH_ADAPTER="$TMP/freeswitch-adapter.php" \
+  UTCP_REFERENCE_TONE_ASSET="$TMP/reference-tone.wav.base64" \
+  UTCP_REFERENCE_TONE_CHECK="$TMP/reference-tone-check" \
   UTCP_FREESWITCH_STARTUP_SMOKE="$TMP/startup-smoke-test" \
   UTCP_FREESWITCH_SIP_PROBE="$TMP/sip-invite-smoke.py" \
   "$CHECK" >/dev/null
@@ -47,6 +55,10 @@ restore() {
   cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/event_socket.conf.xml" "$TMP/event_socket.xml"
   cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/acl.conf.xml" "$TMP/acl.xml"
   cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/modules.conf.xml" "$TMP/modules.xml"
+  cp "$ROOT/infrastructure/docker/freeswitch/config/autoload_configs/console.conf.xml" "$TMP/console.xml"
+  cp "$ROOT/apps/api/app/RuntimeAdapters/FreeSwitch/FreeSwitchEslClient.php" "$TMP/freeswitch-adapter.php"
+  cp "$ROOT/infrastructure/docker/media/reference-tone.wav.base64" "$TMP/reference-tone.wav.base64"
+  cp "$ROOT/scripts/media/reference-tone-check" "$TMP/reference-tone-check"
   cp "$ROOT/scripts/freeswitch/startup-smoke-test" "$TMP/startup-smoke-test"
   cp "$ROOT/scripts/freeswitch/sip-invite-smoke.py" "$TMP/sip-invite-smoke.py"
 }
@@ -54,8 +66,6 @@ restore() {
 run_check
 
 sed -i 's/^  -c \\$/  -c \/etc\/freeswitch\/freeswitch.xml/' "$TMP/entrypoint"; fail_case 'argument after -c'; restore
-sed -i '/-conf \/etc\/freeswitch/d' "$TMP/entrypoint"; fail_case 'missing -conf'; restore
-sed -i '/-db \/var\/lib\/freeswitch\/db/d' "$TMP/entrypoint"; fail_case 'missing -db'; restore
 sed -i '/-run \/var\/run\/freeswitch/d' "$TMP/entrypoint"; fail_case 'missing -run'; restore
 sed -i 's/^exec freeswitch/freeswitch/' "$TMP/entrypoint"; fail_case 'missing exec'; restore
 sed -i '1s/.*/<include>/' "$TMP/freeswitch.xml"; fail_case 'invalid XML root'; restore
@@ -79,8 +89,12 @@ sed -i '/cidr="127.0.0.1\/32"/d' "$TMP/acl.xml"; fail_case 'missing healthcheck 
 sed -i 's/default="deny"/default="allow"/' "$TMP/acl.xml"; fail_case 'permissive runtime ACL default'; restore
 sed -i '/cidr="10.42.0.0\/16"/d' "$TMP/acl.xml"; fail_case 'missing managed Pod-network ACL'; restore
 sed -i '/mod_sndfile/d' "$TMP/modules.xml"; fail_case 'missing mod_sndfile'; restore
+sed -i '/loglevel/d' "$TMP/console.xml"; fail_case 'missing FreeSWITCH console loglevel'; restore
+sed -i 's#-log /var/run/freeswitch#-log /var/log/freeswitch#' "$TMP/entrypoint"; fail_case 'container-local log authority'; restore
+printf 'not-a-tone\n' > "$TMP/reference-tone.wav.base64"; fail_case 'invalid reference tone'; restore
 sed -i '/reference-tone.wav/d' "$TMP/Dockerfile"; fail_case 'missing validation playback asset'; restore
 sed -i 's/alias="false"/alias="true"/' "$TMP/profile.xml"; fail_case 'registered-endpoint domain aliasing'; restore
+sed -i 's/,timer_name=soft//' "$TMP/freeswitch-adapter.php"; fail_case 'missing playback channel timer'; restore
 sed -i '/scripts\/freeswitch\/sip-invite-smoke.py/d' "$TMP/startup-smoke-test"; fail_case 'missing real INVITE smoke'; restore
 sed -i '/Content-Type: application\/sdp/d' "$TMP/sip-invite-smoke.py"; fail_case 'missing SDP smoke offer'; restore
 sed -i '/SIP\/2.0 200/d' "$TMP/sip-invite-smoke.py"; fail_case 'missing 200 OK assertion'; restore

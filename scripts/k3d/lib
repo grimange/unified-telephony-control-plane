@@ -48,6 +48,47 @@ cluster_exists() {
   k3d cluster list -o json 2>/dev/null | grep -q "\"name\":\"$K3D_CLUSTER_NAME\""
 }
 
+cluster_state() {
+  local cluster_json
+  cluster_json="$(k3d cluster list "$K3D_CLUSTER_NAME" -o json 2>/dev/null || true)"
+
+  if [ -z "$cluster_json" ] || ! printf '%s' "$cluster_json" | grep -q "\"name\":\"$K3D_CLUSTER_NAME\""; then
+    printf 'ABSENT\n'
+    return 0
+  fi
+
+  if printf '%s' "$cluster_json" | grep -q '"serversRunning":0' &&
+    printf '%s' "$cluster_json" | grep -q '"agentsRunning":0'; then
+    printf 'STOPPED\n'
+    return 0
+  fi
+
+  printf 'RUNNING\n'
+}
+
+ensure_cluster_running() {
+  local state
+  state="$(cluster_state)"
+
+  case "$state" in
+    ABSENT)
+      validate_ports_available_for_create
+      k3d cluster create --config "$CLUSTER_CONFIG" --timeout 180s --wait=false --kubeconfig-update-default=false --kubeconfig-switch-context=false
+      ;;
+    STOPPED)
+      printf 'starting stopped k3d cluster: %s\n' "$K3D_CLUSTER_NAME"
+      k3d cluster start "$K3D_CLUSTER_NAME"
+      ;;
+    RUNNING)
+      printf 'k3d cluster already running: %s\n' "$K3D_CLUSTER_NAME"
+      ;;
+    *)
+      printf 'unknown k3d cluster state: %s\n' "$state" >&2
+      exit 1
+      ;;
+  esac
+}
+
 registry_exists() {
   k3d registry list -o json 2>/dev/null | grep -q "\"name\":\"$K3D_REGISTRY_NAME\""
 }

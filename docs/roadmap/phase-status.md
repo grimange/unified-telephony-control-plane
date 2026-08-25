@@ -10,20 +10,37 @@ not a competing current-roadmap status or a claim that T4 is incomplete.
 
 ## Current state
 
-**Current phase:** T4 — FreeSWITCH call-control adapter parity.
+**Current phase:** V1 — Bidirectional external call routing and control.
 
 **Current status:** T4A/T4B are implemented and tested. T4C1/T4C2 are
-implemented, tested, live-proven, and frozen. The current bounded
-`media.playback` implementation is present and tested; its narrow live proof
-is pending. Recording remains separate. T4D does not exist.
+implemented, tested, live-proven, and frozen. The timer-backed `media.playback`
+slice is implemented, tested, and **live-proven**: a naturally originated managed
+CallLeg inherits `timer_name=soft`, `call.leg.play_media` produced a full 5.000 s
+timer-paced playback, `call.leg.stop_media` truncated an active playback at
+2.86 s, and both `call.leg.media_started` and `call.leg.media_stopped` entered
+canonical observation authority from FreeSWITCH runtime events. **T4 is
+complete.** Recording remains separate. T4D does not exist. See the
+[`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** run the canonical narrow T4 `media.playback` live
-proof. After T4 closure, begin C7A.
+**Exactly one next action:** activate the implemented Level-2 external UDP/5060
+edge through a safe canonical `utcp-local` lifecycle, then run the narrow
+natural inbound/outbound proof against the independent PBX at `38.146.161.46`.
+The synthetic fixture remains deterministic regression only. The edge
+implementation and current runtime limitation are recorded in the
+[`V1 Level-2 edge evidence`](../evidence/v1/v1-level2-external-sip-lab-edge-implementation.md);
+the earlier fixture preparation evidence remains historical preparation.
+C7A now also supports the bounded V1-A `outbound_registration` signaling mode;
+see [`V1-A registration implementation evidence`](../evidence/v1/v1a-registration-external-trunk-implementation.md).
+C7B closed on 2026-08-24 after deterministic tenant-scoped inbound/outbound
+route evaluation, canonical destination references, C7A eligibility enforcement,
+and focused implementation tests passed.
 
 **Mainline:**
 
 ```text
-T4 closure -> C7A -> C7B -> T6 -> V1 -> A0 -> R0
+Telephony:   T4 closure -> C7A closure -> C7B -> T6 -> V1 -> A0
+Distributed: K5A -> K5B -> K5C -> K5D -> K5E
+                         both tracks converge at R0
 ```
 
 This ledger does not claim that a live proof was performed by this
@@ -50,16 +67,17 @@ documentation task. Current T4 implementation evidence:
 
 | Phase | Status | Next bounded proof |
 | --- | --- | --- |
-| T4 | In progress | Live proof of implemented FreeSWITCH `media.playback`; see the T4 evidence link above |
+| T4 | Complete | Timer-backed `media.playback` natural live proof passed 2026-08-24; see the T4 live-proof record above |
+| T6 | Complete | Kamailio and Asterisk provider-consumption seams implemented/tested with bounded synthetic runtime verification |
 
 ## Planned mainline
 
 | Phase | Status | Dependency / boundary |
 | --- | --- | --- |
-| C7A | Planned | Follows T4; external connectivity, TelephonyAddress, trunk lifecycle, and CallerIdentity authority |
-| C7B | Planned | Follows C7A; inbound/outbound routes, RouteDecision, and runtime-neutral DestinationRef |
-| T6 | Planned | Follows C7A/C7B; live external trunk and route projection through adapters |
-| V1 | Planned | Follows T6; bidirectional external routing and normalized call control acceptance |
+| C7A | Complete | Tenant-scoped ExternalTrunk, endpoint/credential-reference lifecycle, TelephonyAddress, CallerIdentity, policy, and provider-neutral Admin API; see `docs/evidence/c7a/` |
+| C7B | Complete | Inbound/outbound routes, derived RouteDecision, and runtime-neutral DestinationRef; see `docs/evidence/c7b/` |
+| T6 | Complete | Provider projection and Kamailio/Asterisk synthetic consumption verified; V1 owns natural external SIP acceptance |
+| V1 | Active | Fixture and bounded V1-A registration implementation are present; deployment readiness is separated from strict inactive V1-B topology verification; least-privilege registration-reader provisioning and live V1-A deployment are complete, with external REGISTER/interoperability and normalized call control acceptance still pending |
 | A0 | Planned | Follows V1; minimal outbound, inbound, and IVR-style reference consumers |
 | R0 | Planned | Finite release boundary after the mainline evidence is complete |
 
@@ -67,14 +85,22 @@ documentation task. Current T4 implementation evidence:
 
 | Track | Status / release placement |
 | --- | --- |
-| K5 | Planned parallel infrastructure track under [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md); not an R0 prerequisite on current evidence |
+| K5 | Planned / Parallel / R0-Critical under [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md); does not serially gate T4 or C7A, but K5E is required before R0 |
 | C8 | Planned UTCP core transfer/handoff track under [`ADR-025`](../decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md); advanced consultative and inter-runtime/provider handoff defaults to post-R0/R1 unless V1 proves a basic dependency |
 | Queue/ACD | Future extension; no R0 phase |
 | Campaigns, CRM, predictive dialing, agent workflow, advanced IVR, billing/settlement, number purchasing/porting, SMS/MMS | Application, provider, or future domains; outside R0 core |
+
+K5 is the distributed telephony infrastructure track: K5A host visibility,
+K5B telephony placement awareness, K5C capacity/failure-domain policy, K5D
+telephony-aware host maintenance, and K5E a bounded live proof across distinct
+Kubernetes host/failure domains. It builds on existing RuntimeNode and RNP
+authorities; Kubernetes remains authoritative for Nodes, Pods, scheduling, and
+workload placement. Full multi-cluster federation remains future-compatible,
+not an R0 requirement.
 
 ## Historical status rule
 
 Evidence documents may retain superseded status labels because those statements
 describe a point in time. The current ledger uses only the final state: T3 and V0 are Complete; C6 is Complete /
-live-proven / frozen; T4 is the only active mainline phase. Completed phase IDs,
+live-proven / frozen; T6 is complete and V1 is the current mainline phase. Completed phase IDs,
 ADR-024, ADR-025, and all evidence files are preserved.

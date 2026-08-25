@@ -1,5 +1,7 @@
 .DEFAULT_GOAL := help
 
+.PHONY: k3d-start k3d-cluster-dns-apply k3d-runtime-ready k3d-lifecycle-test
+
 COMPOSER_CACHE_DIR ?= /tmp/utcp-composer-cache
 NPM_CONFIG_CACHE ?= /tmp/utcp-npm-cache
 UTCP_API_IMAGE ?= utcp-api:dev
@@ -79,7 +81,7 @@ test: api-test web-test ## Run backend and frontend tests.
 check: repository-hygiene media-config-check media-config-check-test media-edge-config-check media-edge-config-check-test media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test media-edge-containment-check media-edge-failure-proof-test t3-media-candidate-assertions-test rtpengine-advertised-address-check freeswitch-config-check freeswitch-config-check-test freeswitch-overlay-check t3-media-prover-config-check t3-media-prover-config-check-test t3-media-prover-host-check security-config-check-test kamailio-signaling-config-check api-check web-lint web-typecheck ## Run repository, backend, frontend, media, security, and Kamailio signaling static checks.
 
 .PHONY: rtpengine-advertised-address-check media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test media-edge-apply media-edge-failure-proof-overlay-test t3-media-prover-host-check t3-media-prover-host-check-test k3d-config-check-test k3d-verifier-check-test api-entrypoint-check-test
-.PHONY: k8s-config-check-test
+.PHONY: k8s-config-check-test kamailio-signaling-external-trunk-runtime-proof kamailio-signaling-registration-runtime-proof asterisk-external-trunk-config-check asterisk-external-trunk-runtime-proof v1-external-sip-peer-config-check v1-external-sip-peer-smoke v1-external-sip-edge-config-check
 
 k3d-config-check-test: ## Run canonical utcp-local RTP publication mutation checks.
 	@./scripts/k3d/config-check-test
@@ -274,6 +276,18 @@ k3d-registry-check-test: ## Run focused K0 registry container verification regre
 
 k3d-create: ## Create or validate the local utcp-local k3d cluster and repository kubeconfig.
 	@./scripts/k3d/create
+
+k3d-start: ## Start or create the canonical utcp-local k3d cluster without deleting existing state.
+	@./scripts/k3d/start
+
+k3d-cluster-dns-apply: ## Apply the repository-owned CoreDNS custom configuration and restart CoreDNS.
+	@./scripts/k3d/cluster-dns-apply
+
+k3d-runtime-ready: ## Verify baseline deployment readiness without full desired-topology acceptance.
+	@./scripts/k3d/runtime-ready
+
+k3d-lifecycle-test: ## Run focused absent/running/stopped k3d lifecycle tests.
+	@./scripts/k3d/lifecycle-test
 
 k3d-status: ## Report local k3d cluster, node, namespace, registry, and kubeconfig status.
 	@./scripts/k3d/status
@@ -561,6 +575,21 @@ asterisk-conference-recovery-runtime-proof: ## Prove T2-B Asterisk conference re
 asterisk-conference-recovery-status: ## Report safe aggregate T2-B conference recovery status.
 	@./scripts/asterisk-conference/recovery-status
 
+asterisk-external-trunk-config-check: ## Validate the derived Asterisk external-trunk provider seam.
+	@./scripts/asterisk-external-trunk/config-check
+
+asterisk-external-trunk-runtime-proof: ## Prove a running Asterisk consumes the derived external-trunk representation.
+	@./scripts/asterisk-external-trunk/runtime-proof
+
+v1-external-sip-peer-config-check: ## Validate the disposable V1 External SIP Peer fixture.
+	@./scripts/v1/external-sip-peer-config-check
+
+v1-external-sip-peer-smoke: v1-external-sip-peer-config-check ## Build and smoke-test the V1 External SIP Peer preparation harness.
+	@./scripts/v1/external-sip-peer-smoke
+
+v1-external-sip-edge-config-check: ## Validate the bounded V1 external UDP/5060 edge.
+	@./scripts/v1/external-sip-edge-config-check
+
 kamailio-signaling-config-check: ## Validate current T1 signaling credential authority boundaries.
 	@./scripts/kamailio-signaling/config-check
 
@@ -575,6 +604,12 @@ kamailio-signaling-api-proof: ## Prove T1 credential API behavior; live Kamailio
 
 kamailio-signaling-runtime-proof: ## Prove live Kamailio WSS REGISTER corridor when implemented.
 	@./scripts/kamailio-signaling/runtime-proof
+
+kamailio-signaling-external-trunk-runtime-proof: ## Prove Kamailio consumes the derived external-trunk SQL view.
+	@./scripts/kamailio-signaling/external-trunk-runtime-proof
+
+kamailio-signaling-registration-runtime-proof: ## Prove the V1-A registration projection and internal control contract without real PBX credentials.
+	@./scripts/kamailio-signaling/registration-runtime-proof
 
 kamailio-signaling-status: ## Report safe aggregate T1 signaling credential and registration counts.
 	@./scripts/kamailio-signaling/status

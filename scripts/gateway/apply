@@ -7,7 +7,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 required_tools
 ensure_kubeconfig
-"$ROOT/scripts/k3d/verify" >/dev/null
+"$ROOT/scripts/k3d/runtime-ready" >/dev/null
 "$ROOT/scripts/kubernetes/config-check" >/dev/null
 "$ROOT/scripts/kubernetes/status" >/dev/null
 check_edge_bindings

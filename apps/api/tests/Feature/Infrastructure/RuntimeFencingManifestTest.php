@@ -90,7 +90,7 @@ final class RuntimeFencingManifestTest extends TestCase
 
         $ports = $this->networkPolicyPorts($workerPolicies['NetworkPolicy/utcp-platform/allow-worker-required-egress']);
         sort($ports);
-        $this->assertSame(['TCP:53', 'TCP:5432', 'TCP:6379', 'TCP:8080', 'UDP:53'], $ports);
+        $this->assertSame(['TCP:53', 'TCP:5432', 'TCP:6379', 'TCP:8080', 'TCP:8090', 'UDP:53'], $ports);
 
         $freeswitchPolicy = $workerPolicies['NetworkPolicy/utcp-platform/allow-command-worker-to-freeswitch-esl'];
         $this->assertSame(['Egress'], $freeswitchPolicy['spec']['policyTypes']);

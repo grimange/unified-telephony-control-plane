@@ -45,7 +45,36 @@ spec:
       ports:
         - protocol: UDP
           port: 5060
+    - from:
+        - ipBlock:
+            cidr: 38.146.161.46/32
+      ports:
+        - protocol: UDP
+          port: 5060
+    - from:
+        - podSelector:
+            matchLabels:
+              utcp.io/network-role: worker
+      ports:
+        - protocol: TCP
+          port: 8090
+    # The registration observer reads uac_reg state through the same
+    # internal control seam. Observation is read-only; it never becomes a
+    # second registration authority.
+    - from:
+        - podSelector:
+            matchLabels:
+              utcp.io/network-role: kamailio-registration-observer
+      ports:
+        - protocol: TCP
+          port: 8090
   egress:
+    # Kamailio is the canonical SIP edge. Permit the currently supported
+    # outbound-registration transport without making Kubernetes a provider
+    # address allowlist or duplicating ExternalTrunk state.
+    - ports:
+        - protocol: UDP
+          port: 5060
     - to:
         - namespaceSelector:
             matchLabels:

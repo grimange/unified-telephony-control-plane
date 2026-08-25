@@ -85,12 +85,8 @@ spec:
               mountPath: /var/lib/freeswitch
             - name: freeswitch-run
               mountPath: /var/run/freeswitch
-            - name: freeswitch-log
-              mountPath: /var/log/freeswitch
       volumes:
         - name: freeswitch-runtime
           emptyDir: {}
         - name: freeswitch-run
-          emptyDir: {}
-        - name: freeswitch-log
           emptyDir: {}

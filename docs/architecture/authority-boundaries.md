@@ -22,6 +22,28 @@ UTCP must not silently transfer authority from one component to another.
 | Local metrics, logs, dashboards, and alert delivery | Prometheus, Loki, Grafana, Alertmanager, and Alloy |
 | Runtime-operation lifecycle, leases, fencing, outbox, inbox, idempotency, and audit records | UTCP application kernel backed by PostgreSQL |
 
+### Future Media Processing Boundary (not implemented)
+
+The following is a future compatibility boundary, not a claim that these
+authorities or resources exist today:
+
+| Concern | Future authority |
+| --- | --- |
+| Business reason for processing and AI workflow | Consuming application |
+| Media-processing intent, policy, authorization, selection, orchestration, and normalized observations | UTCP control plane |
+| RTP/SRTP transport, anchoring, relay, forking, and injection | rtpengine |
+| DSP, transformation, speech recognition, synthesis, and inference | Future Media Processor |
+| Processor Pod placement, CPU/GPU resources, restart, and scheduling | Kubernetes |
+| PBX call execution | Asterisk or FreeSWITCH |
+| Transcript persistence and retention policy | Future explicit UTCP/application policy, separate from transcription processing |
+
+Future processors attach through a controlled, identity- and tenant-scoped
+media session. Applications must not provide arbitrary processor destinations,
+and rtpengine protocol details remain below the UTCP media-orchestration
+boundary. Live processing is stream-first; files remain artifacts or consumers
+for recording and offline work. A future processor is not required to be a
+`RuntimeNode`, and no execution-resource schema is implied by this table.
+
 ## Required Separations
 
 - PostgreSQL is canonical for business records. Redis must not be treated as the source of truth.
@@ -63,9 +85,13 @@ control catalog. `runtime_operations` remains command authority,
 `runtime_observations` remains provider-fact authority, and `CallDomainService`
 remains canonical Call/CallLeg mutation authority. Provider adapters execute and
 listeners normalize; neither directly mutates canonical lifecycle state.
-Destination selection will depend on the C7 `DestinationRef` and, where
-appropriate, `TelephonyAddress` authority. Provider/runtime selection belongs to
-UTCP routing, readiness, capability, placement, and failure-domain policy, not
+C7A owns normalized external connectivity, telephony addresses, and caller
+identity authority. C7B owns the provider-neutral `DestinationRef`,
+inbound/outbound route configuration, and deterministic `RouteDecision`
+evaluation. T6 will later translate those canonical decisions into
+provider-specific execution; runtime adapters remain below this boundary and
+are not sources of route policy. Provider/runtime selection belongs to UTCP
+routing, readiness, capability, placement, and failure-domain policy, not
 ordinary dialer logic. The original working leg should remain until an explicit
 provider-appropriate commit point where technically possible; failures reconcile
 actual provider state and never fabricate rollback.

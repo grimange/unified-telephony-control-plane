@@ -15,7 +15,7 @@ spec:
   template:
     metadata:
       annotations:
-        utcp.io/kamailio-config-sha256: 56f9bc158a7eb7ee1f4a4b64d02289cfaa265c8f3976918ba574809165e2b8d6
+        utcp.io/kamailio-config-sha256: 0dadfcb93e2b4122b27dc66b423ccab51c20661add9ab64ca1b46c53959b3569
       labels:
         app.kubernetes.io/part-of: utcp
         app.kubernetes.io/component: kamailio
@@ -43,6 +43,8 @@ spec:
                 -e "s#__KAMAILIO_AUTH_DB_PASSWORD__#${KAMAILIO_AUTH_DB_PASSWORD}#g" \
                 -e "s#__KAMAILIO_USRLOC_DB_USER__#${KAMAILIO_USRLOC_DB_USER}#g" \
                 -e "s#__KAMAILIO_USRLOC_DB_PASSWORD__#${KAMAILIO_USRLOC_DB_PASSWORD}#g" \
+                -e "s#__KAMAILIO_REGISTRATION_DB_USER__#${KAMAILIO_REGISTRATION_DB_USER}#g" \
+                -e "s#__KAMAILIO_REGISTRATION_DB_PASSWORD__#${KAMAILIO_REGISTRATION_DB_PASSWORD}#g" \
                 /etc/kamailio/kamailio.cfg > /tmp/kamailio.cfg
               exec kamailio -DD -E -f /tmp/kamailio.cfg -P /tmp/kamailio.pid
           ports:
@@ -52,6 +54,9 @@ spec:
             - name: sip-udp
               containerPort: 5060
               protocol: UDP
+            - name: reg-control
+              containerPort: 8090
+              protocol: TCP
           envFrom:
             - secretRef:
                 name: utcp-local-kamailio-db-credentials

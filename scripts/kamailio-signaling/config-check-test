@@ -208,7 +208,6 @@ def validate(state: dict[str, Any]) -> None:
         "loadmodule \"path.so\"",
         "add_path",
         "path(",
-        "outbound",
         "gruu",
     ):
         require(forbidden not in kamailio.lower(), f"forbidden WebSocket dialog authority introduced: {forbidden}")
@@ -460,7 +459,7 @@ def validate(state: dict[str, Any]) -> None:
     for token in ("append_branch", "t_relay()", "$du =", "www_authorize"):
         require(token not in failure_block, f"failure route must not contain {token}")
     require(re.search(r't_check_status\("(\.\*|[1-6]\[0-9\]\[0-9\]|[45]\[0-9\]\[0-9\]|[0-9]\{3\})"\)', failure_block) is None, "failure route must not map every downstream response")
-    asterisk_targets = re.findall(r"\bsip:([^\";\s]+:5060)(?:;transport=udp)?", kamailio)
+    asterisk_targets = re.findall(r'\$du\s*=\s*"sip:([^";\s]+:5060);transport=udp"', kamailio)
     require(not any(re.match(r"(?:\d{1,3}\.){3}\d{1,3}:5060$", target) for target in asterisk_targets), "IP literal Asterisk target forbidden")
     require(asterisk_targets == ["application-runtime-sip.utcp-runtime.svc.cluster.local:5060"], "exactly one Asterisk Service DNS target required")
     asterisk_destinations = re.findall(r'\$du\s*=\s*"sip:([^";\s]+):(\d+);transport=([a-zA-Z]+)"', kamailio)
@@ -498,16 +497,22 @@ def validate(state: dict[str, Any]) -> None:
         ports = spec.get("ports") or []
         selects_kamailio = selector.get("app.kubernetes.io/component") == "kamailio"
         if selects_kamailio and any(port.get("protocol") == "UDP" for port in ports):
-            require(key(doc) == "Service/utcp-platform/kamailio-sip-internal", "only the internal Kamailio SIP Service may expose UDP")
-            require(spec.get("type") == "ClusterIP", "internal Kamailio SIP Service must be ClusterIP")
             require(selector == {
                 "app.kubernetes.io/part-of": "utcp",
                 "app.kubernetes.io/component": "kamailio",
                 "utcp.io/network-role": "kamailio-signaling",
-            }, "internal Kamailio SIP Service must select only Kamailio signaling")
-            require(ports == [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-udp"}], "internal Kamailio SIP Service must expose only UDP 5060")
-            require(not any(field in spec for field in ("externalIPs", "loadBalancerIP", "externalName")), "internal Kamailio SIP Service must not use external fields")
-        require(not (selects_kamailio and spec.get("type") in {"NodePort", "LoadBalancer"}), "Kamailio public Service type forbidden")
+            }, "Kamailio SIP Services must select only Kamailio signaling")
+            require(not any(field in spec for field in ("externalIPs", "loadBalancerIP", "externalName")), "Kamailio SIP Services must not use external fields")
+            if key(doc) == "Service/utcp-platform/kamailio-sip-internal":
+                require(spec.get("type") == "ClusterIP", "internal Kamailio SIP Service must be ClusterIP")
+                require(ports == [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-udp"}], "internal Kamailio SIP Service must expose only UDP 5060")
+            elif key(doc) == "Service/utcp-platform/kamailio-sip-external":
+                require(spec.get("type") == "NodePort", "external Kamailio SIP Service must be NodePort")
+                require(spec.get("externalTrafficPolicy") == "Cluster", "external Kamailio SIP Service must use the declared Cluster traffic policy")
+                require(ports == [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-udp", "nodePort": 30560}], "external Kamailio SIP Service must expose only UDP 5060 through NodePort 30560")
+            else:
+                raise ValidationError("unapproved Kamailio UDP Service")
+        require(not (selects_kamailio and spec.get("type") == "LoadBalancer"), "Kamailio LoadBalancer Service forbidden")
     require("Service/utcp-platform/kamailio-sip-internal" in local_objects, "internal Kamailio SIP Service required")
 
     kamailio_policy = security_objects.get("NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic")
@@ -519,13 +524,25 @@ def validate(state: dict[str, Any]) -> None:
         for rule in (kamailio_policy.get("spec") or {}).get("egress") or []
         if rule.get("ports") == [{"port": 5060, "protocol": "UDP"}] or rule.get("ports") == [{"protocol": "UDP", "port": 5060}]
     ]
+    require((kamailio_policy.get("spec") or {}).get("podSelector", {}).get("matchLabels") == {"utcp.io/network-role": "kamailio-signaling"}, "Kamailio policy must select only the canonical signaling workload")
+    external_sip_egress = [
+        rule for rule in (kamailio_policy.get("spec") or {}).get("egress") or []
+        if rule.get("ports") == [{"protocol": "UDP", "port": 5060}] and "to" not in rule
+    ]
+    require(external_sip_egress == [{"ports": [{"protocol": "UDP", "port": 5060}]}], "Kamailio must expose exactly one destination-agnostic UDP 5060 egress capability")
+    require([rule for rule in (kamailio_policy.get("spec") or {}).get("egress") or [] if "to" not in rule] == external_sip_egress, "Kamailio must not expose unrelated destination-agnostic egress ports")
+    require(not any("ipBlock" in peer for rule in (kamailio_policy.get("spec") or {}).get("egress") or [] for peer in rule.get("to", [])), "Kamailio egress must not contain provider IP blocks")
     require(any(rule.get("to") == [{
         "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
         "podSelector": {"matchLabels": {
             "app.kubernetes.io/component": "asterisk-ari",
             "utcp.io/network-role": "asterisk-ari",
         }},
-    }] for rule in kamailio_egress), "Kamailio egress destination must include exact canonical Asterisk runtime")
+    }] for rule in kamailio_egress), "Kamailio egress must retain exact canonical Asterisk runtime")
+    require(any(rule.get("to") == [{
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+        "podSelector": {"matchLabels": {"utcp.io/network-role": "freeswitch-esl"}},
+    }] and rule.get("ports") == [{"protocol": "UDP", "port": 5060}] for rule in kamailio_egress), "Kamailio egress must retain exact canonical FreeSWITCH runtime")
     asterisk_media_ingress = {
         "from": [{
             "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
@@ -574,7 +591,16 @@ def validate(state: dict[str, Any]) -> None:
     }] and rule.get("ports") == [{"protocol": "UDP", "port": 5060}] for rule in (kamailio_policy.get("spec") or {}).get("ingress") or []), "Kamailio ingress must be exact canonical Asterisk UDP 5060")
     for policy in (kamailio_policy, asterisk_policy):
         rendered = yaml.safe_dump(policy, sort_keys=True)
-        require("ipBlock" not in rendered, "SIP policy must not use ipBlock")
+        if policy is kamailio_policy:
+            ip_blocks = [
+                peer.get("ipBlock", {}).get("cidr")
+                for rule in (policy.get("spec") or {}).get("ingress") or []
+                for peer in rule.get("from", [])
+                if "ipBlock" in peer
+            ]
+            require(ip_blocks == ["38.146.161.46/32"], "Kamailio external SIP ingress must use only the approved PBX source")
+        else:
+            require("ipBlock" not in rendered, "runtime SIP policy must not use ipBlock")
         require("podSelector: {}\n" not in rendered, "SIP policy must not use namespace-wide peers")
 
 
@@ -663,6 +689,17 @@ def widen_kamailio_sip_egress(policy: dict[str, Any]) -> None:
         ):
             for peer in rule.get("to", []):
                 peer.pop("podSelector", None)
+
+
+def remove_external_kamailio_sip_egress(policy: dict[str, Any]) -> None:
+    policy["spec"]["egress"] = [
+        rule for rule in policy["spec"]["egress"]
+        if not (rule.get("ports") == [{"protocol": "UDP", "port": 5060}] and "to" not in rule)
+    ]
+
+
+def add_unrelated_kamailio_egress(policy: dict[str, Any]) -> None:
+    policy["spec"]["egress"].append({"ports": [{"protocol": "TCP", "port": 5060}]})
 
 
 def move_initial_domain_before_has_totag(state: dict[str, Any]) -> None:
@@ -928,7 +965,15 @@ def remove_initial_media_offer_call(state: dict[str, Any]) -> None:
 
 
 def remove_media_answer_route(state: dict[str, Any]) -> None:
-    set_kamailio_config(state, state["kamailio"].replace('    t_on_reply("APPLICATION_RUNTIME_MEDIA_REPLY");\n', "", 1), update_checksum=True)
+    config = state["kamailio"]
+    marker = "route[APPLICATION_RUNTIME_RELAY]"
+    block = block_after(config, marker)
+    token = 't_on_reply("APPLICATION_RUNTIME_MEDIA_REPLY");\n'
+    if token not in block:
+        raise RuntimeError("test setup could not find application-runtime answer route arming")
+    updated = block.replace(token, "", 1)
+    config = config.replace(block, updated, 1)
+    set_kamailio_config(state, config, update_checksum=True)
 
 
 def remove_onreply_media_answer_delegate(state: dict[str, Any]) -> None:
@@ -1071,9 +1116,13 @@ fail_case("removing SIP Service fails", lambda s: s.update(local_docs=[doc for d
 fail_case("SIP Service NodePort fails", lambda s: mutate_doc(s, "Service/utcp-runtime/application-runtime-sip", lambda d: d["spec"].update(type="NodePort")))
 fail_case("HostPort fails", lambda s: mutate_doc(s, "Deployment/utcp-runtime/asterisk-ari", lambda d: d["spec"]["template"]["spec"]["containers"][0]["ports"][1].update(hostPort=5060)))
 fail_case("removing Kamailio egress fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic", remove_kamailio_sip_egress, "security_docs"))
+fail_case("removing external SIP capability fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic", remove_external_kamailio_sip_egress, "security_docs"))
+fail_case("adding unrelated Kamailio egress fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic", add_unrelated_kamailio_egress, "security_docs"))
 fail_case("removing Asterisk ingress fails", lambda s: s.update(security_docs=[doc for doc in s["security_docs"] if key(doc) != "NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio"]))
 fail_case("widening Kamailio policy fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic", widen_kamailio_sip_egress, "security_docs"))
 fail_case("widening Asterisk policy fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio", lambda d: d["spec"]["ingress"][0]["from"][0].pop("podSelector", None), "security_docs"))
+fail_case("adding sip scheme to reg_contact_addr fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('modparam("uac", "reg_contact_addr", "kamailio-sip-internal.utcp-platform.svc.cluster.local:5060")', 'modparam("uac", "reg_contact_addr", "sip:kamailio-sip-internal.utcp-platform.svc.cluster.local:5060")')))
+fail_case("changing reg_contact_addr host or port fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("kamailio-sip-internal.utcp-platform.svc.cluster.local:5060", "kamailio-sip-internal.utcp-platform.svc.cluster.local:5061")))
 fail_case("removing siputils module fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('loadmodule "siputils.so"\n', "")))
 fail_case("moving initial domain validation before has_totag fails", move_initial_domain_before_has_totag)
 fail_case("removing request_route WITHINDLG dispatch fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('    if (has_totag()) {\n        route(WITHINDLG);\n        exit;\n    }\n\n', "")))
@@ -1139,8 +1188,8 @@ fail_case("Kamailio UDP Service exposure fails", lambda s: mutate_doc(s, "Servic
 fail_case("removing internal Kamailio SIP Service fails", lambda s: s.update(local_docs=[doc for doc in s["local_docs"] if key(doc) != "Service/utcp-platform/kamailio-sip-internal"]))
 fail_case("internal Kamailio SIP Service NodePort fails", lambda s: mutate_doc(s, "Service/utcp-platform/kamailio-sip-internal", lambda d: d["spec"].update(type="NodePort")))
 fail_case("internal Kamailio SIP Service LoadBalancer fails", lambda s: mutate_doc(s, "Service/utcp-platform/kamailio-sip-internal", lambda d: d["spec"].update(type="LoadBalancer")))
-fail_case("Kamailio NodePort exposure fails", lambda s: mutate_doc(s, "Service/utcp-platform/kamailio", lambda d: d["spec"].update(type="NodePort")))
-fail_case("Kamailio LoadBalancer exposure fails", lambda s: mutate_doc(s, "Service/utcp-platform/kamailio", lambda d: d["spec"].update(type="LoadBalancer")))
+fail_case("Kamailio external NodePort contract fails", lambda s: mutate_doc(s, "Service/utcp-platform/kamailio-sip-external", lambda d: d["spec"]["ports"][0].update(nodePort=30561)))
+fail_case("Kamailio LoadBalancer exposure fails", lambda s: mutate_doc(s, "Service/utcp-platform/kamailio-sip-external", lambda d: d["spec"].update(type="LoadBalancer")))
 fail_case("Kamailio UDPRoute exposure fails", lambda s: s["local_docs"].append({"apiVersion": "gateway.networking.k8s.io/v1alpha2", "kind": "UDPRoute", "metadata": {"name": "kamailio-sip", "namespace": "utcp-platform"}, "spec": {}}))
 fail_case("Kamailio hostNetwork fails", lambda s: mutate_doc(s, "Deployment/utcp-platform/kamailio", lambda d: d["spec"]["template"]["spec"].update(hostNetwork=True)))
 fail_case("Kamailio Pod IP listener fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("listen=udp:0.0.0.0:5060 advertise", "listen=udp:10.42.1.99:5060 advertise"), update_checksum=True))
@@ -1199,7 +1248,7 @@ fail_case("adding direct rtpengine operation outside media routes fails", lambda
 fail_case("removing Asterisk reverse egress fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio", lambda d: d["spec"].pop("egress", None), "security_docs"))
 fail_case("removing Kamailio reverse ingress fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-platform/allow-kamailio-signaling-required-traffic", lambda d: d["spec"].update(ingress=[rule for rule in d["spec"]["ingress"] if rule.get("ports") != [{"protocol": "UDP", "port": 5060}]]), "security_docs"))
 fail_case("widening Asterisk reverse egress fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio", lambda d: d["spec"]["egress"][0]["to"][0].pop("podSelector", None), "security_docs"))
-fail_case("allowing secondary Asterisk workload fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio", lambda d: d["spec"]["podSelector"]["matchLabels"].pop("utcp.dev/runtime-node", None), "security_docs"))
+fail_case("allowing secondary Asterisk workload fails", lambda s: mutate_doc(s, "NetworkPolicy/utcp-runtime/allow-asterisk-sip-from-kamailio", lambda d: d["spec"]["podSelector"]["matchLabels"].pop("utcp.io/network-role", None), "security_docs"))
 fail_case("base proof extension fails", lambda s: s.update(extensions=s["extensions"] + "\nexten => 9900,1,Answer()\n"))
 
 rendered_invalid = load_state()

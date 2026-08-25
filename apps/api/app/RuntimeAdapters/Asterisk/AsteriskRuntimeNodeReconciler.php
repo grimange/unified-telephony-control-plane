@@ -8,7 +8,9 @@ use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClientException;
 use App\RuntimeEngine\Reconciliation\Reconciler;
 use App\RuntimeEngine\Reconciliation\ReconciliationResult;
 use App\RuntimeProvisioning\ManagedAsteriskProvisioningOperationHandler;
+use App\RuntimeRegistry\RuntimeExecutionContract;
 use App\RuntimeRegistry\RuntimeRegistryService;
+use App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentity;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -56,6 +58,16 @@ final class AsteriskRuntimeNodeReconciler implements Reconciler
         }
 
         if ($this->registry !== null && $this->registry->isManagedNode((string) $node->tenant_id, (string) $node->id)) {
+            $image = (string) config('asterisk_ari.managed_image', '');
+            if (! preg_match('/^[^\/\s]+\/utcp\/asterisk-ari@sha256:[0-9a-f]{64}$/', $image)) {
+                return ReconciliationResult::blocked('managed_asterisk_image_invalid');
+            }
+            $this->registry->ensureManagedExecutionImage(
+                ExecutionContext::system(tenantId: (string) $node->tenant_id, reason: 'managed Asterisk execution image convergence', origin: 'runtime-engine'),
+                (string) $node->tenant_id,
+                (string) $node->id,
+                $image,
+            );
             if (! $this->convergeManagedDeployment($node)) {
                 return ReconciliationResult::waiting('managed_deployment_convergence_failed', 30);
             }
@@ -66,6 +78,8 @@ final class AsteriskRuntimeNodeReconciler implements Reconciler
                 (string) $node->id,
                 config('runtime_registry.adapter_keys.asterisk-ari.supported_capabilities', []),
             );
+            $node = DB::table('runtime_nodes')->where('id', $node->id)->first();
+            $this->observeManagedImage($node);
             $node = DB::table('runtime_nodes')->where('id', $node->id)->first();
         }
 
@@ -83,7 +97,10 @@ final class AsteriskRuntimeNodeReconciler implements Reconciler
         }
 
         $observedGeneration = $node->observed_configuration_version === null ? 0 : (int) $node->observed_configuration_version;
-        if ($node->observed_state === 'ready' && $observedGeneration >= (int) $node->configuration_version) {
+        if ($node->observed_state === 'ready'
+            && $observedGeneration >= (int) $node->configuration_version
+            && ($node->desired_execution_image === null || RuntimeExecutionContract::isCurrent($node->desired_execution_image, $node->observed_execution_image))
+        ) {
             return ReconciliationResult::converged(120);
         }
 
@@ -128,5 +145,44 @@ final class AsteriskRuntimeNodeReconciler implements Reconciler
         $hasEventsCapability = DB::table('runtime_node_capabilities')->where('runtime_node_id', $runtimeNodeId)->where('capability_key', 'event.stream')->exists();
 
         return $hasControl && $hasEvents && $hasCredential && $hasProfile && $hasObservation && $hasEventsCapability;
+    }
+
+    private function observeManagedImage(object $node): void
+    {
+        if ($this->kubernetes === null) {
+            return;
+        }
+
+        try {
+            $labels = is_string($node->labels)
+                ? json_decode($node->labels, true, 512, JSON_THROW_ON_ERROR)
+                : ($node->labels ?? []);
+            $workload = is_array($labels) ? ($labels['kubernetes_workload'] ?? null) : null;
+            if (! is_array($workload) || ! isset($workload['namespace'], $workload['deployment'])) {
+                return;
+            }
+            $pods = $this->kubernetes->listOwnedPods(
+                (string) $workload['namespace'],
+                new RuntimeNodeWorkloadIdentity((string) $workload['namespace'], (string) $workload['deployment']),
+            );
+            $image = null;
+            foreach ($pods as $pod) {
+                foreach (data_get($pod, 'status.containerStatuses', []) as $status) {
+                    if (($status['name'] ?? '') === 'asterisk' && is_string($status['imageID'] ?? null) && $status['imageID'] !== '') {
+                        $image = RuntimeExecutionContract::digest($status['imageID']);
+                        break 2;
+                    }
+                }
+            }
+            DB::table('runtime_nodes')->where('id', $node->id)->update([
+                'observed_execution_image' => $image,
+                'updated_at' => now(),
+            ]);
+        } catch (\Throwable $exception) {
+            Log::warning('managed Asterisk execution image observation failed', [
+                'runtime_node_id' => (string) $node->id,
+                'reason' => $exception->getMessage(),
+            ]);
+        }
     }
 }

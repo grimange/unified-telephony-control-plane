@@ -723,10 +723,22 @@ F0 Repository contract
 ```
 
 `T5` is complete and remains historical/runtime-control-plane closure; it is
-not a current next phase. `K5` Host visibility and `C8` Unified Call Transfer
-and Inter-Runtime Handoff are parallel or post-R0 tracks unless evidence adds a
-specific dependency to the mainline. The browser Reference Dialer is a
-Reference Telephony Client and acceptance vehicle, not UTCP's product.
+not a current next phase. `K5` Distributed Telephony Infrastructure, Placement
+and Host Lifecycle is a planned parallel, R0-critical infrastructure track. It
+does not serially gate T4 or C7A, but its bounded K5E distributed proof is
+required before R0 closes. `C8` Unified Call Transfer and Inter-Runtime
+Handoff remains a parallel/post-R0 track unless evidence adds a specific
+dependency to the mainline. The browser Reference Dialer is a Reference
+Telephony Client and acceptance vehicle, not UTCP's product.
+
+UTCP is Kubernetes-first because its intended product direction is to operate
+distributed telephony infrastructure across machines and host failure
+domains, then support multi-site and hybrid/cloud growth without surrendering
+vendor-neutral canonical telephony authority. Kubernetes owns infrastructure
+facts, scheduling, and workload placement; UTCP owns telephony-aware
+eligibility, RuntimeNode lifecycle, placement interpretation, maintenance
+coordination, reconciliation, and audit. The serial telephony mainline and the
+parallel K5 track converge at R0.
 
 Do not infer completion from this list. Read the current phase marker and phase-status document.
 

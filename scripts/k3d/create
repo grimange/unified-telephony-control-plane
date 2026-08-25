@@ -7,26 +7,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 required_tools
 "$SCRIPT_DIR/config-check" >/dev/null
-validate_ports_available_for_create
 
 before_context="$(kubectl config current-context 2>/dev/null || true)"
-
-if cluster_exists; then
-  printf 'k3d cluster already exists: %s\n' "$K3D_CLUSTER_NAME"
-else
-  k3d cluster create --config "$CLUSTER_CONFIG" --timeout 180s --wait=false --kubeconfig-update-default=false --kubeconfig-switch-context=false
-fi
+initial_state="$(cluster_state)"
+ensure_cluster_running
 
 write_kubeconfig
 apply_namespaces
 wait_for_nodes
 wait_for_system_pods
-"$SCRIPT_DIR/verify"
 
 after_context="$(kubectl config current-context 2>/dev/null || true)"
 if [ "$before_context" != "$after_context" ]; then
   printf 'global Kubernetes context changed unexpectedly: before=%s after=%s\n' "$before_context" "$after_context" >&2
   exit 1
+fi
+
+if [ "$initial_state" = "ABSENT" ]; then
+  "$SCRIPT_DIR/verify" >/dev/null
+else
+  "$SCRIPT_DIR/runtime-ready" >/dev/null
 fi
 
 printf 'K0 cluster ready: %s\n' "$K3D_CLUSTER_NAME"

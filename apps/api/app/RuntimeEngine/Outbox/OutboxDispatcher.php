@@ -4,6 +4,7 @@ namespace App\RuntimeEngine\Outbox;
 
 use App\ControlPlane\Messaging\InboxRepository;
 use App\ControlPlane\Messaging\OutboxRepository;
+use App\TelephonyDomain\Projection\T6ProjectionDispatcher;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -13,6 +14,7 @@ final class OutboxDispatcher
         private readonly OutboxRepository $outbox,
         private readonly InboxRepository $inbox,
         private readonly OperationalBroadcastBridge $operationalBroadcasts = new OperationalBroadcastBridge,
+        private readonly T6ProjectionDispatcher $t6Projections = new T6ProjectionDispatcher,
     ) {}
 
     public function dispatchOnce(string $workerId, int $batchSize = 10, int $leaseSeconds = 60): int
@@ -69,6 +71,7 @@ final class OutboxDispatcher
 
         if ($status === 'accepted' || $status === 'duplicate_pending') {
             $this->operationalBroadcasts->dispatchForOutboxRow($row);
+            $this->t6Projections->dispatch((string) $row->aggregate_type, $row->tenant_id === null ? null : (string) $row->tenant_id);
             $this->inbox->markProcessed('control-plane-generic-consumer', $claim->id);
         }
     }

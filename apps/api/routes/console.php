@@ -19,6 +19,7 @@ use App\RuntimeEngine\Reconciliation\ReconciliationWorker;
 use App\Simulator\SimulatorEventSourceWorker;
 use App\TelephonyDomain\Failover\ConferenceFailoverCoordinator;
 use App\TelephonyDomain\Signaling\KamailioRegistrationObserver;
+use App\TelephonyDomain\Signaling\KamailioExternalTrunkRegistrationObserver;
 use App\TelephonyDomain\Signaling\KamailioRegistrationPollHealthRepository;
 use App\TelephonyDomain\TelephonyDomainService;
 use Illuminate\Foundation\Inspiring;
@@ -406,7 +407,7 @@ Artisan::command('runtime-engine:reconciler {--once : Process one batch and exit
     return 0;
 })->purpose('Run the generic reconciliation worker.');
 
-Artisan::command('kamailio-registration:observer {--once : Collect one snapshot and exit} {--sleep=5 : Seconds between snapshots}', function (KamailioRegistrationObserver $observer, KamailioRegistrationPollHealthRepository $pollHealth): int {
+Artisan::command('kamailio-registration:observer {--once : Collect one snapshot and exit} {--sleep=5 : Seconds between snapshots}', function (KamailioRegistrationObserver $observer, KamailioExternalTrunkRegistrationObserver $externalObserver, KamailioRegistrationPollHealthRepository $pollHealth): int {
     $owner = gethostname().':kamailio-registration-observer:'.getmypid();
     $sleep = max(1, (int) $this->option('sleep'));
     do {
@@ -416,6 +417,12 @@ Artisan::command('kamailio-registration:observer {--once : Collect one snapshot 
             $this->line('kamailio_registration_observer_receipts='.$result['receipts']);
             $this->line('kamailio_registration_observer_checkpoint_advanced='.($result['checkpoint_advanced'] ? '1' : '0'));
             $pollHealth->recordSuccess();
+            DB::table('trunk_endpoints')
+                ->where('signaling_mode', 'outbound_registration')
+                ->whereIn('desired_state', ['active', 'draining'])
+                ->distinct()
+                ->pluck('tenant_id')
+                ->each(fn (string $tenantId) => $externalObserver->pollTenant($tenantId));
         } catch (Throwable $exception) {
             $pollHealth->recordFailure();
             Log::warning('kamailio registration observer poll failed', [

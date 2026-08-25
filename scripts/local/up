@@ -7,7 +7,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 require_no_persistent_compose
 
-"$ROOT/scripts/k3d/create"
+"$ROOT/scripts/k3d/start"
+"$ROOT/scripts/k3d/cluster-dns-apply"
 "$ROOT/scripts/k3d/registry-proof"
 "$ROOT/scripts/kubernetes/image-build"
 "$ROOT/scripts/kubernetes/image-push"

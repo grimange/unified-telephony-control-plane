@@ -36,6 +36,13 @@ final class RuntimeEvidenceService
             'observed_at' => $node->observed_at,
             'desired_configuration_generation' => (int) $node->configuration_version,
             'observed_configuration_generation' => $node->observed_configuration_version === null ? null : (int) $node->observed_configuration_version,
+            'desired_execution_image' => $node->desired_execution_image,
+            'observed_execution_image' => $node->observed_execution_image,
+            'execution_image_current' => RuntimeExecutionContract::isCurrent($node->desired_execution_image, $node->observed_execution_image),
+            'execution_contract_current' => $node->observed_state === 'ready'
+                && $node->observed_configuration_version !== null
+                && (int) $node->observed_configuration_version >= (int) $node->configuration_version
+                && RuntimeExecutionContract::isCurrent($node->desired_execution_image, $node->observed_execution_image),
             'listener' => [
                 'status' => $lease?->status,
                 'lease_freshness' => $this->freshness($lease?->lease_expires_at),

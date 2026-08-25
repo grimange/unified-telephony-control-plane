@@ -13,7 +13,7 @@ cleanup() {
 trap cleanup EXIT
 
 make image-build-freeswitch UTCP_FREESWITCH_IMAGE="$image" >/dev/null
-mkdir -p "$tmp/log" "$tmp/run" "$tmp/db"
+mkdir -p "$tmp/run" "$tmp/db"
 chown -R 1000:1000 "$tmp"
 esl_password=utcp_freeswitch_smoke_secret
 
@@ -23,7 +23,6 @@ docker run -d --name "$container" \
   --cap-drop ALL \
   --tmpfs /tmp:rw,noexec,nosuid,nodev \
   -e UTCP_ESL_PASSWORD="$esl_password" \
-  -v "$tmp/log:/var/log/freeswitch" \
   -v "$tmp/run:/var/run/freeswitch" \
   -v "$tmp/db:/var/lib/freeswitch" \
   "$image" >/dev/null
@@ -45,6 +44,13 @@ while :; do
   sleep 1
 done
 
+startup_logs="$(docker logs "$container" 2>&1 || true)"
+grep -Eq 'FreeSWITCH|CONSOLE' <<<"$startup_logs" || {
+  printf '%s\n' "$startup_logs" >&2
+  printf 'FreeSWITCH console logs were not emitted to container stdout/stderr\n' >&2
+  exit 1
+}
+
 docker exec "$container" sh -eu -c '
   modules="$(fs_cli -q -H 127.0.0.1 -P 8021 -p "$UTCP_ESL_PASSWORD" -x "show modules")"
   for module in mod_console mod_commands mod_dialplan_xml mod_dptools mod_sofia mod_event_socket; do
@@ -57,7 +63,6 @@ docker exec "$container" sh -eu -c '
   grep -q 'rtp-start-port.*21000' /etc/freeswitch/autoload_configs/switch.conf.xml
   grep -q 'rtp-end-port.*21099' /etc/freeswitch/autoload_configs/switch.conf.xml
   grep -q 9900 /etc/freeswitch/dialplan/utcp.xml
-  test -w /var/log/freeswitch
   test -w /var/run/freeswitch
   test -w /var/lib/freeswitch/db
 '

@@ -2,6 +2,15 @@
 
 UTCP is the platform layer beneath telephony applications. Applications such as dialers, contact centers, IVR systems, and voice automation products can build on it without directly owning runtime fleet control, reconciliation, health history, or audit.
 
+Its Kubernetes-first direction is intentional: UTCP is designed to operate
+vendor-neutral telephony infrastructure across multiple machines and host
+failure domains, with a future-compatible path toward multi-site and
+hybrid/cloud execution. Kubernetes supplies infrastructure facts, scheduling,
+and workload placement; UTCP supplies the telephony-aware control-plane layer
+for RuntimeNode eligibility, lifecycle, placement interpretation, maintenance,
+reconciliation, and audit. UTCP is neither the consuming telephony application
+nor a replacement Kubernetes control plane.
+
 ## Current Phase
 
 T0 is complete locally on top of K0-K4 and C0-C5. T1 Kamailio SIP-over-WSS registration is in progress and `UTCP_PHASE` remains `T0` until the remaining T1 acceptance work passes. The canonical integrated local runtime is the `utcp-local` Kubernetes cluster. Docker Compose remains as a disposable compatibility proof and explicit optional debug mode, not a continuously running parallel runtime. The current platform has a Laravel API process, Vue administration shell, k3d/Kubernetes application base, standard-port local Gateway edge, pinned Pod Security Admission labels, default-deny NetworkPolicies with explicit allow paths, Prometheus metrics, Loki log aggregation, Grafana dashboards, Alertmanager alerts, Alloy Kubernetes API log collection, runtime-neutral kernel primitives for operations, leases, fencing, outbox, inbox, idempotency, audit, event envelopes, and execution context, PostgreSQL-authoritative users, tenants, memberships, built-in roles/capabilities, first-party sessions, active-tenant selection, server-computed capability projection, a tenant-scoped runtime-node registry, backend-driven RuntimeNode management catalogs, scoped runtime evidence and history APIs, C3 PostgreSQL-backed runtime receipts, observations, projection checkpoints, reconciliation state, a C4 deterministic runtime-neutral simulator adapter selected only through the existing authenticated runtime-registry API, C5 PostgreSQL-authoritative telephony sessions, conferences, runtime bindings, conference participants, runtime-neutral conference operations, simulator-backed conference observations, projection, reconciliation, and expiry automation, and a T0 `asterisk-ari` adapter boundary for ARI HTTP inspection and event WebSocket ingestion. The T1 repository implementation now includes TelephonySession-scoped signaling credentials, a pinned Kamailio WSS registrar foundation, fenced registration observer/projection repository logic, registration reconciliation, and a User & Access Management signaling panel under the active TelephonySession. Natural browser acceptance, disposable Kamailio Compose compatibility, full T1 promotion, media, ESL event listeners, and Asterisk conference execution remain future work.
@@ -31,6 +40,35 @@ Planned components:
 - Simulator runtime after registry and command/event contracts exist.
 - Asterisk, FreeSWITCH, Kamailio, and rtpengine behind explicit adapter/runtime boundaries in later phases.
 
+### Future Media Processing Boundary (not yet implemented)
+
+UTCP preserves a future stream-first seam for media processing without making
+it part of the current application kernel or R0 critical path:
+
+```text
+Application / consumer business intent
+                |
+                v
+        UTCP Control Plane
+                |
+                v
+        rtpengine media transport plane
+                |
+                v
+        Future Media Processing Plane
+```
+
+UTCP may eventually orchestrate authorized, capability-oriented processor
+attachments; rtpengine remains responsible for RTP/SRTP transport, anchoring,
+forking, and injection; and replaceable Media Processors may observe, transform,
+or participate in media. The future seam is a live media stream correlated to
+the canonical Call/CallLeg/participant identity, not a WAV-file API. Observer,
+inline-transformer, and interactive-participant failure semantics are distinct
+and must be explicit when implemented. Processor language, model, vendor, and
+deployment runtime are deliberately not canonical. Media Processors are not
+current RuntimeNodes, and no processor schema, API, service, or roadmap phase
+is introduced here. See [`ADR-026`](../decisions/ADR-026-future-media-processing-plane-and-ai-integration-boundary.md).
+
 Planned external HTTPS/WSS edge:
 
 ```text
@@ -58,8 +96,8 @@ keeps one logical `Call` with source, consultation, and target `CallLeg` records
 where possible, and can span RuntimeNodes and providers without exposing ARI,
 ESL, SIP REFER, provider channel IDs, or media-routing details to the consuming
 application. It orchestrates existing C6 call-control primitives and reuses
-runtime operations, observations, audit, and the future C7 `DestinationRef` /
-`TelephonyAddress` authority. This is roadmap direction only; see
+runtime operations, observations, audit, and the current C7A/C7B
+`DestinationRef`/route authority. T6 remains the later projection boundary; see
 [`ADR-025`](../decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md).
 
 ## Current Application Kernel Boundary

@@ -49,6 +49,7 @@ final class CallDomainService
         private readonly OutboxRepository $outbox,
         private readonly RuntimeOperationRepository $operations,
         private readonly ReconciliationRepository $reconciliation,
+        private readonly C7bService $routes,
     ) {}
 
     /** @return array{call_id:string, leg_id:string, operation_id:string} */
@@ -69,6 +70,15 @@ final class CallDomainService
                 return $existing;
             }
 
+            $routeableDestination = is_string($destinationRef) && str_starts_with($destinationRef, 'telephony_address:');
+            $decision = ! $routeableDestination ? null : $this->routes->evaluateOutbound($tenantId, $destinationRef);
+            if ($decision !== null && ! $decision->isSelected()) {
+                throw new InvalidArgumentException('outbound_route_'.$decision->toArray()['failure_code']);
+            }
+            $endpoint = $decision === null ? null : $this->routes->resolveOutboundEndpoint($tenantId, $decision);
+            $executionDestination = $decision === null ? $destinationRef : $this->routes->executionDestination($tenantId, $decision);
+            $decisionData = $decision === null ? null : [...$decision->toArray(), 'trunk_endpoint_id' => (string) $endpoint->id];
+
             $callId = TelephonyDomainIds::new();
             $legId = TelephonyDomainIds::new();
             $now = now();
@@ -80,7 +90,10 @@ final class CallDomainService
                 'desired_state' => 'active',
                 'observed_state' => CallState::Requested->value,
                 'runtime_node_id' => $runtimeNodeId,
-                'destination_ref' => $destinationRef,
+                'destination_ref' => $decision?->destination()?->canonical() ?? $destinationRef,
+                'caller_identity_ref' => $decision?->callerIdentityId(),
+                'route_decision' => $decisionData === null ? null : json_encode($decisionData, JSON_THROW_ON_ERROR),
+                'route_decision_source' => $decision === null ? null : 'c7b',
                 'requested_by_user_id' => $context->actorId,
                 'correlation_id' => $context->correlationId->value(),
                 'created_at' => $now,
@@ -92,6 +105,12 @@ final class CallDomainService
                 'call_id' => $callId,
                 'runtime_node_id' => $runtimeNodeId,
                 'runtime_channel_id' => self::runtimeChannelId($legId),
+                'destination_ref' => $decision?->destination()?->canonical() ?? $destinationRef,
+                'caller_identity_ref' => $decision?->callerIdentityId(),
+                'route_decision_id' => $decision?->id(),
+                'outbound_route_id' => $decision?->routeId(),
+                'external_trunk_id' => $decision?->externalTrunkId(),
+                'trunk_endpoint_id' => $endpoint?->id,
                 'direction' => CallDirection::Outbound->value,
                 'role' => CallLegRole::Destination->value,
                 'desired_state' => 'active',
@@ -105,8 +124,14 @@ final class CallDomainService
                 'call_id' => $callId,
                 'leg_id' => $legId,
                 'runtime_node_id' => $runtimeNodeId,
-                'destination_ref' => $destinationRef,
+                'destination_ref' => $decision?->destination()?->canonical() ?? $destinationRef,
+                'caller_identity_id' => $decision?->callerIdentityId(),
+                'route_decision_id' => $decision?->id(),
+                'outbound_route_id' => $decision?->routeId(),
+                'external_trunk_id' => $decision?->externalTrunkId(),
+                'trunk_endpoint_id' => $endpoint?->id,
                 'runtime_channel_id' => self::runtimeChannelId($legId),
+                'destination_uri' => $executionDestination,
             ], $idempotencyKey, $runtimeNodeId);
             $this->applyCallTransition($tenantId, $callId, CallState::Originating, 'command-requested');
             $this->applyLegTransition($tenantId, $legId, CallState::Originating, 'command-requested');

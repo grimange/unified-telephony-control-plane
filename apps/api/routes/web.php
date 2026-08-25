@@ -10,6 +10,8 @@ use App\Http\Controllers\Identity\AdminUserController;
 use App\Http\Controllers\Identity\AuthController;
 use App\Http\Controllers\RuntimeProvisioning\AdminRuntimeProvisioningController;
 use App\Http\Controllers\RuntimeRegistry\AdminRuntimeNodeController;
+use App\Http\Controllers\TelephonyDomain\AdminC7aController;
+use App\Http\Controllers\TelephonyDomain\AdminC7bController;
 use App\Http\Controllers\TelephonyDomain\AdminConferenceController;
 use App\Http\Controllers\TelephonyDomain\CallController;
 use App\Http\Controllers\TelephonyDomain\ConferenceController;
@@ -93,6 +95,28 @@ Route::prefix('api/v1/admin')->middleware(['identity.session'])->group(function 
     Route::post('/conferences/{conference}/runtime-binding', [AdminConferenceController::class, 'runtimeBinding']);
     Route::get('/conferences/{conference}/participants', [AdminConferenceController::class, 'participants']);
     Route::post('/conferences/{conference}/participants/{participant}/remove', [AdminConferenceController::class, 'removeParticipant']);
+
+    Route::get('/external-trunks', [AdminC7aController::class, 'trunks']);
+    Route::post('/external-trunks', [AdminC7aController::class, 'createTrunk']);
+    Route::get('/external-trunks/{trunk}', [AdminC7aController::class, 'trunk']);
+    Route::patch('/external-trunks/{trunk}', [AdminC7aController::class, 'updateTrunk']);
+    Route::post('/external-trunks/{trunk}/desired-state', [AdminC7aController::class, 'trunkState']);
+    Route::post('/external-trunks/{trunk}/endpoints', [AdminC7aController::class, 'endpoint']);
+    Route::post('/external-trunks/{trunk}/endpoints/{endpoint}/desired-state', [AdminC7aController::class, 'endpointState']);
+    Route::post('/external-trunks/{trunk}/addresses', [AdminC7aController::class, 'attachAddress']);
+    Route::post('/external-trunks/{trunk}/credentials', [AdminC7aController::class, 'credential']);
+    Route::get('/telephony-addresses', [AdminC7aController::class, 'addresses']);
+    Route::post('/telephony-addresses', [AdminC7aController::class, 'createAddress']);
+    Route::post('/telephony-addresses/{address}/desired-state', [AdminC7aController::class, 'addressState']);
+    Route::get('/caller-identities', [AdminC7aController::class, 'callerIdentities']);
+    Route::post('/caller-identities', [AdminC7aController::class, 'createCallerIdentity']);
+    Route::post('/caller-identities/{identity}/desired-state', [AdminC7aController::class, 'callerIdentityState']);
+    Route::post('/caller-identities/{identity}/policies', [AdminC7aController::class, 'callerIdentityPolicy']);
+    Route::get('/inbound-routes', [AdminC7bController::class, 'inbound']);
+    Route::post('/inbound-routes', [AdminC7bController::class, 'createInbound']);
+    Route::get('/outbound-routes', [AdminC7bController::class, 'outbound']);
+    Route::post('/outbound-routes', [AdminC7bController::class, 'createOutbound']);
+    Route::post('/{kind}-routes/{route}/desired-state', [AdminC7bController::class, 'state'])->whereIn('kind', ['inbound', 'outbound']);
 });
 
 Route::prefix('api/v1')->middleware(['identity.session'])->group(function (): void {

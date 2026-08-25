@@ -31,7 +31,14 @@ final class FreeSwitchEslAdapterTest extends TestCase
         $one = [['id' => $id, 'call_id' => 'call-1', 'runtime_channel_id' => $uuid]];
         $two = [$one[0], ['id' => 'leg-2', 'call_id' => 'call-1', 'runtime_channel_id' => 'utcp-call-leg-leg-2']];
         $cases = [
-            ['call.leg.originate', ['leg_id' => $id, 'destination_ref' => 'sofia/gateway/carrier/15551212'], [], 'bgapi', 'originate {origination_uuid='.$uuid.'}sofia/gateway/carrier/15551212 &park', 'freeswitch.originate'],
+            ['call.leg.originate', [
+                'leg_id' => $id,
+                'destination_ref' => 'telephony_address:97001',
+                'destination_uri' => '97001',
+                'route_decision_id' => 'route-decision-1',
+                'trunk_endpoint_id' => 'endpoint-1',
+                'caller_identity_id' => 'caller-1',
+            ], [], 'bgapi', 'originate {origination_uuid='.$uuid.',timer_name=soft,sip_h_X-UTCP-Call-Leg-ID='.$id.',sip_h_X-UTCP-Route-Decision-ID=route-decision-1,sip_h_X-UTCP-Trunk-Endpoint-ID=endpoint-1,sip_h_X-UTCP-Caller-Identity-ID=caller-1}sofia/utcp-internal/97001@kamailio-sip-internal.utcp-platform.svc.cluster.local &park', 'freeswitch.originate'],
             ['call.leg.cancel_origination', [], $one, 'api', 'uuid_kill '.$uuid, 'freeswitch.uuid_kill'],
             ['call.leg.answer', [], $one, 'api', 'uuid_answer '.$uuid, 'freeswitch.uuid_answer'],
             ['call.leg.hangup', [], $one, 'api', 'uuid_kill '.$uuid, 'freeswitch.uuid_kill'],
@@ -44,13 +51,14 @@ final class FreeSwitchEslAdapterTest extends TestCase
             ['call.leg.unmute', [], $one, 'api', 'uuid_audio '.$uuid.' stop', 'freeswitch.uuid_audio'],
             ['call.leg.send_dtmf', ['digit' => '5'], $one, 'api', 'uuid_send_dtmf '.$uuid.' 5', 'freeswitch.uuid_send_dtmf'],
             ['call.leg.play_media', ['media_ref' => 'utcp:media/reference-tone'], $one, 'api', 'uuid_broadcast '.$uuid.' /usr/share/freeswitch/sounds/reference-tone.wav aleg', 'freeswitch.uuid_broadcast'],
-            ['call.leg.stop_media', [], $one, 'api', 'uuid_break '.$uuid, 'freeswitch.uuid_break'],
+            ['call.leg.stop_media', ['media_ref' => 'utcp:media/reference-tone'], $one, 'api', 'uuid_break '.$uuid, 'freeswitch.uuid_break'],
         ];
         foreach ($cases as [$operation, $payload, $legs, $mode, $command, $action]) {
             $transport->requests = [];
             $result = $client->executeCallOperation('tenant-1', 'node-1', $operation, $payload, $legs);
             $this->assertSame('completed', $result['status'], $operation);
-            $this->assertSame([['tenant_id' => 'tenant-1', 'runtime_node_id' => 'node-1', 'mode' => $mode, 'command' => $command]], $transport->requests, $operation);
+            $expectedRequests = [['tenant_id' => 'tenant-1', 'runtime_node_id' => 'node-1', 'mode' => $mode, 'command' => $command]];
+            $this->assertSame($expectedRequests, $transport->requests, $operation);
             $this->assertSame($action, $result['provider_action'], $operation);
         }
         $this->assertSame(RuntimeChannelIdentity::forCallLeg($id), $uuid);
@@ -147,6 +155,43 @@ final class FreeSwitchEslAdapterTest extends TestCase
         $this->assertSame('terminal_failure', $result['status']);
         $this->assertSame('invalid_media_ref', $result['failure_code']);
         $this->assertSame([], $transport->requests);
+    }
+
+    public function test_invalid_stop_media_reference_is_rejected_before_esl_execution(): void
+    {
+        $transport = new RecordingTransport;
+        $result = (new FreeSwitchEslClient($transport))->executeCallOperation('t', 'n', 'call.leg.stop_media', ['media_ref' => 'sound:welcome'], [['id' => 'a', 'call_id' => 'c', 'runtime_channel_id' => 'u-a']]);
+
+        $this->assertSame('terminal_failure', $result['status']);
+        $this->assertSame('invalid_media_ref', $result['failure_code']);
+        $this->assertSame([], $transport->requests);
+    }
+
+    public function test_playback_plus_ok_does_not_fabricate_a_runtime_observation(): void
+    {
+        $transport = new class implements FreeSwitchEslTransport {
+            /** @var list<array<string,string>> */
+            public array $requests = [];
+
+            public function execute(string $tenantId, string $runtimeNodeId, string $mode, string $command): array
+            {
+                $this->requests[] = ['tenant_id' => $tenantId, 'runtime_node_id' => $runtimeNodeId, 'mode' => $mode, 'command' => $command];
+
+                return ['response' => '+OK accepted'];
+            }
+        };
+
+        $result = (new FreeSwitchEslClient($transport))->executeCallOperation(
+            't',
+            'n',
+            'call.leg.play_media',
+            ['media_ref' => 'utcp:media/reference-tone'],
+            [['id' => 'a', 'call_id' => 'c', 'runtime_channel_id' => 'u-a']],
+        );
+
+        $this->assertSame('completed', $result['status']);
+        $this->assertArrayNotHasKey('runtime_observation', $result);
+        $this->assertSame(['uuid_broadcast u-a /usr/share/freeswitch/sounds/reference-tone.wav aleg'], array_column($transport->requests, 'command'));
     }
 
     public function test_provider_error_is_not_downgraded_to_success(): void

@@ -22,6 +22,43 @@ expect_fail() {
 
 expect_pass
 
+custom_dns="$ROOT/infrastructure/k3d/coredns-custom.yaml"
+if ! grep -Fq 'name: coredns-custom' "$custom_dns" ||
+  ! grep -Fq 'namespace: kube-system' "$custom_dns" ||
+  ! grep -Fq 'utcp-lan.server:' "$custom_dns" ||
+  ! grep -Fq 'lan:53 {' "$custom_dns" ||
+  ! grep -Fq 'rcode NXDOMAIN' "$custom_dns"; then
+  printf 'CoreDNS custom ConfigMap contract is incomplete\n' >&2
+  exit 1
+fi
+if grep -Eq 'forward|proxy|\.lan' "$custom_dns"; then
+  printf 'CoreDNS custom .lan block must not forward to an external resolver\n' >&2
+  exit 1
+fi
+if ! grep -Fq 'template ANY ANY' "$custom_dns"; then
+  printf 'CoreDNS custom .lan block must use the local template negative response\n' >&2
+  exit 1
+fi
+if ! grep -Fq 'import /etc/coredns/custom/*.server' <(scripts/k3d/kube -n kube-system get configmap coredns -o jsonpath='{.data.Corefile}' 2>/dev/null || true); then
+  printf 'installed CoreDNS Corefile no longer imports custom server blocks\n' >&2
+  exit 1
+fi
+
+if ! grep -Fq 'cluster_state' "$ROOT/scripts/k3d/lib" ||
+  ! grep -Fq '"serversRunning":0' "$ROOT/scripts/k3d/lib" ||
+  ! grep -Fq 'k3d cluster start' "$ROOT/scripts/k3d/lib"; then
+  printf 'k3d lifecycle state/start contract is incomplete\n' >&2
+  exit 1
+fi
+if grep -Fq 'k3d cluster delete' "$ROOT/scripts/k3d/create" "$ROOT/scripts/k3d/start"; then
+  printf 'canonical start path must never delete a cluster\n' >&2
+  exit 1
+fi
+if ! grep -Fq '0.0.0.0:5060:30560/udp' "$ROOT/infrastructure/k3d/cluster.yaml"; then
+  printf 'strict V1-B UDP/5060 declaration was removed\n' >&2
+  exit 1
+fi
+
 sed -i 's/name: utcp-local/name: utcp-other/' "$tmpdir/cluster.yaml"
 expect_fail "alternate cluster identity"
 cp "$ROOT/infrastructure/k3d/cluster.yaml" "$tmpdir/cluster.yaml"
@@ -39,6 +76,9 @@ expect_fail "TCP instead of UDP"
 cp "$ROOT/infrastructure/k3d/cluster.yaml" "$tmpdir/cluster.yaml"
 sed -i '/127.0.0.1:40000-40099:40000-40099\/udp/d' "$tmpdir/cluster.yaml"
 expect_fail "missing UDP publication"
+cp "$ROOT/infrastructure/k3d/cluster.yaml" "$tmpdir/cluster.yaml"
+sed -i '/port: 0.0.0.0:5060:30560\/udp/,+2d' "$tmpdir/cluster.yaml"
+expect_fail "missing V1 external SIP publication"
 cp "$ROOT/infrastructure/k3d/cluster.yaml" "$tmpdir/cluster.yaml"
 sed -i 's/--kube-apiserver-arg=service-node-port-range=30000-40099/--kube-apiserver-arg=service-node-port-range=30000-30099/' "$tmpdir/cluster.yaml"
 expect_fail "missing extended NodePort range"

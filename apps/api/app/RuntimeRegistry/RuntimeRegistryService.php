@@ -369,6 +369,28 @@ final class RuntimeRegistryService
         });
     }
 
+    public function ensureManagedExecutionImage(ExecutionContext $context, string $tenantId, string $nodeId, string $image): void
+    {
+        if (RuntimeExecutionContract::digest($image) === null) {
+            throw new InvalidArgumentException('Managed runtime execution images must be qualified by an immutable sha256 digest.');
+        }
+
+        DB::transaction(function () use ($context, $tenantId, $nodeId, $image): void {
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            if ((string) ($node->desired_execution_image ?? '') === $image) {
+                return;
+            }
+            DB::table('runtime_nodes')->where('id', $nodeId)->update([
+                'desired_execution_image' => $image,
+                'updated_by' => null,
+                'updated_at' => now(),
+            ]);
+            $this->emitContext($context, $tenantId, $nodeId, 'runtime_node.execution_image_changed', [
+                'desired_execution_image' => $image,
+            ]);
+        });
+    }
+
     public function activateManagedNode(ExecutionContext $context, string $tenantId, string $nodeId): void
     {
         DB::transaction(function () use ($context, $tenantId, $nodeId): void {
@@ -1111,6 +1133,14 @@ final class RuntimeRegistryService
             'observed_state' => $node->observed_state,
             'observed_at' => $node->observed_at,
             'configuration_version' => (int) $node->configuration_version,
+            'observed_configuration_version' => $node->observed_configuration_version === null ? null : (int) $node->observed_configuration_version,
+            'desired_execution_image' => $node->desired_execution_image,
+            'observed_execution_image' => $node->observed_execution_image,
+            'execution_image_current' => RuntimeExecutionContract::isCurrent($node->desired_execution_image, $node->observed_execution_image),
+            'execution_contract_current' => $node->observed_state === 'ready'
+                && $node->observed_configuration_version !== null
+                && (int) $node->observed_configuration_version >= (int) $node->configuration_version
+                && RuntimeExecutionContract::isCurrent($node->desired_execution_image, $node->observed_execution_image),
             'placement' => [
                 'region' => $node->placement_region,
                 'zone' => $node->placement_zone,

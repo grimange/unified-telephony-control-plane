@@ -6,6 +6,7 @@ use App\ControlPlane\Messaging\EventEnvelope;
 use App\ControlPlane\Messaging\InboxRepository;
 use App\ControlPlane\Messaging\OutboxRepository;
 use App\ControlPlane\RuntimeOperations\OperationStatus;
+use App\ControlPlane\RuntimeOperations\FailureClass;
 use App\ControlPlane\RuntimeOperations\RuntimeOperationRepository;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\RuntimeOperationId;
@@ -28,6 +29,7 @@ use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use App\RuntimeEngine\Reconciliation\ReconciliationResult;
 use App\RuntimeEngine\Reconciliation\ReconciliationWorker;
 use App\RuntimeEngine\Sources\EventSourceRepository;
+use App\RuntimeRegistry\RuntimeExecutionContract;
 use App\TelephonyDomain\CallDomainService;
 use DomainException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -143,6 +145,37 @@ final class RuntimeEngineTest extends TestCase
 
         $this->assertSame(0, $worker->workOnce('command-worker-b', batchSize: 1));
         $this->assertDatabaseHas('runtime_operations', ['id' => $unsupportedAdapterId, 'status' => OperationStatus::TerminalFailed->value, 'last_failure_class' => 'unsupported_capability']);
+    }
+
+    public function test_new_origination_rejects_stale_managed_execution_image_before_adapter_resolution(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode('active', 'stale-image');
+        $digest = 'sha256:'.str_repeat('e', 64);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'observed_state' => 'ready',
+            'observed_configuration_version' => 1,
+            'desired_execution_image' => 'registry.example.test/utcp/asterisk-ari@'.$digest,
+            'observed_execution_image' => 'sha256:'.str_repeat('f', 64),
+        ]);
+        $adapter = new TestRuntimeAdapter;
+        $worker = new CommandWorker(
+            new RuntimeOperationRepository,
+            new OutboxRepository,
+            new RuntimeOperationHandlerRegistry([new TestRuntimeHandler('call.leg.originate', 'completed')]),
+            new RuntimeAdapterRegistry([$adapter]),
+            app(CallDomainService::class),
+        );
+        $operation = (object) ['operation_type' => 'call.leg.originate', 'runtime_node_id' => $nodeId, 'tenant_id' => $tenantId];
+        $handler = new TestRuntimeHandler('call.leg.originate', 'completed');
+        $method = new \ReflectionMethod(CommandWorker::class, 'resolveAdapter');
+        $method->setAccessible(true);
+
+        $this->assertSame(FailureClass::Conflict, $method->invoke($worker, $operation, $handler));
+        $this->assertSame(0, $adapter->calls);
+        $this->assertFalse(RuntimeExecutionContract::isCurrent(
+            'registry.example.test/utcp/asterisk-ari@'.$digest,
+            'sha256:'.str_repeat('f', 64),
+        ));
     }
 
     public function test_worker_type_filters_keep_fence_operations_out_of_generic_workers(): void
@@ -1267,6 +1300,8 @@ final class TestRuntimeHandler implements RuntimeOperationHandler
 
 final class TestRuntimeAdapter implements RuntimeAdapter
 {
+    public int $calls = 0;
+
     public function adapterKey(): string
     {
         return 'asterisk-ari';
@@ -1274,6 +1309,8 @@ final class TestRuntimeAdapter implements RuntimeAdapter
 
     public function execute(array $operation): array
     {
+        $this->calls++;
+
         return ['status' => 'ok'];
     }
 }

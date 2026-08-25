@@ -337,7 +337,7 @@ class AsteriskAriClient
         };
 
         if ($operationType === 'call.leg.originate') {
-            $destination = $this->asteriskEndpoint((string) ($payload['destination_ref'] ?? ''));
+            $destination = $this->asteriskEndpoint((string) ($payload['destination_uri'] ?? $payload['destination_ref'] ?? ''));
             $legId = (string) ($payload['leg_id'] ?? ($legs[0]['id'] ?? ''));
             if ($legId === '') {
                 throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_call_leg_missing', 'A normalized originate operation requires a CallLeg target.');
@@ -345,9 +345,19 @@ class AsteriskAriClient
             $runtimeChannelId = RuntimeChannelIdentity::forCallLeg($legId);
             $request('POST', 'channels', [
                 'endpoint' => $destination,
-                'app' => (string) config('asterisk_ari.defaults.application_name', 'utcp-t0-observation'),
+                // Local channels must enter the canonical outbound dialplan. That
+                // context adds the trusted UTCP correlation headers before the
+                // PJSIP leg is sent to Kamailio; placing the channel directly in
+                // Stasis would bypass that execution boundary.
+                'context' => 'utcp-outbound',
+                'extension' => $this->dialplanExtension((string) ($payload['destination_uri'] ?? $payload['destination_ref'] ?? '')),
+                'priority' => '1',
                 'timeout' => (string) ($payload['timeout_seconds'] ?? 30),
                 'channelId' => $runtimeChannelId,
+                'variables[UTCP_CALL_LEG_ID]' => $legId,
+                'variables[UTCP_ROUTE_DECISION_ID]' => (string) ($payload['route_decision_id'] ?? ''),
+                'variables[UTCP_TRUNK_ENDPOINT_ID]' => (string) ($payload['trunk_endpoint_id'] ?? ''),
+                'variables[UTCP_CALLER_IDENTITY_ID]' => (string) ($payload['caller_identity_id'] ?? ''),
             ], [200, 201, 202]);
 
             return ['provider_action' => 'channels.originate', 'destination_ref' => (string) ($payload['destination_ref'] ?? ''), 'runtime_channel_id' => $runtimeChannelId];
@@ -415,11 +425,28 @@ class AsteriskAriClient
 
     private function asteriskEndpoint(string $destination): string
     {
+        $destination = preg_replace('/^sip:([^@]+)@.*$/', '$1', $destination) ?: $destination;
+        $destination = preg_replace('/^tel:/', '', $destination) ?: $destination;
+        if (preg_match('/^[A-Za-z0-9+_.-]+$/', $destination)) {
+            return 'Local/'.rawurlencode($destination).'@utcp-outbound';
+        }
         if (str_starts_with($destination, 'tel:')) {
-            return 'PJSIP/'.substr($destination, 4);
+            return 'Local/'.rawurlencode(substr($destination, 4)).'@utcp-outbound';
         }
         if (str_starts_with($destination, 'sip:')) {
             return 'PJSIP/'.substr($destination, 4);
+        }
+
+        throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_destination_invalid', 'DestinationRef is not a supported normalized telephony address.');
+    }
+
+    private function dialplanExtension(string $destination): string
+    {
+        $destination = preg_replace('/^sip:([^@]+)@.*$/', '$1', $destination) ?: $destination;
+        $destination = preg_replace('/^tel:/', '', $destination) ?: $destination;
+
+        if (preg_match('/^[A-Za-z0-9+_.-]+$/', $destination)) {
+            return $destination;
         }
 
         throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_destination_invalid', 'DestinationRef is not a supported normalized telephony address.');

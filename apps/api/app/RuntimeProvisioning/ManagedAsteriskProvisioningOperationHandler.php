@@ -72,6 +72,7 @@ final class ManagedAsteriskProvisioningOperationHandler implements ManagedRuntim
         $context = ExecutionContext::system(tenantId: $tenantId, reason: 'managed Asterisk provisioning', origin: 'runtime-engine');
         $names = ManagedAsteriskResourceIdentity::names((string) $node->slug, $nodeId);
         try {
+            $this->registry->ensureManagedExecutionImage($context, $tenantId, $nodeId, $image);
             $credential = $this->registry->ensureManagedCredential($context, $tenantId, $nodeId, $this->asterisk->credentialType());
             $this->kubernetes->applySecret($this->secret($names['secret'], $credential), (string) $node->slug);
             $this->kubernetes->applyDeployment($this->deployment($names, (string) $node->slug, $image), (string) $node->slug);
@@ -133,10 +134,7 @@ final class ManagedAsteriskProvisioningOperationHandler implements ManagedRuntim
 
     private static function isQualifiedImageReference(string $image): bool
     {
-        return $image !== ''
-            && ! preg_match('/\s/', $image)
-            && str_contains($image, '/')
-            && (str_contains((string) strrchr($image, '/'), ':') || str_contains($image, '@sha256:'));
+        return (bool) preg_match('/^[^\/\s]+\/utcp\/asterisk-ari@sha256:[0-9a-f]{64}$/', $image);
     }
 
     private function service(array $names, string $slug): array

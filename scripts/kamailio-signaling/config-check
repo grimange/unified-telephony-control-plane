@@ -13,6 +13,7 @@ php -l apps/api/database/migrations/2026_07_16_090000_create_signaling_registrat
 php -l apps/api/database/migrations/2026_07_16_160000_create_kamailio_registrar_foundation.php >/dev/null
 php -l apps/api/database/migrations/2026_07_16_170000_add_kamailio_registration_observer_projection.php >/dev/null
 php -l apps/api/tests/Feature/TelephonyDomain/KamailioRegistrationObserverTest.php >/dev/null
+bash -n scripts/kamailio-signaling/external-trunk-runtime-proof
 
 grep -Fq 'KAMAILIO_IMAGE=ghcr.io/kamailio/kamailio:5.8.6-bookworm' versions.env
 grep -Eq '^UTCP_PHASE=T[01]$' versions.env
@@ -35,6 +36,26 @@ grep -Fq 'calculate_ha1", 0' infrastructure/kubernetes/base/platform/kamailio-co
 grep -Fq 'max_expires", 120' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
 grep -Fq 'max_contacts", 1' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
 grep -Fq 'kamailio_signaling_auth_view' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
+grep -Fq 'kamailio_external_trunk_route_view' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
+grep -Fq 'loadmodule "uac.so"' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
+grep -Fq 'loadmodule "jsonrpcs.so"' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
+grep -Fq 'kamailio_external_trunk_registration_view' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
+grep -Fq 'modparam("uac", "reg_contact_addr", "kamailio-sip-internal.utcp-platform.svc.cluster.local:5060")' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
+if grep -Eq 'modparam\("uac", "reg_contact_addr", "sip:' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml; then
+    printf 'Kamailio uac reg_contact_addr must not include a SIP scheme.\n' >&2
+    exit 1
+fi
+grep -Fq 'modparam("uac", "reg_timer_interval", 10)' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
+grep -Fq 'modparam("uac", "reg_retry_interval", 60)' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
+grep -Fq 'modparam("uac", "reg_random_delay", 5)' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
+grep -Fq 'modparam("uac", "reg_keep_callid", 1)' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
+grep -Fq 'modparam("uac", "reg_use_domain", 1)' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
+grep -Fq 'name: kamailio-registration-control' infrastructure/kubernetes/base/platform/kamailio-registration-control-service.yaml
+grep -Fq 'KAMAILIO_REGISTRATION_DB_USER' "$tmp_manifest"
+grep -Fq 'KAMAILIO_REGISTRATION_DB_PASSWORD' "$tmp_manifest"
+grep -Fq 'KAMAILIO_REGISTRATION_DB_USER' infrastructure/kubernetes/base/platform/kamailio-deployment.yaml
+grep -Fq 'External Trunk Route Matched' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
+grep -Fq 'kamailio_external_trunk_runtime_proof=pass' scripts/kamailio-signaling/external-trunk-runtime-proof
 grep -Fq 'kamailio-registration-observer' infrastructure/docker/api/entrypoint
 grep -Fq 'kamailio-registration:observer' apps/api/routes/console.php
 grep -Fq 'name: kamailio-registration-observer' "$tmp_manifest"
@@ -120,7 +141,7 @@ render_and_parse_kamailio "base" "infrastructure/kubernetes/base"
 render_and_parse_kamailio "local-platform" "infrastructure/kubernetes/overlays/local/platform"
 render_and_parse_kamailio "local" "infrastructure/kubernetes/overlays/local"
 
-if grep -Eq 'type:[[:space:]]*(NodePort|LoadBalancer)|hostNetwork:[[:space:]]*true|hostPort:|privileged:[[:space:]]*true|containerPort:[[:space:]]*(5061|10000|20000)|port:[[:space:]]*(5061|10000|20000)' "$tmp_manifest" "$tmp_gateway"; then
+if grep -Eq 'type:[[:space:]]*LoadBalancer|hostNetwork:[[:space:]]*true|hostPort:|privileged:[[:space:]]*true|containerPort:[[:space:]]*(5061|10000|20000)|port:[[:space:]]*(5061|10000|20000)' "$tmp_manifest" "$tmp_gateway"; then
     printf 'Kamailio signaling manifests expose prohibited host, public SIP, or RTP scope.\n' >&2
     exit 1
 fi
@@ -186,6 +207,14 @@ security_objects = {key(doc): doc for doc in security_docs}
 kamailio_config = (objects.get("ConfigMap/utcp-platform/kamailio-config") or {}).get("data", {}).get("kamailio.cfg", "")
 if not kamailio_config:
     fail("Kamailio ConfigMap must render kamailio.cfg")
+reg_contact_matches = re.findall(r'modparam\("uac",\s*"reg_contact_addr",\s*"([^"]+)"\)', kamailio_config)
+if reg_contact_matches != ["kamailio-sip-internal.utcp-platform.svc.cluster.local:5060"]:
+    fail("uac reg_contact_addr must be one scheme-free Kamailio Service host:port")
+if any(value.startswith("sip:") for value in reg_contact_matches):
+    fail("uac reg_contact_addr must not include the sip scheme")
+for parameter, value in (("reg_timer_interval", "10"), ("reg_retry_interval", "60"), ("reg_random_delay", "5"), ("reg_keep_callid", "1"), ("reg_use_domain", "1")):
+    if f'modparam("uac", "{parameter}", {value})' not in kamailio_config:
+        fail(f"Kamailio uac {parameter} contract drifted")
 
 request_block = block_after(kamailio_config, "request_route")
 application_block = block_after(kamailio_config, "route[APPLICATION_DIALOG]")
@@ -221,7 +250,6 @@ for forbidden in (
     "loadmodule \"path.so\"",
     "add_path",
     "path(",
-    "outbound",
     "gruu",
 ):
     if forbidden in kamailio_config.lower():
@@ -352,6 +380,7 @@ for required in (
     'loadmodule "sqlops.so"',
     'modparam("sqlops", "sqlcon", "conference=>postgres://',
     'sql_query("conference", "select admission_user, signaling_identity, sip_target from kamailio_conference_route_view',
+    'sql_query("conference", "select canonical_external_trunk_id, provider_local_trunk_id, route_id, telephony_address_id, endpoint_uri from kamailio_external_trunk_route_view',
     'if ($dbr(conference_route=>[0,1]) != $au)',
     '$du = $dbr(conference_route=>[0,2])',
 ):
@@ -514,7 +543,7 @@ if 't_check_status("408")' not in failure_block or 't_reply("503", "Application 
 if re.search(r't_check_status\("(\.\*|[1-6]\[0-9\]\[0-9\]|[45]\[0-9\]\[0-9\]|[0-9]\{3\})"\)', failure_block):
     fail("APPLICATION_RUNTIME_UNAVAILABLE must not map every downstream response to 503")
 
-asterisk_targets = re.findall(r"\bsip:([^\";\s]+:5060)(?:;transport=udp)?", kamailio_config)
+asterisk_targets = re.findall(r'\$du\s*=\s*"sip:([^";\s]+:5060);transport=udp"', kamailio_config)
 if any(re.match(r"(?:\d{1,3}\.){3}\d{1,3}:5060$", target) for target in asterisk_targets):
     fail("Asterisk destination must use Service DNS, not an IP literal")
 if asterisk_targets != ["application-runtime-sip.utcp-runtime.svc.cluster.local:5060"]:
@@ -581,21 +610,27 @@ for doc in docs:
     ports = spec.get("ports") or []
     selects_kamailio = selector.get("app.kubernetes.io/component") == "kamailio"
     if selects_kamailio and any(port.get("protocol") == "UDP" for port in ports):
-        if key(doc) != "Service/utcp-platform/kamailio-sip-internal":
-            fail("Kamailio UDP SIP listener must only be exposed by the internal SIP Service")
-        if spec.get("type") != "ClusterIP":
-            fail("internal Kamailio SIP Service must be ClusterIP")
+        if key(doc) == "Service/utcp-platform/kamailio-sip-internal":
+            if spec.get("type") != "ClusterIP":
+                fail("internal Kamailio SIP Service must be ClusterIP")
+        elif key(doc) == "Service/utcp-platform/kamailio-sip-external":
+            if spec.get("type") != "NodePort" or spec.get("externalTrafficPolicy") != "Cluster":
+                fail("V1 external Kamailio SIP Service must be the exact Cluster-policy NodePort")
+            if ports != [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-udp", "nodePort": 30560}]:
+                fail("V1 external Kamailio SIP Service must expose only UDP 5060 through NodePort 30560")
+        else:
+            fail("Kamailio UDP SIP listener has an unapproved Service")
         if selector != {
             "app.kubernetes.io/part-of": "utcp",
             "app.kubernetes.io/component": "kamailio",
             "utcp.io/network-role": "kamailio-signaling",
         }:
             fail("internal Kamailio SIP Service must select only the Kamailio signaling workload")
-        if ports != [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-udp"}]:
+        if key(doc) == "Service/utcp-platform/kamailio-sip-internal" and ports != [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-udp"}]:
             fail("internal Kamailio SIP Service must expose only UDP 5060")
         if any(field in spec for field in ("externalIPs", "loadBalancerIP", "externalName")):
             fail("internal Kamailio SIP Service must not use external service fields")
-    if selects_kamailio and spec.get("type") in {"NodePort", "LoadBalancer"}:
+    if selects_kamailio and spec.get("type") == "LoadBalancer":
         fail("Kamailio Service must not use public service types")
 if "Service/utcp-platform/kamailio-sip-internal" not in objects:
     fail("internal Kamailio SIP Service must render")
@@ -750,6 +785,19 @@ if (asterisk_policy.get("spec") or {}).get("podSelector", {}).get("matchLabels")
 }:
     fail("Asterisk reverse SIP policy must select only managed Asterisk runtimes")
 kamailio_egress = (kamailio_policy.get("spec") or {}).get("egress") or []
+kamailio_selector = (kamailio_policy.get("spec") or {}).get("podSelector", {}).get("matchLabels")
+if kamailio_selector != {"utcp.io/network-role": "kamailio-signaling"}:
+    fail("Kamailio external SIP egress must select only the canonical signaling workload")
+external_sip_egress = [
+    rule for rule in kamailio_egress
+    if rule.get("ports") == [{"protocol": "UDP", "port": 5060}] and "to" not in rule
+]
+if external_sip_egress != [{"ports": [{"protocol": "UDP", "port": 5060}]}]:
+    fail("Kamailio must expose exactly one destination-agnostic UDP 5060 egress capability")
+if [rule for rule in kamailio_egress if "to" not in rule] != external_sip_egress:
+    fail("Kamailio must not expose unrelated destination-agnostic egress ports")
+if any("ipBlock" in peer for rule in kamailio_egress for peer in rule.get("to", [])):
+    fail("Kamailio external SIP egress must not duplicate provider IP management state")
 if not any(rule.get("to") == [{
     "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
     "podSelector": {"matchLabels": {
@@ -757,11 +805,20 @@ if not any(rule.get("to") == [{
         "utcp.io/network-role": "asterisk-ari",
     }},
 }] and rule.get("ports") == [{"protocol": "UDP", "port": 5060}] for rule in kamailio_egress):
-    fail("Kamailio egress must allow only canonical Asterisk UDP 5060 signaling")
+    fail("Kamailio egress must retain canonical Asterisk UDP 5060 signaling")
+if not any(rule.get("to") == [{
+    "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+    "podSelector": {"matchLabels": {"utcp.io/network-role": "freeswitch-esl"}},
+}] and rule.get("ports") == [{"protocol": "UDP", "port": 5060}] for rule in kamailio_egress):
+    fail("Kamailio egress must retain canonical FreeSWITCH UDP 5060 signaling")
 for policy in (kamailio_policy, asterisk_policy):
     rendered = yaml.safe_dump(policy, sort_keys=True)
-    if "ipBlock" in rendered:
-        fail("SIP NetworkPolicies must not use ipBlock")
+    if policy is kamailio_policy:
+        ip_blocks = [peer.get("ipBlock", {}).get("cidr") for rule in (policy.get("spec") or {}).get("ingress", []) for peer in rule.get("from", []) if "ipBlock" in peer]
+        if ip_blocks != ["38.146.161.46/32"]:
+            fail("Kamailio SIP NetworkPolicy must contain only the approved external PBX ipBlock")
+    elif "ipBlock" in rendered:
+        fail("Asterisk SIP NetworkPolicy must not use ipBlock")
     if "podSelector: {}\n" in rendered:
         fail("SIP NetworkPolicies must not use namespace-wide pod peers")
 PY

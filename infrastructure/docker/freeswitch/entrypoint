@@ -2,10 +2,8 @@
 set -eu
 
 mkdir -p \
-  /var/log/freeswitch \
   /var/run/freeswitch \
   /var/lib/freeswitch/db
-test -w /var/log/freeswitch
 test -w /var/run/freeswitch
 test -w /var/lib/freeswitch/db
 
@@ -19,6 +17,6 @@ exec freeswitch \
   -nonat \
   -c \
   -conf /etc/freeswitch \
-  -log /var/log/freeswitch \
+  -log /var/run/freeswitch \
   -db /var/lib/freeswitch/db \
   -run /var/run/freeswitch

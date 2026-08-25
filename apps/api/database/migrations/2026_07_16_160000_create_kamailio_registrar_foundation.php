@@ -57,7 +57,7 @@ return new class extends Migration
 
         DB::statement(<<<'SQL'
             create table if not exists version (
-                table_name varchar(32) not null primary key,
+                table_name varchar(64) not null primary key,
                 table_version integer not null default 0
             )
             SQL);
@@ -92,6 +92,12 @@ return new class extends Migration
                 'grant select on version to %s',
             ],
         );
+        $this->createRoleFromEnvironment(
+            'KAMAILIO_REGISTRATION_DB_USER',
+            'KAMAILIO_REGISTRATION_DB_PASSWORD',
+            'utcp_kamailio_registration_reader',
+            [],
+        );
     }
 
     public function down(): void
@@ -102,7 +108,7 @@ return new class extends Migration
 
         DB::statement('revoke all privileges on location from utcp_kamailio_auth_reader, utcp_kamailio_usrloc_writer, utcp_kamailio_observer_reader');
         DB::statement('revoke all privileges on kamailio_signaling_auth_view from utcp_kamailio_auth_reader, utcp_kamailio_usrloc_writer, utcp_kamailio_observer_reader');
-        DB::statement('revoke all privileges on version from utcp_kamailio_auth_reader, utcp_kamailio_usrloc_writer, utcp_kamailio_observer_reader');
+        DB::statement('revoke all privileges on version from utcp_kamailio_auth_reader, utcp_kamailio_usrloc_writer, utcp_kamailio_observer_reader, utcp_kamailio_registration_reader');
         DB::statement('drop index if exists location_expires_idx');
         DB::statement('drop index if exists location_account_idx');
         DB::statement('drop index if exists location_ruid_unique');

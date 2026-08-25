@@ -2004,6 +2004,16 @@ UTCP owns:
 
 Make the project understandable and reproducible by another engineer or prospective client.
 
+R0 has two converging proof families. The telephony capability family is
+`T4 -> C7A -> C7B -> T6 -> V1 -> A0`; the distributed infrastructure family is
+`K5A -> K5B -> K5C -> K5D -> K5E`. K5 is planned, parallel, and R0-critical:
+it does not serially gate C7A, but its bounded multi-host/failure-domain proof
+must be complete before R0 closes. Kubernetes remains authoritative for
+infrastructure facts, scheduling, and workload placement; UTCP owns the
+telephony-aware RuntimeNode interpretation, eligibility, lifecycle,
+maintenance coordination, reconciliation, and audit. Full multi-cluster
+federation remains a future-compatible direction, not an R0 requirement.
+
 ### Required documentation
 
 * architecture overview

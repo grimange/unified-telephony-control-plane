@@ -11,6 +11,7 @@ use App\ControlPlane\Shared\CorrelationId;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\RequestId;
 use App\TelephonyDomain\CallDomainService;
+use App\RuntimeRegistry\RuntimeExecutionContract;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -156,12 +157,29 @@ final class CommandWorker
         if (! in_array($node->desired_state, $allowedDesiredStates, true)) {
             return FailureClass::Conflict;
         }
+        if ($this->requiresFreshExecutionContract($operation, $node)
+            && ($node->observed_state !== 'ready'
+                || $node->observed_configuration_version === null
+                || (int) $node->observed_configuration_version < (int) $node->configuration_version
+                || $node->desired_execution_image === null
+                || $node->observed_execution_image === null
+                || ! RuntimeExecutionContract::isCurrent($node->desired_execution_image, $node->observed_execution_image))
+        ) {
+            return FailureClass::Conflict;
+        }
         $requiredCapability = $handler->requiredRuntimeCapability();
         if ($requiredCapability !== null && ! DB::table('runtime_node_capabilities')->where('runtime_node_id', $node->id)->where('capability_key', $requiredCapability)->exists()) {
             return FailureClass::UnsupportedCapability;
         }
 
         return $this->adapters->get((string) $node->adapter_key) ?? FailureClass::UnsupportedCapability;
+    }
+
+    private function requiresFreshExecutionContract(object $operation, object $node): bool
+    {
+        return (string) $operation->operation_type === 'call.leg.originate'
+            && in_array((string) $node->adapter_key, ['asterisk-ari', 'freeswitch-esl'], true)
+            && $node->desired_execution_image !== null;
     }
 
     /**

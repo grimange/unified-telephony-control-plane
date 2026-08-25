@@ -46,6 +46,11 @@ check_contains "nodeFilters:" "K2 edge mappings must target the load balancer"
 check_contains "port: 127.0.0.1:40000-40099:40000-40099/udp" "canonical cluster must publish the RTP UDP range"
 check_contains "arg: --kube-apiserver-arg=service-node-port-range=30000-40099" "canonical cluster must extend the NodePort range"
 check_contains "label: utcp.dev/media-edge=true" "canonical media-edge node label is required"
-check_absent "0\\.0\\.0\\.0|\\[::\\]|:2223|:2224|:10000|:20000|:21000|:21099|:5060|:5061|hostNetwork|pod-cidr" "unapproved media-edge exposure is prohibited"
+check_contains "port: 0.0.0.0:5060:30560/udp" "V1 external SIP lab edge must publish only UDP/5060 to the canonical NodePort"
+if grep -E 'port: 0\\.0\\.0\\.0:' "$tmp" | grep -vFq 'port: 0.0.0.0:5060:30560/udp'; then
+  printf 'k3d config check failed: unapproved public host publication found\n' >&2
+  exit 1
+fi
+check_absent "\\[::\\]|:2223|:2224|:10000|:20000|:21000|:21099|:5061|hostNetwork|pod-cidr" "unapproved media-edge exposure is prohibited"
 
 printf 'k3d config check passed\n'

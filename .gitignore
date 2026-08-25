@@ -47,3 +47,4 @@ __pycache__/
 Homestead.yaml
 Homestead.json
 .playwright-mcp
+.env-external-pbx-sip-credentials

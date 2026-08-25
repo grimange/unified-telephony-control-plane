@@ -11,6 +11,7 @@ COPY infrastructure/docker/media/reference-tone.wav.base64 /tmp/utcp-reference-t
 RUN chmod 0755 /usr/local/bin/utcp-freeswitch-entrypoint /usr/local/bin/utcp-freeswitch-healthcheck \
     && test -s /etc/freeswitch/freeswitch.xml \
     && test -s /etc/freeswitch/autoload_configs/modules.conf.xml \
+    && test -s /etc/freeswitch/autoload_configs/console.conf.xml \
     && test -s /etc/freeswitch/autoload_configs/switch.conf.xml \
     && test -s /etc/freeswitch/autoload_configs/sofia.conf.xml \
     && test -s /etc/freeswitch/autoload_configs/event_socket.conf.xml \

@@ -74,7 +74,7 @@ render_security() {
 ensure_cluster() {
   required_tools
   ensure_kubeconfig
-  "$ROOT/scripts/k3d/verify" >/dev/null
+  "$ROOT/scripts/k3d/runtime-ready" >/dev/null
 }
 
 service_cluster_ip() {

@@ -23,9 +23,17 @@ final class FreeSwitchEslClient
                     throw new FreeSwitchEslException(FailureClass::InvalidRequest, 'freeswitch_call_leg_missing', 'A normalized originate operation requires a CallLeg target.');
                 }
                 $runtimeId = RuntimeChannelIdentity::forCallLeg($legId);
-                $destination = $this->token((string) ($payload['destination_ref'] ?? ''), 'destination_ref');
+                $destination = $this->token((string) ($payload['destination_uri'] ?? $payload['destination_ref'] ?? ''), 'destination_uri');
+                $destination = preg_replace('/^sip:([^@]+)@.*$/', '$1', $destination) ?: $destination;
+                $headers = implode(',', array_filter([
+                    'sip_h_X-UTCP-Call-Leg-ID='.($legId ?? ''),
+                    'sip_h_X-UTCP-Route-Decision-ID='.(string) ($payload['route_decision_id'] ?? ''),
+                    'sip_h_X-UTCP-Trunk-Endpoint-ID='.(string) ($payload['trunk_endpoint_id'] ?? ''),
+                    'sip_h_X-UTCP-Caller-Identity-ID='.(string) ($payload['caller_identity_id'] ?? ''),
+                ]));
+                $destination = 'sofia/utcp-internal/'.rawurlencode($destination).'@kamailio-sip-internal.utcp-platform.svc.cluster.local';
 
-                return $this->send($tenantId, $runtimeNodeId, 'bgapi', 'originate {origination_uuid='.$runtimeId.'}'.$destination.' &park', 'freeswitch.originate', $runtimeId);
+                return $this->send($tenantId, $runtimeNodeId, 'bgapi', 'originate {origination_uuid='.$runtimeId.',timer_name=soft'.($headers === '' ? '' : ','.$headers).'}'.$destination.' &park', 'freeswitch.originate', $runtimeId);
             }
             if ($channel === null) {
                 throw new FreeSwitchEslException(FailureClass::Conflict, 'freeswitch_call_channel_unbound', 'The normalized CallLeg has no current FreeSWITCH channel.');
@@ -42,6 +50,9 @@ final class FreeSwitchEslClient
                 $this->send($tenantId, $runtimeNodeId, 'api', 'uuid_setvar '.$channels[1].' park_after_bridge true', 'freeswitch.uuid_setvar', $channels[1]);
 
                 return $this->send($tenantId, $runtimeNodeId, 'api', 'uuid_park '.$channel, 'freeswitch.uuid_park', $channel);
+            }
+            if ($operationType === 'call.leg.stop_media') {
+                $this->mediaReference((string) ($payload['media_ref'] ?? ''));
             }
             [$command, $action] = match ($operationType) {
                 'call.leg.cancel_origination', 'call.leg.hangup' => ['uuid_kill '.$channel, 'freeswitch.uuid_kill'],

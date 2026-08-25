@@ -153,7 +153,7 @@ ensure_kubeconfig() {
 ensure_cluster() {
   required_tools
   ensure_kubeconfig
-  "$ROOT/scripts/k3d/verify" >/dev/null
+  "$ROOT/scripts/k3d/runtime-ready" >/dev/null
 }
 
 ensure_registry() {
@@ -196,6 +196,16 @@ ensure_local_asterisk_credentials() {
 
 ensure_local_kamailio_credentials() {
   if [ -s "$K8S_KAMAILIO_PLATFORM_CREDENTIALS_FILE" ] && [ -s "$K8S_KAMAILIO_MIGRATION_CREDENTIALS_FILE" ]; then
+    if ! grep -q '^KAMAILIO_REGISTRATION_DB_USER=' "$K8S_KAMAILIO_PLATFORM_CREDENTIALS_FILE"; then
+      umask 077
+      {
+        printf 'KAMAILIO_REGISTRATION_DB_USER=utcp_kamailio_registration_reader\n'
+        printf 'KAMAILIO_REGISTRATION_DB_PASSWORD='
+        od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
+        printf '\n'
+      } >>"$K8S_KAMAILIO_PLATFORM_CREDENTIALS_FILE"
+      cp "$K8S_KAMAILIO_PLATFORM_CREDENTIALS_FILE" "$K8S_KAMAILIO_MIGRATION_CREDENTIALS_FILE"
+    fi
     return
   fi
 
@@ -214,6 +224,10 @@ ensure_local_kamailio_credentials() {
     printf '\n'
     printf 'KAMAILIO_OBSERVER_DB_USER=utcp_kamailio_observer_reader\n'
     printf 'KAMAILIO_OBSERVER_DB_PASSWORD='
+    od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
+    printf '\n'
+    printf 'KAMAILIO_REGISTRATION_DB_USER=utcp_kamailio_registration_reader\n'
+    printf 'KAMAILIO_REGISTRATION_DB_PASSWORD='
     od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
     printf '\n'
   } >"$tmp_file"

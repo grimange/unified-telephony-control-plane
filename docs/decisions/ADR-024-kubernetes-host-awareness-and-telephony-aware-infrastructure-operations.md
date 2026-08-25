@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted as a future architecture and roadmap direction. No functionality in
+Accepted as a future architecture and roadmap direction. K5 is planned in
+parallel with the telephony mainline and is R0-critical; no functionality in
 this ADR is implemented by this documentation packet.
 
 ## Context
@@ -113,7 +114,27 @@ authority.
 
 ## Roadmap placement
 
-These slices form a separate planned K-series infrastructure track, beginning
-with K5 Host Visibility. K5 and its later slices are not prerequisites for C6
-closure, T4, or C7, and do not reorder the primary `RT-1 -> C6 -> T4 -> C7`
-mainline.
+These slices form the K5 distributed telephony infrastructure track, beginning
+with K5A Host / Kubernetes Node Visibility and progressing through K5E
+Distributed Infrastructure Live Proof. K5 is not a serial prerequisite for
+C6 closure, T4, or C7A: C7A may begin when T4 closes even if K5 is incomplete.
+K5E is nevertheless required before the R0 portfolio release closes, alongside
+the serial telephony capability track.
+
+## Roadmap alignment amendment — 2026-08-24
+
+The intended UTCP product is not merely a telephony stack running inside one
+Kubernetes environment. UTCP is a vendor-neutral telephony control plane for
+distributed execution across machines and host failure domains, with a
+long-term direction toward multi-site, hybrid/cloud, and potentially
+multi-cluster operation. Kubernetes remains the infrastructure authority;
+UTCP owns the telephony-aware interpretation, eligibility, placement intent,
+RuntimeNode lifecycle, maintenance coordination, reconciliation, and audit.
+
+This amendment classifies K5 as **Planned / Parallel / R0-Critical** rather
+than generic deferred or post-R0 work. It does not add a false `T4 -> K5 ->
+C7A` dependency. The bounded R0 K5 exit is a proof across at least two
+distinct Kubernetes host/failure domains covering placement correlation,
+runtime readiness, telephony eligibility, new-work exclusion, draining, and
+automatic restoration. Full multi-cluster federation and cloud-provider
+automation remain future-compatible directions, not R0 requirements.

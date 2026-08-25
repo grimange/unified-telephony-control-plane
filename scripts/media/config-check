@@ -627,7 +627,7 @@ if "service-node-port-range=30000-40099" not in cluster_config:
     fail("canonical k3d cluster config must extend the NodePort range to 40099")
 if "label: utcp.dev/media-edge=true" not in cluster_config:
     fail("canonical k3d cluster config must label the media-edge server")
-for forbidden in ("2223", "2224", "10000", "20000", "21000", "21099", "5060", "5061", "hostNetwork"):
+for forbidden in ("2223", "2224", "10000", "20000", "21000", "21099", "5061", "hostNetwork"):
     if forbidden in cluster_config:
         fail(f"k3d cluster config must not publish non-media telephony port or host namespace: {forbidden}")
 

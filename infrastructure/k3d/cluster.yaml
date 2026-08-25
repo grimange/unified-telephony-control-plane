@@ -18,6 +18,9 @@ ports:
   - port: 127.0.0.1:40000-40099:40000-40099/udp
     nodeFilters:
       - server:0
+  - port: 0.0.0.0:5060:30560/udp
+    nodeFilters:
+      - loadbalancer
 registries:
   create:
     name: utcp-local-registry
