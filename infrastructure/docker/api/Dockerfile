@@ -126,9 +126,9 @@ COPY scripts /var/scripts
 COPY apps /var/apps
 COPY .gitignore /var/.gitignore
 COPY versions.env /var/versions.env
-RUN . /var/scripts/kubernetes/lib; \
+RUN /bin/bash -o pipefail -c '. /var/scripts/kubernetes/lib; \
     ensure_local_asterisk_credentials; \
     ensure_local_kamailio_credentials; \
-    ensure_local_reverb_credentials
+    ensure_local_reverb_credentials'
 USER www-data
 CMD ["php", "artisan", "test"]
