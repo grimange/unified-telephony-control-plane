@@ -1,10 +1,11 @@
 #!/usr/bin/env sh
 set -eu
 
-ASTERISK_CONFIG=/tmp/utcp-asterisk/asterisk.conf
-MODULES_CONFIG=/opt/utcp-asterisk-config/modules.conf
-ARI_URL=http://127.0.0.1:8088/ari/asterisk/info
+ASTERISK_CONFIG="${ASTERISK_CONFIG:-/tmp/utcp-asterisk/asterisk.conf}"
+MODULES_CONFIG="${MODULES_CONFIG:-/opt/utcp-asterisk-config/modules.conf}"
+ARI_URL="${ARI_URL:-http://127.0.0.1:8088/ari/asterisk/info}"
 ASTERISK_BIN=/usr/sbin/asterisk
+ASTERISK_BIN="${ASTERISK_BIN_OVERRIDE:-$ASTERISK_BIN}"
 
 fail() {
   check_class="$1"
@@ -60,6 +61,19 @@ printf '%s\n' "$modules" | while IFS= read -r module; do
     fail modules not_running "$module"
   fi
 done
+
+check_interface() {
+  command="$1"
+  evidence="$2"
+  interface="$3"
+  output="$(cli "$command")" || fail dialplan_interface "cli_command_failed" "$interface"
+  printf '%s\n' "$output" | grep -Eiq "$evidence" || fail dialplan_interface "not_registered" "$interface"
+}
+
+check_interface "core show application Dial" "Info about application 'Dial'" Dial
+check_interface "core show function PJSIP_HEADER" "Info about function 'PJSIP_HEADER'" PJSIP_HEADER
+check_interface "core show application Gosub" "Info about application 'Gosub'" Gosub
+check_interface "core show application Return" "Info about application 'Return'" Return
 
 if ! cli "core show channeltypes" | awk '$1 == "Local" { found=1 } END { exit found ? 0 : 1 }'; then
   fail local_channel channel_type_absent

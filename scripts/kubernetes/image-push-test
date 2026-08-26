@@ -36,6 +36,13 @@ if ! diff -u \
   printf 'expected local and platform projections to agree\n' >&2
   exit 1
 fi
+project_managed_asterisk_image "utcp-local-registry:5000/utcp/asterisk-ari@$valid_digest" "$projection_root"
+if ! diff -u \
+  <(grep '^UTCP_MANAGED_ASTERISK_IMAGE=' "$projection_root/infrastructure/kubernetes/overlays/local/application-config.properties") \
+  <(grep '^UTCP_MANAGED_ASTERISK_IMAGE=' "$projection_root/infrastructure/kubernetes/overlays/local/platform/application-config.properties") >/dev/null; then
+  printf 'expected local and platform Asterisk projections to agree\n' >&2
+  exit 1
+fi
 
 stub_bin="$TMP/bin"
 mkdir -p "$stub_bin"
@@ -51,14 +58,20 @@ hash -r
 source "$ROOT/scripts/kubernetes/image-push"
 registry_manifest_digest() { printf '%s\n' "$valid_digest"; }
 project_managed_freeswitch_image() { printf '%s\n' "$1" >"$TMP/projected-image"; }
+project_managed_asterisk_image() { printf '%s\n' "$1" >"$TMP/projected-asterisk-image"; }
 
 push_images >/dev/null
 if [ "$(sed -n '1p' "$TMP/projected-image")" != "utcp-local-registry:5000/utcp/freeswitch@$valid_digest" ]; then
   printf 'expected successful publication to project the registry digest\n' >&2
   exit 1
 fi
+if [ "$(sed -n '1p' "$TMP/projected-asterisk-image")" != "utcp-local-registry:5000/utcp/asterisk-ari@$valid_digest" ]; then
+  printf 'expected successful publication to project the Asterisk registry digest\n' >&2
+  exit 1
+fi
 
 rm -f "$TMP/projected-image"
+rm -f "$TMP/projected-asterisk-image"
 export FAIL_PUSH=1
 if push_images >/dev/null 2>&1; then
   printf 'expected image push failure to fail publication\n' >&2
@@ -66,6 +79,10 @@ if push_images >/dev/null 2>&1; then
 fi
 if [ -e "$TMP/projected-image" ]; then
   printf 'push failure must not update the desired image projection\n' >&2
+  exit 1
+fi
+if [ -e "$TMP/projected-asterisk-image" ]; then
+  printf 'push failure must not update the Asterisk desired image projection\n' >&2
   exit 1
 fi
 
@@ -77,6 +94,10 @@ if push_images >/dev/null 2>&1; then
 fi
 if [ -e "$TMP/projected-image" ]; then
   printf 'digest resolution failure must not update the desired image projection\n' >&2
+  exit 1
+fi
+if [ -e "$TMP/projected-asterisk-image" ]; then
+  printf 'digest resolution failure must not update the Asterisk desired image projection\n' >&2
   exit 1
 fi
 

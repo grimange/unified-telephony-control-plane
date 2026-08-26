@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+MODULES="$ROOT/infrastructure/docker/asterisk/config/modules.conf"
+READINESS="$ROOT/infrastructure/docker/asterisk/readiness"
+
+expect_config_failure() {
+  local name="$1" mutation="$2" expected="$3"
+  cp "$MODULES" "$TMP/modules.conf"
+  case "$mutation" in
+    remove_dial) sed -i '/^load = app_dial\.so$/d' "$TMP/modules.conf" ;;
+    remove_header) sed -i '/^load = res_pjsip_header_funcs\.so$/d' "$TMP/modules.conf" ;;
+    remove_stack) sed -i '/^load = app_stack\.so$/d' "$TMP/modules.conf" ;;
+    autoload_yes) sed -i 's/^autoload = no$/autoload = yes/' "$TMP/modules.conf" ;;
+    noload_dial) printf '%s\n' 'noload = app_dial.so' >> "$TMP/modules.conf" ;;
+    noload_stack) printf '%s\n' 'noload = app_stack.so' >> "$TMP/modules.conf" ;;
+  esac
+  if grep -Fq 'autoload = no' "$TMP/modules.conf" \
+    && grep -Fq 'load = app_dial.so' "$TMP/modules.conf" \
+    && grep -Fq 'load = res_pjsip_header_funcs.so' "$TMP/modules.conf" \
+    && grep -Fq 'load = app_stack.so' "$TMP/modules.conf" \
+    && ! grep -Eq "^[[:space:]]*noload[[:space:]]*=[[:space:]]*$expected[[:space:]]*$" "$TMP/modules.conf"; then
+    printf 'mutation unexpectedly passed: %s\n' "$name" >&2
+    exit 1
+  fi
+  printf 'mutation=failed_as_expected name=%s\n' "$name"
+}
+
+expect_config_failure 'remove app_dial load' remove_dial app_dial.so
+expect_config_failure 'remove res_pjsip_header_funcs load' remove_header res_pjsip_header_funcs.so
+expect_config_failure 'remove app_stack load' remove_stack app_stack.so
+expect_config_failure 'autoload changed to yes' autoload_yes app_dial.so
+expect_config_failure 'noload conflicts with app_dial' noload_dial app_dial.so
+expect_config_failure 'noload conflicts with app_stack' noload_stack app_stack.so
+
+EXTENSIONS="$ROOT/infrastructure/docker/asterisk/config/extensions.conf"
+expect_dialplan_failure() {
+  local name="$1" mutation="$2"
+  cp "$EXTENSIONS" "$TMP/extensions.conf"
+  case "$mutation" in
+    remove_handler) sed -i '/b(utcp-outbound-predial\^s\^1)/d' "$TMP/extensions.conf" ;;
+    move_header) sed -i '/^\[utcp-outbound-predial\]/,$d' "$TMP/extensions.conf"; sed -i '/NoOp(UTCP canonical outbound destination=/a\\ same => n,Set(PJSIP_HEADER(add,X-UTCP-Call-Leg-ID)=${UTCP_CALL_LEG_ID})' "$TMP/extensions.conf" ;;
+    remove_header) sed -i '/X-UTCP-Caller-Identity-ID/d' "$TMP/extensions.conf" ;;
+    direct_provider) sed -i 's/@kamailio-edge/@38.146.161.46:5060/' "$TMP/extensions.conf" ;;
+  esac
+  if grep -Fq '[utcp-outbound]' "$TMP/extensions.conf" \
+    && grep -Fq 'b(utcp-outbound-predial^s^1)' "$TMP/extensions.conf" \
+    && grep -Fq '[utcp-outbound-predial]' "$TMP/extensions.conf" \
+    && grep -Fq 'X-UTCP-Call-Leg-ID' "$TMP/extensions.conf" \
+    && grep -Fq 'X-UTCP-Route-Decision-ID' "$TMP/extensions.conf" \
+    && grep -Fq 'X-UTCP-Trunk-Endpoint-ID' "$TMP/extensions.conf" \
+    && grep -Fq 'X-UTCP-Caller-Identity-ID' "$TMP/extensions.conf" \
+    && grep -Fq '@kamailio-edge' "$TMP/extensions.conf"; then
+    printf 'dialplan mutation unexpectedly passed: %s\n' "$name" >&2
+    exit 1
+  fi
+  printf 'mutation=failed_as_expected name=%s\n' "$name"
+}
+
+expect_dialplan_failure 'removing Dial pre-dial handler' remove_handler
+expect_dialplan_failure 'moving header back to caller context' move_header
+expect_dialplan_failure 'removing a required correlation header' remove_header
+expect_dialplan_failure 'direct provider destination' direct_provider
+
+FAKE_BIN="$TMP/asterisk"
+cat > "$FAKE_BIN" <<'EOF'
+#!/usr/bin/env sh
+command="$*"
+case "$command" in
+  *"core waitfullybooted"*) exit 0 ;;
+  *"module show like"*) module="${command##*module show like }"; printf '%s Running\n' "$module" ;;
+  *"core show application Dial"*) printf '%s\n' "${DIAL_EVIDENCE:-Info about Application 'Dial'}" ;;
+  *"core show function PJSIP_HEADER"*) printf '%s\n' "${HEADER_EVIDENCE:-Info about Function 'PJSIP_HEADER'}" ;;
+  *"core show application Gosub"*) printf '%s\n' "${GOSUB_EVIDENCE:-Info about Application 'Gosub'}" ;;
+  *"core show application Return"*) printf '%s\n' "${RETURN_EVIDENCE:-Info about Application 'Return'}" ;;
+  *"core show channeltypes"*) printf '%s\n' 'Local Local channel type' ;;
+  *"pjsip show transports"*) printf '%s\n' 'Transport: transport-udp-internal udp 0.0.0.0:5060' ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod 0755 "$FAKE_BIN"
+FAKE_CURL="$TMP/curl"
+cat > "$FAKE_CURL" <<'EOF'
+#!/usr/bin/env sh
+printf '401'
+EOF
+chmod 0755 "$FAKE_CURL"
+printf '%s\n' 'ok' > "$TMP/asterisk.conf"
+printf '%s\n' '[modules]' 'autoload = no' 'load = app_stack.so' 'load = app_dial.so' 'load = res_pjsip_header_funcs.so' > "$TMP/modules.conf"
+
+run_readiness() {
+  local name="$1" expected="$2"
+  if PATH="$TMP:$PATH" ASTERISK_BIN_OVERRIDE="$FAKE_BIN" ASTERISK_CONFIG="$TMP/asterisk.conf" MODULES_CONFIG="$TMP/modules.conf" \
+    ARI_URL='http://127.0.0.1:9/unreachable' DIAL_EVIDENCE="${3:-Info about application 'Dial'}" HEADER_EVIDENCE="${4:-Info about function 'PJSIP_HEADER'}" GOSUB_EVIDENCE="${5:-Info about application 'Gosub'}" RETURN_EVIDENCE="${6:-Info about application 'Return'}" \
+    "$READINESS" >"$TMP/out" 2>"$TMP/err"; then
+    actual=pass
+  else
+    actual=fail
+  fi
+  [ "$actual" = "$expected" ] || { printf 'runtime mutation mismatch name=%s expected=%s actual=%s\n' "$name" "$expected" "$actual" >&2; cat "$TMP/err" >&2; exit 1; }
+  printf 'mutation=%s name=%s\n' "$actual" "$name"
+}
+
+run_readiness 'registered interfaces pass readiness' pass
+run_readiness 'Dial unavailable fails readiness' fail 'No such application' "Info about Function 'PJSIP_HEADER'"
+run_readiness 'PJSIP_HEADER unavailable fails readiness' fail "Info about Application 'Dial'" 'No such function'
+run_readiness 'Gosub unavailable fails readiness' fail "Info about Application 'Dial'" "Info about Function 'PJSIP_HEADER'" 'No such application'
+run_readiness 'Return unavailable fails readiness' fail "Info about Application 'Dial'" "Info about Function 'PJSIP_HEADER'" "Info about Application 'Gosub'" 'No such application'
+
+printf 'Asterisk required module contract mutation tests passed\n'

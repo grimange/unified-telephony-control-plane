@@ -345,19 +345,19 @@ class AsteriskAriClient
             $runtimeChannelId = RuntimeChannelIdentity::forCallLeg($legId);
             $request('POST', 'channels', [
                 'endpoint' => $destination,
-                // Local channels must enter the canonical outbound dialplan. That
-                // context adds the trusted UTCP correlation headers before the
-                // PJSIP leg is sent to Kamailio; placing the channel directly in
-                // Stasis would bypass that execution boundary.
+                // Local channels must enter the canonical outbound dialplan. Its
+                // Dial() pre-dial handler applies trusted UTCP correlation
+                // headers to the outbound PJSIP channel before Kamailio receives
+                // it; placing the channel directly in Stasis bypasses that seam.
                 'context' => 'utcp-outbound',
                 'extension' => $this->dialplanExtension((string) ($payload['destination_uri'] ?? $payload['destination_ref'] ?? '')),
                 'priority' => '1',
                 'timeout' => (string) ($payload['timeout_seconds'] ?? 30),
                 'channelId' => $runtimeChannelId,
-                'variables[UTCP_CALL_LEG_ID]' => $legId,
-                'variables[UTCP_ROUTE_DECISION_ID]' => (string) ($payload['route_decision_id'] ?? ''),
-                'variables[UTCP_TRUNK_ENDPOINT_ID]' => (string) ($payload['trunk_endpoint_id'] ?? ''),
-                'variables[UTCP_CALLER_IDENTITY_ID]' => (string) ($payload['caller_identity_id'] ?? ''),
+                'variables[__UTCP_CALL_LEG_ID]' => $legId,
+                'variables[__UTCP_ROUTE_DECISION_ID]' => (string) ($payload['route_decision_id'] ?? ''),
+                'variables[__UTCP_TRUNK_ENDPOINT_ID]' => (string) ($payload['trunk_endpoint_id'] ?? ''),
+                'variables[__UTCP_CALLER_IDENTITY_ID]' => (string) ($payload['caller_identity_id'] ?? ''),
             ], [200, 201, 202]);
 
             return ['provider_action' => 'channels.originate', 'destination_ref' => (string) ($payload['destination_ref'] ?? ''), 'runtime_channel_id' => $runtimeChannelId];

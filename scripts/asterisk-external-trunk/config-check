@@ -12,11 +12,57 @@ require_file "$ROOT/apps/api/app/TelephonyDomain/Projection/ExternalTrunkProject
 require_file "$ROOT/scripts/asterisk-external-trunk/runtime-proof"
 require_file "$ROOT/infrastructure/docker/asterisk/config/pjsip.conf"
 require_file "$ROOT/infrastructure/docker/asterisk/config/modules.conf"
+require_file "$ROOT/infrastructure/docker/asterisk/readiness"
 
 grep -Fq "AsteriskExternalTrunkProjection" "$ROOT/apps/api/app/TelephonyDomain/Projection/ExternalTrunkProjectionService.php"
 grep -Fq "transport-udp-internal" "$ROOT/infrastructure/docker/asterisk/config/pjsip.conf"
 grep -Fq "load = res_pjsip.so" "$ROOT/infrastructure/docker/asterisk/config/modules.conf"
 grep -Fq "load = chan_pjsip.so" "$ROOT/infrastructure/docker/asterisk/config/modules.conf"
+grep -Fq "load = res_pjsip_header_funcs.so" "$ROOT/infrastructure/docker/asterisk/config/modules.conf"
+grep -Fq "load = app_dial.so" "$ROOT/infrastructure/docker/asterisk/config/modules.conf"
+grep -Fq "load = app_stack.so" "$ROOT/infrastructure/docker/asterisk/config/modules.conf"
+grep -Fq "autoload = no" "$ROOT/infrastructure/docker/asterisk/config/modules.conf"
+grep -Fq "core show application Dial" "$ROOT/infrastructure/docker/asterisk/readiness"
+grep -Fq "core show function PJSIP_HEADER" "$ROOT/infrastructure/docker/asterisk/readiness"
+grep -Fq "core show application Gosub" "$ROOT/infrastructure/docker/asterisk/readiness"
+grep -Fq "core show application Return" "$ROOT/infrastructure/docker/asterisk/readiness"
+grep -Fq "dialplan_interface" "$ROOT/infrastructure/docker/asterisk/readiness"
+grep -Fq "PJSIP_HEADER" "$ROOT/infrastructure/docker/asterisk/config/extensions.conf"
+grep -Fq "Dial(PJSIP/" "$ROOT/infrastructure/docker/asterisk/config/extensions.conf"
+grep -Fq "[utcp-outbound]" "$ROOT/infrastructure/docker/asterisk/config/extensions.conf"
+grep -Fq "b(utcp-outbound-predial^s^1)" "$ROOT/infrastructure/docker/asterisk/config/extensions.conf"
+grep -Fq "[utcp-outbound-predial]" "$ROOT/infrastructure/docker/asterisk/config/extensions.conf"
+grep -Fq "same => n,Return()" "$ROOT/infrastructure/docker/asterisk/config/extensions.conf"
+
+predial_block="$(sed -n '/^\[utcp-outbound-predial\]$/,/^\[/p' "$ROOT/infrastructure/docker/asterisk/config/extensions.conf")"
+for header in \
+  X-UTCP-Call-Leg-ID \
+  X-UTCP-Route-Decision-ID \
+  X-UTCP-Trunk-Endpoint-ID \
+  X-UTCP-Caller-Identity-ID
+do
+  printf '%s\n' "$predial_block" | grep -Fq "PJSIP_HEADER(add,$header)" || {
+    printf 'invalid_contract=missing_predial_header header=%s\n' "$header" >&2
+    exit 1
+  }
+done
+outbound_block="$(sed -n '/^\[utcp-outbound\]$/,/^\[/p' "$ROOT/infrastructure/docker/asterisk/config/extensions.conf")"
+if printf '%s\n' "$outbound_block" | grep -Fq 'PJSIP_HEADER(add,'; then
+  printf 'invalid_contract=caller_channel_header_write\n' >&2
+  exit 1
+fi
+
+for module in app_stack.so app_dial.so res_pjsip_header_funcs.so; do
+  count="$(grep -Fc "load = $module" "$ROOT/infrastructure/docker/asterisk/config/modules.conf")"
+  [ "$count" -eq 1 ] || { printf 'invalid_contract=required_module_load_count module=%s count=%s\n' "$module" "$count" >&2; exit 1; }
+done
+
+for module in app_stack.so app_dial.so res_pjsip_header_funcs.so; do
+  if grep -Eq "^[[:space:]]*noload[[:space:]]*=[[:space:]]*$module[[:space:]]*$" "$ROOT/infrastructure/docker/asterisk/config/modules.conf"; then
+    printf 'invalid_contract=noload_conflicts_with_required_module module=%s\n' "$module" >&2
+    exit 1
+  fi
+done
 
 if grep -Fq "res_pjsip_realtime" "$ROOT/infrastructure/docker/asterisk/config/modules.conf"; then
   printf 'invalid_authority=res_pjsip_realtime_not_part_of_managed_file_backed_seam\n' >&2

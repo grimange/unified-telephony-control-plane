@@ -24,8 +24,13 @@ push_images() {
   done
 
   FREESWITCH_DIGEST="$(registry_manifest_digest "$FREESWITCH_HOST_IMAGE")" || return 1
+  ASTERISK_DIGEST="$(registry_manifest_digest "$ASTERISK_HOST_IMAGE")" || return 1
+
   project_managed_freeswitch_image "$CLUSTER_REGISTRY/utcp/freeswitch@$FREESWITCH_DIGEST" || return 1
   printf 'projected=%s/utcp/freeswitch@%s\n' "$CLUSTER_REGISTRY" "$FREESWITCH_DIGEST"
+
+  project_managed_asterisk_image "$CLUSTER_REGISTRY/utcp/asterisk-ari@$ASTERISK_DIGEST" || return 1
+  printf 'projected=%s/utcp/asterisk-ari@%s\n' "$CLUSTER_REGISTRY" "$ASTERISK_DIGEST"
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then

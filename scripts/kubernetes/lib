@@ -122,6 +122,46 @@ project_managed_freeswitch_image() {
   mv "$platform_tmp" "$platform_properties"
 }
 
+project_managed_asterisk_image() {
+  local image="$1"
+  local projection_root="${2:-$ROOT}"
+  local local_properties="$projection_root/infrastructure/kubernetes/overlays/local/application-config.properties"
+  local platform_properties="$projection_root/infrastructure/kubernetes/overlays/local/platform/application-config.properties"
+  local local_tmp platform_tmp
+
+  if ! printf '%s' "$image" | grep -Eq '^[^/]+/utcp/asterisk-ari@sha256:[0-9a-f]{64}$'; then
+    printf 'managed Asterisk image must be an immutable sha256 reference: %s\n' "$image" >&2
+    return 1
+  fi
+  local properties
+  for properties in "$local_properties" "$platform_properties"; do
+    if [ ! -f "$properties" ]; then
+      printf 'managed Asterisk image projection is missing: %s\n' "$properties" >&2
+      return 1
+    fi
+  done
+
+  local_tmp="$(mktemp "${local_properties}.tmp.XXXXXX")"
+  platform_tmp="$(mktemp "${platform_properties}.tmp.XXXXXX")"
+  if ! awk -v value="UTCP_MANAGED_ASTERISK_IMAGE=$image" \
+    '/^UTCP_MANAGED_ASTERISK_IMAGE=/ { print value; found = 1; next } { print } END { if (!found) exit 2 }' \
+    "$local_properties" >"$local_tmp"; then
+    rm -f "$local_tmp" "$platform_tmp"
+    printf 'local managed Asterisk image projection key is missing\n' >&2
+    return 1
+  fi
+  if ! awk -v value="UTCP_MANAGED_ASTERISK_IMAGE=$image" \
+    '/^UTCP_MANAGED_ASTERISK_IMAGE=/ { print value; found = 1; next } { print } END { if (!found) exit 2 }' \
+    "$platform_properties" >"$platform_tmp"; then
+    rm -f "$local_tmp" "$platform_tmp"
+    printf 'platform managed Asterisk image projection key is missing\n' >&2
+    return 1
+  fi
+
+  mv "$local_tmp" "$local_properties"
+  mv "$platform_tmp" "$platform_properties"
+}
+
 required_tools() {
   local missing=0
   for tool in docker k3d kubectl curl awk grep sed; do

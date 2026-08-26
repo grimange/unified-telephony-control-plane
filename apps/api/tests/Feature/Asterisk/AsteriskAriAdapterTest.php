@@ -41,6 +41,29 @@ final class AsteriskAriAdapterTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_originate_uses_inherited_variables_for_the_outbound_predial_header_handler(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([['status' => 201]]);
+
+        $client->executeCallOperation($tenantId, $nodeId, 'call.leg.originate', [
+            'leg_id' => 'leg-1',
+            'destination_uri' => '97001',
+            'route_decision_id' => 'route-decision-1',
+            'trunk_endpoint_id' => 'endpoint-1',
+            'caller_identity_id' => 'caller-1',
+        ], [['id' => 'leg-1', 'call_id' => 'call-1', 'runtime_channel_id' => 'channel-1']]);
+
+        $request = $client->requests[0];
+        $this->assertSame('POST', $request['method']);
+        $this->assertSame('channels', $request['resource']);
+        $this->assertSame('leg-1', $request['query']['variables[__UTCP_CALL_LEG_ID]']);
+        $this->assertSame('route-decision-1', $request['query']['variables[__UTCP_ROUTE_DECISION_ID]']);
+        $this->assertSame('endpoint-1', $request['query']['variables[__UTCP_TRUNK_ENDPOINT_ID]']);
+        $this->assertSame('caller-1', $request['query']['variables[__UTCP_CALLER_IDENTITY_ID]']);
+    }
+
     public function test_asterisk_playback_resolves_generic_media_and_rejects_invalid_syntax_before_ari_execution(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode();
@@ -2195,7 +2218,7 @@ final class AsteriskAriAdapterTest extends TestCase
         return new class(new AsteriskCatalog, app(AsteriskAriProfileService::class), $responses) extends AsteriskAriClient
         {
             /**
-             * @var list<array{method:string,resource:string,timeout_ms:int,accepted_statuses:list<int>}>
+             * @var list<array{method:string,resource:string,query?:array<string,string>,timeout_ms:int,accepted_statuses:list<int>}>
              */
             public array $requests = [];
 
@@ -2209,10 +2232,11 @@ final class AsteriskAriAdapterTest extends TestCase
 
             protected function ariRequest(string $runtimeNodeId, string $method, string $resource, array $query, int $timeoutMs, array $acceptedStatuses): array
             {
-                unset($runtimeNodeId, $query);
+                unset($runtimeNodeId);
                 $this->requests[] = [
                     'method' => $method,
                     'resource' => $resource,
+                    ...($query === [] ? [] : ['query' => $query]),
                     'timeout_ms' => $timeoutMs,
                     'accepted_statuses' => $acceptedStatuses,
                 ];

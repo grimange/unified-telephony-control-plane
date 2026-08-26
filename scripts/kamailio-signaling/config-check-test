@@ -113,6 +113,7 @@ def validate(state: dict[str, Any]) -> None:
     within_loose_route_block = block_after(within_block, "if (loose_route())")
     asterisk_block = block_after(kamailio, "route[APPLICATION_RUNTIME_RELAY]")
     failure_block = block_after(kamailio, "failure_route[APPLICATION_RUNTIME_UNAVAILABLE]")
+    provider_auth_block = block_after(kamailio, "failure_route[RUNTIME_EXTERNAL_TRUNK_AUTH]")
     register_block = block_after(kamailio, 'if ($rm == "REGISTER")')
     media_offer_block = block_after(kamailio, "route[MEDIA_OFFER]")
     media_answer_block = block_after(kamailio, "route[MEDIA_ANSWER]")
@@ -317,8 +318,24 @@ def validate(state: dict[str, Any]) -> None:
         "credential consumption must follow authentication and precede runtime relay",
     )
     require("consume_credentials()" not in register_block, "REGISTER must retain its existing authentication lifecycle")
-    for forbidden in ("accept-blind-auth", "accept-blind-reg", "407", "Authorization:", "Proxy-Authorization:", "auth_username", "auth_password"):
-        require(forbidden not in kamailio, f"downstream or blind authentication is forbidden: {forbidden}")
+    require_in_order(
+        provider_auth_block,
+        ['if (t_check_status("401|407"))', 'if (uac_auth("1"))', "t_relay()"],
+        "failure_route[RUNTIME_EXTERNAL_TRUNK_AUTH] provider authentication",
+    )
+    require("uac_auth(\"1\")" in provider_auth_block, "provider authentication must use the UAC authority")
+    require(
+        kamailio.count('uac_auth("1")') == provider_auth_block.count('uac_auth("1")'),
+        "UAC provider authentication must remain confined to its provider failure route",
+    )
+    downstream_auth_blocks = (request_block, application_block, register_block, within_block, failure_block)
+    for block in downstream_auth_blocks:
+        for forbidden in ("accept-blind-auth", "accept-blind-reg", "407", "Authorization:", "Proxy-Authorization:"):
+            require(forbidden not in block, f"downstream or blind authentication is forbidden: {forbidden}")
+    non_provider_config = re.sub(r'(?s)failure_route\[RUNTIME_EXTERNAL_TRUNK_AUTH\] \{.*?\n    \}', '', kamailio, count=1)
+    non_provider_config = re.sub(r'(?m)^\s*modparam\("uac", "auth_(username|password)_avp".*\n', '', non_provider_config)
+    for forbidden in ("$avp(auth_username)", "$avp(auth_password)", "auth_username =", "auth_password ="):
+        require(forbidden not in non_provider_config, f"downstream credential projection is forbidden: {forbidden}")
     require(not any(token in application_block for token in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage")), "APPLICATION_DIALOG must delegate media control to provider-neutral routes")
     require("route(MEDIA_OFFER)" not in register_block and "route(MEDIA_ANSWER)" not in register_block and "route(MEDIA_DELETE)" not in register_block, "REGISTER route must not invoke media routes")
     for forbidden in ("rtpengine_offer", "rtpengine_answer", "rtpengine_delete", "rtpengine_manage"):
@@ -1201,8 +1218,10 @@ fail_case("removing credential consumption fails", lambda s: set_kamailio_config
 fail_case("moving credential consumption before authentication fails", lambda s: set_kamailio_config(s, remove_credentials(s["kamailio"]).replace('        if (!www_authorize("$fd", "kamailio_signaling_auth_view")) {', '        consume_credentials();\n\n        if (!www_authorize("$fd", "kamailio_signaling_auth_view")) {', 1), update_checksum=True))
 fail_case("moving credential consumption after runtime relay fails", lambda s: set_kamailio_config(s, remove_credentials(s["kamailio"]).replace("        route(APPLICATION_RUNTIME_RELAY);", "        route(APPLICATION_RUNTIME_RELAY);\n        consume_credentials();", 1), update_checksum=True))
 fail_case("consuming credentials in REGISTER fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('        if (!save("location", "0x04")) {', '        consume_credentials();\n\n        if (!save("location", "0x04")) {', 1), update_checksum=True))
-fail_case("adding FreeSWITCH auth retry fails", lambda s: set_kamailio_config(s, s["kamailio"] + "\n# 407 retry Authorization: downstream\n", update_checksum=True))
+fail_case("adding downstream UAC authentication fails", lambda s: set_kamailio_config(s, s["kamailio"] + '\nroute[DOWNSTREAM_AUTH] {\n    uac_auth("1");\n}\n', update_checksum=True))
 fail_case("adding downstream credentials fails", lambda s: set_kamailio_config(s, s["kamailio"] + "\n$avp(auth_username) = \"freeswitch\";\n", update_checksum=True))
+fail_case("removing provider UAC authentication fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('if (uac_auth("1")) {', 'if (provider_auth_missing()) {', 1), update_checksum=True))
+fail_case("removing provider challenge classification fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('t_check_status("401|407")', 't_check_status("500")', 1), update_checksum=True))
 fail_case("removing Record-Route fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("record_route();", "")))
 fail_case("removing loose routing fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("loose_route()", "route_not_found()")))
 fail_case("removing CANCEL handling fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('if ($rm == "CANCEL")', 'if ($rm == "NO_CANCEL")')))
