@@ -108,7 +108,7 @@ CMD ["api"]
 FROM app-prod AS test
 ARG KUBECTL_VERSION=v1.36.2
 USER root
-COPY --from=vendor-test /var/www/html/vendor ./vendor
+COPY --chown=www-data:www-data --from=vendor-test /var/www/html/vendor ./vendor
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl python3 python3-yaml; \
@@ -120,7 +120,7 @@ RUN set -eux; \
     apt-get purge -y --auto-remove curl; \
     rm -rf /var/lib/apt/lists/*; \
     touch .phpunit.result.cache \
-    && chown -R www-data:www-data vendor .phpunit.result.cache
+    && chown www-data:www-data .phpunit.result.cache
 COPY infrastructure /var/infrastructure
 COPY scripts /var/scripts
 COPY apps /var/apps

@@ -96,6 +96,21 @@ final class FreeSwitchEventNormalizer implements EventNormalizer
         if ($type === 'call.leg.offered') {
             $this->copy($payload, 'Caller-Caller-ID-Number', 'remote_identity', $safe);
             $this->copy($payload, 'Caller-Destination-Number', 'called_address', $safe);
+            $called = $this->string($payload, 'variable_utcp_called_address');
+            if ($called !== null && preg_match('/^utcp-in-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/', $called) === 1) {
+                $safe['called_address'] = $called;
+            }
+            foreach ([
+                'ingress_external_trunk_id' => 'variable_sip_h_X-UTCP-Ingress-External-Trunk-ID',
+                'ingress_telephony_address_id' => 'variable_sip_h_X-UTCP-Ingress-Telephony-Address-ID',
+                'ingress_trunk_endpoint_id' => 'variable_sip_h_X-UTCP-Ingress-Trunk-Endpoint-ID',
+                'ingress_runtime_node_id' => 'variable_sip_h_X-UTCP-Ingress-Runtime-Node-ID',
+            ] as $target => $source) {
+                $value = $this->string($payload, $source) ?? $this->string($payload, 'variable_utcp_'.$target);
+                if ($value !== null && preg_match('/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/', $value) === 1) {
+                    $safe[$target] = strtolower($value);
+                }
+            }
         }
         if ($type === 'call.leg.terminated') {
             $this->copy($payload, 'Hangup-Cause', 'termination_reason', $safe);

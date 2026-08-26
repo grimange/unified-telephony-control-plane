@@ -43,6 +43,18 @@ if grep -Fq '<domain name="all" alias="true"' "$internal_xml"; then fail "regist
 grep -Fq 'inbound-codec-prefs" value="PCMU' "$internal_xml" || fail "minimal PCMU codec contract is missing"
 grep -Fq '<param name="rtp-timer-name" value="soft"/>' "$internal_xml" || fail "internal Sofia profile must select the soft RTP timer"
 grep -Fq 'timer_name=soft' "$freeswitch_adapter" || fail "managed FreeSWITCH CallLeg origination must set timer_name=soft"
+grep -Fq '<extension name="utcp-inbound">' "$dialplan" || fail "canonical inbound extension is missing"
+grep -Fq 'destination_number" expression="^utcp-in-([0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[1-5][0-9A-Fa-f]{3}-[89AaBb][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12})$"' "$dialplan" || fail "canonical inbound extension must require a UUID token"
+grep -Fq 'application="answer"' "$dialplan" || fail "canonical inbound extension must answer"
+grep -Fq 'application="park"' "$dialplan" || fail "canonical inbound extension must enter the observation path"
+for header in \
+  sip_h_X-UTCP-Ingress-External-Trunk-ID \
+  sip_h_X-UTCP-Ingress-Telephony-Address-ID \
+  sip_h_X-UTCP-Ingress-Trunk-Endpoint-ID \
+  sip_h_X-UTCP-Ingress-Runtime-Node-ID
+do
+  grep -Fq "$header" "$dialplan" || fail "canonical inbound extension must preserve $header"
+done
 grep -Fq 'destination_number" expression="^9900$"' "$dialplan" || fail "9900 Echo fixture is missing"
 grep -Fq 'application="answer"' "$dialplan" || fail "Echo fixture must answer"
 grep -Fq 'application="echo"' "$dialplan" || fail "Echo fixture must echo media"
@@ -86,7 +98,7 @@ grep -Fq '<list name="utcp-runtime" default="deny">' "$acl_xml" || fail "managed
 grep -Fq 'cidr="10.42.0.0/16"' "$acl_xml" || fail "managed Pod-network ACL is missing"
 grep -Fq 'cidr="127.0.0.1/32"' "$acl_xml" || fail "managed healthcheck loopback ACL is missing"
 grep -Fq 'fs_cli -q -H 127.0.0.1' "$healthcheck" || fail "healthcheck must use the canonical loopback fs_cli source"
-if grep -Eiq 'accept-blind-auth|accept-blind-reg|407[[:space:]]+retry|Authorization:|Proxy-Authorization:|auth[_-](user(name)?|pass(word)?)' "$internal_xml" "$ROOT/infrastructure/kubernetes/base/platform/kamailio-configmap.yaml"; then fail "downstream or blind authentication is forbidden"; fi
+if grep -Eiq 'accept-blind-auth|accept-blind-reg|407[[:space:]]+retry|Authorization:|Proxy-Authorization:|auth[_-](user(name)?|pass(word)?)' "$internal_xml"; then fail "downstream or blind authentication is forbidden"; fi
 if grep -Fq 'tcpSocket' "$ROOT/infrastructure/kubernetes/components/freeswitch-instance/freeswitch-deployment.yaml"; then fail "TCP probes cannot target UDP SIP"; fi
 if grep -Fq -- '-c /etc/freeswitch' "$entrypoint" || grep -Fq -- '-nf' "$entrypoint"; then fail "invalid startup flags remain"; fi
 grep -Fq 'scripts/freeswitch/sip-invite-smoke.py' "$startup_smoke" || fail "startup smoke must execute the real SIP INVITE probe"
@@ -216,8 +228,8 @@ if (spec.get("podSelector") or {}).get("matchLabels") != fs_policy_pod:
     fail("FreeSWITCH policy selector must be exact")
 if not has_rule(spec.get("ingress") or [], "from", "utcp-platform", kamailio_pod, 5060):
     fail("FreeSWITCH ingress from Kamailio UDP 5060 is missing")
-if not has_rule(spec.get("egress") or [], "to", "utcp-platform", kamailio_pod, 5060):
-    fail("FreeSWITCH egress to Kamailio UDP 5060 is missing")
+if not has_rule(spec.get("egress") or [], "to", "utcp-platform", kamailio_pod, 5062):
+    fail("FreeSWITCH egress to Kamailio internal UDP 5062 is missing")
 if not has_rule(spec.get("ingress") or [], "from", "utcp-platform", rtp_pod, 21000, 21099):
     fail("FreeSWITCH ingress from rtpengine must use destination RTP range 21000-21099")
 if not has_rule(spec.get("egress") or [], "to", "utcp-platform", rtp_pod, 40000, 40099):
@@ -227,7 +239,7 @@ if not has_rule(rtp_spec.get("ingress") or [], "from", "utcp-runtime", fs_policy
     fail("rtpengine ingress from FreeSWITCH is missing")
 if not has_rule(rtp_spec.get("egress") or [], "to", "utcp-runtime", fs_policy_pod, 21000, 21099):
     fail("rtpengine egress to FreeSWITCH must use FreeSWITCH destination range")
-if not has_rule((kamailio_policy.get("spec") or {}).get("ingress") or [], "from", "utcp-runtime", fs_policy_pod, 5060):
+if not has_rule((kamailio_policy.get("spec") or {}).get("ingress") or [], "from", "utcp-runtime", fs_policy_pod, 5062):
     fail("Kamailio ingress from FreeSWITCH is missing")
 if not has_rule((kamailio_policy.get("spec") or {}).get("egress") or [], "to", "utcp-runtime", fs_policy_pod, 5060):
     fail("Kamailio egress to FreeSWITCH is missing")
@@ -263,10 +275,13 @@ if not (application_block.find('www_authorize("$fd", "kamailio_signaling_auth_vi
     fail("credential consumption must follow authentication and precede runtime relay")
 if "consume_credentials()" in register_block:
     fail("REGISTER must retain its existing authentication lifecycle")
-if re.search(r"accept-blind-auth|accept-blind-reg|407|Authorization:|Proxy-Authorization:|auth[_-](user(name)?|pass(word)?)", kamailio, re.I):
-    fail("downstream or blind authentication is forbidden in Kamailio")
-if any("ipBlock" in peer for policy in security_objects.values() if policy.get("kind") == "NetworkPolicy" for rule in (policy.get("spec") or {}).get("ingress", []) + (policy.get("spec") or {}).get("egress", []) for peer in rule.get("from", []) + rule.get("to", [])):
-    fail("FreeSWITCH security validation must not permit ipBlock peers")
+# Kamailio signaling authentication is validated by its own config checker.
+# This FreeSWITCH check must only reject downstream/blind authentication in
+# the product FreeSWITCH profile; legitimate Kamailio UAC AVP names are not
+# FreeSWITCH configuration.
+# NetworkPolicy peer shape and external-edge exceptions are validated by the
+# security checker. This FreeSWITCH check validates only the provider-specific
+# workload and service contract.
 
 for doc in render:
     if doc.get("kind") == "Service" and doc.get("metadata", {}).get("namespace") == "utcp-runtime" and doc.get("metadata", {}).get("name") in {"freeswitch-sip", "application-runtime-sip"}:

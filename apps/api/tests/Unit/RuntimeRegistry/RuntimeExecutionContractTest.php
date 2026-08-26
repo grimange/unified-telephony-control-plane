@@ -28,4 +28,25 @@ final class RuntimeExecutionContractTest extends TestCase
         $this->assertFalse(RuntimeExecutionContract::isCurrent('registry.example.test/utcp/asterisk-ari@'.$digest, null));
         $this->assertFalse(RuntimeExecutionContract::isCurrent('registry.example.test/utcp/asterisk-ari@'.$digest, 'docker-pullable://registry.example.test/utcp/asterisk-ari@sha256:'.str_repeat('c', 64)));
     }
+
+    public function test_native_inbound_runtime_projection_uses_the_same_digest_contract(): void
+    {
+        $digest = 'sha256:'.str_repeat('d', 64);
+        foreach ([
+            [$digest, $digest, true],
+            [null, $digest, false],
+            [$digest, null, false],
+            ['sha256:'.str_repeat('e', 64), $digest, false],
+            ['registry.example.test/utcp/runtime:latest', $digest, false],
+        ] as [$desired, $observed, $expected]) {
+            $this->assertSame($expected, RuntimeExecutionContract::isCurrent($desired, $observed));
+        }
+
+        $migration = dirname(__DIR__, 3).'/database/migrations/2026_08_26_101000_create_kamailio_inbound_runtime_target_view.php';
+        $sql = file_get_contents($migration);
+        $this->assertIsString($sql);
+        $this->assertStringContainsString("n.desired_execution_image ~ '(^|@)sha256:[0-9a-f]{64}($|[?#])'", $sql);
+        $this->assertStringContainsString("n.observed_execution_image ~ '(^|@)sha256:[0-9a-f]{64}($|[?#])'", $sql);
+        $this->assertStringContainsString("substring(n.desired_execution_image from '(sha256:[0-9a-f]{64})') = substring(n.observed_execution_image from '(sha256:[0-9a-f]{64})')", $sql);
+    }
 }

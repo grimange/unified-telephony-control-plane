@@ -249,6 +249,7 @@ final class AsteriskAriEventListener
 
         if ($type === 'StasisStart') {
             $normalized = $this->normalizeStasisStart($event);
+            $payload['application_args'] = $normalized['application_args'];
             $result = app(AsteriskConferenceParticipantBinder::class)->bind($node, $normalized);
             if ($result === AsteriskConferenceParticipantBindResult::RETRYABLE) {
                 $reference = $normalized['application_args'][0] ?? null;

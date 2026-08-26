@@ -119,6 +119,8 @@ def validate(state: dict[str, Any]) -> None:
     media_answer_block = block_after(kamailio, "route[MEDIA_ANSWER]")
     media_delete_block = block_after(kamailio, "route[MEDIA_DELETE]")
     media_reply_block = block_after(kamailio, "onreply_route[APPLICATION_RUNTIME_MEDIA_REPLY]")
+    external_trunk_block = block_after(kamailio, "route[EXTERNAL_TRUNK_ROUTE]")
+    runtime_external_trunk_block = block_after(kamailio, "route[RUNTIME_EXTERNAL_TRUNK]")
 
     require(re.search(r"^\s*autoload\s*=\s*no\s*$", modules, re.M) is not None, "autoload=no required")
     require("autoload = yes" not in modules, "autoload=yes forbidden")
@@ -183,8 +185,12 @@ def validate(state: dict[str, Any]) -> None:
         "Kamailio TCP 8080 container port required",
     )
     require(
-        any(port.get("name") == "sip-udp" and port.get("protocol") == "UDP" and port.get("containerPort") == 5060 for port in kamailio_ports),
-        "Kamailio UDP 5060 container port required",
+        any(port.get("name") == "sip-external-udp" and port.get("protocol") == "UDP" and port.get("containerPort") == 5060 for port in kamailio_ports),
+        "Kamailio external UDP 5060 container port required",
+    )
+    require(
+        any(port.get("name") == "sip-runtime-udp" and port.get("protocol") == "UDP" and port.get("containerPort") == 5062 for port in kamailio_ports),
+        "Kamailio internal runtime UDP 5062 container port required",
     )
     require(not any("hostPort" in port for port in kamailio_ports), "Kamailio hostPort forbidden")
     require(kamailio_pod_spec.get("hostNetwork") is not True, "Kamailio hostNetwork forbidden")
@@ -202,6 +208,8 @@ def validate(state: dict[str, Any]) -> None:
         "manual rollout restart timestamp forbidden",
     )
     require("rtpengine_manage" not in kamailio, "rtpengine_manage forbidden; use explicit offer/answer/delete")
+    require('force_send_socket("udp:0.0.0.0:5060")' in runtime_external_trunk_block, "provider relay must force the external send socket")
+    require('modparam("uac", "default_socket", "udp:0.0.0.0:5060")' in kamailio, "UAC registration must pin the external send socket")
     for forbidden in (
         "set_contact_alias",
         "fix_nated_contact",
@@ -261,9 +269,13 @@ def validate(state: dict[str, Any]) -> None:
     require_in_order(
         request_block,
         [
+            'if ($rm == "INVITE" && $Rp == 5060 && $rd == "external.utcp.local.test")',
+            "route(EXTERNAL_TRUNK_ROUTE)",
             'if ($rm == "CANCEL")',
             "has_totag()",
             "route(WITHINDLG)",
+            'if ($Rp == 5062)',
+            "route(RUNTIME_EXTERNAL_TRUNK)",
             'if ($rd != "sip.utcp.local.test")',
             'if ($rm == "REGISTER")',
             'is_method("INVITE|ACK|CANCEL|BYE|UPDATE")',
@@ -271,6 +283,48 @@ def validate(state: dict[str, Any]) -> None:
         ],
         "request_route",
     )
+    require(
+        request_block.find('if ($rm == "INVITE" && $Rp == 5060 && $rd == "external.utcp.local.test")')
+        < request_block.find("has_totag()"),
+        "trusted external INVITE admission must precede established-dialog and internal-domain routing",
+    )
+    require(
+        request_block.find('if ($Rp == 5062)')
+        < request_block.find('if ($rd != "sip.utcp.local.test")'),
+        "internal runtime execution correlation must be gated by the receive socket before URI-domain validation",
+    )
+    require_in_order(
+        external_trunk_block,
+        [
+            'remove_hf("X-UTCP-Trunk-Endpoint-ID")',
+            'select tenant_id, canonical_external_trunk_id, telephony_address_id, trunk_endpoint_id',
+            'from kamailio_external_trunk_route_view',
+            'if ($dbr(external_trunk_route=>rows) == 0)',
+            'if ($dbr(external_trunk_route=>rows) != 1)',
+            'select runtime_node_id, sip_target',
+            'from kamailio_inbound_runtime_target_view',
+            'order by placement_priority, runtime_node_id',
+            'append_hf("X-UTCP-Ingress-External-Trunk-ID:',
+            '$rU = "utcp-in-',
+            "t_relay()",
+        ],
+        "route[EXTERNAL_TRUNK_ROUTE] inbound execution corridor",
+    )
+    for header in (
+        "X-UTCP-Call-Leg-ID",
+        "X-UTCP-Route-Decision-ID",
+        "X-UTCP-Trunk-Endpoint-ID",
+        "X-UTCP-Ingress-External-Trunk-ID",
+        "X-UTCP-Ingress-Telephony-Address-ID",
+        "X-UTCP-Ingress-Trunk-Endpoint-ID",
+        "X-UTCP-Ingress-Runtime-Node-ID",
+    ):
+        require(f'remove_hf("{header}")' in external_trunk_block, f"external ingress must strip {header}")
+    require("route(RUNTIME_EXTERNAL_TRUNK)" not in external_trunk_block, "external ingress must not enter the internal runtime-external-trunk route")
+    require('if ($rm == "OPTIONS")' in external_trunk_block, "OPTIONS verification must remain explicitly separate from INVITE execution")
+    options_reply = external_trunk_block.find('sl_send_reply("200", "External Trunk Route Matched")')
+    relay = external_trunk_block.find("t_relay()")
+    require(options_reply >= 0 and external_trunk_block.find('if ($rm == "OPTIONS")') < options_reply < relay, "OPTIONS verification must terminate before the INVITE relay path")
     require("has_totag()" not in application_block, "established-dialog handling must not live behind initial method routing")
     require('if ($rd != "sip.utcp.local.test")' not in application_block, "initial domain validation must not run inside application dialog route")
     require("loose_route()" in within_block, "WITHINDLG must use loose_route")
@@ -489,16 +543,18 @@ def validate(state: dict[str, Any]) -> None:
         for proto, host, port, adv_host, adv_port in re.findall(r"^\s*listen=(udp|tcp):([^:\s]+):(\d+)\s+advertise\s+([^:\s]+):(\d+)\s*$", kamailio, re.M | re.I)
     ]
     require(listeners.count(("tcp", "0.0.0.0", 8080, "sip.utcp.local.test", 443)) == 1, "exactly one advertised Kamailio TCP 8080 listener required")
-    require(listeners.count(("udp", "0.0.0.0", 5060, "kamailio-sip-internal.utcp-platform.svc.cluster.local", 5060)) == 1, "exactly one advertised Kamailio UDP 5060 listener required")
-    require(sum(1 for proto, _host, _port, _adv_host, _adv_port in listeners if proto == "udp") == 1, "multiple Kamailio UDP listeners forbidden")
+    require(listeners.count(("udp", "0.0.0.0", 5060, "kamailio-sip-external.utcp-platform.svc.cluster.local", 5060)) == 1, "exactly one advertised external Kamailio UDP 5060 listener required")
+    require(listeners.count(("udp", "0.0.0.0", 5062, "kamailio-sip-internal.utcp-platform.svc.cluster.local", 5060)) == 1, "exactly one advertised internal Kamailio UDP 5062 listener required")
+    require(sum(1 for proto, _host, _port, _adv_host, _adv_port in listeners if proto == "udp") == 2, "exactly two Kamailio UDP listeners required")
     for proto, host, port, adv_host, adv_port in listeners:
         require(host == "0.0.0.0", f"Kamailio listener IP literal forbidden: {host}")
         require(adv_host != "0.0.0.0" and not re.match(r"(?:10\.|127\.|172\.(?:1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)", adv_host), f"unstable listener advertisement forbidden: {adv_host}")
         if proto == "tcp":
             require((adv_host, adv_port) == ("sip.utcp.local.test", 443), "client-facing advertisement must use canonical T1 ingress")
-        if proto == "udp":
-            require(port == 5060, "Kamailio UDP listener port must match Asterisk destination")
-            require((adv_host, adv_port) == ("kamailio-sip-internal.utcp-platform.svc.cluster.local", 5060), "Asterisk-facing advertisement must use internal Service DNS")
+        if proto == "udp" and port == 5060:
+            require((adv_host, adv_port) == ("kamailio-sip-external.utcp-platform.svc.cluster.local", 5060), "provider-facing advertisement must use external Service DNS")
+        if proto == "udp" and port == 5062:
+            require((adv_host, adv_port) == ("kamailio-sip-internal.utcp-platform.svc.cluster.local", 5060), "runtime-facing advertisement must use internal Service DNS")
     for _host, port, transport in asterisk_destinations:
         require(transport.lower() == "udp", "Asterisk relay destination must use UDP")
         require(int(port) == 5060, "Asterisk relay destination port must be 5060")
@@ -522,11 +578,11 @@ def validate(state: dict[str, Any]) -> None:
             require(not any(field in spec for field in ("externalIPs", "loadBalancerIP", "externalName")), "Kamailio SIP Services must not use external fields")
             if key(doc) == "Service/utcp-platform/kamailio-sip-internal":
                 require(spec.get("type") == "ClusterIP", "internal Kamailio SIP Service must be ClusterIP")
-                require(ports == [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-udp"}], "internal Kamailio SIP Service must expose only UDP 5060")
+                require(ports == [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-runtime-udp"}], "internal Kamailio SIP Service must expose only UDP 5060 to the runtime socket")
             elif key(doc) == "Service/utcp-platform/kamailio-sip-external":
                 require(spec.get("type") == "NodePort", "external Kamailio SIP Service must be NodePort")
-                require(spec.get("externalTrafficPolicy") == "Cluster", "external Kamailio SIP Service must use the declared Cluster traffic policy")
-                require(ports == [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-udp", "nodePort": 30560}], "external Kamailio SIP Service must expose only UDP 5060 through NodePort 30560")
+                require(spec.get("externalTrafficPolicy") == "Local", "external Kamailio SIP Service must preserve source IP with Local traffic policy")
+                require(ports == [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-external-udp", "nodePort": 30560}], "external Kamailio SIP Service must expose only UDP 5060 through NodePort 30560")
             else:
                 raise ValidationError("unapproved Kamailio UDP Service")
         require(not (selects_kamailio and spec.get("type") == "LoadBalancer"), "Kamailio LoadBalancer Service forbidden")
@@ -581,7 +637,7 @@ def validate(state: dict[str, Any]) -> None:
             "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
             "podSelector": {"matchLabels": {"app.kubernetes.io/component": "kamailio", "utcp.io/network-role": "kamailio-signaling"}},
         }],
-        "ports": [{"protocol": "UDP", "port": 5060}],
+        "ports": [{"protocol": "UDP", "port": 5062}],
     }
     asterisk_dns_egress = {
         "to": [{
@@ -605,7 +661,7 @@ def validate(state: dict[str, Any]) -> None:
     require(any(rule.get("from") == [{
         "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
         "podSelector": {"matchLabels": {"app.kubernetes.io/component": "asterisk-ari", "utcp.io/network-role": "asterisk-ari"}},
-    }] and rule.get("ports") == [{"protocol": "UDP", "port": 5060}] for rule in (kamailio_policy.get("spec") or {}).get("ingress") or []), "Kamailio ingress must be exact canonical Asterisk UDP 5060")
+    }] and rule.get("ports") == [{"protocol": "UDP", "port": 5062}] for rule in (kamailio_policy.get("spec") or {}).get("ingress") or []), "Kamailio ingress must be exact canonical Asterisk UDP 5062 runtime socket")
     for policy in (kamailio_policy, asterisk_policy):
         rendered = yaml.safe_dump(policy, sort_keys=True)
         if policy is kamailio_policy:
@@ -1188,17 +1244,17 @@ fail_case("running alias consumption in REGISTER fails", lambda s: set_kamailio_
 fail_case("adding alias creation to REGISTER fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('        if (!save("location", "0x04")) {', '        add_contact_alias();\n\n        if (!save("location", "0x04")) {', 1), update_checksum=True))
 fail_case("adding Outbound Path GRUU authority fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('loadmodule "nathelper.so"', 'loadmodule "nathelper.so"\n    loadmodule "path.so"'), update_checksum=True))
 fail_case("allowing arbitrary initial alias routing fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('    if (!www_authorize("$fd", "kamailio_signaling_auth_view")) {', '    handle_ruri_alias();\n\n    if (!www_authorize("$fd", "kamailio_signaling_auth_view")) {', 1), update_checksum=True))
-fail_case("removing Kamailio UDP listener fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("listen=udp:0.0.0.0:5060 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060\n", ""), update_checksum=True))
+fail_case("removing Kamailio UDP listener fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("listen=udp:0.0.0.0:5060 advertise kamailio-sip-external.utcp-platform.svc.cluster.local:5060\n", ""), update_checksum=True))
 fail_case("changing Kamailio UDP listener to TCP fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("listen=udp:0.0.0.0:5060 advertise", "listen=tcp:0.0.0.0:5060 advertise"), update_checksum=True))
 fail_case("changing Kamailio UDP listener port fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("listen=udp:0.0.0.0:5060 advertise", "listen=udp:0.0.0.0:5062 advertise"), update_checksum=True))
 fail_case("removing client-side advertisement fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("listen=tcp:0.0.0.0:8080 advertise sip.utcp.local.test:443", "listen=tcp:0.0.0.0:8080"), update_checksum=True))
-fail_case("removing Asterisk-side advertisement fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("listen=udp:0.0.0.0:5060 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060", "listen=udp:0.0.0.0:5060"), update_checksum=True))
-fail_case("advertising 0.0.0.0 fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060", "advertise 0.0.0.0:5060"), update_checksum=True))
-fail_case("advertising Pod or node IP fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060", "advertise 10.42.1.99:5060"), update_checksum=True))
-fail_case("removing Kamailio UDP container port fails", lambda s: mutate_doc(s, "Deployment/utcp-platform/kamailio", lambda d: d["spec"]["template"]["spec"]["containers"][0].update(ports=[p for p in d["spec"]["template"]["spec"]["containers"][0]["ports"] if p.get("name") != "sip-udp"])))
+fail_case("removing external Kamailio advertisement fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("listen=udp:0.0.0.0:5060 advertise kamailio-sip-external.utcp-platform.svc.cluster.local:5060", "listen=udp:0.0.0.0:5060"), update_checksum=True))
+fail_case("advertising 0.0.0.0 fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("advertise kamailio-sip-external.utcp-platform.svc.cluster.local:5060", "advertise 0.0.0.0:5060"), update_checksum=True))
+fail_case("advertising Pod or node IP fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("advertise kamailio-sip-external.utcp-platform.svc.cluster.local:5060", "advertise 10.42.1.99:5060"), update_checksum=True))
+fail_case("removing Kamailio external UDP container port fails", lambda s: mutate_doc(s, "Deployment/utcp-platform/kamailio", lambda d: d["spec"]["template"]["spec"]["containers"][0].update(ports=[p for p in d["spec"]["template"]["spec"]["containers"][0]["ports"] if p.get("name") != "sip-external-udp"])))
 fail_case("changing Kamailio UDP container port protocol fails", lambda s: mutate_doc(s, "Deployment/utcp-platform/kamailio", lambda d: d["spec"]["template"]["spec"]["containers"][0]["ports"][1].update(protocol="TCP")))
 fail_case("changing Asterisk relay destination UDP port fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("application-runtime-sip.utcp-runtime.svc.cluster.local:5060;transport=udp", "application-runtime-sip.utcp-runtime.svc.cluster.local:5062;transport=udp"), update_checksum=True))
-fail_case("adding second Kamailio UDP listener fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("listen=udp:0.0.0.0:5060 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060", "listen=udp:0.0.0.0:5060 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060\n    listen=udp:0.0.0.0:5062 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5062"), update_checksum=True))
+fail_case("adding duplicate Kamailio UDP listener fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("listen=udp:0.0.0.0:5062 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060", "listen=udp:0.0.0.0:5062 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060\n    listen=udp:0.0.0.0:5062 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060"), update_checksum=True))
 fail_case("adding second Asterisk UDP relay destination fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('route[APPLICATION_RUNTIME_RELAY] {', 'route[APPLICATION_RUNTIME_RELAY] {\n        $du = "sip:asterisk-alt.utcp-runtime.svc.cluster.local:5060;transport=udp";'), update_checksum=True))
 fail_case("Kamailio HostPort fails", lambda s: mutate_doc(s, "Deployment/utcp-platform/kamailio", lambda d: d["spec"]["template"]["spec"]["containers"][0]["ports"][1].update(hostPort=5060)))
 fail_case("Kamailio UDP Service exposure fails", lambda s: mutate_doc(s, "Service/utcp-platform/kamailio", lambda d: d["spec"]["ports"].append({"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-udp"})))

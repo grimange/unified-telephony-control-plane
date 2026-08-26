@@ -932,6 +932,47 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertSame('ready', DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_state'));
     }
 
+    public function test_stasis_start_normalizes_trusted_inbound_correlation_without_leaking_provider_fields(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $catalog = new AsteriskCatalog;
+        $addressId = '11111111-1111-4111-8111-111111111111';
+        $trunkId = '22222222-2222-4222-8222-222222222222';
+        $endpointId = '33333333-3333-4333-8333-333333333333';
+        $runtimeNodeId = '44444444-4444-4444-8444-444444444444';
+        $observations = (new AsteriskAriEventNormalizer($catalog, $catalog->eventType('stasis_start')))->normalize((object) [
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $nodeId,
+        ], [
+            'channel_id' => 'ari-inbound-1',
+            'application_args' => [
+                'utcp-in-'.$addressId,
+                strtoupper($trunkId),
+                $addressId,
+                $endpointId,
+                $runtimeNodeId,
+                'provider-internal-value',
+            ],
+        ]);
+
+        $payload = $observations[0]['payload'];
+        $this->assertSame('utcp-in-'.$addressId, $payload['called_address']);
+        $this->assertSame($trunkId, $payload['ingress_external_trunk_id']);
+        $this->assertSame($addressId, $payload['ingress_telephony_address_id']);
+        $this->assertSame($endpointId, $payload['ingress_trunk_endpoint_id']);
+        $this->assertSame($runtimeNodeId, $payload['ingress_runtime_node_id']);
+        $this->assertArrayNotHasKey('provider-internal-value', $payload);
+
+        $malformed = (new AsteriskAriEventNormalizer($catalog, $catalog->eventType('stasis_start')))->normalize((object) [
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $nodeId,
+        ], [
+            'channel_id' => 'ari-inbound-2',
+            'application_args' => ['utcp-in-'.$addressId, 'not-a-uuid', $addressId, $endpointId, $runtimeNodeId],
+        ]);
+        $this->assertArrayNotHasKey('ingress_external_trunk_id', $malformed[0]['payload']);
+    }
+
     public function test_explicit_authentication_failure_retains_real_degraded_runtime_health_semantics(): void
     {
         [, $nodeId] = $this->runtimeNode();

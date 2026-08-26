@@ -35,6 +35,12 @@ final class CallObservationProcessorTest extends TestCase
         $this->assertSame('inbound', DB::table('calls')->where('id', $leg->call_id)->value('direction'));
         $this->assertSame('offered', $leg->observed_state);
         $this->assertSame($tenantId, $leg->tenant_id);
+        $this->assertNull($leg->route_decision_id);
+        $this->assertNull($leg->inbound_route_id);
+        $this->assertDatabaseHas('control_plane_audit_records', ['action' => 'call.inbound_route_failed']);
+        $failure = DB::table('control_plane_audit_records')->where('action', 'call.inbound_route_failed')->first();
+        $metadata = json_decode((string) $failure->metadata, true);
+        $this->assertSame('ingress_correlation_missing', $metadata['data']['reason']);
         $this->assertDatabaseHas('runtime_observations', ['observation_type' => 'call.leg.offered', 'subject_id' => 'runtime:'.$nodeId.':'.$channel]);
 
         $this->emit('offered-2', $tenantId, $nodeId, 'call.leg.offered', 'runtime:'.$nodeId.':'.$channel, ['runtime_channel_id' => $channel]);
@@ -42,6 +48,151 @@ final class CallObservationProcessorTest extends TestCase
         $this->assertSame(1, DB::table('call_legs')->where('runtime_node_id', $nodeId)->where('runtime_channel_id', $channel)->count());
         $this->assertSame(1, DB::table('calls')->where('direction', 'inbound')->count());
         $this->assertSame(2, DB::table('runtime_observations')->where('observation_type', 'call.leg.offered')->count());
+    }
+
+    public function test_valid_external_inbound_offer_is_bound_by_c7b_after_c6_adoption(): void
+    {
+        $fixture = $this->inboundFixture();
+        $channel = 'inbound-bound';
+
+        $this->emit('inbound-bound', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.offered', 'runtime:'.$fixture['node_id'].':'.$channel, [
+            'runtime_channel_id' => $channel,
+            'remote_identity' => '+15550100',
+            'called_address' => 'utcp-in-'.$fixture['address_id'],
+            'ingress_external_trunk_id' => $fixture['trunk_id'],
+            'ingress_telephony_address_id' => $fixture['address_id'],
+            'ingress_trunk_endpoint_id' => $fixture['endpoint_id'],
+            'ingress_runtime_node_id' => $fixture['node_id'],
+        ]);
+
+        $leg = DB::table('call_legs')->where('runtime_channel_id', $channel)->first();
+        $call = DB::table('calls')->where('id', $leg->call_id)->first();
+        $decision = json_decode((string) $call->route_decision, true);
+        $this->assertSame(1, DB::table('calls')->count());
+        $this->assertSame(1, DB::table('call_legs')->count());
+        $this->assertSame($fixture['route_id'], $leg->inbound_route_id);
+        $this->assertSame($fixture['route_id'], $decision['route_id']);
+        $this->assertSame($fixture['trunk_id'], $leg->external_trunk_id);
+        $this->assertSame($fixture['endpoint_id'], $leg->trunk_endpoint_id);
+        $this->assertSame('opaque:application-entry', $leg->destination_ref);
+        $this->assertSame('opaque:application-entry', $call->destination_ref);
+        $this->assertSame('c7b', $call->route_decision_source);
+        $this->assertSame('selected', $decision['status']);
+        $this->assertArrayNotHasKey('provider', $decision);
+    }
+
+    public function test_duplicate_inbound_offer_reuses_the_existing_call_leg_and_binding(): void
+    {
+        $fixture = $this->inboundFixture();
+        $payload = [
+            'runtime_channel_id' => 'inbound-duplicate',
+            'ingress_external_trunk_id' => $fixture['trunk_id'],
+            'ingress_telephony_address_id' => $fixture['address_id'],
+            'ingress_trunk_endpoint_id' => $fixture['endpoint_id'],
+            'ingress_runtime_node_id' => $fixture['node_id'],
+        ];
+        $subject = 'runtime:'.$fixture['node_id'].':inbound-duplicate';
+        $this->emit('inbound-duplicate-1', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.offered', $subject, $payload);
+        $leg = DB::table('call_legs')->where('runtime_channel_id', 'inbound-duplicate')->first();
+        $decisionId = $leg->route_decision_id;
+        $this->emit('inbound-duplicate-2', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.offered', $subject, $payload);
+
+        $this->assertSame(1, DB::table('calls')->count());
+        $this->assertSame(1, DB::table('call_legs')->count());
+        $this->assertSame($decisionId, DB::table('call_legs')->where('runtime_channel_id', 'inbound-duplicate')->value('route_decision_id'));
+    }
+
+    public function test_partial_and_malformed_inbound_correlation_is_observable_without_binding(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        foreach ([
+            ['partial', ['ingress_external_trunk_id' => Str::uuid()->toString()]],
+            ['malformed', ['ingress_external_trunk_id' => 'not-a-uuid', 'ingress_telephony_address_id' => Str::uuid()->toString(), 'ingress_trunk_endpoint_id' => Str::uuid()->toString(), 'ingress_runtime_node_id' => $nodeId]],
+        ] as [$channel, $correlation]) {
+            $this->emit('missing-'.$channel, $tenantId, $nodeId, 'call.leg.offered', 'runtime:'.$nodeId.':'.$channel, ['runtime_channel_id' => $channel, ...$correlation]);
+            $leg = DB::table('call_legs')->where('runtime_channel_id', $channel)->first();
+            $this->assertNotNull($leg);
+            $this->assertNull($leg->route_decision_id);
+            $this->assertNull($leg->inbound_route_id);
+            $this->assertSame('offered', $leg->observed_state);
+        }
+        $reasons = DB::table('control_plane_audit_records')->where('action', 'call.inbound_route_failed')->pluck('metadata')->map(fn (string $metadata): string => json_decode($metadata, true)['data']['reason'])->all();
+        $this->assertSame(['ingress_correlation_missing', 'ingress_correlation_missing'], $reasons);
+    }
+
+    public function test_inbound_execution_target_mismatch_is_rejected_without_fallback(): void
+    {
+        $fixture = $this->inboundFixture();
+        $this->emit('runtime-mismatch', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.offered', 'runtime:'.$fixture['node_id'].':runtime-mismatch', [
+            'runtime_channel_id' => 'runtime-mismatch',
+            'ingress_external_trunk_id' => $fixture['trunk_id'],
+            'ingress_telephony_address_id' => $fixture['address_id'],
+            'ingress_trunk_endpoint_id' => $fixture['endpoint_id'],
+            'ingress_runtime_node_id' => Str::uuid()->toString(),
+        ]);
+        $leg = DB::table('call_legs')->where('runtime_channel_id', 'runtime-mismatch')->first();
+        $this->assertNull($leg->route_decision_id);
+        $this->assertSame('ingress_execution_target_mismatch', $this->lastInboundFailureReason());
+    }
+
+    public function test_cross_tenant_inbound_correlation_is_rejected_before_route_evaluation(): void
+    {
+        $fixture = $this->inboundFixture();
+        $other = $this->inboundFixture();
+        $this->emit('tenant-mismatch', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.offered', 'runtime:'.$fixture['node_id'].':tenant-mismatch', [
+            'runtime_channel_id' => 'tenant-mismatch',
+            'ingress_external_trunk_id' => $other['trunk_id'],
+            'ingress_telephony_address_id' => $other['address_id'],
+            'ingress_trunk_endpoint_id' => $other['endpoint_id'],
+            'ingress_runtime_node_id' => $fixture['node_id'],
+        ]);
+        $leg = DB::table('call_legs')->where('runtime_channel_id', 'tenant-mismatch')->first();
+        $this->assertSame($fixture['tenant_id'], $leg->tenant_id);
+        $this->assertNull($leg->external_trunk_id);
+        $this->assertSame('ingress_tenant_mismatch', $this->lastInboundFailureReason());
+    }
+
+    public function test_trunk_endpoint_correlation_mismatch_is_rejected_without_lookup_fallback(): void
+    {
+        $fixture = $this->inboundFixture();
+        $other = $this->inboundFixture($fixture['tenant_id']);
+        $this->emit('endpoint-mismatch', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.offered', 'runtime:'.$fixture['node_id'].':endpoint-mismatch', [
+            'runtime_channel_id' => 'endpoint-mismatch',
+            'ingress_external_trunk_id' => $fixture['trunk_id'],
+            'ingress_telephony_address_id' => $fixture['address_id'],
+            'ingress_trunk_endpoint_id' => $other['endpoint_id'],
+            'ingress_runtime_node_id' => $fixture['node_id'],
+        ]);
+        $leg = DB::table('call_legs')->where('runtime_channel_id', 'endpoint-mismatch')->first();
+        $this->assertNull($leg->route_decision_id);
+        $this->assertSame('ingress_correlation_mismatch', $this->lastInboundFailureReason());
+    }
+
+    public function test_inbound_route_failures_are_deterministic_and_do_not_bind_a_route(): void
+    {
+        foreach ([
+            'missing-route' => ['with_route' => false, 'health' => null],
+            'ineligible-route' => ['with_route' => true, 'health' => 'unknown'],
+        ] as $channel => $case) {
+            $fixture = $this->inboundFixture(withRoute: $case['with_route']);
+            if ($case['health'] !== null) {
+                DB::table('external_trunks')->where('id', $fixture['trunk_id'])->update(['observed_health' => $case['health']]);
+            }
+            $this->emit('route-failure-'.$channel, $fixture['tenant_id'], $fixture['node_id'], 'call.leg.offered', 'runtime:'.$fixture['node_id'].':'.$channel, [
+                'runtime_channel_id' => $channel,
+                'ingress_external_trunk_id' => $fixture['trunk_id'],
+                'ingress_telephony_address_id' => $fixture['address_id'],
+                'ingress_trunk_endpoint_id' => $fixture['endpoint_id'],
+                'ingress_runtime_node_id' => $fixture['node_id'],
+            ]);
+            $leg = DB::table('call_legs')->where('runtime_channel_id', $channel)->first();
+            $this->assertNull($leg->route_decision_id);
+            $this->assertNull($leg->inbound_route_id);
+            $this->assertSame('failed', $leg->observed_state);
+        }
+        $reasons = DB::table('control_plane_audit_records')->where('action', 'call.inbound_route_failed')->pluck('metadata')->map(fn (string $metadata): string => json_decode($metadata, true)['data']['reason'])->all();
+        $this->assertContains('no_matching_route', $reasons);
+        $this->assertContains('no_eligible_route', $reasons);
     }
 
     public function test_duplicate_source_event_is_processed_once_and_dtmf_does_not_change_lifecycle(): void
@@ -253,6 +404,46 @@ final class CallObservationProcessorTest extends TestCase
     private function adopt(string $nodeId, string $channel): array
     {
         return app(CallDomainService::class)->adoptInboundLeg($nodeId, $channel);
+    }
+
+    /** @return array{tenant_id:string,node_id:string,trunk_id:string,address_id:string,endpoint_id:string,route_id:?string} */
+    private function inboundFixture(?string $tenantId = null, bool $withRoute = true, string $routeState = 'active'): array
+    {
+        $tenantId ??= Str::uuid()->toString();
+        $nodeId = Str::uuid()->toString();
+        $trunkId = Str::uuid()->toString();
+        $addressId = Str::uuid()->toString();
+        $endpointId = Str::uuid()->toString();
+        $routeId = $withRoute ? Str::uuid()->toString() : null;
+        $suffix = str_replace('-', '', $tenantId);
+        $resourceSuffix = substr(str_replace('-', '', $nodeId), 0, 8);
+        if (! DB::table('tenants')->where('id', $tenantId)->exists()) {
+            DB::table('tenants')->insert(['id' => $tenantId, 'slug' => 'inbound-'.$suffix, 'display_name' => 'Inbound tenant', 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
+        }
+        DB::table('runtime_nodes')->insert(['id' => $nodeId, 'tenant_id' => $tenantId, 'name' => 'Inbound simulator', 'slug' => 'inbound-node-'.substr(str_replace('-', '', $nodeId), 0, 8), 'runtime_family' => 'simulator', 'adapter_key' => 'simulator-deterministic', 'desired_state' => 'active', 'observed_state' => 'ready', 'configuration_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('telephony_addresses')->insert(['id' => $addressId, 'tenant_id' => $tenantId, 'address_type' => 'e164', 'normalized_value' => '+1555'.substr(str_replace('-', '', $addressId), 0, 7), 'desired_state' => 'active', 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('external_trunks')->insert(['id' => $trunkId, 'tenant_id' => $tenantId, 'name' => 'Inbound trunk', 'slug' => 'inbound-trunk-'.$resourceSuffix, 'supported_directions' => json_encode(['inbound']), 'capabilities' => json_encode([]), 'desired_state' => 'active', 'observed_health' => 'ready', 'configuration_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('external_trunk_addresses')->insert(['external_trunk_id' => $trunkId, 'telephony_address_id' => $addressId, 'direction' => 'inbound', 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('trunk_endpoints')->insert(['id' => $endpointId, 'tenant_id' => $tenantId, 'external_trunk_id' => $trunkId, 'endpoint_uri' => 'sip:inbound-'.$resourceSuffix.'.example.test', 'transport' => 'udp', 'authentication_mode' => 'none', 'capabilities' => json_encode([]), 'desired_state' => 'active', 'priority' => 100, 'signaling_mode' => 'static', 'created_at' => now(), 'updated_at' => now()]);
+        if ($routeId !== null) {
+            DB::table('inbound_routes')->insert(['id' => $routeId, 'tenant_id' => $tenantId, 'name' => 'Inbound route', 'slug' => 'route-'.$resourceSuffix, 'external_trunk_id' => $trunkId, 'telephony_address_id' => $addressId, 'destination_ref' => 'opaque:application-entry', 'priority' => 10, 'desired_state' => $routeState, 'created_at' => now(), 'updated_at' => now()]);
+        }
+
+        return [
+            'tenant_id' => $tenantId,
+            'node_id' => $nodeId,
+            'trunk_id' => $trunkId,
+            'address_id' => $addressId,
+            'endpoint_id' => $endpointId,
+            'route_id' => $routeId,
+        ];
+    }
+
+    private function lastInboundFailureReason(): string
+    {
+        $payload = DB::table('control_plane_audit_records')->where('action', 'call.inbound_route_failed')->latest('created_at')->value('metadata');
+
+        return json_decode((string) $payload, true)['data']['reason'];
     }
 
     /** @return array{0:string,1:string} */

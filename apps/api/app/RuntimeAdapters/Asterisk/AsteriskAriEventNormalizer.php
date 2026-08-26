@@ -193,6 +193,17 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
         if (is_string($payload['remote_identity'] ?? null) && trim($payload['remote_identity']) !== '') {
             $safe['remote_identity'] = trim($payload['remote_identity']);
         }
+        if ($type === 'call.leg.offered') {
+            $args = is_array($payload['application_args'] ?? null) ? array_values(array_filter($payload['application_args'], 'is_string')) : [];
+            if (isset($args[0]) && preg_match('/^utcp-in-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/', $args[0]) === 1) {
+                $safe['called_address'] = $args[0];
+                foreach ([1 => 'ingress_external_trunk_id', 2 => 'ingress_telephony_address_id', 3 => 'ingress_trunk_endpoint_id', 4 => 'ingress_runtime_node_id'] as $index => $key) {
+                    if (isset($args[$index]) && preg_match('/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$/', $args[$index]) === 1) {
+                        $safe[$key] = strtolower($args[$index]);
+                    }
+                }
+            }
+        }
         if (is_string($payload['digit'] ?? null)) {
             $safe['digit'] = $payload['digit'];
         }

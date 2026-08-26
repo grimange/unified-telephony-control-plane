@@ -70,6 +70,42 @@ final class FreeSwitchEventObservationTest extends TestCase
         $this->assertSame('call.legs.unbridged', $unbridge[0]['observation_type']);
     }
 
+    public function test_inbound_sip_headers_normalize_to_provider_neutral_correlation(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $receipt = (object) ['tenant_id' => $tenantId, 'runtime_node_id' => $nodeId, 'connection_epoch_id' => 'epoch-inbound'];
+        $addressId = '11111111-1111-4111-8111-111111111111';
+        $trunkId = '22222222-2222-4222-8222-222222222222';
+        $endpointId = '33333333-3333-4333-8333-333333333333';
+        $runtimeNodeId = '44444444-4444-4444-8444-444444444444';
+        $observations = (new FreeSwitchEventNormalizer(new FreeSwitchCatalog, 'CHANNEL_CREATE'))->normalize($receipt, [
+            'Unique-ID' => 'freeswitch-inbound-1',
+            'Caller-Direction' => 'inbound',
+            'variable_utcp_called_address' => 'utcp-in-'.$addressId,
+            'variable_sip_h_X-UTCP-Ingress-External-Trunk-ID' => strtoupper($trunkId),
+            'variable_sip_h_X-UTCP-Ingress-Telephony-Address-ID' => $addressId,
+            'variable_sip_h_X-UTCP-Ingress-Trunk-Endpoint-ID' => $endpointId,
+            'variable_sip_h_X-UTCP-Ingress-Runtime-Node-ID' => $runtimeNodeId,
+            'variable_sip_h_X-Provider-Secret' => 'must-not-leak',
+        ]);
+
+        $payload = $observations[0]['payload'];
+        $this->assertSame('utcp-in-'.$addressId, $payload['called_address']);
+        $this->assertSame($trunkId, $payload['ingress_external_trunk_id']);
+        $this->assertSame($addressId, $payload['ingress_telephony_address_id']);
+        $this->assertSame($endpointId, $payload['ingress_trunk_endpoint_id']);
+        $this->assertSame($runtimeNodeId, $payload['ingress_runtime_node_id']);
+        $this->assertArrayNotHasKey('variable_sip_h_X-Provider-Secret', $payload);
+
+        $malformed = (new FreeSwitchEventNormalizer(new FreeSwitchCatalog, 'CHANNEL_CREATE'))->normalize($receipt, [
+            'Unique-ID' => 'freeswitch-inbound-2',
+            'Caller-Direction' => 'inbound',
+            'variable_utcp_called_address' => 'utcp-in-'.$addressId,
+            'variable_sip_h_X-UTCP-Ingress-External-Trunk-ID' => 'not-a-uuid',
+        ]);
+        $this->assertArrayNotHasKey('ingress_external_trunk_id', $malformed[0]['payload']);
+    }
+
     public function test_outbound_create_is_not_inbound_offered_and_reserved_answer_correlates(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode();

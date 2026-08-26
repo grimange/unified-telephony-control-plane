@@ -72,9 +72,9 @@ for doc in docs:
     if spec.get("type") == "NodePort" and key(doc) != "Service/utcp-platform/kamailio-sip-external":
         fail(f"unapproved NodePort Service {key(doc)}")
     if key(doc) == "Service/utcp-platform/kamailio-sip-external":
-        if spec.get("type") != "NodePort" or spec.get("externalTrafficPolicy") != "Cluster":
-            fail("external Kamailio SIP Service must use the bounded NodePort contract")
-        if spec.get("ports") != [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-udp", "nodePort": 30560}]:
+        if spec.get("type") != "NodePort" or spec.get("externalTrafficPolicy") != "Local":
+            fail("external Kamailio SIP Service must use the bounded Local-policy NodePort contract")
+        if spec.get("ports") != [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-external-udp", "nodePort": 30560}]:
             fail("external Kamailio SIP Service must expose only UDP/5060 through NodePort 30560")
 
 

@@ -10,6 +10,7 @@ use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\IdempotencyKey;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 use LogicException;
 
@@ -357,6 +358,142 @@ final class CallDomainService
 
             return ['call_id' => $callId, 'leg_id' => $legId, 'created' => true];
         });
+    }
+
+    /**
+     * Attach the canonical C7B decision after C6 has observed and adopted the
+     * runtime channel. The ingress values are trusted only after the Kamailio
+     * boundary and are revalidated against the observation receipt here.
+     *
+     * @param array<string, mixed> $ingress
+     * @return array{status:string,route_decision_id:?string}
+     */
+    public function evaluateAndBindInboundRoute(
+        string $tenantId,
+        string $callId,
+        string $legId,
+        string $runtimeNodeId,
+        array $ingress,
+    ): array {
+        return DB::transaction(function () use ($tenantId, $callId, $legId, $runtimeNodeId, $ingress): array {
+            $call = DB::table('calls')->where('tenant_id', $tenantId)->where('id', $callId)->lockForUpdate()->first();
+            $leg = DB::table('call_legs')->where('tenant_id', $tenantId)->where('id', $legId)->lockForUpdate()->first();
+            if ($call === null || $leg === null || (string) $leg->call_id !== $callId) {
+                return ['status' => 'missing_call_leg', 'route_decision_id' => null];
+            }
+
+            // Duplicate offered observations must converge on the existing
+            // binding without re-running route selection or creating a new
+            // decision identity.
+            if ($leg->route_decision_id !== null) {
+                return ['status' => 'selected', 'route_decision_id' => (string) $leg->route_decision_id];
+            }
+
+            $externalTrunkId = $this->uuidValue($ingress['ingress_external_trunk_id'] ?? null);
+            $addressId = $this->uuidValue($ingress['ingress_telephony_address_id'] ?? null);
+            $endpointId = $this->uuidValue($ingress['ingress_trunk_endpoint_id'] ?? null);
+            $selectedNodeId = $this->uuidValue($ingress['ingress_runtime_node_id'] ?? null);
+            if ($externalTrunkId === null || $addressId === null || $endpointId === null || $selectedNodeId === null) {
+                $this->recordInboundRouteFailure($tenantId, $callId, $legId, 'ingress_correlation_missing');
+
+                return ['status' => 'ingress_correlation_missing', 'route_decision_id' => null];
+            }
+            if ($selectedNodeId !== $runtimeNodeId) {
+                $this->recordInboundRouteFailure($tenantId, $callId, $legId, 'ingress_execution_target_mismatch');
+
+                return ['status' => 'ingress_execution_target_mismatch', 'route_decision_id' => null];
+            }
+
+            $trunkTenant = DB::table('external_trunks')->where('id', $externalTrunkId)->value('tenant_id');
+            if ((string) $trunkTenant !== $tenantId) {
+                $this->recordInboundRouteFailure($tenantId, $callId, $legId, 'ingress_tenant_mismatch');
+
+                return ['status' => 'ingress_tenant_mismatch', 'route_decision_id' => null];
+            }
+
+            $endpoint = DB::table('trunk_endpoints')
+                ->where('tenant_id', $tenantId)
+                ->where('id', $endpointId)
+                ->where('external_trunk_id', $externalTrunkId)
+                ->first();
+            if ($endpoint === null) {
+                $this->recordInboundRouteFailure($tenantId, $callId, $legId, 'ingress_correlation_mismatch');
+
+                return ['status' => 'ingress_correlation_mismatch', 'route_decision_id' => null];
+            }
+
+            $decision = $this->routes->evaluateInbound($tenantId, $externalTrunkId, $addressId);
+            if (! $decision->isSelected()) {
+                $failure = $decision->toArray()['failure_code'] ?? 'no_matching_route';
+                $this->recordInboundRouteFailure($tenantId, $callId, $legId, (string) $failure, $decision->toArray(), true);
+
+                return ['status' => (string) $failure, 'route_decision_id' => null];
+            }
+
+            $destination = $decision->destination()?->canonical();
+            $decisionData = [...$decision->toArray(), 'trunk_endpoint_id' => $endpointId];
+            DB::table('calls')->where('id', $callId)->update([
+                'destination_ref' => $destination,
+                'route_decision' => json_encode($decisionData, JSON_THROW_ON_ERROR),
+                'route_decision_source' => 'c7b',
+                'updated_at' => now(),
+            ]);
+            DB::table('call_legs')->where('id', $legId)->update([
+                'route_decision_id' => $decision->id(),
+                'inbound_route_id' => $decision->routeId(),
+                'external_trunk_id' => $decision->externalTrunkId(),
+                'trunk_endpoint_id' => $endpointId,
+                'destination_ref' => $destination,
+                'updated_at' => now(),
+            ]);
+            $this->record(ExecutionContext::system(reason: 'inbound route selected', tenantId: $tenantId, origin: 'telephony-observation'), 'call.inbound_route_selected', 'call', $callId, [
+                'call_id' => $callId,
+                'leg_id' => $legId,
+                'route_decision_id' => $decision->id(),
+                'inbound_route_id' => $decision->routeId(),
+                'external_trunk_id' => $decision->externalTrunkId(),
+                'trunk_endpoint_id' => $endpointId,
+                'destination_ref' => $destination,
+                'source' => 'c7b',
+            ]);
+
+            return ['status' => 'selected', 'route_decision_id' => $decision->id()];
+        });
+    }
+
+    /** @param array<string,mixed> $details */
+    private function recordInboundRouteFailure(string $tenantId, string $callId, string $legId, string $reason, array $details = [], bool $terminate = false): void
+    {
+        if ($terminate) {
+            DB::table('call_legs')->where('id', $legId)->update([
+                'desired_state' => 'terminated',
+                'observed_state' => CallState::Failed->value,
+                'termination_reason' => $reason,
+                'termination_party' => 'system',
+                'terminated_at' => now(),
+                'updated_at' => now(),
+            ]);
+            DB::table('calls')->where('id', $callId)->update([
+                'desired_state' => 'terminated',
+                'observed_state' => CallState::Failed->value,
+                'termination_reason' => $reason,
+                'termination_party' => 'system',
+                'terminated_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+        $this->record(ExecutionContext::system(reason: 'inbound route evaluation', tenantId: $tenantId, origin: 'telephony-observation'), 'call.inbound_route_failed', 'call', $callId, [
+            'call_id' => $callId,
+            'leg_id' => $legId,
+            'reason' => $reason,
+            'details' => $details,
+            'route_binding' => null,
+        ]);
+    }
+
+    private function uuidValue(mixed $value): ?string
+    {
+        return is_string($value) && Str::isUuid($value) ? strtolower($value) : null;
     }
 
     public function bindObservedRuntimeChannel(string $tenantId, string $legId, string $runtimeNodeId, string $runtimeChannelId): bool

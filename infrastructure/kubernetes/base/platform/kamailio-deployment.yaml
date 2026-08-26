@@ -15,7 +15,7 @@ spec:
   template:
     metadata:
       annotations:
-        utcp.io/kamailio-config-sha256: 0dadfcb93e2b4122b27dc66b423ccab51c20661add9ab64ca1b46c53959b3569
+        utcp.io/kamailio-config-sha256: d6504745c3aaa29e2427309fb8feb8182eb88cdcdc7bc02b73e698d0bd10c794
       labels:
         app.kubernetes.io/part-of: utcp
         app.kubernetes.io/component: kamailio
@@ -51,8 +51,11 @@ spec:
             - name: ws
               containerPort: 8080
               protocol: TCP
-            - name: sip-udp
+            - name: sip-external-udp
               containerPort: 5060
+              protocol: UDP
+            - name: sip-runtime-udp
+              containerPort: 5062
               protocol: UDP
             - name: reg-control
               containerPort: 8090

@@ -9,7 +9,7 @@ metadata:
     utcp.io/exposure: v1-external-sip-lab
 spec:
   type: NodePort
-  externalTrafficPolicy: Cluster
+  externalTrafficPolicy: Local
   selector:
     app.kubernetes.io/part-of: utcp
     app.kubernetes.io/component: kamailio
@@ -18,5 +18,5 @@ spec:
     - name: sip-udp
       protocol: UDP
       port: 5060
-      targetPort: sip-udp
+      targetPort: sip-external-udp
       nodePort: 30560

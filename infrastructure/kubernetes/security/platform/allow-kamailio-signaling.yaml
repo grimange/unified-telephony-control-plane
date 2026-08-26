@@ -34,7 +34,7 @@ spec:
               utcp.io/network-role: asterisk-ari
       ports:
         - protocol: UDP
-          port: 5060
+          port: 5062
     - from:
         - namespaceSelector:
             matchLabels:
@@ -44,7 +44,7 @@ spec:
               utcp.io/network-role: freeswitch-esl
       ports:
         - protocol: UDP
-          port: 5060
+          port: 5062
     - from:
         - ipBlock:
             cidr: 38.146.161.46/32

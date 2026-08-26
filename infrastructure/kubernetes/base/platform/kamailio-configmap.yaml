@@ -24,7 +24,9 @@ data:
     max_while_loops=100
     listen=tcp:0.0.0.0:8080 advertise sip.utcp.local.test:443
     listen=tcp:0.0.0.0:8090
-    listen=udp:0.0.0.0:5060 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060
+    # UDP/5060 is provider-facing; UDP/5062 is the trusted runtime ingress.
+    listen=udp:0.0.0.0:5060 advertise kamailio-sip-external.utcp-platform.svc.cluster.local:5060
+    listen=udp:0.0.0.0:5062 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060
     alias=sip.utcp.local.test
 
     loadmodule "tm.so"
@@ -66,6 +68,7 @@ data:
     modparam("uac", "reg_db_url", "postgres://__KAMAILIO_REGISTRATION_DB_USER__:__KAMAILIO_REGISTRATION_DB_PASSWORD__@postgres.utcp-data.svc.cluster.local:5432/utcp")
     modparam("uac", "reg_db_table", "kamailio_external_trunk_registration_view")
     modparam("uac", "reg_contact_addr", "kamailio-sip-internal.utcp-platform.svc.cluster.local:5060")
+    modparam("uac", "default_socket", "udp:0.0.0.0:5060")
     modparam("uac", "reg_timer_interval", 10)
     modparam("uac", "reg_retry_interval", 60)
     modparam("uac", "reg_random_delay", 5)
@@ -105,11 +108,16 @@ data:
         }
 
         if ($rm == "OPTIONS") {
-            if ($rd == "external.utcp.local.test") {
+            if ($Rp == 5060 && $rd == "external.utcp.local.test") {
                 route(EXTERNAL_TRUNK_ROUTE);
                 exit;
             }
             sl_send_reply("200", "Keepalive");
+            exit;
+        }
+
+        if ($rm == "INVITE" && $Rp == 5060 && $rd == "external.utcp.local.test") {
+            route(EXTERNAL_TRUNK_ROUTE);
             exit;
         }
 
@@ -121,17 +129,22 @@ data:
             exit;
         }
 
-        # Only the managed runtime path may request canonical provider
-        # execution.  The endpoint correlation is selected by C7B and is
-        # carried as an internal header; this route never selects a trunk.
-        if ($rm == "INVITE" && $hdr(X-UTCP-Trunk-Endpoint-ID) != "") {
-            route(RUNTIME_EXTERNAL_TRUNK);
-            exit;
-        }
-
         if (has_totag()) {
             route(WITHINDLG);
             exit;
+        }
+
+        # The receive socket, not a peer-controlled URI, is the trust boundary.
+        if ($Rp == 5062) {
+            if ($rm == "INVITE") {
+                if ($hdr(X-UTCP-Call-Leg-ID) == "" || $hdr(X-UTCP-Route-Decision-ID) == "" || $hdr(X-UTCP-Trunk-Endpoint-ID) == "") {
+                    xlog("L_WARN", "kamailio_runtime_external_route result=missing_canonical_correlation call_id=$ci\n");
+                    sl_send_reply("403", "Missing UTCP Execution Correlation");
+                    exit;
+                }
+                route(RUNTIME_EXTERNAL_TRUNK);
+                exit;
+            }
         }
 
         if ($rd != "sip.utcp.local.test") {
@@ -254,20 +267,65 @@ data:
     }
 
     route[EXTERNAL_TRUNK_ROUTE] {
-        if (!sql_query("conference", "select canonical_external_trunk_id, provider_local_trunk_id, route_id, telephony_address_id, endpoint_uri from kamailio_external_trunk_route_view where normalized_address = '$rU' and direction = 'inbound'", "external_trunk_route")) {
+        # Peer-supplied correlation is never trusted. The only accepted
+        # values are re-established from the T6 projection after identity
+        # matching on source host and called address.
+        remove_hf("X-UTCP-Call-Leg-ID");
+        remove_hf("X-UTCP-Route-Decision-ID");
+        remove_hf("X-UTCP-Trunk-Endpoint-ID");
+        remove_hf("X-UTCP-Ingress-External-Trunk-ID");
+        remove_hf("X-UTCP-Ingress-Telephony-Address-ID");
+        remove_hf("X-UTCP-Ingress-Trunk-Endpoint-ID");
+        remove_hf("X-UTCP-Ingress-Runtime-Node-ID");
+
+        if (!sql_query("conference", "select tenant_id, canonical_external_trunk_id, telephony_address_id, trunk_endpoint_id from kamailio_external_trunk_route_view where normalized_address = '$rU' and direction = 'inbound' and provider_host = '$si'", "external_trunk_route")) {
             xlog("L_WARN", "kamailio_external_trunk_route result=projection_query_failed method=$rm call_id=$ci\n");
             sl_send_reply("503", "External Trunk Projection Unavailable");
             exit;
         }
 
-        if ($dbr(external_trunk_route=>rows) != 1) {
-            xlog("L_INFO", "kamailio_external_trunk_route result=route_not_found method=$rm call_id=$ci\n");
+        if ($dbr(external_trunk_route=>rows) == 0) {
+            xlog("L_INFO", "kamailio_external_trunk_route result=unknown_ingress_identity method=$rm call_id=$ci\n");
             sl_send_reply("404", "External Trunk Route Not Found");
             exit;
         }
+        if ($dbr(external_trunk_route=>rows) != 1) {
+            xlog("L_WARN", "kamailio_external_trunk_route result=ambiguous_ingress_identity method=$rm call_id=$ci\n");
+            sl_send_reply("403", "Ambiguous External Trunk Route");
+            exit;
+        }
 
-        xlog("L_INFO", "kamailio_external_trunk_route result=matched external_trunk_id=$dbr(external_trunk_route=>[0,0]) provider_local_trunk_id=$dbr(external_trunk_route=>[0,1]) route_id=$dbr(external_trunk_route=>[0,2]) telephony_address_id=$dbr(external_trunk_route=>[0,3]) endpoint_uri=$dbr(external_trunk_route=>[0,4])\n");
-        sl_send_reply("200", "External Trunk Route Matched");
+        if ($rm == "OPTIONS") {
+            xlog("L_INFO", "kamailio_external_trunk_route result=matched method=OPTIONS call_id=$ci\n");
+            sl_send_reply("200", "External Trunk Route Matched");
+            exit;
+        }
+
+        if (!sql_query("conference", "select runtime_node_id, sip_target from kamailio_inbound_runtime_target_view where tenant_id = '$dbr(external_trunk_route=>[0,0])' order by placement_priority, runtime_node_id", "inbound_runtime_target")) {
+            xlog("L_WARN", "kamailio_external_trunk_route result=execution_target_projection_failed method=$rm call_id=$ci\n");
+            sl_send_reply("503", "Inbound Runtime Unavailable");
+            exit;
+        }
+        if ($dbr(inbound_runtime_target=>rows) < 1) {
+            xlog("L_WARN", "kamailio_external_trunk_route result=no_eligible_runtime_target method=$rm call_id=$ci\n");
+            sl_send_reply("503", "Inbound Runtime Unavailable");
+            exit;
+        }
+
+        append_hf("X-UTCP-Ingress-External-Trunk-ID: $dbr(external_trunk_route=>[0,1])\r\n");
+        append_hf("X-UTCP-Ingress-Telephony-Address-ID: $dbr(external_trunk_route=>[0,2])\r\n");
+        append_hf("X-UTCP-Ingress-Trunk-Endpoint-ID: $dbr(external_trunk_route=>[0,3])\r\n");
+        append_hf("X-UTCP-Ingress-Runtime-Node-ID: $dbr(inbound_runtime_target=>[0,0])\r\n");
+        $rU = "utcp-in-$dbr(external_trunk_route=>[0,2])";
+        $du = $dbr(inbound_runtime_target=>[0,1]);
+        route(MEDIA_OFFER);
+        record_route();
+        t_on_reply("APPLICATION_RUNTIME_MEDIA_REPLY");
+        t_on_failure("APPLICATION_RUNTIME_UNAVAILABLE");
+        if (!t_relay()) {
+            xlog("L_WARN", "kamailio_external_trunk_route result=relay_failed method=$rm call_id=$ci\n");
+            sl_reply_error();
+        }
         exit;
     }
 
@@ -295,6 +353,7 @@ data:
         $avp(auser) = $dbr(runtime_external_route=>[0,2]);
         $avp(apass) = $dbr(runtime_external_route=>[0,3]);
         $avp(arealm) = $dbr(runtime_external_route=>[0,4]);
+        force_send_socket("udp:0.0.0.0:5060");
         remove_hf("X-UTCP-Call-Leg-ID");
         remove_hf("X-UTCP-Route-Decision-ID");
         remove_hf("X-UTCP-Trunk-Endpoint-ID");

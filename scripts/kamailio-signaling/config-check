@@ -560,21 +560,25 @@ listeners = re.findall(r"^\s*listen=(udp|tcp):([^:\s]+):(\d+)\s+advertise\s+([^:
 normalized_listeners = [(proto.lower(), host, int(port), adv_host, int(adv_port)) for proto, host, port, adv_host, adv_port in listeners]
 if normalized_listeners.count(("tcp", "0.0.0.0", 8080, "sip.utcp.local.test", 443)) != 1:
     fail("Kamailio must preserve exactly one TCP 8080 listener")
-if normalized_listeners.count(("udp", "0.0.0.0", 5060, "kamailio-sip-internal.utcp-platform.svc.cluster.local", 5060)) != 1:
-    fail("Asterisk UDP 5060 destination requires exactly one advertised internal UDP socket")
-if sum(1 for proto, _host, _port, _adv_host, _adv_port in normalized_listeners if proto == "udp") != 1:
-    fail("Kamailio must not configure more than one UDP SIP listener")
+if normalized_listeners.count(("udp", "0.0.0.0", 5060, "kamailio-sip-external.utcp-platform.svc.cluster.local", 5060)) != 1:
+    fail("provider UDP 5060 requires exactly one advertised external UDP socket")
+if normalized_listeners.count(("udp", "0.0.0.0", 5062, "kamailio-sip-internal.utcp-platform.svc.cluster.local", 5060)) != 1:
+    fail("runtime UDP 5062 requires exactly one advertised internal UDP socket")
+if sum(1 for proto, _host, _port, _adv_host, _adv_port in normalized_listeners if proto == "udp") != 2:
+    fail("Kamailio must configure exactly two UDP SIP listeners")
 for proto, host, port, adv_host, adv_port in normalized_listeners:
     if host != "0.0.0.0":
         fail(f"Kamailio listener must bind to pod-local wildcard authority, not {host}")
     if adv_host == "0.0.0.0" or re.match(r"(?:10\.|127\.|172\.(?:1[6-9]|2[0-9]|3[0-1])\.|192\.168\.)", adv_host):
         fail(f"Kamailio listener advertises unstable or unreachable identity {adv_host}")
-    if proto == "udp" and port != 5060:
-        fail(f"Asterisk UDP relay listener port drifted from 5060 to {port}")
+    if proto == "udp" and port not in (5060, 5062):
+        fail(f"Kamailio UDP listener port is outside the external/runtime split: {port}")
     if proto == "tcp" and (adv_host, adv_port) != ("sip.utcp.local.test", 443):
         fail("Client-facing listener must advertise the canonical T1 SIP ingress identity")
-    if proto == "udp" and (adv_host, adv_port) != ("kamailio-sip-internal.utcp-platform.svc.cluster.local", 5060):
-        fail("Asterisk-facing listener must advertise the internal Kamailio SIP Service DNS")
+    if proto == "udp" and port == 5060 and (adv_host, adv_port) != ("kamailio-sip-external.utcp-platform.svc.cluster.local", 5060):
+        fail("provider-facing listener must advertise the external Kamailio SIP Service DNS")
+    if proto == "udp" and port == 5062 and (adv_host, adv_port) != ("kamailio-sip-internal.utcp-platform.svc.cluster.local", 5060):
+        fail("runtime-facing listener must advertise the internal Kamailio SIP Service DNS")
 for _host, port, transport in asterisk_destinations:
     if transport.lower() != "udp":
         fail("Asterisk relay destination must use UDP transport")
@@ -593,8 +597,10 @@ if len(kamailio_containers) != 1:
 kamailio_ports = kamailio_containers[0].get("ports") or []
 if not any(port.get("name") == "ws" and port.get("protocol") == "TCP" and port.get("containerPort") == 8080 for port in kamailio_ports):
     fail("Kamailio Deployment must preserve TCP 8080 container port")
-if not any(port.get("name") == "sip-udp" and port.get("protocol") == "UDP" and port.get("containerPort") == 5060 for port in kamailio_ports):
-    fail("Kamailio UDP 5060 listener requires matching sip-udp UDP container port")
+if not any(port.get("name") == "sip-external-udp" and port.get("protocol") == "UDP" and port.get("containerPort") == 5060 for port in kamailio_ports):
+    fail("Kamailio UDP 5060 listener requires the external SIP container port")
+if not any(port.get("name") == "sip-runtime-udp" and port.get("protocol") == "UDP" and port.get("containerPort") == 5062 for port in kamailio_ports):
+    fail("Kamailio UDP 5062 listener requires the runtime SIP container port")
 if any("hostPort" in port for port in kamailio_ports):
     fail("Kamailio SIP listener must not use hostPort")
 if (kamailio_pod_spec.get("hostNetwork") is True):
@@ -614,9 +620,9 @@ for doc in docs:
             if spec.get("type") != "ClusterIP":
                 fail("internal Kamailio SIP Service must be ClusterIP")
         elif key(doc) == "Service/utcp-platform/kamailio-sip-external":
-            if spec.get("type") != "NodePort" or spec.get("externalTrafficPolicy") != "Cluster":
-                fail("V1 external Kamailio SIP Service must be the exact Cluster-policy NodePort")
-            if ports != [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-udp", "nodePort": 30560}]:
+            if spec.get("type") != "NodePort" or spec.get("externalTrafficPolicy") != "Local":
+                fail("V1 external Kamailio SIP Service must be the exact Local-policy NodePort")
+            if ports != [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-external-udp", "nodePort": 30560}]:
                 fail("V1 external Kamailio SIP Service must expose only UDP 5060 through NodePort 30560")
         else:
             fail("Kamailio UDP SIP listener has an unapproved Service")
@@ -626,7 +632,7 @@ for doc in docs:
             "utcp.io/network-role": "kamailio-signaling",
         }:
             fail("internal Kamailio SIP Service must select only the Kamailio signaling workload")
-        if key(doc) == "Service/utcp-platform/kamailio-sip-internal" and ports != [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-udp"}]:
+        if key(doc) == "Service/utcp-platform/kamailio-sip-internal" and ports != [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-runtime-udp"}]:
             fail("internal Kamailio SIP Service must expose only UDP 5060")
         if any(field in spec for field in ("externalIPs", "loadBalancerIP", "externalName")):
             fail("internal Kamailio SIP Service must not use external service fields")
@@ -735,8 +741,20 @@ if not any(rule.get("from") == [{
         "app.kubernetes.io/component": "asterisk-ari",
         "utcp.io/network-role": "asterisk-ari",
     }},
-}] and rule.get("ports") == [{"protocol": "UDP", "port": 5060}] for rule in kamailio_ingress):
-    fail("Kamailio ingress must allow only canonical Asterisk UDP 5060 reverse signaling")
+}] and rule.get("ports") == [{"protocol": "UDP", "port": 5062}] for rule in kamailio_ingress):
+    fail("Kamailio ingress must allow only canonical Asterisk UDP 5062 runtime signaling")
+if any(
+    rule.get("ports") == [{"protocol": "UDP", "port": 5060}]
+    and any(peer.get("namespaceSelector") for peer in rule.get("from", []))
+    for rule in kamailio_ingress
+):
+    fail("Kamailio runtime namespace ingress must not reach the provider-facing UDP 5060 socket")
+external_ingress = [
+    rule for rule in kamailio_ingress
+    if any(peer.get("ipBlock", {}).get("cidr") == "38.146.161.46/32" for peer in rule.get("from", []))
+]
+if external_ingress != [{"from": [{"ipBlock": {"cidr": "38.146.161.46/32"}}], "ports": [{"protocol": "UDP", "port": 5060}]}]:
+    fail("Kamailio external SIP ingress must target only UDP 5060")
 asterisk_egress = (asterisk_policy.get("spec") or {}).get("egress") or []
 asterisk_sip_egress = {
     "to": [{
@@ -746,7 +764,7 @@ asterisk_sip_egress = {
             "utcp.io/network-role": "kamailio-signaling",
         }},
     }],
-    "ports": [{"protocol": "UDP", "port": 5060}],
+    "ports": [{"protocol": "UDP", "port": 5062}],
 }
 asterisk_dns_egress = {
     "to": [{

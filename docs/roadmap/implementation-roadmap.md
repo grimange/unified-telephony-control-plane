@@ -87,12 +87,17 @@ originated managed CallLeg, so **T4 is complete**. Recording remains separate.
 T4D is not a phase. See
 [`docs/evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** run the narrow natural V1 external inbound/outbound
-proof through the prepared UTCP-owned External SIP Peer fixture. The fixture
-and preparation harness are implemented and tested; T6 provider-consumption
-for Kamailio and Asterisk is implemented and synthetically verified. See
-[`V1 fixture preparation evidence`](../evidence/v1/v1-external-sip-peer-fixture-preparation.md).
-Live external SIP acceptance remains V1 scope.
+**Exactly one next action:** implement the V1 inbound corridor as decided by
+[`ADR-027`](../decisions/ADR-027-canonical-inbound-external-call-admission-and-execution-target.md).
+The V1 outbound corridor is implemented: `CallDomainService::createOutboundCall()`
+evaluates C7B, binds the RouteDecision to the Call/CallLeg, and Kamailio relays
+through `route[RUNTIME_EXTERNAL_TRUNK]`. The inbound corridor is not implemented:
+`C7bService::evaluateInbound()` has no production caller, `adoptInboundLeg()`
+binds no route or trunk, and Kamailio's inbound route replies
+`200 External Trunk Route Matched` without relaying. ADR-027 resolves the last
+open authority question — the canonical inbound execution target — so this is a
+bounded implementation, not further evidence work. Live external SIP acceptance
+remains V1 scope and follows the implementation.
 C7B closed on 2026-08-24 after its focused route-authority tests and
 provider-neutrality checks passed.
 
@@ -316,15 +321,30 @@ and retained as the existing browser acceptance slice. Its browser/client
 history is evidence, not product scope. See `docs/evidence/v0/`.
 
 **V1 — Bidirectional external call routing and control:** active after T6.
-The External SIP Peer fixture and reusable preparation harness are implemented;
-the remaining acceptance is the natural outbound/inbound proof: outbound
-application -> route -> caller identity -> external trunk -> runtime and
-inbound external peer -> address -> route -> destination -> canonical
-Call/CallLeg -> application/runtime, including normalized control,
-observations, audit, and failure behavior.
+The outbound corridor — application -> route -> caller identity -> external
+trunk -> runtime — is implemented and carries canonical route binding. The
+inbound corridor — external peer -> address -> route -> destination ->
+canonical Call/CallLeg -> application/runtime — requires **implementation**,
+not only acceptance: canonical inbound route evaluation has no production
+caller, inbound adoption binds no route or trunk, and the Kamailio inbound
+route is a verification stub that does not relay. The External SIP Peer fixture
+and preparation harness remain available as deterministic regression.
 
-**Evidence links:** [`V1 External SIP Peer fixture preparation`](../evidence/v1/v1-external-sip-peer-fixture-preparation.md); the remaining natural
-acceptance contract is defined by C6, C7, and the initial implementation plans.
+[`ADR-027`](../decisions/ADR-027-canonical-inbound-external-call-admission-and-execution-target.md)
+decides the canonical inbound execution target: a RuntimeNode SIP endpoint
+derived from canonical RuntimeNode eligibility and deterministic ordering, not
+the static `selected-application-runtime` selector. It also settles the ingress
+token, the Asterisk and FreeSWITCH product inbound contracts, the Kamailio
+trust boundary, and the runtime eligibility rule for new inbound work.
+
+**Evidence links:** [`ADR-027`](../decisions/ADR-027-canonical-inbound-external-call-admission-and-execution-target.md)
+for the inbound admission and execution-target contract;
+[`ADR-023`](../decisions/ADR-023-canonical-call-lifecycle-and-call-control-authority.md)
+for Call/CallLeg authority;
+[`V1 External SIP Peer fixture preparation`](../evidence/v1/v1-external-sip-peer-fixture-preparation.md)
+for the regression fixture. Normalized control, observations, audit, and
+failure behavior remain defined by C6, C7, and the initial implementation
+plans.
 
 ### Reference Consumers — A0
 
@@ -404,7 +424,10 @@ roadmap.
 
 ## Next
 
-Prepare the V1 external SIP peer/PBX fixture and narrow natural inbound/outbound
-proof. C7A and C7B implementation/evidence are complete, and both T6 provider
-consumption seams are synthetically verified; live external connectivity remains
-V1 scope.
+Implement the V1 inbound corridor under
+[`ADR-027`](../decisions/ADR-027-canonical-inbound-external-call-admission-and-execution-target.md):
+Kamailio trusted ingress and execution-target resolution, Asterisk and
+FreeSWITCH product inbound contracts, normalized ingress correlation, C6
+adoption, and C7B RouteDecision attachment. C7A and C7B authority is complete
+and both T6 provider-consumption seams are verified; live external connectivity
+remains V1 scope and follows the implementation.

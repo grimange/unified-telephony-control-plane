@@ -16,4 +16,4 @@ spec:
     - name: sip-udp
       protocol: UDP
       port: 5060
-      targetPort: sip-udp
+      targetPort: sip-runtime-udp

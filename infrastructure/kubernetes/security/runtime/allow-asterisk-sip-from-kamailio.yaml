@@ -45,7 +45,7 @@ spec:
               utcp.io/network-role: kamailio-signaling
       ports:
         - protocol: UDP
-          port: 5060
+          port: 5062
     - to:
         - namespaceSelector:
             matchLabels:

@@ -47,6 +47,12 @@ final class CallObservationProcessor
             }
             $adopted = $this->calls->adoptInboundLeg($nodeId, $channelId, $this->string($payload, 'remote_identity'), $this->string($payload, 'called_address'));
             if ($adopted['leg_id'] !== '') {
+                $this->calls->evaluateAndBindInboundRoute($tenantId, $adopted['call_id'], $adopted['leg_id'], $nodeId, [
+                    'ingress_external_trunk_id' => $this->string($payload, 'ingress_external_trunk_id'),
+                    'ingress_telephony_address_id' => $this->string($payload, 'ingress_telephony_address_id'),
+                    'ingress_trunk_endpoint_id' => $this->string($payload, 'ingress_trunk_endpoint_id'),
+                    'ingress_runtime_node_id' => $this->string($payload, 'ingress_runtime_node_id'),
+                ]);
                 $this->catchUp($receipt, $adopted['leg_id'], $channelId);
             }
 

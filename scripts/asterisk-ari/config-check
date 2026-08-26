@@ -62,6 +62,15 @@ if grep -A4 -q '^exten => c6-generic-proof,1,.*Echo' infrastructure/kubernetes/c
   fail "C6 generic proof destination must not use the T3 Echo fixture"
 fi
 
+grep -Fq 'exten => _utcp-in-.,1,' infrastructure/docker/asterisk/config/extensions.conf || fail "canonical inbound Asterisk destination is missing"
+grep -Fq 'EXTEN:8' infrastructure/docker/asterisk/config/extensions.conf || fail "canonical inbound Asterisk destination must validate the UUID token"
+grep -Fq 'PJSIP_HEADER(read,X-UTCP-Ingress-External-Trunk-ID)' infrastructure/docker/asterisk/config/extensions.conf || fail "Asterisk inbound trunk correlation is missing"
+grep -Fq 'PJSIP_HEADER(read,X-UTCP-Ingress-Telephony-Address-ID)' infrastructure/docker/asterisk/config/extensions.conf || fail "Asterisk inbound address correlation is missing"
+grep -Fq 'PJSIP_HEADER(read,X-UTCP-Ingress-Trunk-Endpoint-ID)' infrastructure/docker/asterisk/config/extensions.conf || fail "Asterisk inbound endpoint correlation is missing"
+grep -Fq 'PJSIP_HEADER(read,X-UTCP-Ingress-Runtime-Node-ID)' infrastructure/docker/asterisk/config/extensions.conf || fail "Asterisk inbound runtime correlation is missing"
+grep -Fq 'Stasis(utcp-t0-observation,${EXTEN},${UTCP_INGRESS_EXTERNAL_TRUNK_ID}' infrastructure/docker/asterisk/config/extensions.conf || fail "Asterisk inbound destination must enter the observation path with correlation"
+grep -Fq 'same => n,Answer()' infrastructure/docker/asterisk/config/extensions.conf || fail "Asterisk inbound destination must answer"
+
 find apps/api/app/RuntimeAdapters/Asterisk -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
 php -l apps/api/app/RuntimeEngine/Commands/GenericRuntimeNodeInspectHandler.php >/dev/null
 php -l apps/api/app/RuntimeEngine/Listeners/RuntimeListenerLeaseRepository.php >/dev/null

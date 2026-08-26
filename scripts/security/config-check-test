@@ -238,6 +238,30 @@ if not runtime_default_deny:
 if (runtime_default_deny.get("spec") or {}).get("podSelector") != {}:
     fail("runtime default-deny must remain namespace-wide")
 
+kamailio_ingress = (kamailio.get("spec") or {}).get("ingress") or []
+runtime_ingress = [
+    rule for rule in kamailio_ingress
+    if rule.get("ports") == [{"protocol": "UDP", "port": 5062}]
+    and any(
+        (peer.get("namespaceSelector") or {}).get("matchLabels", {}).get("kubernetes.io/metadata.name") == "utcp-runtime"
+        for peer in rule.get("from", [])
+    )
+]
+if len(runtime_ingress) != 2:
+    fail("Kamailio must expose exactly two runtime ingress rules on UDP 5062")
+if any(
+    rule.get("ports") == [{"protocol": "UDP", "port": 5060}]
+    and any(peer.get("namespaceSelector") for peer in rule.get("from", []))
+    for rule in kamailio_ingress
+):
+    fail("runtime namespace ingress must not reach Kamailio provider UDP 5060")
+external_ingress = [
+    rule for rule in kamailio_ingress
+    if any(peer.get("ipBlock", {}).get("cidr") == "38.146.161.46/32" for peer in rule.get("from", []))
+]
+if external_ingress != [{"from": [{"ipBlock": {"cidr": "38.146.161.46/32"}}], "ports": [{"protocol": "UDP", "port": 5060}]}]:
+    fail("external provider ingress must be limited to UDP 5060")
+
 internal_rr_host = "kamailio-sip-internal.utcp-platform.svc.cluster.local:5060"
 if internal_rr_host not in kamailio_config:
     fail("internal Kamailio route-set identity must remain Service DNS")
@@ -301,7 +325,7 @@ for rule in egress:
 
 sip_rules = [
     rule for rule in egress
-    if rule.get("ports") == [{"protocol": "UDP", "port": 5060}]
+    if rule.get("ports") == [{"protocol": "UDP", "port": 5062}]
 ]
 if sip_rules != [
     {
@@ -314,10 +338,10 @@ if sip_rules != [
                 }},
             }
         ],
-        "ports": [{"protocol": "UDP", "port": 5060}],
+        "ports": [{"protocol": "UDP", "port": 5062}],
     }
 ]:
-    fail("Asterisk SIP egress must remain exact Kamailio UDP 5060")
+    fail("Asterisk SIP egress must remain exact Kamailio internal UDP 5062")
 
 media_rules = [rule for rule in egress if rule.get("ports") == [{"protocol": "UDP", "port": 40000, "endPort": 40099}]]
 if media_rules != [{
@@ -567,7 +591,7 @@ def asterisk_dns_rule() -> dict:
 
 def asterisk_sip_rule() -> dict:
     for rule in asterisk_spec.get("egress") or []:
-        if rule.get("ports") == [{"protocol": "UDP", "port": 5060}]:
+        if rule.get("ports") == [{"protocol": "UDP", "port": 5062}]:
             return rule
     raise SystemExit("Asterisk SIP rule not found")
 
@@ -609,7 +633,7 @@ elif mutation == "allow-secondary-asterisk":
 elif mutation == "remove-sip-egress":
     asterisk_spec["egress"] = [
         rule for rule in asterisk_spec.get("egress") or []
-        if rule.get("ports") != [{"protocol": "UDP", "port": 5060}]
+        if rule.get("ports") != [{"protocol": "UDP", "port": 5062}]
     ]
 elif mutation == "widen-sip-egress":
     asterisk_sip_rule()["to"][0].pop("podSelector", None)
@@ -689,7 +713,7 @@ do
       expected="Asterisk egress must contain exactly SIP, media, and DNS"
       ;;
     widen-sip-egress)
-      expected="Asterisk SIP egress must remain exact Kamailio UDP 5060"
+      expected="Asterisk SIP egress must remain exact Kamailio internal UDP 5062"
       ;;
     *)
       expected="Asterisk DNS policy mutation rejected"
