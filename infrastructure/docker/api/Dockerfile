@@ -129,6 +129,7 @@ COPY versions.env /var/versions.env
 RUN /bin/bash -o pipefail -c '. /var/scripts/kubernetes/lib; \
     ensure_local_asterisk_credentials; \
     ensure_local_kamailio_credentials; \
-    ensure_local_reverb_credentials'
+    ensure_local_reverb_credentials; \
+    chown -R www-data:www-data /var/infrastructure/kubernetes/overlays/local'
 USER www-data
 CMD ["php", "artisan", "test"]
