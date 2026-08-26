@@ -92,9 +92,14 @@ jobs:
               "$@" \
               --push \
               .
-            digest="$(docker buildx imagetools inspect "$reference" | awk '/Digest:/ { print $2; exit }')"
-            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+            digest="$(resolve_digest "$reference")"
             printf '%s=%s@%s\n' "$key" "$registry/$image" "$digest" >> "$lock"
+          }
+
+          resolve_digest() {
+            local reference="$1" manifest
+            manifest="$(docker buildx imagetools inspect "$reference" --format '{{json .Manifest}}')"
+            jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<< "$manifest"
           }
 
           publish_image UTCP_SERVER_API_IMAGE utcp-api infrastructure/docker/api/Dockerfile \
@@ -115,13 +120,13 @@ jobs:
             --build-arg "RTPENGINE_SOURCE_COMMIT=$RTPENGINE_SOURCE_COMMIT"
 
           kamailio="$KAMAILIO_IMAGE"
-          kamailio_digest="$(docker buildx imagetools inspect "$kamailio" | awk '/Digest:/ { print $2; exit }')"
+          kamailio_digest="$(resolve_digest "$kamailio")"
           printf 'UTCP_SERVER_KAMAILIO_IMAGE=ghcr.io/kamailio/kamailio@%s\n' "$kamailio_digest" >> "$lock"
           postgres="postgres:17.6-alpine"
-          postgres_digest="$(docker buildx imagetools inspect "$postgres" | awk '/Digest:/ { print $2; exit }')"
+          postgres_digest="$(resolve_digest "$postgres")"
           printf 'UTCP_SERVER_POSTGRES_IMAGE=docker.io/library/postgres@%s\n' "$postgres_digest" >> "$lock"
           redis="redis:8.2.3-alpine"
-          redis_digest="$(docker buildx imagetools inspect "$redis" | awk '/Digest:/ { print $2; exit }')"
+          redis_digest="$(resolve_digest "$redis")"
           printf 'UTCP_SERVER_REDIS_IMAGE=docker.io/library/redis@%s\n' "$redis_digest" >> "$lock"
           {
             printf 'UTCP_SERVER_IMAGE_REGISTRY=%s\n' "$registry"
