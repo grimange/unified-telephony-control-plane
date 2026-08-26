@@ -94,7 +94,8 @@ jobs:
               --metadata-file "$metadata" \
               --push \
               .
-            digest="$(jq -er '.["containerimage.digest"]' "$metadata")"
+            digest="$(jq -er '.["containerimage.digest"] // .["containerimage.descriptor"].digest' "$metadata")"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
             printf '%s=%s@%s\n' "$key" "$registry/$image" "$digest" >> "$lock"
           }
 
