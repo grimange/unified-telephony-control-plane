@@ -39,6 +39,7 @@ jobs:
             printf 'RTPENGINE_BASE_IMAGE=%s\n' "$RTPENGINE_BASE_IMAGE"
             printf 'RTPENGINE_VERSION=%s\n' "$RTPENGINE_VERSION"
             printf 'RTPENGINE_SOURCE_COMMIT=%s\n' "$RTPENGINE_SOURCE_COMMIT"
+            printf 'KAMAILIO_IMAGE=%s\n' "$KAMAILIO_IMAGE"
           } >> "$GITHUB_ENV"
 
       - name: Setup Docker Buildx
@@ -114,7 +115,7 @@ jobs:
             --build-arg "RTPENGINE_VERSION=$RTPENGINE_VERSION" \
             --build-arg "RTPENGINE_SOURCE_COMMIT=$RTPENGINE_SOURCE_COMMIT"
 
-          kamailio="ghcr.io/kamailio/kamailio:5.8.6-bookworm"
+          kamailio="$KAMAILIO_IMAGE"
           kamailio_digest="$(docker buildx imagetools inspect "$kamailio" | awk '/Digest:/ { print $2; exit }')"
           printf 'UTCP_SERVER_KAMAILIO_IMAGE=ghcr.io/kamailio/kamailio@%s\n' "$kamailio_digest" >> "$lock"
           postgres="postgres:17.6-alpine"
