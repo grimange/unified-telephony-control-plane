@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+require_image_lock
+ensure_target
+manifest="$(mktemp)"
+trap 'rm -f "$manifest"' EXIT
+render_server > "$manifest"
+grep -Fq 'storageClassName: local-path' "$manifest" || fail 'server overlay must use local-path persistence'
+if grep -Eq 'utcp-local-registry|127\.0\.0\.1:5001|kind: (NodePort|LoadBalancer)|hostPort:|nodePort:' "$manifest"; then fail 'native manifest contains a local-registry or externally exposed resource'; fi
+if grep -Eq 'kind: Service[[:space:]]*$' "$manifest" && grep -Eq 'type: (NodePort|LoadBalancer)' "$manifest"; then fail 'native foundation must not expose telephony edge ports'; fi
+printf 'native k3s configuration check passed\n'

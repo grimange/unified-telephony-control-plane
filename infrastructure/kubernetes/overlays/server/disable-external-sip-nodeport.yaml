@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kamailio-sip-external
+  namespace: utcp-platform
+spec:
+  type: ClusterIP
+  externalTrafficPolicy: null
+  ports:
+    - name: sip-udp
+      protocol: UDP
+      port: 5060
+      targetPort: sip-udp
+      nodePort: null

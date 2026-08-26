@@ -1,0 +1,142 @@
+name: Native k3s Images
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: native-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build, test, and publish native images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact source commit
+        # release: actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Read pinned build inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          . ./versions.env
+          {
+            printf 'PHP_BASE_IMAGE=%s\n' "$PHP_BASE_IMAGE"
+            printf 'COMPOSER_IMAGE=%s\n' "$COMPOSER_IMAGE"
+            printf 'NODE_BASE_IMAGE=%s\n' "$NODE_BASE_IMAGE"
+            printf 'WEB_RUNTIME_IMAGE=%s\n' "$WEB_RUNTIME_IMAGE"
+            printf 'GATEWAY_RUNTIME_IMAGE=%s\n' "$GATEWAY_RUNTIME_IMAGE"
+            printf 'ASTERISK_BASE_IMAGE=%s\n' "$ASTERISK_BASE_IMAGE"
+            printf 'FREESWITCH_BASE_IMAGE=%s\n' "$FREESWITCH_BASE_IMAGE"
+            printf 'RTPENGINE_BASE_IMAGE=%s\n' "$RTPENGINE_BASE_IMAGE"
+            printf 'RTPENGINE_VERSION=%s\n' "$RTPENGINE_VERSION"
+            printf 'RTPENGINE_SOURCE_COMMIT=%s\n' "$RTPENGINE_SOURCE_COMMIT"
+          } >> "$GITHUB_ENV"
+
+      - name: Setup Docker Buildx
+        # release: docker/setup-buildx-action v4.2.0
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+
+      - name: Run existing image tests and smoke checks before publication
+        run: make image-test-api image-test-web image-smoke-api image-smoke-web
+
+      - name: Authenticate to GHCR
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Build and publish immutable images
+        id: publish
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          registry="ghcr.io/$owner"
+          tag="sha-$GITHUB_SHA"
+          source="https://github.com/$GITHUB_REPOSITORY"
+          version="${GITHUB_REF_NAME:-$tag}"
+          lock="$RUNNER_TEMP/native-k3s-image-lock.env"
+          : > "$lock"
+
+          publish_image() {
+            local key="$1" image="$2" dockerfile="$3"
+            shift 3
+            local reference="$registry/$image:$tag" metadata digest
+            metadata="$RUNNER_TEMP/$key-metadata.json"
+            build_args=(
+              --build-arg "BUILD_VERSION=$version"
+              --build-arg "BUILD_COMMIT=$GITHUB_SHA"
+              --build-arg "BUILD_CREATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              --build-arg "IMAGE_SOURCE=$source"
+            )
+            case "$key" in
+              UTCP_SERVER_API_IMAGE|UTCP_SERVER_WEB_IMAGE|UTCP_SERVER_GATEWAY_IMAGE) build_args+=(--target app-prod);;
+            esac
+            docker buildx build \
+              --file "$dockerfile" \
+              --tag "$reference" \
+              "${build_args[@]}" \
+              "$@" \
+              --metadata-file "$metadata" \
+              --push \
+              .
+            digest="$(jq -er '.["containerimage.digest"]' "$metadata")"
+            printf '%s=%s@%s\n' "$key" "$registry/$image" "$digest" >> "$lock"
+          }
+
+          publish_image UTCP_SERVER_API_IMAGE utcp-api infrastructure/docker/api/Dockerfile \
+            --build-arg "PHP_IMAGE=$PHP_BASE_IMAGE" \
+            --build-arg "COMPOSER_IMAGE=$COMPOSER_IMAGE"
+          publish_image UTCP_SERVER_WEB_IMAGE utcp-web infrastructure/docker/web/Dockerfile \
+            --build-arg "NODE_IMAGE=$NODE_BASE_IMAGE" \
+            --build-arg "WEB_RUNTIME_IMAGE=$WEB_RUNTIME_IMAGE"
+          publish_image UTCP_SERVER_GATEWAY_IMAGE utcp-gateway infrastructure/docker/gateway/Dockerfile \
+            --build-arg "GATEWAY_RUNTIME_IMAGE=$GATEWAY_RUNTIME_IMAGE"
+          publish_image UTCP_SERVER_ASTERISK_IMAGE utcp-asterisk infrastructure/docker/asterisk/Dockerfile \
+            --build-arg "ASTERISK_BASE_IMAGE=$ASTERISK_BASE_IMAGE"
+          publish_image UTCP_SERVER_FREESWITCH_IMAGE utcp-freeswitch infrastructure/docker/freeswitch/Dockerfile \
+            --build-arg "FREESWITCH_BASE_IMAGE=$FREESWITCH_BASE_IMAGE"
+          publish_image UTCP_SERVER_RTPENGINE_IMAGE utcp-rtpengine infrastructure/docker/rtpengine/Dockerfile \
+            --build-arg "RTPENGINE_BASE_IMAGE=$RTPENGINE_BASE_IMAGE" \
+            --build-arg "RTPENGINE_VERSION=$RTPENGINE_VERSION" \
+            --build-arg "RTPENGINE_SOURCE_COMMIT=$RTPENGINE_SOURCE_COMMIT"
+
+          kamailio="ghcr.io/kamailio/kamailio:5.8.6-bookworm"
+          kamailio_digest="$(docker buildx imagetools inspect "$kamailio" | awk '/Digest:/ { print $2; exit }')"
+          printf 'UTCP_SERVER_KAMAILIO_IMAGE=ghcr.io/kamailio/kamailio@%s\n' "$kamailio_digest" >> "$lock"
+          postgres="postgres:17.6-alpine"
+          postgres_digest="$(docker buildx imagetools inspect "$postgres" | awk '/Digest:/ { print $2; exit }')"
+          printf 'UTCP_SERVER_POSTGRES_IMAGE=docker.io/library/postgres@%s\n' "$postgres_digest" >> "$lock"
+          redis="redis:8.2.3-alpine"
+          redis_digest="$(docker buildx imagetools inspect "$redis" | awk '/Digest:/ { print $2; exit }')"
+          printf 'UTCP_SERVER_REDIS_IMAGE=docker.io/library/redis@%s\n' "$redis_digest" >> "$lock"
+          {
+            printf 'UTCP_SERVER_IMAGE_REGISTRY=%s\n' "$registry"
+            printf 'UTCP_SERVER_IMAGE_TAG=%s\n' "$tag"
+            printf 'UTCP_SERVER_SOURCE_COMMIT=%s\n' "$GITHUB_SHA"
+          } >> "$lock.tmp"
+          cat "$lock" >> "$lock.tmp"
+          mv "$lock.tmp" "$lock"
+          cat "$lock" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload native image lock
+        # release: actions/upload-artifact v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: native-k3s-image-lock-${{ github.sha }}
+          path: ${{ runner.temp }}/native-k3s-image-lock.env
+          if-no-files-found: error
+          retention-days: 30

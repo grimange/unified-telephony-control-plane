@@ -3,6 +3,18 @@
 ARG FREESWITCH_BASE_IMAGE=docker.io/safarov/freeswitch:1.10.12@sha256:b31c743f4c911a19687c61e3214968f2a24f93f9d3d667cc26284192e158ffc6
 FROM ${FREESWITCH_BASE_IMAGE}
 
+ARG BUILD_VERSION=0.1.0-dev
+ARG BUILD_COMMIT=unknown
+ARG BUILD_CREATED=unknown
+ARG IMAGE_SOURCE=unknown
+
+LABEL org.opencontainers.image.title="UTCP FreeSWITCH runtime" \
+      org.opencontainers.image.description="Repository-built FreeSWITCH runtime for the Unified Telephony Control Plane" \
+      org.opencontainers.image.version="${BUILD_VERSION}" \
+      org.opencontainers.image.revision="${BUILD_COMMIT}" \
+      org.opencontainers.image.created="${BUILD_CREATED}" \
+      org.opencontainers.image.source="${IMAGE_SOURCE}"
+
 COPY infrastructure/docker/freeswitch/config/ /etc/freeswitch/
 COPY infrastructure/docker/freeswitch/entrypoint /usr/local/bin/utcp-freeswitch-entrypoint
 COPY infrastructure/docker/freeswitch/healthcheck /usr/local/bin/utcp-freeswitch-healthcheck

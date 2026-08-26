@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+require_image_lock
+ensure_target
+scheme="${UTCP_SERVER_IMAGE_REGISTRY_SCHEME:-https}"
+for variable in UTCP_SERVER_POSTGRES_IMAGE UTCP_SERVER_REDIS_IMAGE UTCP_SERVER_API_IMAGE UTCP_SERVER_WEB_IMAGE UTCP_SERVER_GATEWAY_IMAGE UTCP_SERVER_ASTERISK_IMAGE UTCP_SERVER_FREESWITCH_IMAGE UTCP_SERVER_RTPENGINE_IMAGE UTCP_SERVER_KAMAILIO_IMAGE; do
+  reference="${!variable}"
+  registry="${reference%%/*}"
+  repository="${reference#*/}"
+  repository="${repository%@*}"
+  digest="${reference#*@}"
+  printf 'required=%s\n' "$reference"
+  code="$(curl --connect-timeout 5 --max-time 10 --silent --show-error --output /dev/null --write-out '%{http_code}' -H 'Accept: application/vnd.oci.image.manifest.v1+json' -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' "$scheme://$registry/v2/$repository/manifests/$digest" || true)"
+  [ "$code" = 200 ] || fail "$variable is not anonymously pullable from $scheme://$registry (HTTP $code)"
+done
+printf 'native image preflight passed target, immutable-lock, registry, and image-manifest checks\n'

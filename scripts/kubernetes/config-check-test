@@ -4,7 +4,23 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CHECK="$ROOT/scripts/kubernetes/application-config-check.py"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+# The local overlay intentionally generates ignored credentials. Make this
+# mutation test hermetic for a fresh checkout without deleting operator-owned
+# credentials that were already present.
+# shellcheck source=scripts/kubernetes/lib
+. "$ROOT/scripts/kubernetes/lib"
+generated_credentials=()
+for credentials_file in "$K8S_ASTERISK_CREDENTIALS_FILE" "$K8S_KAMAILIO_PLATFORM_CREDENTIALS_FILE" "$K8S_KAMAILIO_MIGRATION_CREDENTIALS_FILE" "$K8S_REVERB_CREDENTIALS_FILE"; do
+  [ -s "$credentials_file" ] || generated_credentials+=("$credentials_file")
+done
+ensure_local_asterisk_credentials
+ensure_local_kamailio_credentials
+ensure_local_reverb_credentials
+cleanup() {
+  rm -rf "$TMP"
+  for credentials_file in "${generated_credentials[@]}"; do rm -f "$credentials_file"; done
+}
+trap cleanup EXIT
 
 kubectl kustomize "$ROOT/infrastructure/kubernetes/overlays/local" >"$TMP/local.yaml"
 kubectl kustomize "$ROOT/infrastructure/kubernetes/overlays/local/platform" >"$TMP/platform.yaml"

@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+ensure_target
+printf 'context=%s\nkubeconfig=%s\nnode=%s\n' "$SERVER_CONTEXT" "$SERVER_KUBECONFIG" "$SERVER_NODE_NAME"
+server_kube get nodes -o wide
+server_kube -n "$SERVER_NAMESPACE_DATA" get statefulsets,pods,services,pvc -o wide
+server_kube -n "$SERVER_NAMESPACE_PLATFORM" get deployments,pods,services,job -o wide

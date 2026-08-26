@@ -1,0 +1,62 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: utcp-application-config
+    namespace: utcp-platform
+    envs:
+      - application-config.properties
+secretGenerator:
+  - name: utcp-local-data-credentials
+    namespace: utcp-data
+    envs:
+      - server-data-credentials.properties
+  - name: utcp-local-data-credentials
+    namespace: utcp-platform
+    envs:
+      - server-data-credentials.properties
+  - name: utcp-local-kamailio-db-credentials
+    namespace: utcp-platform
+    envs:
+      - server-kamailio-db-credentials.properties
+  - name: utcp-local-reverb-credentials
+    namespace: utcp-platform
+    envs:
+      - server-reverb-credentials.properties
+resources:
+  - ../../base/data
+  - ../../base/migration
+  - ../../base/platform
+  - ../../base/runtime
+  - ../../components/runtime-fencing
+patches:
+  - path: disable-external-sip-nodeport.yaml
+images:
+  - name: postgres
+    newName: __UTCP_POSTGRES_IMAGE_NAME__
+    digest: __UTCP_POSTGRES_DIGEST__
+  - name: redis
+    newName: __UTCP_REDIS_IMAGE_NAME__
+    digest: __UTCP_REDIS_DIGEST__
+  - name: utcp-api
+    newName: __UTCP_API_IMAGE_NAME__
+    digest: __UTCP_API_DIGEST__
+  - name: utcp-web
+    newName: __UTCP_WEB_IMAGE_NAME__
+    digest: __UTCP_WEB_DIGEST__
+  - name: utcp-gateway
+    newName: __UTCP_GATEWAY_IMAGE_NAME__
+    digest: __UTCP_GATEWAY_DIGEST__
+  - name: utcp-asterisk-ari
+    newName: __UTCP_ASTERISK_IMAGE_NAME__
+    digest: __UTCP_ASTERISK_DIGEST__
+  - name: utcp-freeswitch
+    newName: __UTCP_FREESWITCH_IMAGE_NAME__
+    digest: __UTCP_FREESWITCH_DIGEST__
+  - name: utcp-rtpengine
+    newName: __UTCP_RTPENGINE_IMAGE_NAME__
+    digest: __UTCP_RTPENGINE_DIGEST__
+  - name: utcp-kamailio
+    newName: __UTCP_KAMAILIO_IMAGE_NAME__
+    digest: __UTCP_KAMAILIO_DIGEST__

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+ensure_target
+wait_data
+server_kube -n "$SERVER_NAMESPACE_PLATFORM" wait --for=condition=Complete job/utcp-migrate --timeout=240s
+wait_platform
+log="$(mktemp)"; trap 'rm -f "$log"' EXIT
+port_forward_gateway >"$log" 2>&1 & pf=$!; trap 'kill "$pf" 2>/dev/null || true; wait "$pf" 2>/dev/null || true; rm -f "$log"' EXIT
+for _ in $(seq 1 60); do curl -fsS --max-time 3 "http://127.0.0.1:$SERVER_PROOF_PORT/healthz" >/dev/null 2>&1 && break; sleep 1; done
+curl -fsS "http://127.0.0.1:$SERVER_PROOF_PORT/healthz" | grep -Fxq ok
+curl -fsS "http://127.0.0.1:$SERVER_PROOF_PORT/api/health/ready" | grep -Fq '"status":"ready"'
+server_kube -n "$SERVER_NAMESPACE_DATA" get pvc -o jsonpath='{range .items[*]}{.metadata.name}={.status.phase}{"\n"}{end}' | grep -Fq '=Bound'
+printf 'native k3s internal application proof passed\n'

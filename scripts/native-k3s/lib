@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+. "$ROOT/versions.env"
+
+SERVER_OVERLAY="$ROOT/infrastructure/kubernetes/overlays/server"
+SERVER_STATE_DIR="${UTCP_SERVER_STATE_DIR:-$ROOT/.runtime/native-k3s}"
+SERVER_KUBECONFIG="${UTCP_SERVER_KUBECONFIG:-${KUBECONFIG:-$HOME/.kube/config}}"
+SERVER_CONTEXT="${UTCP_SERVER_CONTEXT:-default}"
+SERVER_NODE_NAME="${UTCP_SERVER_NODE_NAME:-utcp-dev01}"
+SERVER_IMAGE_LOCK="${UTCP_SERVER_IMAGE_LOCK:-$SERVER_STATE_DIR/image-lock.env}"
+SERVER_PROOF_PORT="${UTCP_SERVER_PROOF_PORT:-18090}"
+SERVER_NAMESPACE_PLATFORM="utcp-platform"
+SERVER_NAMESPACE_DATA="utcp-data"
+SERVER_NAMESPACE_RUNTIME="utcp-runtime"
+
+server_kube() {
+  kubectl --kubeconfig "$SERVER_KUBECONFIG" --context "$SERVER_CONTEXT" "$@"
+}
+
+fail() { printf 'native-k3s: %s\n' "$1" >&2; exit 1; }
+
+require_registry() {
+  load_image_lock
+  [ -n "$SERVER_REGISTRY" ] || fail 'image lock has no UTCP_SERVER_IMAGE_REGISTRY'
+  printf '%s' "$SERVER_REGISTRY" | grep -Eq '^[a-zA-Z0-9.-]+(:[0-9]+)?(/[a-zA-Z0-9._-]+)+$' || fail 'image lock registry must be a registry authority with an owner path'
+  case "$SERVER_REGISTRY" in *utcp-local-registry*|127.0.0.1:5001|localhost:5001) fail 'the native registry must not be the k3d local registry';; esac
+}
+
+load_image_lock() {
+  [ -r "$SERVER_IMAGE_LOCK" ] || fail "native image lock is not readable: $SERVER_IMAGE_LOCK"
+  # The publication workflow writes a data-only shell environment file.
+  # shellcheck disable=SC1090
+  . "$SERVER_IMAGE_LOCK"
+  SERVER_REGISTRY="${UTCP_SERVER_IMAGE_REGISTRY:-}"
+}
+
+require_image_lock() {
+  require_registry
+  printf '%s' "${UTCP_SERVER_IMAGE_TAG:-}" | grep -Eq '^sha-[0-9a-f]{40}$' || fail 'UTCP_SERVER_IMAGE_TAG must identify a full source commit'
+  printf '%s' "${UTCP_SERVER_SOURCE_COMMIT:-}" | grep -Eq '^[0-9a-f]{40}$' || fail 'UTCP_SERVER_SOURCE_COMMIT must be a full source commit'
+  for name in UTCP_SERVER_POSTGRES_IMAGE UTCP_SERVER_REDIS_IMAGE UTCP_SERVER_API_IMAGE UTCP_SERVER_WEB_IMAGE UTCP_SERVER_GATEWAY_IMAGE UTCP_SERVER_ASTERISK_IMAGE UTCP_SERVER_FREESWITCH_IMAGE UTCP_SERVER_RTPENGINE_IMAGE UTCP_SERVER_KAMAILIO_IMAGE; do
+    value="${!name:-}"
+    printf '%s' "$value" | grep -Eq '^[a-zA-Z0-9.-]+(/[a-zA-Z0-9._-]+)+@sha256:[0-9a-f]{64}$' || fail "$name must be an immutable image reference"
+  done
+}
+
+ensure_target() {
+  [ -r "$SERVER_KUBECONFIG" ] || fail "native kubeconfig is not readable: $SERVER_KUBECONFIG"
+  case "$SERVER_CONTEXT" in *k3d*|*utcp-local*) fail "unsafe native context: $SERVER_CONTEXT";; esac
+  server_kube config get-contexts "$SERVER_CONTEXT" >/dev/null 2>&1 || fail "native context is not present: $SERVER_CONTEXT"
+  server_kube get node "$SERVER_NODE_NAME" -o jsonpath='{.metadata.name}' 2>/dev/null | grep -Fxq "$SERVER_NODE_NAME" || fail "validated native node is unavailable: $SERVER_NODE_NAME"
+}
+
+write_credentials() {
+  mkdir -p "$SERVER_STATE_DIR"
+  umask 077
+  if [ ! -s "$SERVER_STATE_DIR/server-data-credentials.properties" ]; then
+    {
+      printf 'APP_KEY=base64:'; od -An -N32 -tx1 /dev/urandom | tr -d ' \n'; printf '\n'
+      printf 'DB_PASSWORD='; od -An -N24 -tx1 /dev/urandom | tr -d ' \n'; printf '\n'
+      printf 'POSTGRES_DB=utcp\nPOSTGRES_USER=utcp\nPOSTGRES_PASSWORD='
+      od -An -N24 -tx1 /dev/urandom | tr -d ' \n'; printf '\n'
+    } > "$SERVER_STATE_DIR/server-data-credentials.properties"
+  fi
+  if [ ! -s "$SERVER_STATE_DIR/server-kamailio-db-credentials.properties" ]; then
+    {
+      for role in AUTH USRLOC OBSERVER REGISTRATION; do
+        case "$role" in AUTH) user=utcp_kamailio_auth_reader;; USRLOC) user=utcp_kamailio_usrloc_writer;; OBSERVER) user=utcp_kamailio_observer_reader;; REGISTRATION) user=utcp_kamailio_registration_reader;; esac
+        printf 'KAMAILIO_%s_DB_USER=%s\nKAMAILIO_%s_DB_PASSWORD=' "$role" "$user" "$role"
+        od -An -N24 -tx1 /dev/urandom | tr -d ' \n'; printf '\n'
+      done
+    } > "$SERVER_STATE_DIR/server-kamailio-db-credentials.properties"
+  fi
+  if [ ! -s "$SERVER_STATE_DIR/server-reverb-credentials.properties" ]; then
+    {
+      printf 'REVERB_APP_ID=utcp-server\nREVERB_APP_KEY='; od -An -N16 -tx1 /dev/urandom | tr -d ' \n'; printf '\nREVERB_APP_SECRET='; od -An -N32 -tx1 /dev/urandom | tr -d ' \n'; printf '\n'
+    } > "$SERVER_STATE_DIR/server-reverb-credentials.properties"
+  fi
+}
+
+render_server() {
+  require_image_lock
+  write_credentials
+  render_root="$(mktemp -d)"
+  render_dir="$render_root/infrastructure/kubernetes/overlays/server"
+  mkdir -p "$render_dir"
+  cp -R "$ROOT/infrastructure/kubernetes"/. "$render_root/infrastructure/kubernetes/"
+  render_kustomization "$render_dir/kustomization.yaml"
+  sed -e "s#__UTCP_ASTERISK_IMAGE__#$UTCP_SERVER_ASTERISK_IMAGE#g" -e "s#__UTCP_FREESWITCH_IMAGE__#$UTCP_SERVER_FREESWITCH_IMAGE#g" "$SERVER_OVERLAY/application-config.properties.in" > "$render_dir/application-config.properties"
+  cp "$SERVER_STATE_DIR/server-data-credentials.properties" "$render_dir/server-data-credentials.properties"
+  cp "$SERVER_STATE_DIR/server-kamailio-db-credentials.properties" "$render_dir/server-kamailio-db-credentials.properties"
+  cp "$SERVER_STATE_DIR/server-reverb-credentials.properties" "$render_dir/server-reverb-credentials.properties"
+  kubectl kustomize "$render_dir"
+  rm -rf "$render_root"
+}
+
+image_name() { printf '%s' "${1%@*}"; }
+image_digest() { printf '%s' "${1#*@}"; }
+
+render_kustomization() {
+  local output="$1"
+  sed \
+    -e "s#__UTCP_API_IMAGE_NAME__#$(image_name "$UTCP_SERVER_API_IMAGE")#g" -e "s#__UTCP_API_DIGEST__#$(image_digest "$UTCP_SERVER_API_IMAGE")#g" \
+    -e "s#__UTCP_POSTGRES_IMAGE_NAME__#$(image_name "$UTCP_SERVER_POSTGRES_IMAGE")#g" -e "s#__UTCP_POSTGRES_DIGEST__#$(image_digest "$UTCP_SERVER_POSTGRES_IMAGE")#g" \
+    -e "s#__UTCP_REDIS_IMAGE_NAME__#$(image_name "$UTCP_SERVER_REDIS_IMAGE")#g" -e "s#__UTCP_REDIS_DIGEST__#$(image_digest "$UTCP_SERVER_REDIS_IMAGE")#g" \
+    -e "s#__UTCP_WEB_IMAGE_NAME__#$(image_name "$UTCP_SERVER_WEB_IMAGE")#g" -e "s#__UTCP_WEB_DIGEST__#$(image_digest "$UTCP_SERVER_WEB_IMAGE")#g" \
+    -e "s#__UTCP_GATEWAY_IMAGE_NAME__#$(image_name "$UTCP_SERVER_GATEWAY_IMAGE")#g" -e "s#__UTCP_GATEWAY_DIGEST__#$(image_digest "$UTCP_SERVER_GATEWAY_IMAGE")#g" \
+    -e "s#__UTCP_ASTERISK_IMAGE_NAME__#$(image_name "$UTCP_SERVER_ASTERISK_IMAGE")#g" -e "s#__UTCP_ASTERISK_DIGEST__#$(image_digest "$UTCP_SERVER_ASTERISK_IMAGE")#g" \
+    -e "s#__UTCP_FREESWITCH_IMAGE_NAME__#$(image_name "$UTCP_SERVER_FREESWITCH_IMAGE")#g" -e "s#__UTCP_FREESWITCH_DIGEST__#$(image_digest "$UTCP_SERVER_FREESWITCH_IMAGE")#g" \
+    -e "s#__UTCP_RTPENGINE_IMAGE_NAME__#$(image_name "$UTCP_SERVER_RTPENGINE_IMAGE")#g" -e "s#__UTCP_RTPENGINE_DIGEST__#$(image_digest "$UTCP_SERVER_RTPENGINE_IMAGE")#g" \
+    -e "s#__UTCP_KAMAILIO_IMAGE_NAME__#$(image_name "$UTCP_SERVER_KAMAILIO_IMAGE")#g" -e "s#__UTCP_KAMAILIO_DIGEST__#$(image_digest "$UTCP_SERVER_KAMAILIO_IMAGE")#g" \
+    "$SERVER_OVERLAY/kustomization.yaml" > "$output"
+}
+
+wait_data() {
+  server_kube -n "$SERVER_NAMESPACE_DATA" rollout status statefulset/postgres --timeout=240s
+  server_kube -n "$SERVER_NAMESPACE_DATA" rollout status statefulset/redis --timeout=180s
+}
+
+wait_platform() {
+  for deployment in api gateway web worker scheduler reverb; do server_kube -n "$SERVER_NAMESPACE_PLATFORM" rollout status "deployment/$deployment" --timeout=240s; done
+}
+
+port_forward_gateway() {
+  server_kube -n "$SERVER_NAMESPACE_PLATFORM" port-forward --address 127.0.0.1 service/gateway "$SERVER_PROOF_PORT:8080"
+}
