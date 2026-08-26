@@ -111,7 +111,7 @@ USER root
 COPY --from=vendor-test /var/www/html/vendor ./vendor
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl python3; \
+    apt-get install -y --no-install-recommends ca-certificates curl python3 python3-yaml; \
     curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl; \
     curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256" -o /tmp/kubectl.sha256; \
     printf '%s  %s\n' "$(cat /tmp/kubectl.sha256)" /usr/local/bin/kubectl | sha256sum -c -; \
@@ -123,5 +123,12 @@ RUN set -eux; \
     && chown -R www-data:www-data vendor .phpunit.result.cache
 COPY infrastructure /var/infrastructure
 COPY scripts /var/scripts
+COPY apps /var/apps
+COPY .gitignore /var/.gitignore
+COPY versions.env /var/versions.env
+RUN . /var/scripts/kubernetes/lib; \
+    ensure_local_asterisk_credentials; \
+    ensure_local_kamailio_credentials; \
+    ensure_local_reverb_credentials
 USER www-data
 CMD ["php", "artisan", "test"]
