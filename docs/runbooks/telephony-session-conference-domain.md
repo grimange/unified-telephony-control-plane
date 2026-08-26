@@ -132,7 +132,13 @@ make telephony-domain-status
 
 `telephony-domain-api-proof` uses the normal C1 CSRF/session lifecycle against the deployed HTTPS API. It creates or reuses the deterministic simulator RuntimeNode, creates the proof conference, creates the proof member session, proves member administrative denial, proves session and admission idempotency, and does not directly invoke runtime operations.
 
-`telephony-domain-runtime-proof` runs against the canonical `utcp-local` Kubernetes runtime. It proves `open -> ready`, `admitted -> joined`, `removed -> left`, draining admission rejection, `closed -> closed`, session expiry removal, command-worker restart recovery, simulator-event-source restart recovery, raw receipt ingestion, normalization, projection, checkpoint advancement, and reconciliation convergence through the deployed C3/C4 workers.
+`telephony-domain-runtime-proof` runs against the explicitly selected secondary
+`utcp-local` Kubernetes regression runtime. It proves `open -> ready`,
+`admitted -> joined`, `removed -> left`, draining admission rejection,
+`closed -> closed`, session expiry removal, command-worker restart recovery,
+simulator-event-source restart recovery, raw receipt ingestion, normalization,
+projection, checkpoint advancement, and reconciliation convergence through the
+deployed C3/C4 workers.
 
 Cross-tenant conference access and stale epoch/old-generation projection rejection are covered by focused PostgreSQL-backed tests because the live cluster intentionally has no public event injection route or direct C5 fixture path.
 

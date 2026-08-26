@@ -79,6 +79,18 @@ relevant ADRs
 relevant evidence documents
 ```
 
+When a task involves Kubernetes, deployment, runtime, ingress, live proof,
+host networking, or SIP/RTP exposure, also read:
+
+```text
+docs/decisions/ADR-028-native-k3s-current-development-and-v1-acceptance-topology.md
+```
+
+Before recommending environment mutation, report the resolved
+`CANONICAL_ENVIRONMENT`, `CANONICAL_CONTEXT`, `CANONICAL_NODE`, and
+`CANONICAL_EDGE_ADDRESS`. The current authority is native k3s / `utcp-dev01` /
+`192.168.254.124`; historical evidence does not select a current topology.
+
 Treat these as separate facts:
 
 ```text
@@ -327,7 +339,7 @@ Repository and local-runtime actions must satisfy all three conditions:
 Examples of changes that remain material even when technically reversible:
 
 * Creating another k3d cluster or local registry
-* Replacing the canonical `utcp-local` environment
+* Replacing the selected secondary `utcp-local` environment
 * Changing host port publication, node count, or cluster topology
 * Creating a parallel Kubernetes deployment
 * Switching from the canonical Make target or script to direct lower-level application
@@ -381,7 +393,7 @@ Examples:
 * Adding host port mappings or changing load-balancer publication
 * Changing cluster node counts
 * Creating a parallel proof cluster
-* Moving the canonical deployment to another cluster or replacing `utcp-local`
+* Moving the active deployment to another cluster or replacing selected secondary `utcp-local`
 * Recreating stateful services or persistent volumes
 * Bypassing a canonical Make target or deployment script
 * Applying lower-level manifests because the canonical lifecycle rejects the intended topology
@@ -597,7 +609,8 @@ Do not split into microservices without an explicit architecture decision.
 
 ### Canonical integrated local runtime
 
-The canonical integrated local runtime is:
+The canonical integrated local runtime for explicitly selected k3d regression
+work is:
 
 ```text
 utcp-local k3d/Kubernetes cluster
@@ -616,9 +629,9 @@ Docker Compose must not:
 * Become a fallback when Kubernetes is unavailable
 * Compete with Kubernetes for runtime authority
 
-### Canonical local environment identity
+### Secondary k3d environment identity
 
-The canonical local Kubernetes environment is:
+The supported secondary local Kubernetes environment is:
 
 ```text
 cluster: utcp-local
@@ -627,7 +640,9 @@ registry host endpoint: 127.0.0.1:5001
 edge ownership: 127.0.0.1:80 and 127.0.0.1:443
 ```
 
-Repository instructions and current committed configuration may define additional required port publications.
+It is not the current V1 acceptance authority. Repository instructions and
+current committed configuration may define additional required port
+publications.
 
 Do not create another cluster such as `utcp-mediaedge`, `utcp-proof`, `utcp-test`, `utcp-recovery`, or `utcp-local-2` as a replacement, workaround, or temporary proof environment unless the current task explicitly authorizes a documented multi-cluster topology.
 
@@ -637,7 +652,8 @@ If `utcp-local` lacks an immutable k3d capability needed by the current roadmapâ
 
 1. Update the repository-owned canonical cluster configuration.
 2. Verify that local state is reproducible or safely preserved.
-3. Rebuild `utcp-local` through the authorized canonical lifecycle.
+3. Rebuild the explicitly selected `utcp-local` secondary topology through the
+   authorized lifecycle.
 4. Redeploy through the normal repository commands.
 5. Verify restoration and the newly required capability.
 

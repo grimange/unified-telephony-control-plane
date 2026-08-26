@@ -2,7 +2,11 @@
 
 ## Scope
 
-This runbook covers the retained Docker Compose configuration after the local runtime authority cutoff. The canonical integrated local runtime is the `utcp-local` Kubernetes cluster. Compose is a disposable container/integration proof facility and an explicit optional debug mode only.
+This runbook covers the retained Docker Compose configuration after the local
+runtime authority cutoff. The current active-phase runtime is native k3s on
+`utcp-dev01`; `utcp-local` is a supported secondary local/regression topology.
+Compose is a disposable container/integration proof facility and an explicit
+optional debug mode only.
 
 It does not cover Kubernetes, Traefik, SIP, RTP, Asterisk, FreeSWITCH, Kamailio, rtpengine, authentication, tenancy, or production operations.
 

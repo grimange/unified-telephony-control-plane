@@ -1,5 +1,12 @@
 # Traefik Gateway API Runbook
 
+> **Topology note:** The HTTP/HTTPS example below is the historical **k3d/local
+> variant**. The current active topology is native k3s on `utcp-dev01`, where
+> `192.168.254.124:80/443` owns the edge and
+> `app.utcp.local.test -> native edge`. See
+> [`ADR-028`](../decisions/ADR-028-native-k3s-current-development-and-v1-acceptance-topology.md).
+> Do not imply that both edges can safely operate simultaneously on this host.
+
 Phase K2 installs Traefik as the local Kubernetes HTTP/HTTPS edge for the existing K1 application gateway.
 
 ## Architecture

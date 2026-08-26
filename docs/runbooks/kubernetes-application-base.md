@@ -1,5 +1,12 @@
 # Kubernetes Application Base Runbook
 
+> **Historical/secondary topology:** This runbook describes the K1 k3d
+> deployment path and preserves its local-development facts. It does not
+> select the current active-phase topology. Current V1 development and
+> acceptance authority is native k3s; follow the native/server runbook and
+> [`ADR-028`](../decisions/ADR-028-native-k3s-current-development-and-v1-acceptance-topology.md)
+> for active V1 runtime work.
+
 Phase K1 deploys the existing UTCP application base to the repository-managed `utcp-local` k3d cluster. It is a local development deployment, not a production architecture.
 
 ## Prerequisites

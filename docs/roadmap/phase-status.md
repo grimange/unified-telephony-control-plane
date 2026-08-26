@@ -22,9 +22,11 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** activate the implemented Level-2 external UDP/5060
-edge through a safe canonical `utcp-local` lifecycle, then run the narrow
-natural inbound/outbound proof against the independent PBX at `38.146.161.46`.
+**Exactly one next action:** continue V1 preparation on canonical native k3s
+(`utcp-dev01`, `192.168.254.124`) through the authenticated API, then run the
+narrow natural inbound/outbound proof against the independent PBX at
+`38.146.161.46` only after the shared Kubernetes/Kamailio repairs are closed
+and proven on native.
 The synthetic fixture remains deterministic regression only. The edge
 implementation and current runtime limitation are recorded in the
 [`V1 Level-2 edge evidence`](../evidence/v1/v1-level2-external-sip-lab-edge-implementation.md);
@@ -34,6 +36,16 @@ see [`V1-A registration implementation evidence`](../evidence/v1/v1a-registratio
 C7B closed on 2026-08-24 after deterministic tenant-scoped inbound/outbound
 route evaluation, canonical destination references, C7A eligibility enforcement,
 and focused implementation tests passed.
+
+**Current topology authority:** native k3s on `utcp-dev01` at
+`192.168.254.124` is the canonical V1 environment. `utcp-local` remains a
+supported secondary development/regression topology and is not current V1
+acceptance authority. Shared Kubernetes/Kamailio defects found during the
+temporary k3d recovery are repaired in the working tree and must be closed and
+proven against native before natural external SIP acceptance. The accidental
+synthetic V1 fixture with slug `v1-canonical-peer-1787783954` is known cleanup
+debt and is deferred to a separate bounded packet. External PBX prerequisites
+remain separate.
 
 **Mainline:**
 

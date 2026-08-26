@@ -217,10 +217,39 @@ Do not interpret broad instructions such as “complete the proof,” “recover
 
 Prefer repairing or reproducibly rebuilding the canonical environment over creating a second near-duplicate environment.
 
-For local UTCP development:
+Before any Kubernetes, runtime, ingress, host-networking, or live-proof
+mutation:
 
-* `utcp-local` is the canonical cluster unless repository documentation explicitly establishes another named topology for the current phase.
-* A missing immutable k3d cluster capability, such as a required host-port publication, should normally be addressed in the canonical cluster-creation configuration and verified by rebuilding `utcp-local` through the repository lifecycle.
+1. Read `docs/roadmap/phase-status.md`, the applicable topology ADR, and the
+   applicable active-phase runbook.
+2. Resolve exactly one canonical environment, including environment type,
+   cluster/context, node, edge address, and active hostname ownership.
+3. The current active authority is native k3s / `utcp-dev01` unless a later
+   current roadmap entry and accepted ADR explicitly change it.
+4. Historical runbooks and evidence do not automatically reactivate their
+   topology.
+5. k3d / `utcp-local` must be explicitly selected by the task before it can be
+   used for mutation or proof.
+6. Do not create, recreate, or switch to k3d merely because native topology
+   has a blocker. A topology transition requires an explicit current decision.
+
+Before mutation, report:
+
+```text
+CANONICAL_ENVIRONMENT=native-k3s
+CANONICAL_CONTEXT=<resolved native context>
+CANONICAL_NODE=utcp-dev01
+CANONICAL_EDGE_ADDRESS=192.168.254.124
+```
+
+The canonical environment is selected only by current phase-status, an
+applicable accepted topology ADR, and the current executable roadmap/runbook;
+historical proof does not select deployment topology.
+
+For local UTCP development, a missing immutable k3d cluster capability, such
+as a required host-port publication, should normally be addressed in the
+explicitly selected k3d cluster-creation configuration and verified through
+the repository lifecycle.
 * Rebuilding is permitted only when the current task explicitly authorizes it, repository evidence identifies the exact desired configuration, and preflight confirms that required state is reproducible or safely preserved.
 * A second cluster is permitted only when the architecture intentionally requires multiple simultaneous clusters and that topology, ownership, ports, lifecycle, and cleanup are documented in the repository before creation.
 * A temporary cluster must never silently become the canonical deployment target.

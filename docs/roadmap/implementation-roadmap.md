@@ -76,6 +76,16 @@ evidence.
 `CLAUDE.md` records the repository phase dependency used for task scoping. It
 must agree with the current mainline here and is not a second status ledger.
 
+### Current topology authority
+
+The canonical current topology is native k3s on `utcp-dev01`, with edge
+address `192.168.254.124` and application endpoint
+`https://app.utcp.local.test`. V1 natural acceptance runs on native k3s.
+k3d/`utcp-local` remains a supported secondary local/regression topology and
+must be explicitly selected by a task; historical K0-K4 descriptions do not
+reactivate it as the current proof environment. See
+[`ADR-028`](../decisions/ADR-028-native-k3s-current-development-and-v1-acceptance-topology.md).
+
 ## Current state and executable order
 
 **Current phase:** V1 — Bidirectional external call routing and control.
@@ -95,12 +105,11 @@ corridor. The focused ADR-027 regression proof passed, and the canonical API
 suite passed with 595 tests, 8 skips, and 5007 assertions. The implementation
 is committed at `e334209ccc016053d2f63f8e39e99f2126aa5535`.
 
-**Exactly one next action:** prepare and run natural external SIP acceptance
-against the canonical `utcp-local` proof topology. No retained k3d state exists,
-so `utcp-local` must first be recreated through the committed canonical k3d
-lifecycle. The native `utcp-dev01` server overlay remains intentionally
-non-public for SIP. Live proof must re-provision fixture state through the
-authoritative API/UI before testing the independent PBX path.
+**Exactly one next action:** continue V1 preparation and close/prove the
+accumulated Kubernetes/Kamailio repairs against canonical native k3s on
+`utcp-dev01`, then run natural external SIP acceptance there. V1 state must be
+re-provisioned through the authoritative API/UI before testing the independent
+PBX path. The external PBX prerequisites remain separate.
 C7B closed on 2026-08-24 after its focused route-authority tests and
 provider-neutrality checks passed.
 
@@ -432,9 +441,9 @@ roadmap.
 V1 repository implementation is complete under
 [`ADR-027`](../decisions/ADR-027-canonical-inbound-external-call-admission-and-execution-target.md),
 with focused regression and canonical PHP proof passed and the implementation
-committed at `e334209ccc016053d2f63f8e39e99f2126aa5535`. Next, recreate the
-canonical `utcp-local` through the repository lifecycle, re-provision V1
-canonical fixture state through the authoritative API/UI, and run controlled
-natural inbound/outbound proof against the independent PBX at `38.146.161.46`.
-The PBX prerequisites are not claimed complete here; the native server overlay
-remains intentionally non-public for SIP.
+committed at `e334209ccc016053d2f63f8e39e99f2126aa5535`. Next, continue on the
+canonical native k3s topology (`utcp-dev01`, `192.168.254.124`), close and prove
+the uncommitted Kubernetes/Kamailio repairs, re-provision V1 canonical fixture
+state through the authoritative API/UI, and run controlled natural
+inbound/outbound proof against the independent PBX at `38.146.161.46`. The PBX
+prerequisites are not claimed complete here.

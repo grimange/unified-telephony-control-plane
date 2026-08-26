@@ -1,5 +1,14 @@
 # Local k3d Cluster Runbook
 
+> **LOCAL K3D TOPOLOGY — SECONDARY DEVELOPMENT/REGRESSION ONLY**
+>
+> This runbook documents the supported secondary k3d development/regression
+> environment. It is **not** the current V1 acceptance environment. Current
+> V1 authority is native k3s on `utcp-dev01` at `192.168.254.124`. Do not
+> recreate or start `utcp-local` for active-phase proof unless the task
+> explicitly selects the k3d topology. Historical K0 behavior remains valid
+> for its original proof period.
+
 ## Scope
 
 Phase K0 establishes a local Kubernetes foundation only. It creates a deterministic k3d/K3s cluster, a k3d-managed local registry, a repository-managed kubeconfig, and canonical namespace boundaries.
@@ -145,7 +154,11 @@ When switching between local application clusters, run cluster lifecycle command
 
 Docker Engine remains required because it builds application images, runs the k3d node containers, and hosts the local registry. Docker Compose remains available for disposable proof and explicit debug mode only.
 
-The canonical integrated local runtime is `utcp-local`. Normal Kubernetes lifecycle and proof commands do not start Compose and do not fall back to Compose if Kubernetes is unavailable. A persistent UTCP Compose debug project running beside Kubernetes is reported as authority drift and must be stopped explicitly before canonical proof.
+The integrated k3d regression runtime is `utcp-local` when this secondary
+topology is explicitly selected. Normal Kubernetes lifecycle and proof commands
+do not start Compose and do not fall back to Compose if Kubernetes is
+unavailable. A persistent UTCP Compose debug project running beside Kubernetes
+is reported as authority drift and must be stopped explicitly before proof.
 
 Before and after K0 proof, inspect:
 

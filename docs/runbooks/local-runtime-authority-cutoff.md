@@ -2,7 +2,10 @@
 
 ## Scope
 
-The canonical integrated local runtime is the `utcp-local` Kubernetes cluster.
+The canonical active-phase runtime is native k3s on `utcp-dev01` at
+`192.168.254.124`. The `utcp-local` Kubernetes cluster described below is a
+supported secondary local/regression runtime and must be explicitly selected
+by the task. See [`ADR-028`](../decisions/ADR-028-native-k3s-current-development-and-v1-acceptance-topology.md).
 
 Docker Compose remains supported for:
 
@@ -24,8 +27,11 @@ Docker Engine
 ├── runs k3d node containers
 └── runs the local registry
 
+native k3s / utcp-dev01
+└── current active-phase runtime
+
 utcp-local Kubernetes
-└── canonical integrated local runtime
+└── supported secondary local/regression runtime
 
 Docker Compose
 └── disposable compatibility proof and explicit debug mode

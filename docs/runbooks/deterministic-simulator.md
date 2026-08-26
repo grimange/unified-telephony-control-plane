@@ -66,7 +66,16 @@ make simulator-status
 
 `simulator-test` runs the focused PostgreSQL-backed feature suite (`tests/Feature/Simulator`) using in-process worker calls; it is a lower-level proof of the same contracts and does not require the live cluster.
 
-`simulator-api-proof` and `simulator-runtime-proof` are live proofs. They authenticate against the running `utcp-local` cluster through the same CSRF/session flow as every other API proof, create or reuse the canonical `local-deterministic-simulator` node (`simulator-api-proof`) and dedicated per-scenario proof nodes (`simulator-runtime-proof`), and then poll PostgreSQL read-only for convergence evidence produced by the already-running Kubernetes Deployments. Neither script invokes a manual dispatch, normalization, projection, or reconciliation command; every state transition is produced by the deployed workers on their normal poll cycles.
+`simulator-api-proof` and `simulator-runtime-proof` are live proofs for the
+explicitly selected secondary `utcp-local` regression topology. They
+authenticate against the running cluster through the same CSRF/session flow as
+every other API proof, create or reuse the canonical
+`local-deterministic-simulator` node (`simulator-api-proof`) and dedicated
+per-scenario proof nodes (`simulator-runtime-proof`), and then poll PostgreSQL
+read-only for convergence evidence produced by the already-running Kubernetes
+Deployments. Neither script invokes a manual dispatch, normalization,
+projection, or reconciliation command; every state transition is produced by
+the deployed workers on their normal poll cycles.
 
 ## Metrics and Alerts
 
