@@ -146,7 +146,7 @@ if services["web"].get("image") != "utcp-web:dev":
 if services["gateway"].get("image") != "utcp-gateway:dev":
     fail("gateway must use the utcp-gateway image")
 
-if services["kamailio"].get("image") != "ghcr.io/kamailio/kamailio:5.8.6-bookworm":
+if services["kamailio"].get("image") != "ghcr.io/kamailio/kamailio:6.0.7-bookworm":
     fail("kamailio must use the pinned repository version")
 
 if services["sip-gateway"].get("image") != "nginxinc/nginx-unprivileged:1.29.4-alpine":

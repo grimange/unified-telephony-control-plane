@@ -15,7 +15,7 @@ php -l apps/api/database/migrations/2026_07_16_170000_add_kamailio_registration_
 php -l apps/api/tests/Feature/TelephonyDomain/KamailioRegistrationObserverTest.php >/dev/null
 bash -n scripts/kamailio-signaling/external-trunk-runtime-proof
 
-grep -Fq 'KAMAILIO_IMAGE=ghcr.io/kamailio/kamailio:5.8.6-bookworm' versions.env
+grep -Fq 'KAMAILIO_IMAGE=ghcr.io/kamailio/kamailio:6.0.7-bookworm' versions.env
 grep -Eq '^UTCP_PHASE=T[01]$' versions.env
 
 tmp_dir="$(mktemp -d)"
@@ -30,7 +30,7 @@ kubectl kustomize infrastructure/kubernetes/overlays/local >"$tmp_manifest"
 kubectl kustomize infrastructure/kubernetes/gateway-api >"$tmp_gateway"
 kubectl kustomize infrastructure/kubernetes/security >"$tmp_security"
 
-grep -Fq 'image: ghcr.io/kamailio/kamailio:5.8.6-bookworm' "$tmp_manifest"
+grep -Fq 'image: ghcr.io/kamailio/kamailio:6.0.7-bookworm' "$tmp_manifest"
 grep -Fq 'name: utcp-local-kamailio-db-credentials' "$tmp_manifest"
 grep -Fq 'calculate_ha1", 0' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
 grep -Fq 'max_expires", 120' infrastructure/kubernetes/base/platform/kamailio-configmap.yaml
@@ -66,7 +66,7 @@ grep -Fq 'value: /ws' "$tmp_gateway"
 grep -Fq 'kind: HTTPRoute' "$tmp_gateway"
 
 kamailio_image="$(grep -E '^KAMAILIO_IMAGE=' versions.env | cut -d= -f2-)"
-if [ "$kamailio_image" != "ghcr.io/kamailio/kamailio:5.8.6-bookworm" ]; then
+if [ "$kamailio_image" != "ghcr.io/kamailio/kamailio:6.0.7-bookworm" ]; then
     printf 'Unexpected pinned Kamailio image: %s\n' "$kamailio_image" >&2
     exit 1
 fi

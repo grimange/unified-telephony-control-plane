@@ -263,7 +263,7 @@ services:
 
   kamailio:
     profiles: ["signaling"]
-    image: ${KAMAILIO_IMAGE:-ghcr.io/kamailio/kamailio:5.8.6-bookworm}
+    image: ${KAMAILIO_IMAGE:-ghcr.io/kamailio/kamailio:6.0.7-bookworm}
     labels:
       utcp.compose.signaling.policy: "auth_db usrloc registrar calculate_ha1 max_expires"
     entrypoint:

@@ -54,4 +54,4 @@ images:
     newTag: 0.1.0-k1-dev
   - name: utcp-kamailio
     newName: ghcr.io/kamailio/kamailio
-    newTag: 5.8.6-bookworm
+    newTag: 6.0.7-bookworm
