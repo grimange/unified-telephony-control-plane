@@ -13,8 +13,14 @@ VERSIONS_FILE="$ROOT/versions.env"
 # shellcheck disable=SC1090
 . "$VERSIONS_FILE"
 
-K3D_CONTEXT_NAME="${K3D_CONTEXT_NAME:-k3d-utcp-local}"
-KUBECONFIG_FILE="$ROOT/.runtime/kubeconfig/utcp-local.yaml"
+SECURITY_ENVIRONMENT="${UTCP_SECURITY_ENVIRONMENT:-local}"
+if [ "$SECURITY_ENVIRONMENT" = "native-k3s" ]; then
+  K3D_CONTEXT_NAME="${UTCP_SECURITY_CONTEXT:-default}"
+  KUBECONFIG_FILE="${UTCP_SECURITY_KUBECONFIG_FILE:-${KUBECONFIG:-$HOME/.kube/config}}"
+else
+  K3D_CONTEXT_NAME="${K3D_CONTEXT_NAME:-k3d-utcp-local}"
+  KUBECONFIG_FILE="$ROOT/.runtime/kubeconfig/utcp-local.yaml"
+fi
 SECURITY_KUSTOMIZATION="$ROOT/infrastructure/kubernetes/security"
 SECURITY_RUNTIME_DIR="$ROOT/.runtime/kubernetes/security"
 SECURITY_APISERVER_TEMPLATE="$SECURITY_KUSTOMIZATION/traefik/allow-apiserver-egress.template.yaml"
@@ -25,7 +31,13 @@ OBSERVABILITY_APISERVER_TEMPLATE="$ROOT/infrastructure/kubernetes/observability/
 OBSERVABILITY_APISERVER_POLICY="$ROOT/.runtime/observability/allow-apiserver-egress.yaml"
 SECURITY_SERVICE_TEMPLATE="$SECURITY_KUSTOMIZATION/service-clusterips/allow-service-clusterip-egress.template.yaml"
 SECURITY_SERVICE_POLICY="$SECURITY_RUNTIME_DIR/service-clusterip-egress.yaml"
-SECURITY_PROOF_IMAGE="${SECURITY_PROOF_IMAGE:-utcp-local-registry:5000/utcp/api:0.1.0-k1-dev}"
+if [ "$SECURITY_ENVIRONMENT" = "native-k3s" ] && [ -z "${SECURITY_PROOF_IMAGE:-}" ]; then
+  # shellcheck disable=SC1091
+  . "$ROOT/.runtime/native-k3s/image-lock.env"
+  SECURITY_PROOF_IMAGE="$UTCP_SERVER_API_IMAGE"
+else
+  SECURITY_PROOF_IMAGE="${SECURITY_PROOF_IMAGE:-utcp-local-registry:5000/utcp/api:0.1.0-k1-dev}"
+fi
 SECURITY_PROOF_LABEL="utcp.io/security-proof=k3"
 
 UTCP_NAMESPACES=(utcp-platform utcp-data utcp-runtime utcp-observability traefik-system)
@@ -41,7 +53,11 @@ PSA_KEYS=(
 
 required_tools() {
   local missing=0
-  for tool in kubectl awk grep sed docker; do
+  local tools=(kubectl awk grep sed)
+  if [ "$SECURITY_ENVIRONMENT" != "native-k3s" ]; then
+    tools+=(docker)
+  fi
+  for tool in "${tools[@]}"; do
     if ! command -v "$tool" >/dev/null 2>&1; then
       printf 'missing required K3 tool: %s\n' "$tool" >&2
       missing=1
@@ -74,7 +90,11 @@ render_security() {
 ensure_cluster() {
   required_tools
   ensure_kubeconfig
-  "$ROOT/scripts/k3d/runtime-ready" >/dev/null
+  if [ "$SECURITY_ENVIRONMENT" = "native-k3s" ]; then
+    kube get node utcp-dev01 -o jsonpath='{.metadata.name}' | grep -Fxq utcp-dev01
+  else
+    "$ROOT/scripts/k3d/runtime-ready" >/dev/null
+  fi
 }
 
 service_cluster_ip() {

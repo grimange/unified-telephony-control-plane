@@ -38,7 +38,7 @@ headers="$(mktemp)"
 body="$(mktemp)"
 curl --fail --silent --show-error \
   --cacert "$ROOT/.runtime/tls/utcp-local-ca.crt" \
-  --resolve "app.utcp.local.test:443:127.0.0.1" \
+  --resolve "app.utcp.local.test:443:${UTCP_OBSERVABILITY_EDGE_HOST:-127.0.0.1}" \
   -D "$headers" \
   -o "$body" \
   "https://app.utcp.local.test/api/version"

@@ -53,3 +53,47 @@ local overlay because its ignored/generated Asterisk credential file is absent
 in this checkout. The mutation regression now generates and cleans these
 credentials hermetically; the remaining k3d configuration check cannot run
 because the `k3d` executable is not installed on this host.
+
+## Final live acceptance reconciliation
+
+The native deployment was subsequently completed and proven on `utcp-dev01`
+using the validated native k3s context and the immutable GHCR image lock. The
+PostgreSQL and Redis StatefulSets reached readiness through `local-path` PVCs;
+the migration Job completed; and the API, worker, scheduler, web, gateway,
+telephony runtime, and reconciliation workloads reached their expected
+readiness states. Bounded persistence and workload recovery proofs passed.
+
+The UTCP-owned Traefik and Gateway API layer reached readiness with the
+prepared CA-signed HTTPS certificate for `app.utcp.local.test`. Gateway routes,
+security policy/RBAC, observability components, and the no-public-SIP/RTP
+exposure boundary were proven without enabling bundled k3s Traefik.
+
+The native APP_KEY generator defect was resolved during live acceptance. The
+former generator emitted hexadecimal text with a `base64:` label, producing an
+invalid 48-byte decoded key. Native generation now uses 32 cryptographically
+random bytes with correct base64 encoding. Existing malformed native keys are
+repaired in place by replacing only `APP_KEY`; valid keys remain stable and
+database credentials are preserved. The focused regression covers generation,
+32-byte decoding, idempotency, malformed-key repair, credential preservation,
+and Kubernetes Secret projection.
+
+After projection, the API container reported a 32-byte decoded APP_KEY. The
+CSRF endpoint returned HTTP 200 and the unauthenticated session endpoint
+returned the normal HTTP 401 response rather than HTTP 500.
+
+Final browser acceptance used Playwright MCP against
+`https://app.utcp.local.test`. The real login page was used, authentication
+succeeded, `Local Tenant` was selected through the visible UI, and the
+read-only Runtime nodes Admin surface rendered its canonical empty state. The
+browser's Runtime nodes request returned HTTP 200 with `{"runtime_nodes":[]}`;
+the result matched the rendered state and the authenticated capability/tenant
+context returned by the API.
+
+The Runtime nodes page displayed `Live updates disconnected`, but no current
+corresponding failed request was captured and the required API-backed read-only
+acceptance passed. This remains a non-blocking follow-up observation, not a
+Stage 4 defect claim.
+
+Final verdict:
+
+`STAGE_4_NATIVE_K3S_DEPLOYMENT_FOUNDATION_IMPLEMENTED_AND_PROVEN`

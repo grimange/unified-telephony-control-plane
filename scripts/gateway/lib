@@ -17,18 +17,30 @@ fi
 # shellcheck disable=SC1090
 . "$VERSIONS_FILE"
 
-K3D_CONTEXT_NAME="${K3D_CONTEXT_NAME:-k3d-utcp-local}"
-KUBECONFIG_FILE="$ROOT/.runtime/kubeconfig/utcp-local.yaml"
+GATEWAY_ENVIRONMENT="${UTCP_GATEWAY_ENVIRONMENT:-local}"
+if [ "$GATEWAY_ENVIRONMENT" = "native-k3s" ]; then
+  K3D_CONTEXT_NAME=""
+  KUBECONFIG_FILE="${UTCP_GATEWAY_KUBECONFIG_FILE:-${KUBECONFIG:-$HOME/.kube/config}}"
+  GATEWAY_CONTEXT="${UTCP_GATEWAY_CONTEXT:-default}"
+else
+  K3D_CONTEXT_NAME="${K3D_CONTEXT_NAME:-k3d-utcp-local}"
+  KUBECONFIG_FILE="$ROOT/.runtime/kubeconfig/utcp-local.yaml"
+  GATEWAY_CONTEXT="$K3D_CONTEXT_NAME"
+fi
 GATEWAY_API_VERSION="${GATEWAY_API_VERSION:-v1.5.1}"
 GATEWAY_API_STANDARD_INSTALL_SHA256="${GATEWAY_API_STANDARD_INSTALL_SHA256:-751002b3b91a87f7ae3bd2517c79a47a8d7ed6702901808a1cf9bd97d284f9b8}"
 TRAEFIK_HELM_REPOSITORY="${TRAEFIK_HELM_REPOSITORY:-https://traefik.github.io/charts}"
 TRAEFIK_HELM_CHART_VERSION="${TRAEFIK_HELM_CHART_VERSION:-41.0.2}"
 TRAEFIK_PROXY_IMAGE="${TRAEFIK_PROXY_IMAGE:-docker.io/traefik:v3.7.7}"
 TRAEFIK_PROXY_VERSION="${TRAEFIK_PROXY_VERSION:-v3.7.7}"
-UTCP_EDGE_HTTP_HOST="${UTCP_EDGE_HTTP_HOST:-127.0.0.1}"
+UTCP_EDGE_HTTP_HOST="${UTCP_EDGE_HTTP_HOST:-$([ "$GATEWAY_ENVIRONMENT" = native-k3s ] && printf '192.168.254.124' || printf '127.0.0.1')}"
 UTCP_EDGE_HTTP_HOST_PORT="${UTCP_EDGE_HTTP_HOST_PORT:-80}"
-UTCP_EDGE_HTTPS_HOST="${UTCP_EDGE_HTTPS_HOST:-127.0.0.1}"
+UTCP_EDGE_HTTPS_HOST="${UTCP_EDGE_HTTPS_HOST:-$([ "$GATEWAY_ENVIRONMENT" = native-k3s ] && printf '192.168.254.124' || printf '127.0.0.1')}"
 UTCP_EDGE_HTTPS_HOST_PORT="${UTCP_EDGE_HTTPS_HOST_PORT:-443}"
+if [ "$GATEWAY_ENVIRONMENT" = "native-k3s" ]; then
+  UTCP_EDGE_HTTP_HOST="${UTCP_GATEWAY_EDGE_HOST:-192.168.254.124}"
+  UTCP_EDGE_HTTPS_HOST="${UTCP_GATEWAY_EDGE_HOST:-192.168.254.124}"
+fi
 UTCP_GATEWAY_CLASS="${UTCP_GATEWAY_CLASS:-utcp-traefik}"
 UTCP_GATEWAY_NAMESPACE="${UTCP_GATEWAY_NAMESPACE:-traefik-system}"
 UTCP_GATEWAY_NAME="${UTCP_GATEWAY_NAME:-utcp-local}"
@@ -69,7 +81,7 @@ required_tools() {
 }
 
 kube() {
-  KUBECONFIG="$KUBECONFIG_FILE" kubectl --context "$K3D_CONTEXT_NAME" "$@"
+  KUBECONFIG="$KUBECONFIG_FILE" kubectl --context "$GATEWAY_CONTEXT" "$@"
 }
 
 ensure_kubeconfig() {
@@ -153,6 +165,14 @@ prepare_gateway_crds() {
 }
 
 check_edge_bindings() {
+  if [ "$GATEWAY_ENVIRONMENT" = "native-k3s" ]; then
+    local service_type ingress
+    service_type="$(kube -n "$UTCP_GATEWAY_NAMESPACE" get service traefik -o jsonpath='{.spec.type}')"
+    ingress="$(kube -n "$UTCP_GATEWAY_NAMESPACE" get service traefik -o jsonpath='{range .status.loadBalancer.ingress[*]}{.ip}{.hostname}{"\n"}{end}')"
+    [ "$service_type" = LoadBalancer ] || { printf 'native Gateway Service is not LoadBalancer: %s\n' "$service_type" >&2; exit 1; }
+    printf '%s\n' "$ingress" | grep -Fxq "$UTCP_EDGE_HTTPS_HOST" || { printf 'native Gateway Service has no expected edge address: %s\n' "$UTCP_EDGE_HTTPS_HOST" >&2; exit 1; }
+    return 0
+  fi
   local ports
   ports="$(docker ps --filter "name=k3d-${K3D_CLUSTER_NAME:-utcp-local}-serverlb" --format '{{.Ports}}')"
   if ! printf '%s\n' "$ports" | grep -Fq "${UTCP_EDGE_HTTP_HOST}:${UTCP_EDGE_HTTP_HOST_PORT}->80"; then

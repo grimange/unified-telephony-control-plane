@@ -256,8 +256,15 @@ run_probe observability-gateway-deny utcp-observability generic "$gateway_ip" 80
 run_probe observability-api-deny utcp-observability generic "$api_ip" 9000 deny
 run_probe data-gateway-deny utcp-data generic "$gateway_ip" 8080 deny
 
-"$ROOT/scripts/gateway/proof" >/dev/null
-"$ROOT/scripts/kubernetes/proof" >/dev/null
+if [ "$SECURITY_ENVIRONMENT" = "native-k3s" ]; then
+  UTCP_GATEWAY_ENVIRONMENT=native-k3s \
+    UTCP_GATEWAY_KUBECONFIG_FILE="$KUBECONFIG_FILE" \
+    UTCP_GATEWAY_CONTEXT="$K3D_CONTEXT_NAME" \
+    "$ROOT/scripts/gateway/proof" >/dev/null
+else
+  "$ROOT/scripts/gateway/proof" >/dev/null
+  "$ROOT/scripts/kubernetes/proof" >/dev/null
+fi
 
 cleanup_proof_pods
 if kube get pods -A -l "$SECURITY_PROOF_LABEL" --no-headers 2>/dev/null | grep -q .; then

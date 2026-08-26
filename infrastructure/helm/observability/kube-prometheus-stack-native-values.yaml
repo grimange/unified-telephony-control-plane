@@ -1,0 +1,8 @@
+# Native k3s may need more time for Grafana's first persistent SQLite
+# bootstrap on the single-node local-path volume.
+grafana:
+  livenessProbe:
+    initialDelaySeconds: 300
+    failureThreshold: 10
+  readinessProbe:
+    initialDelaySeconds: 30

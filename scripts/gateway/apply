@@ -7,12 +7,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 required_tools
 ensure_kubeconfig
-"$ROOT/scripts/k3d/runtime-ready" >/dev/null
-"$ROOT/scripts/kubernetes/config-check" >/dev/null
-"$ROOT/scripts/kubernetes/status" >/dev/null
-check_edge_bindings
+if [ "$GATEWAY_ENVIRONMENT" = "native-k3s" ]; then
+  kube get node utcp-dev01 -o jsonpath='{.metadata.name}' | grep -Fxq utcp-dev01
+  "$ROOT/scripts/native-k3s/config-check" >/dev/null
+else
+  "$ROOT/scripts/k3d/runtime-ready" >/dev/null
+  "$ROOT/scripts/kubernetes/config-check" >/dev/null
+  "$ROOT/scripts/kubernetes/status" >/dev/null
+  check_edge_bindings
+fi
 "$SCRIPT_DIR/install-crds"
 "$SCRIPT_DIR/install-traefik"
+if [ "$GATEWAY_ENVIRONMENT" = "native-k3s" ]; then
+  check_edge_bindings
+fi
 kube apply -k "$GATEWAY_KUSTOMIZATION"
 "$SCRIPT_DIR/tls-apply"
 wait_gateway

@@ -17,8 +17,14 @@ fi
 # shellcheck disable=SC1090
 . "$VERSIONS_FILE"
 
-K3D_CONTEXT_NAME="${K3D_CONTEXT_NAME:-k3d-utcp-local}"
-KUBECONFIG_FILE="$ROOT/.runtime/kubeconfig/utcp-local.yaml"
+OBSERVABILITY_ENVIRONMENT="${UTCP_OBSERVABILITY_ENVIRONMENT:-local}"
+if [ "$OBSERVABILITY_ENVIRONMENT" = "native-k3s" ]; then
+  K3D_CONTEXT_NAME="${UTCP_OBSERVABILITY_CONTEXT:-default}"
+  KUBECONFIG_FILE="${UTCP_OBSERVABILITY_KUBECONFIG_FILE:-${KUBECONFIG:-$HOME/.kube/config}}"
+else
+  K3D_CONTEXT_NAME="${K3D_CONTEXT_NAME:-k3d-utcp-local}"
+  KUBECONFIG_FILE="$ROOT/.runtime/kubeconfig/utcp-local.yaml"
+fi
 OBSERVABILITY_NAMESPACE="${OBSERVABILITY_NAMESPACE:-utcp-observability}"
 OBSERVABILITY_HELM_DIR="$ROOT/infrastructure/helm/observability"
 OBSERVABILITY_KUSTOMIZATION="$ROOT/infrastructure/kubernetes/observability"
@@ -69,7 +75,11 @@ ensure_kubeconfig() {
 ensure_cluster() {
   required_tools
   ensure_kubeconfig
-  "$ROOT/scripts/k3d/runtime-ready" >/dev/null
+  if [ "$OBSERVABILITY_ENVIRONMENT" = "native-k3s" ]; then
+    kube get node utcp-dev01 -o jsonpath='{.metadata.name}' | grep -Fxq utcp-dev01
+  else
+    "$ROOT/scripts/k3d/runtime-ready" >/dev/null
+  fi
 }
 
 render_observability() {

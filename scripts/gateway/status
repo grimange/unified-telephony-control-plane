@@ -25,7 +25,11 @@ kube -n utcp-platform get httproute -o jsonpath='{range .items[*]}{.metadata.nam
 printf '\nCertificate:\n'
 cert_summary
 printf '\nHost port mappings:\n'
-docker ps --filter "name=k3d-${K3D_CLUSTER_NAME:-utcp-local}-serverlb" --format '{{.Names}}	{{.Ports}}'
+if [ "$GATEWAY_ENVIRONMENT" = "native-k3s" ]; then
+  kube -n "$UTCP_GATEWAY_NAMESPACE" get service traefik -o wide
+else
+  docker ps --filter "name=k3d-${K3D_CLUSTER_NAME:-utcp-local}-serverlb" --format '{{.Names}}	{{.Ports}}'
+fi
 printf '\nReserved hostname route absence:\n'
 rendered_gateway="$(render_gateway)"
 if printf '%s\n' "$rendered_gateway" | grep -Eiq 'events\.utcp\.local\.test'; then

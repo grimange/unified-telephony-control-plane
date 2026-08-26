@@ -58,12 +58,14 @@ write_credentials() {
   mkdir -p "$SERVER_STATE_DIR"
   umask 077
   if [ ! -s "$SERVER_STATE_DIR/server-data-credentials.properties" ]; then
+    db_password="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
     {
-      printf 'APP_KEY=base64:'; od -An -N32 -tx1 /dev/urandom | tr -d ' \n'; printf '\n'
-      printf 'DB_PASSWORD='; od -An -N24 -tx1 /dev/urandom | tr -d ' \n'; printf '\n'
-      printf 'POSTGRES_DB=utcp\nPOSTGRES_USER=utcp\nPOSTGRES_PASSWORD='
-      od -An -N24 -tx1 /dev/urandom | tr -d ' \n'; printf '\n'
+      printf 'APP_KEY=%s\n' "$(generate_app_key)"
+      printf 'DB_PASSWORD=%s\n' "$db_password"
+      printf 'POSTGRES_DB=utcp\nPOSTGRES_USER=utcp\nPOSTGRES_PASSWORD=%s\n' "$db_password"
     } > "$SERVER_STATE_DIR/server-data-credentials.properties"
+  elif ! valid_app_key_file "$SERVER_STATE_DIR/server-data-credentials.properties"; then
+    replace_app_key "$SERVER_STATE_DIR/server-data-credentials.properties"
   fi
   if [ ! -s "$SERVER_STATE_DIR/server-kamailio-db-credentials.properties" ]; then
     {
@@ -79,6 +81,48 @@ write_credentials() {
       printf 'REVERB_APP_ID=utcp-server\nREVERB_APP_KEY='; od -An -N16 -tx1 /dev/urandom | tr -d ' \n'; printf '\nREVERB_APP_SECRET='; od -An -N32 -tx1 /dev/urandom | tr -d ' \n'; printf '\n'
     } > "$SERVER_STATE_DIR/server-reverb-credentials.properties"
   fi
+  if [ ! -s "$SERVER_STATE_DIR/server-asterisk-ari-credentials.properties" ]; then
+    {
+      printf 'ARI_USERNAME=utcp_ari\nARI_PASSWORD='
+      od -An -N24 -tx1 /dev/urandom | tr -d ' \n'
+      printf '\n'
+    } > "$SERVER_STATE_DIR/server-asterisk-ari-credentials.properties"
+  fi
+}
+
+generate_app_key() {
+  # Laravel's base64: AES-256 key is the base64 encoding of exactly 32 bytes.
+  printf 'base64:%s' "$(openssl rand -base64 32 | tr -d '\n')"
+}
+
+valid_app_key_file() {
+  local credentials_file="$1" app_key encoded decoded_length
+  app_key="$(awk -F= '$1 == "APP_KEY" {sub(/^[^=]*=/, ""); print; exit}' "$credentials_file")"
+  case "$app_key" in base64:*) ;; *) return 1 ;; esac
+  encoded="${app_key#base64:}"
+  [ -n "$encoded" ] || return 1
+  decoded_length="$(printf '%s' "$encoded" | base64 --decode 2>/dev/null | wc -c)"
+  [ "$decoded_length" -eq 32 ]
+}
+
+replace_app_key() {
+  local credentials_file="$1" temporary_file app_key replaced=0 line
+  app_key="$(generate_app_key)"
+  temporary_file="$(mktemp "${credentials_file}.XXXXXX")"
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      APP_KEY=*)
+        if [ "$replaced" -eq 0 ]; then
+          printf 'APP_KEY=%s\n' "$app_key" >> "$temporary_file"
+          replaced=1
+        fi
+        ;;
+      *) printf '%s\n' "$line" >> "$temporary_file" ;;
+    esac
+  done < "$credentials_file"
+  if [ "$replaced" -eq 0 ]; then printf 'APP_KEY=%s\n' "$app_key" >> "$temporary_file"; fi
+  chmod 600 "$temporary_file"
+  mv "$temporary_file" "$credentials_file"
 }
 
 render_server() {
@@ -93,6 +137,7 @@ render_server() {
   cp "$SERVER_STATE_DIR/server-data-credentials.properties" "$render_dir/server-data-credentials.properties"
   cp "$SERVER_STATE_DIR/server-kamailio-db-credentials.properties" "$render_dir/server-kamailio-db-credentials.properties"
   cp "$SERVER_STATE_DIR/server-reverb-credentials.properties" "$render_dir/server-reverb-credentials.properties"
+  cp "$SERVER_STATE_DIR/server-asterisk-ari-credentials.properties" "$render_dir/server-asterisk-ari-credentials.properties"
   kubectl kustomize "$render_dir"
   rm -rf "$render_root"
 }

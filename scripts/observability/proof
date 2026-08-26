@@ -37,7 +37,14 @@ prometheus_query "$prom_port" 'up' | jq -e '.status == "success" and (.data.resu
 prometheus_query "$prom_port" 'kube_deployment_status_replicas_available{namespace="utcp-platform"}' | jq -e '.data.result | length > 0' >/dev/null
 prometheus_query "$prom_port" 'kube_statefulset_status_replicas_ready{namespace="utcp-data"}' | jq -e '.data.result | length > 0' >/dev/null
 
-"$ROOT/scripts/gateway/proof" >/dev/null
+if [ "$OBSERVABILITY_ENVIRONMENT" = "native-k3s" ]; then
+  UTCP_GATEWAY_ENVIRONMENT=native-k3s \
+    UTCP_GATEWAY_KUBECONFIG_FILE="$KUBECONFIG_FILE" \
+    UTCP_GATEWAY_CONTEXT="$K3D_CONTEXT_NAME" \
+    "$ROOT/scripts/gateway/proof" >/dev/null
+else
+  "$ROOT/scripts/gateway/proof" >/dev/null
+fi
 sleep 5
 prometheus_query "$prom_port" 'traefik_service_requests_total' | jq -e '.data.result | length > 0' >/dev/null
 printf 'metrics_proof=passed\n'
@@ -46,7 +53,11 @@ headers="$(mktemp)"
 body="$(mktemp)"
 version_ca_cert="$ROOT/.runtime/tls/utcp-local-ca.crt"
 version_leaf_cert="$ROOT/.runtime/tls/utcp-local.crt"
-version_curl_args=(--fail --silent --show-error --resolve "app.utcp.local.test:443:127.0.0.1" -D "$headers" -o "$body")
+version_edge="127.0.0.1"
+if [ "$OBSERVABILITY_ENVIRONMENT" = "native-k3s" ]; then
+  version_edge="${UTCP_OBSERVABILITY_EDGE_HOST:-192.168.254.124}"
+fi
+version_curl_args=(--fail --silent --show-error --resolve "app.utcp.local.test:443:${version_edge}" -D "$headers" -o "$body")
 if [ -s "$version_ca_cert" ] && openssl verify -CAfile "$version_ca_cert" "$version_leaf_cert" >/dev/null 2>&1; then
   version_curl_args+=(--cacert "$version_ca_cert")
 fi
@@ -136,6 +147,17 @@ if curl --silent --show-error "http://127.0.0.1:${alert_port}/api/v2/alerts?acti
 fi
 printf 'synthetic_alert_proof=passed\n'
 
-"$ROOT/scripts/security/proof" >/dev/null
-"$ROOT/scripts/gateway/proof" >/dev/null
+if [ "$OBSERVABILITY_ENVIRONMENT" = "native-k3s" ]; then
+  UTCP_SECURITY_ENVIRONMENT=native-k3s \
+    UTCP_SECURITY_KUBECONFIG_FILE="$KUBECONFIG_FILE" \
+    UTCP_SECURITY_CONTEXT="$K3D_CONTEXT_NAME" \
+    "$ROOT/scripts/security/proof" >/dev/null
+  UTCP_GATEWAY_ENVIRONMENT=native-k3s \
+    UTCP_GATEWAY_KUBECONFIG_FILE="$KUBECONFIG_FILE" \
+    UTCP_GATEWAY_CONTEXT="$K3D_CONTEXT_NAME" \
+    "$ROOT/scripts/gateway/proof" >/dev/null
+else
+  "$ROOT/scripts/security/proof" >/dev/null
+  "$ROOT/scripts/gateway/proof" >/dev/null
+fi
 printf 'K4 observability proof passed\n'

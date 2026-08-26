@@ -5,6 +5,34 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/security/lib
 . "$SCRIPT_DIR/lib"
 
+# The local overlay intentionally uses ignored generated credentials. Keep
+# this static check hermetic for a fresh checkout without retaining fixtures
+# or touching operator-owned credential files.
+generated_credentials=()
+for credentials_file in \
+  "$ROOT/infrastructure/kubernetes/overlays/local/runtime/local-asterisk-ari-credentials.properties" \
+  "$ROOT/infrastructure/kubernetes/overlays/local/platform/local-kamailio-db-credentials.properties" \
+  "$ROOT/infrastructure/kubernetes/overlays/local/migration/local-kamailio-db-credentials.properties" \
+  "$ROOT/infrastructure/kubernetes/overlays/local/platform/local-reverb-credentials.properties"; do
+  [ -s "$credentials_file" ] || generated_credentials+=("$credentials_file")
+done
+prepare_local_credentials() {
+  (
+    # shellcheck source=scripts/kubernetes/lib
+    . "$ROOT/scripts/kubernetes/lib"
+    ensure_local_asterisk_credentials
+    ensure_local_kamailio_credentials
+    ensure_local_reverb_credentials
+  )
+}
+prepare_local_credentials
+cleanup_generated_credentials() {
+  for credentials_file in "${generated_credentials[@]}"; do
+    rm -f "$credentials_file"
+  done
+}
+trap cleanup_generated_credentials EXIT
+
 required_tools
 ensure_kubeconfig
 

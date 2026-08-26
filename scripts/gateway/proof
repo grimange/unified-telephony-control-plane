@@ -82,7 +82,7 @@ if [ -n "$unexpected_runtime_workloads" ]; then
   exit 1
 fi
 
-if docker ps --filter 'name=k3d-utcp-local-serverlb' --format '{{.Ports}}' | grep -Eq '18080|18443'; then
+if [ "$GATEWAY_ENVIRONMENT" != "native-k3s" ] && docker ps --filter 'name=k3d-utcp-local-serverlb' --format '{{.Ports}}' | grep -Eq '18080|18443'; then
   printf 'custom UTCP edge ports remain published\n' >&2
   docker ps --filter 'name=k3d-utcp-local-serverlb' --format '{{.Names}}\t{{.Ports}}' >&2
   exit 1

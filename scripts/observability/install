@@ -9,11 +9,16 @@ ensure_cluster
 "$SCRIPT_DIR/config-check" >/dev/null
 apply_grafana_secret
 
+prometheus_values=(--values "$OBSERVABILITY_HELM_DIR/kube-prometheus-stack-values.yaml")
+if [ "$OBSERVABILITY_ENVIRONMENT" = "native-k3s" ]; then
+  prometheus_values+=(--values "$OBSERVABILITY_HELM_DIR/kube-prometheus-stack-native-values.yaml")
+fi
+
 helm_cmd upgrade --install kube-prometheus-stack kube-prometheus-stack \
   --repo "$KUBE_PROMETHEUS_STACK_HELM_REPOSITORY" \
   --version "$KUBE_PROMETHEUS_STACK_HELM_CHART_VERSION" \
   --namespace "$OBSERVABILITY_NAMESPACE" \
-  --values "$OBSERVABILITY_HELM_DIR/kube-prometheus-stack-values.yaml" \
+  "${prometheus_values[@]}" \
   --wait \
   --timeout 10m
 

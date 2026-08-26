@@ -337,6 +337,9 @@ k8s-restart-proof: ## Prove application Deployments recover from Pod replacement
 k8s-delete: ## Delete only K1 Kubernetes resources; preserve PVCs unless CONFIRM=delete-k1-pvcs.
 	@./scripts/kubernetes/delete
 
+server-credentials-test: ## Run native APP_KEY generation and Secret projection regression tests.
+	@./scripts/native-k3s/credentials-test
+
 server-config-check: ## Validate the native k3s overlay and target guardrails without applying resources.
 	@./scripts/native-k3s/config-check
 

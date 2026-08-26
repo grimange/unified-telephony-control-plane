@@ -1,7 +1,5 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-generatorOptions:
-  disableNameSuffixHash: true
 configMapGenerator:
   - name: utcp-application-config
     namespace: utcp-platform
@@ -24,6 +22,10 @@ secretGenerator:
     namespace: utcp-platform
     envs:
       - server-reverb-credentials.properties
+  - name: utcp-local-asterisk-ari-credentials
+    namespace: utcp-runtime
+    envs:
+      - server-asterisk-ari-credentials.properties
 resources:
   - ../../base/data
   - ../../base/migration
@@ -32,6 +34,7 @@ resources:
   - ../../components/runtime-fencing
 patches:
   - path: disable-external-sip-nodeport.yaml
+  - path: postgres-probes.yaml
 images:
   - name: postgres
     newName: __UTCP_POSTGRES_IMAGE_NAME__

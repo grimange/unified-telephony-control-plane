@@ -14,29 +14,45 @@ kube apply -f "$SECURITY_APISERVER_POLICY"
 kube apply -f "$SECURITY_FENCER_APISERVER_POLICY"
 kube apply -f "$SECURITY_SERVICE_POLICY"
 
-kube apply -k "$ROOT/infrastructure/kubernetes/overlays/local/data" >/dev/null
+if [ "$SECURITY_ENVIRONMENT" = "native-k3s" ]; then
+  kube -n utcp-data rollout status statefulset/postgres --timeout=240s
+else
+  kube apply -k "$ROOT/infrastructure/kubernetes/overlays/local/data" >/dev/null
+fi
 kube -n utcp-data rollout status statefulset/postgres --timeout=240s
 kube -n utcp-data rollout status statefulset/redis --timeout=240s
 kube -n utcp-data wait --for=condition=Ready pod -l app.kubernetes.io/component=postgres --timeout=180s >/dev/null
 kube -n utcp-data wait --for=condition=Ready pod -l app.kubernetes.io/component=redis --timeout=180s >/dev/null
 
-kube apply -f "$ROOT/infrastructure/kubernetes/base/platform/service-account.yaml" >/dev/null
-kube apply -k "$ROOT/infrastructure/kubernetes/overlays/local/platform" >/dev/null
-for deployment in api worker scheduler web gateway; do
-  kube -n utcp-platform rollout status "deployment/$deployment" --timeout=240s
-done
+if [ "$SECURITY_ENVIRONMENT" = "native-k3s" ]; then
+  for deployment in api worker scheduler web gateway; do
+    kube -n utcp-platform rollout status "deployment/$deployment" --timeout=240s
+  done
+  kube -n utcp-runtime rollout status deployment/asterisk-ari --timeout=240s
+  kube -n traefik-system rollout status deployment/traefik --timeout=240s
+  UTCP_GATEWAY_ENVIRONMENT=native-k3s \
+    UTCP_GATEWAY_KUBECONFIG_FILE="$KUBECONFIG_FILE" \
+    UTCP_GATEWAY_CONTEXT="$K3D_CONTEXT_NAME" \
+    "$ROOT/scripts/gateway/proof" >/dev/null
+else
+  kube apply -f "$ROOT/infrastructure/kubernetes/base/platform/service-account.yaml" >/dev/null
+  kube apply -k "$ROOT/infrastructure/kubernetes/overlays/local/platform" >/dev/null
+  for deployment in api worker scheduler web gateway; do
+    kube -n utcp-platform rollout status "deployment/$deployment" --timeout=240s
+  done
 
-kube -n utcp-platform delete job utcp-migrate --ignore-not-found >/dev/null
-"$ROOT/scripts/kubernetes/config-check" >/dev/null
-kube apply -k "$ROOT/infrastructure/kubernetes/overlays/local/migration" >/dev/null
-if ! kube -n utcp-platform wait --for=condition=Complete job/utcp-migrate --timeout=240s; then
-  kube -n utcp-platform logs job/utcp-migrate --tail=80 >&2 || true
-  exit 1
+  kube -n utcp-platform delete job utcp-migrate --ignore-not-found >/dev/null
+  "$ROOT/scripts/kubernetes/config-check" >/dev/null
+  kube apply -k "$ROOT/infrastructure/kubernetes/overlays/local/migration" >/dev/null
+  if ! kube -n utcp-platform wait --for=condition=Complete job/utcp-migrate --timeout=240s; then
+    kube -n utcp-platform logs job/utcp-migrate --tail=80 >&2 || true
+    exit 1
+  fi
+  "$ROOT/scripts/gateway/apply" >/dev/null
+  "$ROOT/scripts/kubernetes/proof" >/dev/null
+  "$ROOT/scripts/gateway/proof" >/dev/null
+  kube -n traefik-system rollout status deployment/traefik --timeout=240s
+  "$ROOT/scripts/gateway/status" >/dev/null
 fi
-"$ROOT/scripts/gateway/apply" >/dev/null
-"$ROOT/scripts/kubernetes/proof" >/dev/null
-"$ROOT/scripts/gateway/proof" >/dev/null
-kube -n traefik-system rollout status deployment/traefik --timeout=240s
-"$ROOT/scripts/gateway/status" >/dev/null
 "$SCRIPT_DIR/status"
 printf 'K3 security boundaries applied. Proof command: make security-proof\n'

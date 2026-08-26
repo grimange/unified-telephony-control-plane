@@ -7,10 +7,13 @@ ensure_target
 manifest="$(mktemp)"
 trap 'rm -f "$manifest"' EXIT
 render_server > "$manifest"
+# Namespaces are intentionally owned by the shared security layer, but must
+# exist before the namespaced core resources can be reconciled.
+server_kube apply -f "$ROOT/infrastructure/kubernetes/security/namespaces/pod-security-labels.yaml" >/dev/null
+server_kube -n "$SERVER_NAMESPACE_PLATFORM" delete job utcp-migrate --ignore-not-found >/dev/null
 server_kube apply -f "$manifest" >/dev/null
 wait_data
-server_kube -n "$SERVER_NAMESPACE_PLATFORM" delete job utcp-migrate --ignore-not-found >/dev/null
-server_kube -n "$SERVER_NAMESPACE_PLATFORM" apply -f "$manifest" >/dev/null
+server_kube apply -f "$manifest" >/dev/null
 server_kube -n "$SERVER_NAMESPACE_PLATFORM" wait --for=condition=Complete job/utcp-migrate --timeout=240s
 wait_platform
 server_kube -n "$SERVER_NAMESPACE_PLATFORM" get deployment api web gateway worker scheduler -o wide
