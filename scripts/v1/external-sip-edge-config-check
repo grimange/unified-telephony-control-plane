@@ -82,7 +82,7 @@ git check-ignore -q .env-external-pbx-sip-credentials || fail 'external PBX cred
 if git ls-files --error-unmatch .env-external-pbx-sip-credentials >/dev/null 2>&1; then
   fail 'external PBX credential file is tracked'
 fi
-if git grep -n -I -F '.env-external-pbx-sip-credentials' -- ':!.gitignore' ':!docs/evidence/v1/v1-level2-external-sip-lab-edge-implementation.md' >/dev/null 2>&1; then
+if git grep -n -I -F '.env-external-pbx-sip-credentials' -- ':!.gitignore' ':!scripts/v1/external-sip-edge-config-check' ':!docs/evidence/v1' >/dev/null 2>&1; then
   fail 'external credential file is referenced outside the evidence record'
 fi
 

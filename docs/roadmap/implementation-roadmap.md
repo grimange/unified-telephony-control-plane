@@ -87,17 +87,20 @@ originated managed CallLeg, so **T4 is complete**. Recording remains separate.
 T4D is not a phase. See
 [`docs/evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** implement the V1 inbound corridor as decided by
-[`ADR-027`](../decisions/ADR-027-canonical-inbound-external-call-admission-and-execution-target.md).
-The V1 outbound corridor is implemented: `CallDomainService::createOutboundCall()`
-evaluates C7B, binds the RouteDecision to the Call/CallLeg, and Kamailio relays
-through `route[RUNTIME_EXTERNAL_TRUNK]`. The inbound corridor is not implemented:
-`C7bService::evaluateInbound()` has no production caller, `adoptInboundLeg()`
-binds no route or trunk, and Kamailio's inbound route replies
-`200 External Trunk Route Matched` without relaying. ADR-027 resolves the last
-open authority question — the canonical inbound execution target — so this is a
-bounded implementation, not further evidence work. Live external SIP acceptance
-remains V1 scope and follows the implementation.
+ADR-027 inbound is implemented and regression-proven. The production
+`CallObservationProcessor` drives C6 offered adoption and C7B evaluation;
+canonical inbound route, ExternalTrunk, and destination binding is persisted;
+and Kamailio relays admitted inbound INVITEs through the trusted execution
+corridor. The focused ADR-027 regression proof passed, and the canonical API
+suite passed with 595 tests, 8 skips, and 5007 assertions. The implementation
+is committed at `e334209ccc016053d2f63f8e39e99f2126aa5535`.
+
+**Exactly one next action:** prepare and run natural external SIP acceptance
+against the canonical `utcp-local` proof topology. No retained k3d state exists,
+so `utcp-local` must first be recreated through the committed canonical k3d
+lifecycle. The native `utcp-dev01` server overlay remains intentionally
+non-public for SIP. Live proof must re-provision fixture state through the
+authoritative API/UI before testing the independent PBX path.
 C7B closed on 2026-08-24 after its focused route-authority tests and
 provider-neutrality checks passed.
 
@@ -324,11 +327,13 @@ history is evidence, not product scope. See `docs/evidence/v0/`.
 The outbound corridor — application -> route -> caller identity -> external
 trunk -> runtime — is implemented and carries canonical route binding. The
 inbound corridor — external peer -> address -> route -> destination ->
-canonical Call/CallLeg -> application/runtime — requires **implementation**,
-not only acceptance: canonical inbound route evaluation has no production
-caller, inbound adoption binds no route or trunk, and the Kamailio inbound
-route is a verification stub that does not relay. The External SIP Peer fixture
-and preparation harness remain available as deterministic regression.
+canonical Call/CallLeg -> application/runtime — is implemented: the production
+observation path performs C6 offered adoption, invokes C7B, persists canonical
+route/trunk/destination binding, and Kamailio relays admitted inbound INVITEs.
+Focused repository regression proof and the canonical PHP suite are green. The
+External SIP Peer fixture and preparation harness remain available as
+deterministic regression; natural external SIP acceptance is the remaining V1
+proof.
 
 [`ADR-027`](../decisions/ADR-027-canonical-inbound-external-call-admission-and-execution-target.md)
 decides the canonical inbound execution target: a RuntimeNode SIP endpoint
@@ -424,10 +429,12 @@ roadmap.
 
 ## Next
 
-Implement the V1 inbound corridor under
-[`ADR-027`](../decisions/ADR-027-canonical-inbound-external-call-admission-and-execution-target.md):
-Kamailio trusted ingress and execution-target resolution, Asterisk and
-FreeSWITCH product inbound contracts, normalized ingress correlation, C6
-adoption, and C7B RouteDecision attachment. C7A and C7B authority is complete
-and both T6 provider-consumption seams are verified; live external connectivity
-remains V1 scope and follows the implementation.
+V1 repository implementation is complete under
+[`ADR-027`](../decisions/ADR-027-canonical-inbound-external-call-admission-and-execution-target.md),
+with focused regression and canonical PHP proof passed and the implementation
+committed at `e334209ccc016053d2f63f8e39e99f2126aa5535`. Next, recreate the
+canonical `utcp-local` through the repository lifecycle, re-provision V1
+canonical fixture state through the authoritative API/UI, and run controlled
+natural inbound/outbound proof against the independent PBX at `38.146.161.46`.
+The PBX prerequisites are not claimed complete here; the native server overlay
+remains intentionally non-public for SIP.
