@@ -11,7 +11,30 @@ for variable in UTCP_SERVER_POSTGRES_IMAGE UTCP_SERVER_REDIS_IMAGE UTCP_SERVER_A
   repository="${repository%@*}"
   digest="${reference#*@}"
   printf 'required=%s\n' "$reference"
-  code="$(curl --connect-timeout 5 --max-time 10 --silent --show-error --output /dev/null --write-out '%{http_code}' -H 'Accept: application/vnd.oci.image.manifest.v1+json' -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' "$scheme://$registry/v2/$repository/manifests/$digest" || true)"
+  manifest_url="$scheme://$registry/v2/$repository/manifests/$digest"
+  case "$registry" in
+    ghcr.io)
+      token="$(curl --connect-timeout 5 --max-time 10 --fail --silent --show-error --get \
+        --data-urlencode "service=$registry" \
+        --data-urlencode "scope=repository:$repository:pull" \
+        "$scheme://$registry/token" | jq -er '.token')"
+      code="$(curl --connect-timeout 5 --max-time 10 --silent --show-error --location --output /dev/null --write-out '%{http_code}' \
+        -H "Authorization: Bearer $token" \
+        -H 'Accept: application/vnd.oci.image.index.v1+json' \
+        -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
+        -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+        -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+        "$manifest_url" || true)"
+      ;;
+    *)
+      code="$(curl --connect-timeout 5 --max-time 10 --silent --show-error --location --output /dev/null --write-out '%{http_code}' \
+        -H 'Accept: application/vnd.oci.image.index.v1+json' \
+        -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
+        -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+        -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+        "$manifest_url" || true)"
+      ;;
+  esac
   [ "$code" = 200 ] || fail "$variable is not anonymously pullable from $scheme://$registry (HTTP $code)"
 done
 printf 'native image preflight passed target, immutable-lock, registry, and image-manifest checks\n'
