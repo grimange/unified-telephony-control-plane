@@ -44,7 +44,7 @@ if spec.get("selector") != {
     fail("external SIP Service must select the existing Kamailio workload")
 if spec.get("ports") != [{
     "name": "sip-udp", "protocol": "UDP", "port": 5060,
-    "targetPort": "sip-external-udp", "nodePort": 30560,
+    "targetPort": "sip-ext-udp", "nodePort": 30560,
 }]:
     fail("external SIP Service must expose exactly UDP/5060 through NodePort 30560")
 

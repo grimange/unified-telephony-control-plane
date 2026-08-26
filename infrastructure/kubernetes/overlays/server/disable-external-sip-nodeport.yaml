@@ -10,5 +10,5 @@ spec:
     - name: sip-udp
       protocol: UDP
       port: 5060
-      targetPort: sip-external-udp
+      targetPort: sip-ext-udp
       nodePort: null

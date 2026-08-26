@@ -42,6 +42,7 @@ fi
 python3 - "$manifest" <<'PY'
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,19 @@ def key(doc: dict[str, Any]) -> str:
 
 
 for doc in docs:
+    template = (doc.get("spec") or {}).get("template") or {}
+    pod_spec = template.get("spec") or {}
+    for container in pod_spec.get("containers") or []:
+        for port in container.get("ports") or []:
+            name = port.get("name")
+            if name is not None and (
+                len(name) > 15
+                or not re.fullmatch(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?", name)
+            ):
+                fail(f"named container port {name!r} in {key(doc)} violates Kubernetes IANA_SVC_NAME")
+
+
+for doc in docs:
     if doc.get("kind") != "Service":
         continue
     spec = doc.get("spec") or {}
@@ -74,7 +88,7 @@ for doc in docs:
     if key(doc) == "Service/utcp-platform/kamailio-sip-external":
         if spec.get("type") != "NodePort" or spec.get("externalTrafficPolicy") != "Local":
             fail("external Kamailio SIP Service must use the bounded Local-policy NodePort contract")
-        if spec.get("ports") != [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-external-udp", "nodePort": 30560}]:
+        if spec.get("ports") != [{"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-ext-udp", "nodePort": 30560}]:
             fail("external Kamailio SIP Service must expose only UDP/5060 through NodePort 30560")
 
 

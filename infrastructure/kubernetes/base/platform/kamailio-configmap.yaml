@@ -25,8 +25,8 @@ data:
     listen=tcp:0.0.0.0:8080 advertise sip.utcp.local.test:443
     listen=tcp:0.0.0.0:8090
     # UDP/5060 is provider-facing; UDP/5062 is the trusted runtime ingress.
-    listen=udp:0.0.0.0:5060 advertise kamailio-sip-external.utcp-platform.svc.cluster.local:5060
-    listen=udp:0.0.0.0:5062 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060
+    listen=udp:0.0.0.0:5060 advertise kamailio-sip-external.utcp-platform.svc.cluster.local:5060 name "provider"
+    listen=udp:0.0.0.0:5062 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060 name "runtime"
     alias=sip.utcp.local.test
 
     loadmodule "tm.so"
@@ -353,7 +353,7 @@ data:
         $avp(auser) = $dbr(runtime_external_route=>[0,2]);
         $avp(apass) = $dbr(runtime_external_route=>[0,3]);
         $avp(arealm) = $dbr(runtime_external_route=>[0,4]);
-        force_send_socket("udp:0.0.0.0:5060");
+        $fsn = "provider";
         remove_hf("X-UTCP-Call-Leg-ID");
         remove_hf("X-UTCP-Route-Decision-ID");
         remove_hf("X-UTCP-Trunk-Endpoint-ID");
