@@ -75,8 +75,7 @@ jobs:
           publish_image() {
             local key="$1" image="$2" dockerfile="$3"
             shift 3
-            local reference="$registry/$image:$tag" metadata digest
-            metadata="$RUNNER_TEMP/$key-metadata.json"
+            local reference="$registry/$image:$tag" digest
             build_args=(
               --build-arg "BUILD_VERSION=$version"
               --build-arg "BUILD_COMMIT=$GITHUB_SHA"
@@ -91,10 +90,9 @@ jobs:
               --tag "$reference" \
               "${build_args[@]}" \
               "$@" \
-              --metadata-file "$metadata" \
               --push \
               .
-            digest="$(jq -er '.["containerimage.digest"] // .["containerimage.descriptor"].digest' "$metadata")"
+            digest="$(docker buildx imagetools inspect "$reference" | awk '/Digest:/ { print $2; exit }')"
             [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
             printf '%s=%s@%s\n' "$key" "$registry/$image" "$digest" >> "$lock"
           }
