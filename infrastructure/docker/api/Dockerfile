@@ -106,9 +106,21 @@ ENTRYPOINT ["utcp-api-entrypoint"]
 CMD ["api"]
 
 FROM app-prod AS test
+ARG KUBECTL_VERSION=v1.36.2
 USER root
 COPY --from=vendor-test /var/www/html/vendor ./vendor
-RUN touch .phpunit.result.cache \
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl; \
+    curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /usr/local/bin/kubectl; \
+    curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256" -o /tmp/kubectl.sha256; \
+    printf '%s  %s\n' "$(cat /tmp/kubectl.sha256)" /usr/local/bin/kubectl | sha256sum -c -; \
+    chmod +x /usr/local/bin/kubectl; \
+    rm -f /tmp/kubectl.sha256; \
+    apt-get purge -y --auto-remove curl; \
+    rm -rf /var/lib/apt/lists/*; \
+    touch .phpunit.result.cache \
     && chown -R www-data:www-data vendor .phpunit.result.cache
+COPY infrastructure /var/infrastructure
 USER www-data
 CMD ["php", "artisan", "test"]
