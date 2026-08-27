@@ -162,6 +162,12 @@ The boundary preserves rtpengine as transport authority and UTCP as the future
 policy/orchestration authority while leaving processor languages, models,
 protocols, placement mechanics, and deployment runtimes open for evidence-led
 future work. Current Call, CallLeg, RuntimeNode, adapter, Kubernetes, and K5
-contracts remain unchanged. Any future implementation must add its own concrete
+contracts remain unchanged. Recording & Media Archive is a separate planned
+R0-critical capability under [`ADR-029`](ADR-029-recording-media-artifact-and-archive-authority.md):
+RMA owns recording artifact and archive lifecycle, while this ADR continues to
+own future streaming DSP, transcription, synthesis, and AI processing. A
+RecordingArtifact may later be consumed by those systems, but remains an
+artifact and does not make media processing an R0 requirement. Any future
+implementation must add its own concrete
 contract, security policy, runtime evidence, and failure semantics before it is
 treated as current capability.

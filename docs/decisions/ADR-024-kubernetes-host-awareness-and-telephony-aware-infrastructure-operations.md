@@ -138,3 +138,10 @@ distinct Kubernetes host/failure domains covering placement correlation,
 runtime readiness, telephony eligibility, new-work exclusion, draining, and
 automatic restoration. Full multi-cluster federation and cloud-provider
 automation remain future-compatible directions, not R0 requirements.
+
+RMA — Recording & Media Archive — intentionally follows K5E. Future recording
+and archive contracts may rely on the host visibility, placement/failure-domain
+correlation, telephony-aware draining, maintenance coordination, and automatic
+restoration established by K5, without assuming one host or local filesystem.
+This ADR does not define those RMA contracts; see
+[`ADR-029`](ADR-029-recording-media-artifact-and-archive-authority.md).

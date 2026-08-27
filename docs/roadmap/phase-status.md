@@ -52,7 +52,8 @@ remain separate.
 ```text
 Telephony:   T4 closure -> C7A closure -> C7B -> T6 -> V1 -> A0
 Distributed: K5A -> K5B -> K5C -> K5D -> K5E
-                         both tracks converge at R0
+                         K5E -> RMA
+                         A0, K5E, and RMA converge at R0
 ```
 
 This ledger does not claim that a live proof was performed by this
@@ -98,6 +99,7 @@ documentation task. Current T4 implementation evidence:
 | Track | Status / release placement |
 | --- | --- |
 | K5 | Planned / Parallel / R0-Critical under [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md); does not serially gate T4 or C7A, but K5E is required before R0 |
+| RMA | Planned / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); begins after the V1 Call/CallLeg corridor and K5E; no implementation or live proof claimed |
 | C8 | Planned UTCP core transfer/handoff track under [`ADR-025`](../decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md); advanced consultative and inter-runtime/provider handoff defaults to post-R0/R1 unless V1 proves a basic dependency |
 | Queue/ACD | Future extension; no R0 phase |
 | Campaigns, CRM, predictive dialing, agent workflow, advanced IVR, billing/settlement, number purchasing/porting, SMS/MMS | Application, provider, or future domains; outside R0 core |
@@ -109,6 +111,13 @@ Kubernetes host/failure domains. It builds on existing RuntimeNode and RNP
 authorities; Kubernetes remains authoritative for Nodes, Pods, scheduling, and
 workload placement. Full multi-cluster federation remains future-compatible,
 not an R0 requirement.
+
+RMA is the planned Recording & Media Archive track. It follows completed K5E
+and the established V1 Call/CallLeg corridor; it is not the current phase and
+does not technically gate A0. The immediate V1 engineering blocker remains
+the managed Asterisk/FreeSWITCH image-reference validation correction for
+canonical digest-pinned native-k3s GHCR references; this documentation task
+does not repair or reclassify that defect.
 
 ## Historical status rule
 

@@ -26,6 +26,10 @@ It owns:
 * canonical telephony identity, session, and registration contracts
 * canonical call intent, call lifecycle, call-leg, and call-observation records
 * normalized call-control commands and capability negotiation
+* authorized technical recording intent and lifecycle
+* recording artifact metadata and Call/CallLeg/Conference correlation
+* media archive target lifecycle and archive credential-reference policy
+* basic technical retention/deletion orchestration and archive evidence
 * external trunk definitions, endpoints, credential references, lifecycle, readiness, and runtime projections
 * inbound and outbound routing policy
 * caller-identity selection policy
@@ -42,6 +46,7 @@ Applications built on UTCP may own:
 * IVR workflow definitions
 * notification jobs
 * the business reason a call is requested
+* business consent meaning, jurisdictional interpretation, and workflow
 * application-specific retry, disposition, and outcome policy
 * business reporting
 * customer-specific workflows
@@ -63,6 +68,9 @@ The first implementation must not attempt to become a complete dialer, contact-c
 | External trunk lifecycle and policy          | UTCP/PostgreSQL                                |
 | Inbound and outbound route policy            | UTCP/PostgreSQL                                |
 | Caller-identity selection policy             | UTCP/PostgreSQL                                |
+| Recording intent and lifecycle               | UTCP/PostgreSQL                                |
+| Recording artifact and archive metadata      | UTCP/PostgreSQL                                |
+| Archive credential references                | UTCP secret-reference boundary                 |
 | Canonical call intent and requested control  | UTCP/PostgreSQL                                |
 | Instantaneous live call execution            | Asterisk or FreeSWITCH                         |
 | Normalized call and call-leg observations    | Runtime observations stored by UTCP            |
@@ -73,6 +81,8 @@ The first implementation must not attempt to become a complete dialer, contact-c
 | Browser SIP-over-WSS forwarding              | Traefik to Kamailio                            |
 | Live SIP signaling and route execution       | Kamailio and selected execution runtime        |
 | RTP, SRTP and media relay                    | rtpengine                                      |
+| Instantaneous media capture                  | Asterisk, FreeSWITCH, rtpengine, or future adapter |
+| Durable recording media bytes                | Object storage                                 |
 | Workload placement                           | Kubernetes                                     |
 | Persistent business records                  | PostgreSQL                                     |
 | queues, locks and transient projections      | Redis                                          |
@@ -1417,7 +1427,7 @@ Not every adapter must support every operation. Unsupported behavior must return
 * runtime identifiers remain adapter-owned references, not public business identifiers
 * call timelines show requested actions, route decisions, runtime observations and termination reason
 * simulator scenarios prove originate, ring, answer, bridge, hold, resume, transfer, hangup, failure and timeout
-* recording operations define control authority only; storage, consent and compliance workflows remain separately governed and may be deferred
+* recording control, technical artifact metadata, archive-target lifecycle, and basic technical retention/deletion are UTCP core directions; business consent meaning and advanced compliance remain separately governed
 
 ### Exit criteria
 
@@ -1998,17 +2008,52 @@ UTCP owns:
 
 ---
 
+## Phase RMA — Recording & Media Archive
+
+### Goal
+
+Define and later prove the reusable technical recording and media-archive
+lifecycle used by multiple telephony applications. RMA is planned, UTCP core,
+and R0-critical; implementation begins only after the V1 Call/CallLeg corridor
+is established and K5E is complete.
+
+### Planned slices
+
+RMA-A Recording Authority and Lifecycle; RMA-B Runtime-Neutral Capture Contract;
+RMA-C Recording Artifact Authority; RMA-D Archive Target and Secret-Reference
+Authority; RMA-E S3-Compatible Archive Adapter and Deterministic MinIO Proof;
+RMA-F BYO Storage Credentials and Rotation; RMA-G Retention and Deletion
+Lifecycle; RMA-H Distributed Recording and Archive Natural Live Proof.
+
+These are architectural plans, not implementation claims. `RecordingSession` is
+separate from `RecordingArtifact`; artifact metadata is separate from media
+bytes; capture lifecycle is separate from archive-transfer lifecycle. PostgreSQL
+owns metadata, not large recording binaries, and UTCP orchestrates the archive
+path without becoming the canonical media data plane. See ADR-029.
+
+### Boundary
+
+Applications own business reason, consent meaning, customer workflow, and
+application disposition. UTCP owns authorized technical intent, tenant policy,
+correlation, observations, artifact metadata, archive targets, credential
+references, transfer lifecycle, technical retention/deletion, authorization,
+and audit. Telephony/media executors capture media; object storage owns durable
+bytes. Legal holds, e-discovery, PCI/HIPAA workflows, and jurisdiction-specific
+automation remain separate future domains.
+
+---
+
 ## Phase R0 — Portfolio Release
 
 ### Goal
 
 Make the project understandable and reproducible by another engineer or prospective client.
 
-R0 has two converging proof families. The telephony capability family is
-`T4 -> C7A -> C7B -> T6 -> V1 -> A0`; the distributed infrastructure family is
-`K5A -> K5B -> K5C -> K5D -> K5E`. K5 is planned, parallel, and R0-critical:
-it does not serially gate C7A, but its bounded multi-host/failure-domain proof
-must be complete before R0 closes. Kubernetes remains authoritative for
+R0 converges the V1/A0 consumer work with K5E and RMA. The technical
+dependencies are V1 Call/CallLeg corridor and K5E -> RMA; A0 does not
+technically depend on RMA. K5 is planned, parallel, and R0-critical: it does
+not serially gate C7A, but its bounded multi-host/failure-domain proof must be
+complete before R0 closes. Kubernetes remains authoritative for
 infrastructure facts, scheduling, and workload placement; UTCP owns the
 telephony-aware RuntimeNode interpretation, eligibility, lifecycle,
 maintenance coordination, reconciliation, and audit. Full multi-cluster
@@ -2065,6 +2110,7 @@ federation remains a future-compatible direction, not an R0 requirement.
 * screenshots and diagrams are current
 * project limitations are honest
 * versioned release is created
+* bounded RMA implementation and distributed archive evidence are complete
 
 ---
 
@@ -2127,10 +2173,21 @@ T4 FreeSWITCH runtime adapter parity
  ↓
 T5 Multi-runtime convergence, failover, and recovery
  ↓
-A0 Reference application contract
+V1 closure
+ ↓
+K5A -> K5B -> K5C -> K5D -> K5E
+ ↓
+RMA Recording & Media Archive
+ ↓
+A0 Reference application contract (preferred order; no RMA dependency)
  ↓
 R0 Portfolio release
 ```
+
+The technical dependency graph is separate from this preferred execution
+order: A0 depends on V1, RMA depends on the established V1 Call/CallLeg
+corridor and K5E, and A0 does not technically depend on RMA. The preferred
+program order is V1 closure, K5A-K5E, RMA, remaining A0 closure, then R0.
 
 Phases may be split into smaller implementation corridors, but must not be reordered without an ADR explaining why.
 

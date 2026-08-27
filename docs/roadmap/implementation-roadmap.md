@@ -15,7 +15,11 @@ authority. It owns canonical desired state, tenant and operator policy,
 RuntimeNode lifecycle, runtime readiness and capability contracts, call and
 call-leg lifecycle, normalized control operations and observations, trunk and
 address authority, routing decisions, reconciliation, idempotency, audit, and
-operational visibility. Runtime adapters execute provider-specific behavior
+operational visibility. It also owns reusable technical recording intent and
+lifecycle, Recording Artifact metadata, Media Archive Target desired state,
+archive credential-reference policy, archive transfer lifecycle, and basic
+technical retention/deletion orchestration. Runtime adapters execute
+provider-specific behavior
 behind those contracts; Kamailio, rtpengine, Asterisk, FreeSWITCH, Kubernetes,
 PostgreSQL, Redis, and Traefik retain their own execution or infrastructure
 authority.
@@ -93,7 +97,8 @@ reactivate it as the current proof environment. See
 **Current status:** T4A/T4B are implemented and tested; T4C1/T4C2 are
 implemented, tested, live-proven, and frozen. The timer-backed media playback
 slice is implemented, tested, and **live-proven** end to end on a naturally
-originated managed CallLeg, so **T4 is complete**. Recording remains separate.
+originated managed CallLeg, so **T4 is complete**. Recording remains separate
+from T4 and is now represented by the planned RMA track below.
 T4D is not a phase. See
 [`docs/evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
@@ -119,19 +124,21 @@ T4 closure
   -> C7B
   -> T6
   -> V1
-  -> A0
-           \
-            \
-             R0
-            /
-           /
-K5A -> K5B -> K5C -> K5D -> K5E
+       |       \
+       |        A0
+       |          \
+       |           R0
+       |          /
+K5A -> K5B -> K5C -> K5D -> K5E -> RMA
 ```
 
-The top line is the serial telephony control track. K5 is a planned parallel,
-R0-critical distributed-infrastructure track; it does not serially gate C7A.
-C7A may begin after T4 closes even while K5 is incomplete, but R0 cannot close
-until both tracks satisfy their bounded exit criteria. C8 and other deferred
+The top line is the serial telephony control track and V1 remains current. K5
+is a planned parallel, R0-critical distributed-infrastructure track; it does
+not serially gate C7A or the established V1 corridor. RMA is a planned UTCP
+core, R0-critical track that begins only after the V1 Call/CallLeg corridor is
+established and K5E is complete. A0 does not technically depend on RMA; the
+preferred execution order is documented separately below. R0 cannot close until
+A0, K5E, and RMA satisfy their bounded exit criteria. C8 and other deferred
 domains remain outside this convergence unless later evidence changes the
 release boundary.
 
@@ -245,7 +252,7 @@ runtime-neutral seams consumed by C7. Existing conference authority remains
 separate where the established architecture requires it.
 
 **Explicit non-goals:** provider-specific routing, campaign logic, IVR
-workflow, recording storage/retention, Queue/ACD, or a new parallel
+workflow, Recording & Media Archive implementation, Queue/ACD, or a new parallel
 operation/observation authority. See [`ADR-023`](../decisions/ADR-023-canonical-call-lifecycle-and-call-control-authority.md)
 and the C6 evidence index.
 
@@ -374,6 +381,32 @@ editor, contact-center suite, queue/agent logic, CRM workflow, or a large new
 client. Reuse the Reference Telephony Client where practical. The application
 owns business meaning; UTCP owns reusable telephony control and lifecycle.
 
+### RMA — Recording & Media Archive
+
+**Status:** Planned / UTCP Core / R0-Critical. RMA is not implemented or
+live-proven by this roadmap update.
+
+**Objective:** provide reusable, provider-neutral technical recording and media
+artifact/archive lifecycle for multiple telephony applications. The consuming
+application owns why recording is requested, business consent meaning, and
+workflow; UTCP owns authorized technical intent, tenant policy, lifecycle,
+Call/CallLeg/Conference correlation, artifact metadata, archive targets and
+credential references, transfer lifecycle, technical retention/deletion,
+authorization, and audit. Telephony/media executors retain instantaneous
+capture and media-generation authority; object storage owns durable bytes.
+
+**Slices:** RMA-A Recording Authority and Lifecycle; RMA-B Runtime-Neutral
+Capture Contract; RMA-C Recording Artifact Authority; RMA-D Archive Target and
+Secret-Reference Authority; RMA-E S3-Compatible Archive Adapter and
+Deterministic MinIO Proof; RMA-F BYO Storage Credentials and Rotation; RMA-G
+Retention and Deletion Lifecycle; RMA-H Distributed Recording and Archive
+Natural Live Proof.
+
+These are planned architectural slices only. No RMA schemas, migrations, APIs,
+workers, adapters, MinIO deployment, or runtime support are claimed. RMA
+depends on the established V1 Call/CallLeg corridor and completed K5E; it does
+not technically depend on A0. See [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md).
+
 ### Release boundary — R0
 
 **Status:** Planned.
@@ -384,13 +417,19 @@ contract, not every future telephony application domain.
 **Converging tracks:**
 
 ```text
-Telephony:   T4 closure -> C7A closure -> C7B -> T6 -> V1 -> A0
-Distributed: K5A -> K5B -> K5C -> K5D -> K5E
-                         both tracks converge at R0
+Telephony:   T4 closure -> C7A closure -> C7B -> T6 -> V1
+Reference:   V1 -> A0
+Distributed: K5A -> K5B -> K5C -> K5D -> K5E -> RMA
+                         A0, K5E, and RMA converge at R0
 ```
 
-**R0 exit criteria:** both the telephony capability track and bounded K5
-distributed-infrastructure track have their required repository/live evidence;
+**R0 exit criteria:** the telephony capability track, minimal A0 reference
+consumer proof, bounded K5 distributed-infrastructure track, and bounded RMA
+track have their required repository/live evidence; RMA evidence covers
+authorized technical recording intent, runtime-neutral capture, artifact and
+archive-transfer lifecycle separation, provider-neutral archive-target and
+secret-reference boundaries, technical retention/deletion auditability, and a
+distributed proof that does not assume one host or local filesystem;
 canonical trunk/address/route/caller-identity authority is tenant-safe and
 idempotent; bidirectional synthetic external routing and normalized call
 control are proven; at least the three minimal consumers can consume UTCP;
@@ -414,6 +453,12 @@ make the Reference Telephony Client authoritative.
 
 **K5:** planned parallel and R0-critical under ADR-024. K5 does not block the
 serial T4/C7/T6/V1 telephony sequence, but K5E must be proven before R0 closes.
+
+**RMA:** planned UTCP Core and R0-critical under ADR-029. RMA begins after the
+V1 Call/CallLeg corridor is established and K5E is complete. It is preferred
+after K5E and before remaining A0 closure, but A0 has no technical RMA
+dependency. RMA does not make business consent or advanced compliance a UTCP
+authority.
 
 **Future Media Processing architecture:** UTCP preserves a future
 provider-neutral Media Processing Plane boundary for DSP, speech processing,

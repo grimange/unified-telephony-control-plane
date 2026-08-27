@@ -63,6 +63,16 @@ The application core must remain:
 
 Runtime-specific behavior belongs behind adapters.
 
+Recording & Media Archive is a planned UTCP core capability, deferred until
+after V1 and K5E. UTCP will own authorized technical recording intent and
+lifecycle, Recording Artifact metadata, Media Archive Target lifecycle,
+archive credential-reference policy, archive transfer orchestration, and basic
+technical retention/deletion. Applications retain the business reason to
+record, consent meaning, customer workflow, and disposition; advanced legal
+and compliance interpretation remains separately governed. No RMA implementation
+is claimed here. See [`ADR-029`](decisions/ADR-029-recording-media-artifact-and-archive-authority.md)
+and the executable roadmap.
+
 The application must not contain controller or service branches such as:
 
 ```php
@@ -1031,6 +1041,8 @@ Split a component only when there is evidence of:
 | Runtime conference execution | Asterisk or FreeSWITCH adapter |
 | Actual conference membership | Runtime observation projected by UTCP |
 | Media relay | rtpengine |
+| Recording and archive lifecycle | UTCP, planned after V1 and K5E |
+| Recording media bytes | Object storage; not PostgreSQL business blobs |
 | Edge HTTPS/WSS routing | Traefik |
 | UI notifications | Reverb |
 | Durable audit | PostgreSQL |
@@ -1072,7 +1084,19 @@ V0  Natural login → SIP REGISTER → conference admission
 T4  FreeSWITCH ESL adapter parity
  ↓
 T5  Convergence, failover, and recovery
+ ↓
+V1  Bidirectional external routing and control
+ ↓
+K5A -> K5B -> K5C -> K5D -> K5E
+ ↓
+RMA Recording & Media Archive
+ ↓
+A0  Minimal reference consumers (preferred order; no RMA dependency)
 ```
+
+This is preferred program order, not a false dependency declaration: A0
+depends on V1, while RMA depends on the established V1 Call/CallLeg corridor
+and K5E, and RMA is not an A0 prerequisite.
 
 ---
 

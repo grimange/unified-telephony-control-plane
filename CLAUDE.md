@@ -742,7 +742,10 @@ F0 Repository contract
 not a current next phase. `K5` Distributed Telephony Infrastructure, Placement
 and Host Lifecycle is a planned parallel, R0-critical infrastructure track. It
 does not serially gate T4 or C7A, but its bounded K5E distributed proof is
-required before R0 closes. `C8` Unified Call Transfer and Inter-Runtime
+required before R0 closes. `RMA` Recording & Media Archive is a planned UTCP
+core, R0-critical track that begins after the V1 Call/CallLeg corridor and K5E;
+it owns technical recording/archive lifecycle, not business consent meaning.
+`C8` Unified Call Transfer and Inter-Runtime
 Handoff remains a parallel/post-R0 track unless evidence adds a specific
 dependency to the mainline. The browser Reference Dialer is a Reference
 Telephony Client and acceptance vehicle, not UTCP's product.
