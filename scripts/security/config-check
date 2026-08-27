@@ -767,7 +767,7 @@ for rule in asterisk_egress:
 asterisk_sip_egress = [
     rule
     for rule in asterisk_egress
-    if rule.get("ports") == [{"protocol": "UDP", "port": 5060}]
+    if rule.get("ports") == [{"protocol": "UDP", "port": 5062}]
 ]
 if asterisk_sip_egress != [
     {
@@ -780,10 +780,10 @@ if asterisk_sip_egress != [
                 }},
             }
         ],
-        "ports": [{"protocol": "UDP", "port": 5060}],
+        "ports": [{"protocol": "UDP", "port": 5062}],
     }
 ]:
-    fail("Asterisk SIP egress must retain exact Kamailio UDP 5060")
+    fail("Asterisk SIP egress must retain exact Kamailio runtime UDP 5062")
 asterisk_media_egress = [rule for rule in asterisk_egress if rule.get("ports") == [{"protocol": "UDP", "port": 40000, "endPort": 40099}]]
 if asterisk_media_egress != [{
     "to": [{
