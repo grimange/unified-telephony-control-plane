@@ -241,7 +241,7 @@
           :loading="runtimeActionSubmitting(managedProvisionActionKey)"
           loading-label="Creating"
         >
-          Create Runtime
+          Create Telephony Node
         </UiButton>
       </form>
       <p
@@ -282,8 +282,8 @@
       label="Telephony infrastructure"
       loading-label="Loading telephony nodes."
       refreshing-label="Refreshing telephony nodes."
-      empty-title="No telephony nodes"
-      empty-message="No telephony nodes were returned."
+      empty-title="No Telephony Nodes configured"
+      empty-message="Telephony execution requiring a runtime cannot proceed until a Telephony Node is available."
       error-title="Telephony nodes unavailable"
       forbidden-title="Telephony nodes forbidden"
     >
@@ -299,12 +299,14 @@
           :key="node.id"
           class="data-row runtime-row"
         >
-          <span>
-            <strong>{{ node.name }}</strong>
-            <small>{{ node.slug }} · {{ node.runtime_family }} · {{ node.adapter_key }}</small>
+          <div class="node-summary">
+            <div class="node-heading">
+              <strong>{{ node.name }}</strong>
+              <span class="node-slug">{{ node.slug }}</span>
+            </div>
             <span class="badge-row">
               <UiStatusBadge
-                :label="runtimeManagement(node).mode === 'managed' ? 'UTCP managed' : 'External'"
+                :label="managementLabel(node)"
                 :category="runtimeManagement(node).mode === 'managed' ? 'information' : 'neutral'"
               />
               <UiStatusBadge
@@ -317,6 +319,24 @@
                 category="warning"
               />
             </span>
+            <dl class="node-facts">
+              <div>
+                <dt>Engine</dt>
+                <dd>{{ engineLabel(node) }}</dd>
+              </div>
+              <div>
+                <dt>Integration</dt>
+                <dd>{{ integrationLabel(node) }}</dd>
+              </div>
+              <div>
+                <dt>Location</dt>
+                <dd>{{ locationLabel(node) }}</dd>
+              </div>
+              <div>
+                <dt>Configuration</dt>
+                <dd>{{ configurationStatus(node) }}</dd>
+              </div>
+            </dl>
             <small
               v-if="runtimeManagement(node).mode === 'managed'"
               class="meta"
@@ -347,7 +367,7 @@
             >
               Last observed: {{ displayValue(runtimeEvidence[node.id].observed_at) }} · Capability evidence: {{ runtimeEvidence[node.id].capabilities?.freshness ?? 'unknown' }}
             </small>
-          </span>
+          </div>
           <span class="row-actions">
             <UiButton
               type="button"
@@ -376,7 +396,7 @@
               :loading="runtimeActionSubmitting(runtimeDecommissionActionKey(node))"
               @click="requestRuntimeDecommission(node)"
             >
-              Retire runtime
+              Retire Telephony Node
             </UiButton>
             <UiButton
               v-if="can('runtime.nodes.manage') && ['draft', 'active', 'draining'].includes(node.desired_state)"
@@ -404,6 +424,62 @@
             >
               {{ runtimeNodeDetailStates[node.id]?.error }}
             </UiAlert>
+            <section
+              class="detail-section"
+              :aria-labelledby="runtimeFieldId(node.id, 'overview-heading')"
+            >
+              <div class="detail-section-heading">
+                <div>
+                  <h3 :id="runtimeFieldId(node.id, 'overview-heading')">
+                    Overview
+                  </h3>
+                  <p class="meta">
+                    Operational identity and current lifecycle state for this Telephony Node.
+                  </p>
+                </div>
+                <UiStatusBadge
+                  :label="runtimeNodePrimaryStatus(node)"
+                  :category="runtimeStatusCategory(runtimeNodePrimaryStatus(node).toLowerCase().replaceAll(' ', '_'))"
+                />
+              </div>
+              <dl class="detail-facts">
+                <div><dt>Engine</dt><dd>{{ engineLabel(node) }}</dd></div>
+                <div><dt>Integration</dt><dd>{{ integrationLabel(node) }}</dd></div>
+                <div><dt>Management</dt><dd>{{ managementLabel(node) }}</dd></div>
+                <div><dt>Lifecycle</dt><dd>{{ lifecycleLabel(node.desired_state) }}</dd></div>
+                <div><dt>Observed state</dt><dd>{{ lifecycleLabel(node.observed_state) }}</dd></div>
+                <div><dt>Last observed</dt><dd>{{ displayValue(runtimeEvidence[node.id]?.observed_at) }}</dd></div>
+                <div><dt>Configuration</dt><dd>{{ configurationStatus(node) }}</dd></div>
+                <div><dt>Location</dt><dd>{{ locationLabel(node) }}</dd></div>
+              </dl>
+            </section>
+            <section
+              v-if="node.desired_state === 'draining' || node.desired_state === 'drained'"
+              class="detail-section lifecycle-callout"
+              :aria-labelledby="runtimeFieldId(node.id, 'drain-heading')"
+            >
+              <h3 :id="runtimeFieldId(node.id, 'drain-heading')">
+                Drain status
+              </h3>
+              <p v-if="node.desired_state === 'draining'">
+                Draining. No new work is assigned; existing work is allowed to complete.
+              </p>
+              <p v-else>
+                Drained. No active workload remains and this node is excluded from placement.
+              </p>
+              <p
+                v-if="runtimeEvidence[node.id]?.drain"
+                class="meta"
+              >
+                Remaining work: {{ runtimeEvidence[node.id]?.drain?.remaining_work }}<span v-if="runtimeEvidence[node.id]?.drain?.timed_out"> · Drain timed out; the node remains cordoned.</span>
+              </p>
+            </section>
+            <section class="detail-section">
+              <h3>Placement and infrastructure</h3>
+              <p class="meta">
+                Placement and infrastructure ownership remain governed by the canonical Telephony Node lifecycle.
+              </p>
+            </section>
             <form
               v-if="can('runtime.nodes.manage') && node.desired_state !== 'retired' && runtimeManagement(node).mode !== 'managed'"
               class="inline-form"
@@ -488,13 +564,15 @@
                 Save runtime details
               </UiButton>
             </form>
-            <p class="meta">
-              Runtime identity: {{ node.runtime_family }} / {{ node.adapter_key }}. Identity changes are lifecycle-guarded by the API.
+            <p class="meta detail-note">
+              Runtime node identity: {{ engineLabel(node) }} / {{ integrationLabel(node) }}. Identity changes are lifecycle-guarded by the API.
             </p>
             <div class="review-card">
               <strong>Management</strong>
-              <p class="meta">
-                {{ runtimeManagement(node).mode === 'managed' ? 'UTCP managed' : 'External' }}
+              <p
+                class="meta"
+              >
+                {{ managementLabel(node) }}
                 <span v-if="runtimeManagement(node).provisioning_request"> · {{ runtimeManagement(node).provisioning_request?.deployment_target.name }}</span>
               </p>
               <p
@@ -511,7 +589,13 @@
               </p>
             </div>
             <details class="advanced-details">
-              <summary>Advanced diagnostics</summary>
+              <summary>Connectivity, capabilities and Advanced diagnostics</summary>
+              <section class="detail-section">
+                <h3>Connectivity</h3>
+                <p class="meta">
+                  Connection endpoints used by this Telephony Node.
+                </p>
+              </section>
               <form
                 v-if="can('runtime.nodes.manage') && node.desired_state !== 'retired' && runtimeManagement(node).mode !== 'managed'"
                 class="inline-form"
@@ -754,7 +838,7 @@
                 </UiButton>
               </form>
               <div>
-                <strong>Declared capabilities</strong>
+                <strong>Capabilities</strong>
                 <p class="meta">
                   {{ node.capabilities.join(', ') || 'None' }}
                 </p>
@@ -912,7 +996,7 @@
                 This adapter does not expose writable configuration fields.
               </UiAlert>
               <div v-if="runtimeEvidence[node.id]">
-                <strong>Runtime evidence</strong>
+                <strong>Activity / Evidence</strong>
                 <p class="meta">
                   Desired state: {{ runtimeEvidence[node.id].desired_state }} · Observed state: {{ runtimeEvidence[node.id].observed_state }}
                 </p>
@@ -1155,6 +1239,45 @@ function runtimeStatusCategory(status: string): 'success' | 'warning' | 'danger'
   if (['failed', 'unavailable', 'disabled', 'retired'].includes(status)) return 'danger'
 
   return 'neutral'
+}
+
+function humanizeRuntimeValue(value: string | null | undefined): string {
+  if (!value) return 'Not reported'
+
+  return value
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (character) => character.toUpperCase())
+}
+
+function engineLabel(node: RuntimeNode): string {
+  return humanizeRuntimeValue(node.runtime_family)
+}
+
+function integrationLabel(node: RuntimeNode): string {
+  return humanizeRuntimeValue(node.adapter_key)
+}
+
+function managementLabel(node: RuntimeNode): string {
+  return runtimeManagement(node).mode === 'managed' ? 'UTCP Managed' : 'External'
+}
+
+function locationLabel(node: RuntimeNode): string {
+  const location = [node.placement.region, node.placement.zone].filter(Boolean).join(' / ')
+  const managedTarget = runtimeManagement(node).provisioning_request?.deployment_target.name
+
+  return managedTarget ?? (location || 'Not assigned')
+}
+
+function lifecycleLabel(value: string): string {
+  return humanizeRuntimeValue(value)
+}
+
+function configurationStatus(node: RuntimeNode): string {
+  const evidence = runtimeEvidence[node.id]
+  if (!evidence || evidence.observed_configuration_generation === null) return 'Not yet observed'
+  if (evidence.observed_configuration_generation === evidence.desired_configuration_generation) return 'Current'
+
+  return 'Pending update'
 }
 
 function managedOperationFailure(node: RuntimeNode): string {
@@ -1450,6 +1573,90 @@ onBeforeUnmount(() => {
   gap: 1rem;
 }
 
+.runtime-row {
+  align-items: start;
+  gap: 1.25rem;
+}
+
+.node-summary {
+  display: grid;
+  min-width: 0;
+  gap: 0.55rem;
+  flex: 1;
+}
+
+.node-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.65rem;
+}
+
+.node-heading strong {
+  font-size: 1.05rem;
+}
+
+.node-slug {
+  color: var(--color-text-muted, #667085);
+  font-size: 0.8rem;
+}
+
+.node-facts,
+.detail-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem 1rem;
+  margin: 0;
+}
+
+.node-facts dt,
+.detail-facts dt {
+  color: var(--color-text-muted, #667085);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.node-facts dd,
+.detail-facts dd {
+  margin: 0.15rem 0 0;
+}
+
+.detail-section {
+  display: grid;
+  gap: 0.7rem;
+  padding: 1rem;
+  border: 1px solid var(--color-border-subtle, #e2e8f0);
+  border-radius: var(--radius-md, 8px);
+  background: var(--color-surface-muted, #f8fafc);
+}
+
+.detail-section h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.detail-section-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.detail-note {
+  margin: 0;
+}
+
+.lifecycle-callout {
+  border-color: var(--color-warning, #925600);
+  background: var(--color-warning-muted, #fff2d8);
+}
+
+.lifecycle-callout p {
+  margin: 0;
+}
+
 .review-card {
   display: grid;
   gap: 0.75rem;
@@ -1480,8 +1687,18 @@ onBeforeUnmount(() => {
 
 @media (max-width: 720px) {
   .choice-grid,
-  .review-list {
+  .review-list,
+  .node-facts,
+  .detail-facts {
     grid-template-columns: 1fr;
+  }
+
+  .runtime-row {
+    display: grid;
+  }
+
+  .row-actions {
+    justify-content: start;
   }
 }
 </style>

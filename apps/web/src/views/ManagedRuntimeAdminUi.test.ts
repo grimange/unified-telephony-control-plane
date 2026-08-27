@@ -16,6 +16,18 @@ const operation = (status: RuntimeOperationStatus, id: string) => ({
 })
 
 describe('RNP-5 managed RuntimeNode Admin UI contract', () => {
+  it('presents RuntimeNodes as a progressive Telephony Infrastructure surface', () => {
+    expect(runtimeNodesViewSource).toContain('Telephony Nodes')
+    expect(runtimeNodesViewSource).toContain('Engine')
+    expect(runtimeNodesViewSource).toContain('Integration')
+    expect(runtimeNodesViewSource).toContain('UTCP Managed')
+    expect(runtimeNodesViewSource).toContain('Placement and infrastructure')
+    expect(runtimeNodesViewSource).toContain('Connectivity')
+    expect(runtimeNodesViewSource).toContain('Activity / Evidence')
+    expect(runtimeNodesViewSource).toContain('Advanced diagnostics')
+    expect(runtimeNodesViewSource).toContain('No Telephony Nodes configured')
+  })
+
   it('loads endpoint transport and TLS options from the backend catalog without a fallback list', () => {
     expect(runtimeNodesViewSource).toContain('endpointTransportOptions')
     expect(runtimeNodesViewSource).toContain('endpointTlsModeOptions')
