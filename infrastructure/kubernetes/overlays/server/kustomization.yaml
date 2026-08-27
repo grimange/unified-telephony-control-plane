@@ -33,7 +33,6 @@ resources:
   - ../../base/runtime
   - ../../components/runtime-fencing
 patches:
-  - path: disable-external-sip-nodeport.yaml
   - path: postgres-probes.yaml
 images:
   - name: postgres

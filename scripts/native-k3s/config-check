@@ -7,7 +7,7 @@ manifest="$(mktemp)"
 trap 'rm -f "$manifest"' EXIT
 render_server > "$manifest"
 grep -Fq 'storageClassName: local-path' "$manifest" || fail 'server overlay must use local-path persistence'
-if grep -Eq 'utcp-local-registry|127\.0\.0\.1:5001|hostPort:|nodePort:' "$manifest"; then fail 'native manifest contains a local-registry, hostPort, or NodePort resource'; fi
+if grep -Eq 'utcp-local-registry|127\.0\.0\.1:5001|hostPort:' "$manifest"; then fail 'native manifest contains a local-registry or hostPort resource'; fi
 python3 - "$manifest" <<'PY'
 from pathlib import Path
 import sys
@@ -21,17 +21,15 @@ if len(external) != 1:
 
 service = external[0]
 spec = service.get("spec") or {}
-if spec.get("type") != "LoadBalancer":
-    raise SystemExit("native-k3s: external Kamailio SIP Service must be LoadBalancer")
-if spec.get("allocateLoadBalancerNodePorts") is not False:
-    raise SystemExit("native-k3s: external Kamailio SIP Service must disable NodePort allocation")
+if spec.get("type") != "NodePort":
+    raise SystemExit("native-k3s: external Kamailio SIP Service must be NodePort")
 if spec.get("externalTrafficPolicy") != "Local":
     raise SystemExit("native-k3s: external Kamailio SIP Service must use externalTrafficPolicy Local")
 if spec.get("ports") != [{
     "name": "sip-udp", "protocol": "UDP", "port": 5060,
-    "targetPort": "sip-ext-udp",
+    "targetPort": "sip-ext-udp", "nodePort": 30560,
 }]:
-    raise SystemExit("native-k3s: external Kamailio SIP Service must expose only UDP/5060")
+    raise SystemExit("native-k3s: external Kamailio SIP Service must expose UDP/5060 through NodePort 30560")
 
 for candidate in services:
     if candidate is not service and (candidate.get("spec") or {}).get("type") in {"NodePort", "LoadBalancer"}:
