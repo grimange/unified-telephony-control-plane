@@ -7,9 +7,8 @@
       <div>
         <h2 id="call-console-title">
           Calls
-        </h2>
-        <p class="meta">
-          Minimal reference consumer for canonical generic calls.
+        </h2><p class="meta">
+          Observe tenant-scoped call lifecycle, execution and control-plane evidence.
         </p>
       </div>
       <UiButton
@@ -22,19 +21,17 @@
         Refresh
       </UiButton>
     </div>
-
     <UiAlert
-      v-if="errorMessage"
+      v-if="listError"
       variant="error"
-      title="Call console unavailable"
+      title="Calls could not be loaded"
     >
-      {{ errorMessage }}
+      {{ listError }}
     </UiAlert>
-
     <div class="call-console-grid">
       <UiPanel
-        title="Call list"
-        label="Canonical calls"
+        title="Calls"
+        label="Call lifecycle"
       >
         <UiLoadingState
           v-if="loading && calls.length === 0"
@@ -43,7 +40,7 @@
         <UiEmptyState
           v-else-if="calls.length === 0"
           title="No calls"
-          message="No tenant-scoped generic Calls are available."
+          message="No calls were returned for the active tenant."
         />
         <div
           v-else
@@ -55,107 +52,70 @@
             type="button"
             class="data-row call-list-row"
             :class="{ 'call-list-row--selected': selectedCallId === call.id }"
+            :aria-label="`${directionLabel(call.direction)} call ${destinationLabel(call)}`"
             @click="void selectCall(call.id)"
           >
-            <span>
-              <strong>{{ shortId(call.id) }}</strong>
-              <small>{{ call.direction }} · {{ formatDate(call.created_at) }}</small>
-            </span>
+            <span><strong>{{ directionLabel(call.direction) }} · {{ destinationLabel(call) }}</strong><small>{{ formatDate(call.created_at) }} · Call {{ shortId(call.id) }}</small></span>
             <UiStatusBadge
-              :label="call.state"
+              :label="stateLabel(call.state)"
               :category="stateCategory(call.state)"
             />
           </button>
         </div>
       </UiPanel>
-
       <UiPanel
-        title="New outbound Call"
-        label="C6 reference consumer"
-        description="Uses the pre-C7 normalized destination seam."
+        title="Operational context"
+        label="Control-plane evidence"
       >
-        <form
-          class="call-form"
-          @submit.prevent="void createOutbound()"
-        >
-          <UiFormField
-            id="call-destination"
-            label="Destination"
-          >
-            <template #default="{ id }">
-              <UiTextInput
-                :id="id"
-                v-model="newCall.destination"
-                placeholder="opaque:destination-1"
-                required
-                :disabled="creating"
-              />
-            </template>
-          </UiFormField>
-          <UiFormField
-            id="call-runtime-node"
-            label="Runtime node ID (optional pre-C7 seam)"
-          >
-            <template #default="{ id }">
-              <UiTextInput
-                :id="id"
-                v-model="newCall.runtimeNodeId"
-                placeholder="Runtime node UUID"
-                :disabled="creating"
-              />
-            </template>
-          </UiFormField>
-          <UiButton
-            type="submit"
-            :disabled="!canOriginate || newCall.destination.trim() === ''"
-            :loading="creating"
-            loading-label="Creating"
-          >
-            Create outbound Call
-          </UiButton>
-          <p
-            v-if="!canOriginate"
-            class="meta"
-          >
-            Origination permission is required.
-          </p>
-        </form>
+        <p class="meta">
+          Calls are observed through canonical lifecycle, leg, operation and timeline records. Origination and endpoint interaction remain application concerns.
+        </p>
+        <dl class="definition-grid">
+          <div><dt>Call list</dt><dd>Tenant-scoped canonical calls</dd></div><div><dt>Detail evidence</dt><dd>Call Legs, operations and timeline</dd></div><div><dt>Runtime identity</dt><dd>Resolved from authorized Telephony Nodes where available</dd></div>
+        </dl>
       </UiPanel>
     </div>
 
     <UiPanel
       v-if="selectedCall !== null"
-      title="Selected Call"
-      label="Canonical state"
+      title="Call overview"
+      label="Canonical call facts"
     >
+      <UiAlert
+        v-if="detailCallError"
+        variant="error"
+        title="Call overview unavailable"
+      >
+        {{ detailCallError }}
+      </UiAlert>
       <div class="section-heading">
         <div>
-          <h3>{{ shortId(selectedCall.id) }}</h3>
-          <p class="meta">
-            State is read from the canonical Call API after observation processing.
+          <h3>{{ directionLabel(selectedCall.direction) }} → {{ destinationLabel(selectedCall) }}</h3><p class="meta">
+            The state below is read from the canonical Call API.
           </p>
-        </div>
-        <UiStatusBadge
-          :label="selectedCall.state"
+        </div><UiStatusBadge
+          :label="stateLabel(selectedCall.state)"
           :category="stateCategory(selectedCall.state)"
         />
       </div>
       <dl class="definition-grid">
-        <div><dt>Call ID</dt><dd>{{ selectedCall.id }}</dd></div>
-        <div><dt>Direction</dt><dd>{{ selectedCall.direction }}</dd></div>
-        <div><dt>Created</dt><dd>{{ formatDate(selectedCall.created_at) }}</dd></div>
-        <div><dt>Termination</dt><dd>{{ selectedCall.termination_reason ?? 'Not terminal' }}</dd></div>
-        <div><dt>Destination seam</dt><dd>{{ selectedCall.destination_ref ?? 'Not present' }}</dd></div>
+        <div><dt>Direction</dt><dd>{{ directionLabel(selectedCall.direction) }}</dd></div><div><dt>Destination / remote party</dt><dd>{{ destinationLabel(selectedCall) }}</dd></div><div><dt>Telephony Node</dt><dd>{{ selectedRuntimeLabel }}</dd></div><div><dt>Created</dt><dd>{{ formatDate(selectedCall.created_at) }}</dd></div><div><dt>Answered</dt><dd>Unavailable in canonical Call data</dd></div><div><dt>Ended</dt><dd>{{ formatDate(selectedCall.terminated_at) }}</dd></div><div><dt>Duration</dt><dd>{{ durationLabel }}</dd></div><div><dt>Termination reason</dt><dd>{{ selectedCall.termination_reason ?? 'Not terminal' }}</dd></div>
       </dl>
+      <details class="technical-details">
+        <summary>Technical details</summary><dl class="definition-grid">
+          <div><dt>Call ID</dt><dd>{{ selectedCall.id }}</dd></div><div><dt>Correlation ID</dt><dd>{{ selectedCall.correlation_id ?? 'Unavailable' }}</dd></div><div><dt>Destination reference</dt><dd>{{ selectedCall.destination_ref ?? 'Unavailable' }}</dd></div>
+        </dl>
+      </details>
 
       <div class="call-console-grid call-console-grid--details">
         <section
           class="detail-section"
-          aria-label="Call legs"
+          aria-labelledby="call-legs-title"
         >
           <div class="section-heading">
-            <h3>CallLegs</h3>
-            <UiButton
+            <h3 id="call-legs-title">
+              Call Legs
+            </h3><UiButton
               type="button"
               variant="secondary"
               :loading="detailLoading"
@@ -164,156 +124,110 @@
               Refresh detail
             </UiButton>
           </div>
-          <UiEmptyState
-            v-if="legs.length === 0"
-            title="No CallLegs"
+          <UiAlert
+            v-if="legsError"
+            variant="error"
+            title="Call Legs unavailable"
+          >
+            {{ legsError }}
+          </UiAlert><UiLoadingState
+            v-else-if="legsLoading"
+            label="Loading Call Legs."
+          /><UiEmptyState
+            v-else-if="legs.length === 0"
+            title="No Call Legs"
             message="No canonical legs are attached to this Call."
           />
           <div
             v-for="leg in legs"
+            v-else
             :key="leg.id"
             class="call-leg-card"
-            :class="{ 'call-leg-card--selected': selectedLegId === leg.id }"
           >
             <div class="section-heading">
               <div>
-                <strong>{{ shortId(leg.id) }}</strong>
-                <p class="meta">
-                  {{ leg.role }} · {{ leg.direction }}
+                <strong>{{ directionLabel(leg.direction) }} · {{ leg.role }}</strong><p class="meta">
+                  Remote identity: {{ leg.remote_identity ?? 'Unavailable' }}
                 </p>
-              </div>
-              <UiStatusBadge
-                :label="leg.state"
+              </div><UiStatusBadge
+                :label="stateLabel(leg.state)"
                 :category="stateCategory(leg.state)"
               />
-            </div>
-            <dl class="definition-grid">
-              <div><dt>Runtime node</dt><dd>{{ leg.runtime_node_id ?? 'Unbound' }}</dd></div>
-              <div><dt>Runtime channel</dt><dd>{{ leg.runtime_channel_id ?? 'Unbound' }}</dd></div>
-              <div><dt>Remote identity</dt><dd>{{ leg.remote_identity ?? 'Unavailable' }}</dd></div>
-              <div><dt>Bridge</dt><dd>{{ leg.bridged_to_leg_id ? shortId(leg.bridged_to_leg_id) : 'Not bridged' }}</dd></div>
-              <div><dt>Termination</dt><dd>{{ leg.termination_reason ?? 'Not terminal' }}</dd></div>
-            </dl>
-            <div class="call-controls">
-              <UiButton
-                v-if="normalizeCallLegState(leg.state) === 'offered'"
-                type="button"
-                :disabled="!canControl"
-                :loading="activeOperation === 'call.leg.answer'"
-                @click.stop="void submitOperation('call.leg.answer', leg.id)"
-              >
-                Answer
-              </UiButton>
-              <UiButton
-                v-if="normalizeCallLegState(leg.state) === 'answered'"
-                type="button"
-                variant="secondary"
-                :disabled="!canControl"
-                :loading="activeOperation === 'call.leg.hold'"
-                @click.stop="void submitOperation('call.leg.hold', leg.id)"
-              >
-                Hold
-              </UiButton>
-              <UiButton
-                v-if="normalizeCallLegState(leg.state) === 'held'"
-                type="button"
-                variant="secondary"
-                :disabled="!canControl"
-                :loading="activeOperation === 'call.leg.resume'"
-                @click.stop="void submitOperation('call.leg.resume', leg.id)"
-              >
-                Resume
-              </UiButton>
-              <UiButton
-                v-if="!isTerminal(leg.state)"
-                type="button"
-                variant="danger"
-                :disabled="!operationAllowed(pendingOperation(leg))"
-                :loading="activeOperation === pendingOperation(leg)"
-                @click.stop="void submitOperation(pendingOperation(leg), leg.id)"
-              >
-                {{ pendingOperation(leg) === 'call.leg.cancel_origination' ? 'Cancel origination' : 'Hang up' }}
-              </UiButton>
-            </div>
+            </div><dl class="definition-grid">
+              <div><dt>Telephony Node</dt><dd>{{ runtimeLabel(leg.runtime_node_id) }}</dd></div><div><dt>Started</dt><dd>Unavailable in canonical Call Leg data</dd></div><div><dt>Answered</dt><dd>Unavailable in canonical Call Leg data</dd></div><div><dt>Ended</dt><dd>{{ formatDate(leg.terminated_at) }}</dd></div><div><dt>Bridge</dt><dd>{{ leg.bridged_to_leg_id ? `Call Leg ${shortId(leg.bridged_to_leg_id)}` : 'Not bridged' }}</dd></div><div><dt>Termination reason</dt><dd>{{ leg.termination_reason ?? 'Not terminal' }}</dd></div>
+            </dl><details class="technical-details">
+              <summary>Technical details</summary><dl class="definition-grid">
+                <div><dt>Call Leg ID</dt><dd>{{ leg.id }}</dd></div><div><dt>Runtime channel ID</dt><dd>{{ leg.runtime_channel_id ?? 'Unavailable' }}</dd></div><div><dt>Telephony session ID</dt><dd>{{ leg.telephony_session_id ?? 'Unavailable' }}</dd></div>
+              </dl>
+            </details>
           </div>
-          <div
-            v-if="selectedLeg !== null && !isTerminal(selectedLeg.state)"
-            class="call-controls"
-          >
-            <UiTextInput
-              v-model="dtmfDigit"
-              aria-label="DTMF digit"
-              placeholder="DTMF digit"
-              :disabled="!canControl || activeOperation !== null"
-            />
-            <UiButton
-              type="button"
-              variant="secondary"
-              :disabled="!canControl || dtmfDigit.trim() === ''"
-              :loading="activeOperation === 'call.leg.send_dtmf'"
-              @click="void sendDtmf()"
-            >
-              Send DTMF
-            </UiButton>
-          </div>
-          <p
-            v-if="!canControl"
-            class="meta"
-          >
-            Call control permission is required for operation buttons.
-          </p>
         </section>
-
         <section
           class="detail-section"
-          aria-label="Call operations"
+          aria-labelledby="call-operations-title"
         >
-          <h3>Operations</h3>
-          <UiEmptyState
-            v-if="operations.length === 0"
+          <h3 id="call-operations-title">
+            Operations history
+          </h3><UiAlert
+            v-if="operationsError"
+            variant="error"
+            title="Operations unavailable"
+          >
+            {{ operationsError }}
+          </UiAlert><UiLoadingState
+            v-else-if="operationsLoading"
+            label="Loading operations."
+          /><UiEmptyState
+            v-else-if="operations.length === 0"
             title="No operations"
-            message="No normalized runtime operations are recorded for this Call."
-          />
-          <div
+            message="No normalized operations are recorded for this Call."
+          /><div
             v-for="operation in operations"
+            v-else
             :key="operation.id"
             class="timeline-entry"
           >
             <UiStatusBadge
-              :label="operation.status"
+              :label="stateLabel(operation.status)"
               :category="stateCategory(operation.status)"
-            />
-            <span><strong>{{ operation.operation_type }}</strong><small>{{ formatDate(operation.created_at) }}</small></span>
+            /><span><strong>{{ operationLabel(operation.operation_type) }}</strong><small>{{ formatDate(operation.created_at) }} · {{ operation.target.type }} {{ shortId(operation.target.id) }}</small><small v-if="operation.completed_at">Completed {{ formatDate(operation.completed_at) }}</small><small
+              v-if="operation.failure_code"
+              class="failure-text"
+            >Failure: {{ operation.failure_code }}</small></span>
           </div>
         </section>
       </div>
-
       <section
         class="detail-section"
-        aria-label="Call timeline"
+        aria-labelledby="call-timeline-title"
       >
-        <h3>Timeline</h3>
-        <p class="meta">
-          COMMAND and OBSERVATION remain separate; this view never derives state locally.
-        </p>
-        <UiEmptyState
-          v-if="timeline.length === 0"
+        <h3 id="call-timeline-title">
+          Timeline
+        </h3><p class="meta">
+          Commands and observations remain separate; the UI does not derive Call state from timeline events.
+        </p><UiAlert
+          v-if="timelineError"
+          variant="error"
+          title="Timeline unavailable"
+        >
+          {{ timelineError }}
+        </UiAlert><UiLoadingState
+          v-else-if="timelineLoading"
+          label="Loading timeline."
+        /><UiEmptyState
+          v-else-if="timeline.length === 0"
           title="No timeline entries"
           message="No normalized history is available for this Call."
-        />
-        <div
+        /><div
           v-for="entry in timeline"
+          v-else
           :key="entry.id"
           class="timeline-entry"
         >
           <UiStatusBadge
-            :label="entry.source.toUpperCase()"
-            :category="entry.source === 'observation' ? 'success' : entry.source === 'command' ? 'information' : 'neutral'"
-          />
-          <span>
-            <strong>{{ entry.type }}</strong>
-            <small>{{ entry.summary }} · {{ formatDate(entry.occurred_at) }}</small>
-          </span>
+            :label="sourceLabel(entry.source)"
+            :category="sourceCategory(entry.source)"
+          /><span><strong>{{ entry.type }}</strong><small>{{ entry.summary }} · {{ formatDate(entry.occurred_at) }}</small><small v-if="entry.leg_id">Call Leg {{ shortId(entry.leg_id) }}</small></span>
         </div>
       </section>
     </UiPanel>
@@ -321,257 +235,51 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import UiAlert from '../components/ui/UiAlert.vue'
-import UiButton from '../components/ui/UiButton.vue'
-import UiEmptyState from '../components/ui/UiEmptyState.vue'
-import UiFormField from '../components/ui/UiFormField.vue'
-import UiLoadingState from '../components/ui/UiLoadingState.vue'
-import UiPanel from '../components/ui/UiPanel.vue'
-import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
-import UiTextInput from '../components/ui/UiTextInput.vue'
-import { apiErrorMessage, can } from '../state/appState'
-import { callApi, type Call, type CallLeg, type CallOperation, type CallTimelineEntry } from '../api/platform'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import UiAlert from '../components/ui/UiAlert.vue'; import UiButton from '../components/ui/UiButton.vue'; import UiEmptyState from '../components/ui/UiEmptyState.vue'; import UiLoadingState from '../components/ui/UiLoadingState.vue'; import UiPanel from '../components/ui/UiPanel.vue'; import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
+import { callApi, identityApi, type Call, type CallLeg, type CallOperation, type CallTimelineEntry, type RuntimeNode } from '../api/platform'
+import { apiErrorMessage, can, tenantContextVersion } from '../state/appState'
+const calls = ref<Call[]>([]); const selectedCall = ref<Call | null>(null); const legs = ref<CallLeg[]>([]); const operations = ref<CallOperation[]>([]); const timeline = ref<CallTimelineEntry[]>([]); const runtimeNodes = ref<RuntimeNode[]>([]); const selectedCallId = ref<string | null>(null)
+const loading = ref(false); const detailLoading = ref(false); const legsLoading = ref(false); const operationsLoading = ref(false); const timelineLoading = ref(false); const listError = ref(''); const detailCallError = ref(''); const legsError = ref(''); const operationsError = ref(''); const timelineError = ref('')
+let refreshTimer: ReturnType<typeof setInterval> | null = null; let detailGeneration = 0
+function shortId(value: string): string { return value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value }
+function formatDate(value: string | null): string { if (!value) return 'Unavailable'; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleString() }
+function normalize(value: string): string { return value.trim().toLowerCase() }
+function stateLabel(value: string): string {
+  const label = value.replaceAll('_', ' ')
 
-const calls = ref<Call[]>([])
-const selectedCall = ref<Call | null>(null)
-const legs = ref<CallLeg[]>([])
-const operations = ref<CallOperation[]>([])
-const timeline = ref<CallTimelineEntry[]>([])
-const selectedCallId = ref<string | null>(null)
-const selectedLegId = ref<string | null>(null)
-const loading = ref(false)
-const detailLoading = ref(false)
-const creating = ref(false)
-const errorMessage = ref('')
-const activeOperation = ref<string | null>(null)
-const dtmfDigit = ref('')
-const newCall = ref({ destination: '', runtimeNodeId: '' })
-let refreshTimer: ReturnType<typeof setInterval> | null = null
-
-const canOriginate = computed(() => can('telephony.calls.originate'))
-const canControl = computed(() => can('telephony.calls.control'))
-const selectedLeg = computed(() => legs.value.find((leg) => leg.id === selectedLegId.value) ?? null)
-
-function idempotencyKey(prefix: string): string {
-  return `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
+  return label.charAt(0).toUpperCase() + label.slice(1)
 }
-
-function shortId(value: string): string {
-  return value.length > 12 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value
-}
-
-function formatDate(value: string | null): string {
-  if (!value) return 'Unavailable'
-  const date = new Date(value)
-
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
-}
-
-function normalizeCallLegState(value: string): string {
-  return value.trim().toLowerCase()
-}
-
-function stateCategory(value: string): 'success' | 'danger' | 'warning' | 'information' | 'neutral' {
-  const state = normalizeCallLegState(value)
-  if (['answered', 'succeeded', 'completed', 'connected'].includes(state)) return 'success'
-  if (['failed', 'cancelled', 'rejected', 'error'].includes(state)) return 'danger'
-  if (['held', 'ringing', 'offered', 'running', 'requested'].includes(state)) return 'warning'
-  if (['originating', 'selecting_route', 'pending'].includes(state)) return 'information'
-
-  return 'neutral'
-}
-
-function isTerminal(value: string): boolean {
-  return ['completed', 'failed', 'cancelled'].includes(normalizeCallLegState(value))
-}
-
-function pendingOperation(leg: CallLeg): 'call.leg.cancel_origination' | 'call.leg.hangup' {
-  return leg.direction.toLowerCase() === 'outbound' && ['requested', 'selecting_route', 'originating', 'pending'].includes(normalizeCallLegState(leg.state))
-    ? 'call.leg.cancel_origination'
-    : 'call.leg.hangup'
-}
-
-function operationAllowed(operationType: string): boolean {
-  return operationType === 'call.leg.cancel_origination' ? canOriginate.value : canControl.value
-}
-
-async function loadCalls(): Promise<void> {
-  loading.value = true
-  errorMessage.value = ''
-  try {
-    const response = await callApi.list({ per_page: 50 })
-    calls.value = response.data
-    if (selectedCallId.value !== null && !calls.value.some((call) => call.id === selectedCallId.value)) {
-      selectedCallId.value = null
-      selectedCall.value = null
-    }
-  } catch (error) {
-    errorMessage.value = apiErrorMessage(error)
-  } finally {
-    loading.value = false
-  }
-}
-
-async function selectCall(callId: string): Promise<void> {
-  selectedCallId.value = callId
-  selectedLegId.value = null
-  await refreshSelected()
-}
-
-async function refreshSelected(): Promise<void> {
-  if (selectedCallId.value === null) return
-  detailLoading.value = true
-  errorMessage.value = ''
-  try {
-    const [callResponse, legResponse, operationResponse, timelineResponse] = await Promise.all([
-      callApi.get(selectedCallId.value),
-      callApi.legs(selectedCallId.value, { per_page: 50 }),
-      callApi.operations(selectedCallId.value, { per_page: 50 }),
-      callApi.timeline(selectedCallId.value, { per_page: 50 }),
-    ])
-    selectedCall.value = callResponse.data
-    legs.value = legResponse.data
-    operations.value = operationResponse.data
-    timeline.value = timelineResponse.data
-    if (selectedLegId.value === null || !legs.value.some((leg) => leg.id === selectedLegId.value)) {
-      selectedLegId.value = legs.value[0]?.id ?? null
-    }
-  } catch (error) {
-    errorMessage.value = apiErrorMessage(error)
-  } finally {
-    detailLoading.value = false
-  }
-}
-
-async function createOutbound(): Promise<void> {
-  if (!canOriginate.value || newCall.value.destination.trim() === '' || creating.value) return
-  creating.value = true
-  errorMessage.value = ''
-  try {
-    const response = await callApi.createOutbound(newCall.value.destination.trim(), newCall.value.runtimeNodeId.trim(), idempotencyKey('call-create'))
-    newCall.value.destination = ''
-    newCall.value.runtimeNodeId = ''
-    await loadCalls()
-    await selectCall(response.data.id)
-  } catch (error) {
-    errorMessage.value = apiErrorMessage(error)
-  } finally {
-    creating.value = false
-  }
-}
-
-async function submitOperation(operationType: string, legId: string | null): Promise<void> {
-  if (!operationAllowed(operationType) || selectedCall.value === null || activeOperation.value !== null) return
-  activeOperation.value = operationType
-  errorMessage.value = ''
-  try {
-    await callApi.submitOperation(selectedCall.value.id, operationType, legId, {}, idempotencyKey('call-operation'))
-    await refreshSelected()
-  } catch (error) {
-    errorMessage.value = apiErrorMessage(error)
-  } finally {
-    activeOperation.value = null
-  }
-}
-
-async function sendDtmf(): Promise<void> {
-  const digit = dtmfDigit.value.trim()
-  if (digit === '' || selectedLeg.value === null) return
-  activeOperation.value = 'call.leg.send_dtmf'
-  errorMessage.value = ''
-  try {
-    await callApi.submitOperation(selectedCall.value?.id ?? '', 'call.leg.send_dtmf', selectedLeg.value.id, { digit }, idempotencyKey('call-operation'))
-    dtmfDigit.value = ''
-    await refreshSelected()
-  } catch (error) {
-    errorMessage.value = apiErrorMessage(error)
-  } finally {
-    activeOperation.value = null
-  }
-}
-
-onMounted(async () => {
-  await loadCalls()
-  refreshTimer = setInterval(() => {
-    void loadCalls()
-    if (selectedCallId.value !== null && selectedCall.value !== null && !isTerminal(selectedCall.value.state)) void refreshSelected()
-  }, 5000)
-})
-
-onBeforeUnmount(() => {
-  if (refreshTimer !== null) clearInterval(refreshTimer)
-})
-
+function directionLabel(value: string): string { return value.charAt(0).toUpperCase() + value.slice(1) }
+function stateCategory(value: string): 'success' | 'danger' | 'warning' | 'information' | 'neutral' { const state = normalize(value); if (['answered', 'connected', 'completed', 'succeeded'].includes(state)) return 'success'; if (['failed', 'cancelled', 'rejected', 'error', 'terminal_failed'].includes(state)) return 'danger'; if (['offered', 'ringing', 'running', 'requested', 'held'].includes(state)) return 'warning'; if (['originating', 'selecting_route', 'pending', 'leased', 'retry_scheduled'].includes(state)) return 'information'; return 'neutral' }
+function destinationLabel(call: Call): string { return call.destination_ref ?? 'Destination unavailable' }
+function runtimeLabel(id: string | null): string { if (!id) return 'Reference unavailable'; const node = runtimeNodes.value.find((candidate) => candidate.id === id); return node ? `${node.name} (${node.runtime_family})` : `Reference unavailable (${shortId(id)})` }
+function operationLabel(value: string): string { return ({ 'call.leg.hangup': 'Terminate leg', 'call.leg.cancel_origination': 'Cancel origination' } as Record<string, string>)[value] ?? value }
+function sourceLabel(value: string): string { return value.charAt(0).toUpperCase() + value.slice(1) }
+function sourceCategory(value: string): 'success' | 'information' | 'neutral' { return value === 'observation' ? 'success' : value === 'command' ? 'information' : 'neutral' }
+const selectedRuntimeLabel = computed(() => runtimeLabel(legs.value.find((leg) => leg.runtime_node_id)?.runtime_node_id ?? null)); const durationLabel = computed(() => 'Unavailable without canonical answered timestamp')
+async function loadRuntimeNodes(): Promise<void> { if (!can('runtime.nodes.view')) { runtimeNodes.value = []; return } try { runtimeNodes.value = (await identityApi.runtimeNodes()).runtime_nodes } catch { runtimeNodes.value = [] } }
+async function loadCalls(): Promise<void> { loading.value = true; listError.value = ''; try { const response = await callApi.list({ per_page: 50 }); calls.value = response.data; if (selectedCallId.value && !calls.value.some((call) => call.id === selectedCallId.value)) clearSelection() } catch (error) { listError.value = apiErrorMessage(error) } finally { loading.value = false } }
+function clearSelection(): void { selectedCallId.value = null; selectedCall.value = null; legs.value = []; operations.value = []; timeline.value = []; detailCallError.value = ''; legsError.value = ''; operationsError.value = ''; timelineError.value = ''; detailGeneration += 1 }
+async function selectCall(callId: string): Promise<void> { clearSelection(); selectedCallId.value = callId; await refreshSelected() }
+async function refreshSelected(): Promise<void> { const callId = selectedCallId.value; if (!callId) return; const generation = ++detailGeneration; const tenantGeneration = tenantContextVersion.value; detailLoading.value = true; detailCallError.value = ''; legsError.value = ''; operationsError.value = ''; timelineError.value = ''; legsLoading.value = true; operationsLoading.value = true; timelineLoading.value = true
+  const loadPart = async <T>(load: () => Promise<{ data: T }>, assign: (value: T) => void, fail: (message: string) => void, done: () => void): Promise<void> => { try { const response = await load(); if (generation === detailGeneration && selectedCallId.value === callId && tenantContextVersion.value === tenantGeneration) assign(response.data) } catch (error) { if (generation === detailGeneration && selectedCallId.value === callId && tenantContextVersion.value === tenantGeneration) fail(apiErrorMessage(error)) } finally { done() } }
+  await Promise.all([loadPart(() => callApi.get(callId), (value) => { selectedCall.value = value }, (message) => { detailCallError.value = message }, () => { detailLoading.value = false }), loadPart(() => callApi.legs(callId, { per_page: 50 }), (value) => { legs.value = value }, (message) => { legsError.value = message }, () => { legsLoading.value = false }), loadPart(() => callApi.operations(callId, { per_page: 50 }), (value) => { operations.value = value }, (message) => { operationsError.value = message }, () => { operationsLoading.value = false }), loadPart(() => callApi.timeline(callId, { per_page: 50 }), (value) => { timeline.value = value }, (message) => { timelineError.value = message }, () => { timelineLoading.value = false })]); if (generation === detailGeneration) detailLoading.value = false }
+watch(tenantContextVersion, () => { clearSelection(); calls.value = []; void loadCalls(); void loadRuntimeNodes() })
+onMounted(() => { void loadCalls(); void loadRuntimeNodes(); refreshTimer = setInterval(() => { void loadCalls(); if (selectedCallId.value && selectedCall.value && !['completed', 'failed', 'cancelled'].includes(normalize(selectedCall.value.state))) void refreshSelected() }, 5000) })
+onBeforeUnmount(() => { if (refreshTimer !== null) clearInterval(refreshTimer) })
 </script>
 
 <style scoped>
-.call-console-grid {
-  display: grid;
-  gap: 1rem;
-  grid-template-columns: minmax(0, 1.2fr) minmax(18rem, 0.8fr);
-}
-
-.call-console-grid--details {
-  grid-template-columns: minmax(0, 1.4fr) minmax(18rem, 0.6fr);
-}
-
-.call-list-row {
-  align-items: center;
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid var(--color-border);
-  color: inherit;
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  padding: 0.75rem;
-  text-align: left;
-  width: 100%;
-}
-
-.call-list-row:hover,
-.call-list-row--selected {
-  background: var(--color-surface-muted);
-}
-
-.call-list-row small,
-.timeline-entry small {
-  display: block;
-  margin-top: 0.25rem;
-}
-
-.call-form,
-.call-controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-}
-
-.call-leg-card {
-  border: 1px solid var(--color-border);
-  border-radius: 0.5rem;
-  cursor: pointer;
-  margin-top: 0.75rem;
-  padding: 0.75rem;
-}
-
-.call-leg-card--selected {
-  border-color: var(--color-accent);
-}
-
-.timeline-entry {
-  align-items: center;
-  border-bottom: 1px solid var(--color-border);
-  display: flex;
-  gap: 0.75rem;
-  padding: 0.65rem 0;
-}
-
-@media (max-width: 900px) {
-  .call-console-grid,
-  .call-console-grid--details {
-    grid-template-columns: 1fr;
-  }
-}
+.call-console-grid { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1.2fr) minmax(18rem, 0.8fr); }
+.call-console-grid--details { grid-template-columns: minmax(0, 1.4fr) minmax(18rem, 0.6fr); }
+.call-list-row { align-items: center; background: transparent; border: 0; border-bottom: 1px solid var(--color-border); color: inherit; cursor: pointer; display: flex; justify-content: space-between; padding: 0.75rem; text-align: left; width: 100%; }
+.call-list-row:hover, .call-list-row--selected { background: var(--color-surface-muted); }
+.call-list-row small, .timeline-entry small { display: block; margin-top: 0.25rem; }
+.call-leg-card { border: 1px solid var(--color-border); border-radius: 0.5rem; margin-top: 0.75rem; padding: 0.75rem; }
+.timeline-entry { align-items: center; border-bottom: 1px solid var(--color-border); display: flex; gap: 0.75rem; padding: 0.65rem 0; }
+.failure-text { color: var(--color-danger); }
+.technical-details { margin-top: 1rem; }
+.technical-details summary { cursor: pointer; font-weight: 600; }
+@media (max-width: 900px) { .call-console-grid, .call-console-grid--details { grid-template-columns: 1fr; } }
 </style>
