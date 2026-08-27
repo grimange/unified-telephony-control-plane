@@ -2,6 +2,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
+command -v rg >/dev/null 2>&1 || { printf 'telephony domain config check failed: required tool missing: rg\n' >&2; exit 1; }
 
 test -f apps/api/config/telephony_domain.php
 test -f apps/api/database/migrations/2026_07_15_090000_create_telephony_session_conference_domain_tables.php

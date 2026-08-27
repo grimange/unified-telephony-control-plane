@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
+command -v rg >/dev/null 2>&1 || { printf 'simulator config check failed: required tool missing: rg\n' >&2; exit 1; }
 
 fail() {
   printf 'simulator config check failed: %s\n' "$1" >&2

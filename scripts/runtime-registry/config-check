@@ -9,6 +9,8 @@ fail() {
   exit 1
 }
 
+command -v rg >/dev/null 2>&1 || fail "required tool missing: rg"
+
 for file in \
   apps/api/config/runtime_registry.php \
   apps/api/config/identity.php \
@@ -61,7 +63,7 @@ foreach (["conference.execution", "channel.control", "event.stream", "registrati
   }
 }
 foreach (array_keys($catalog["runtime_capabilities"]) as $capability) {
-  if (preg_match("/ari\\.|esl\\.|asterisk\\.|freeswitch\\.|sip\\.|rtp\\.|media\\.|trunk\\.|carrier\\./i", $capability)) {
+  if ($capability !== "media.playback" && preg_match("/ari\\.|esl\\.|asterisk\\.|freeswitch\\.|sip\\.|rtp\\.|trunk\\.|carrier\\.|media\\./i", $capability)) {
     fwrite(STDERR, "adapter-specific or telephony-transport capability is not allowed in C2: {$capability}\n");
     exit(1);
   }

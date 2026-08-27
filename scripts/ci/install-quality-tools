@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v rg >/dev/null 2>&1; then
+  if command -v sudo >/dev/null 2>&1; then
+    sudo apt-get update
+    sudo apt-get install -y ripgrep
+  else
+    apt-get update
+    apt-get install -y ripgrep
+  fi
+fi
+
+command -v rg >/dev/null 2>&1 || {
+  printf 'quality tools installation failed: required tool missing: rg\n' >&2
+  exit 1
+}
+
+printf '%s\n' "$(command -v rg)"

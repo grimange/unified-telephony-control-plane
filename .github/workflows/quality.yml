@@ -198,6 +198,9 @@ jobs:
         # release: actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
+      - name: Install Quality guard tools
+        run: scripts/ci/install-quality-tools
+
       - name: Install pinned Kubernetes tools
         shell: bash
         run: |
@@ -237,6 +240,9 @@ jobs:
         # release: actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
+      - name: Install Quality guard tools
+        run: scripts/ci/install-quality-tools
+
       - name: Install pinned Kubernetes tools
         shell: bash
         run: |
@@ -273,6 +279,9 @@ jobs:
       - name: Checkout
         # release: actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install Quality guard tools
+        run: scripts/ci/install-quality-tools
 
       - name: Install pinned Kubernetes tools
         shell: bash
@@ -323,6 +332,9 @@ jobs:
         # release: actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
+      - name: Install Quality guard tools
+        run: scripts/ci/install-quality-tools
+
       - name: Install pinned Kubernetes tools
         shell: bash
         run: |
@@ -363,6 +375,9 @@ jobs:
       - name: Checkout
         # release: actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install Quality guard tools
+        run: scripts/ci/install-quality-tools
 
       - name: Install pinned Kubernetes tools
         shell: bash
@@ -411,6 +426,9 @@ jobs:
         # release: actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
+      - name: Install Quality guard tools
+        run: scripts/ci/install-quality-tools
+
       - name: Install pinned Kubernetes tools
         shell: bash
         run: |
@@ -453,6 +471,9 @@ jobs:
       - name: Checkout
         # release: actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install Quality guard tools
+        run: scripts/ci/install-quality-tools
 
       - name: Install pinned Kubernetes tools
         shell: bash
@@ -507,6 +528,9 @@ jobs:
       - name: Checkout
         # release: actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install Quality guard tools
+        run: scripts/ci/install-quality-tools
 
       - name: Install pinned Kubernetes tools
         shell: bash
@@ -590,12 +614,18 @@ jobs:
         # release: actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
+      - name: Install Quality guard tools
+        run: scripts/ci/install-quality-tools
+
       - name: Setup Docker Buildx
         # release: docker/setup-buildx-action v4.2.0
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
 
       - name: Validate C0 kernel boundaries
         run: make control-plane-config-check
+
+      - name: Run C0 guard mutation tests
+        run: make control-plane-config-check-test
 
       - name: Prove C0 migrations
         run: make control-plane-migrate-proof
@@ -612,6 +642,9 @@ jobs:
       - name: Checkout
         # release: actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install Quality guard tools
+        run: scripts/ci/install-quality-tools
 
       - name: Read tool versions
         id: versions
@@ -670,6 +703,9 @@ jobs:
         # release: actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
+      - name: Install Quality guard tools
+        run: scripts/ci/install-quality-tools
+
       - name: Read tool versions
         id: versions
         shell: bash
@@ -707,6 +743,9 @@ jobs:
       - name: Validate C2 runtime registry boundaries
         run: make runtime-registry-config-check
 
+      - name: Run C2 guard mutation tests
+        run: make runtime-registry-config-check-test
+
       - name: Run C2 runtime registry tests
         run: make runtime-registry-test
 
@@ -726,6 +765,9 @@ jobs:
       - name: Checkout
         # release: actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install Quality guard tools
+        run: scripts/ci/install-quality-tools
 
       - name: Setup Docker Buildx
         # release: docker/setup-buildx-action v4.2.0
@@ -750,6 +792,9 @@ jobs:
       - name: Checkout
         # release: actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+
+      - name: Install Quality guard tools
+        run: scripts/ci/install-quality-tools
 
       - name: Read tool versions
         id: versions
@@ -857,6 +902,9 @@ jobs:
         # release: actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
+      - name: Install Quality guard tools
+        run: scripts/ci/install-quality-tools
+
       - name: Read tool versions
         id: versions
         shell: bash
@@ -902,6 +950,9 @@ jobs:
         # release: actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
+      - name: Install Quality guard tools
+        run: scripts/ci/install-quality-tools
+
       - name: Read tool versions
         id: versions
         shell: bash
@@ -935,6 +986,9 @@ jobs:
 
       - name: Validate T0 Asterisk ARI boundaries
         run: make asterisk-ari-config-check
+
+      - name: Run T0 guard mutation tests
+        run: make asterisk-ari-config-check-test
 
       - name: Run T0 focused Asterisk ARI tests
         run: make asterisk-ari-test

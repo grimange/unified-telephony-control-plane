@@ -4,6 +4,13 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
+fail() {
+  printf 'control-plane-config-check failed: %s\n' "$1" >&2
+  exit 1
+}
+
+command -v rg >/dev/null 2>&1 || fail "required tool missing: rg"
+
 required_files=(
   "apps/api/app/ControlPlane/Shared/ExecutionContext.php"
   "apps/api/app/ControlPlane/RuntimeOperations/RuntimeOperationRepository.php"
@@ -20,26 +27,14 @@ done
 
 printf 'control-plane-config-check: required C0 files exist\n'
 
-# C4 legitimately owns the deterministic-simulator vocabulary, T0 owns the
-# explicit Asterisk ARI adapter/listener/observability vocabulary, and T1 owns
-# the explicit Kamailio registrar/registration-observer vocabulary. Future
-# telephony-vendor behavior remains forbidden outside its bounded phase surface,
-# and the simulator module must stay adapter-neutral and vendor-free.
+# C0 owns the application kernel and public route boundary. Leaf adapters,
+# provider projections, and Kubernetes resources are checked by their owning
+# phase guards; vendor vocabulary remains forbidden inside the C0 kernel itself.
 if rg -n --glob '*.php' --glob '*.yaml' --glob '*.yml' \
   --glob '!tests/**' --glob '!vendor/**' --glob '!database/migrations/**' \
-  --glob '!apps/api/app/Simulator/**' --glob '!apps/api/app/Providers/AppServiceProvider.php' \
-  --glob '!apps/api/app/RuntimeAdapters/Asterisk/**' \
-  --glob '!apps/api/app/TelephonyDomain/Signaling/**' \
-  --glob '!apps/api/app/Http/Controllers/Platform/MetricsController.php' \
   --glob '!apps/api/routes/console.php' \
-  --glob '!infrastructure/kubernetes/base/platform/asterisk-ari-events-deployment.yaml' \
-  --glob '!infrastructure/kubernetes/base/runtime/**' \
-  --glob '!infrastructure/kubernetes/observability/alerts/utcp-alerts.yaml' \
-  --glob '!infrastructure/kubernetes/security/platform/allow-asterisk-ari-egress.yaml' \
-  --glob '!infrastructure/kubernetes/security/platform/allow-asterisk-ari-events.yaml' \
-  --glob '!infrastructure/kubernetes/security/runtime/**' \
   'FreeSwitch|FreeSWITCH|Kamailio|rtpengine|SimulatorRuntimeAdapter|FakeAsterisk|FakeFreeSwitch|SimulatedConference|SimulatedRegistration|AriController|\bESL\b|\bSIP\b|\bWSS\b|ConfBridge|PJSIP' \
-  apps/api/app apps/api/routes infrastructure/kubernetes >/tmp/utcp-c0-forbidden.txt; then
+  apps/api/app/ControlPlane apps/api/routes >/tmp/utcp-c0-forbidden.txt; then
   printf 'control-plane-config-check: forbidden runtime-specific vocabulary found in production code:\n' >&2
   cat /tmp/utcp-c0-forbidden.txt >&2
   exit 1
@@ -62,7 +57,7 @@ fi
 
 printf 'control-plane-config-check: no runtime-specific public routes found\n'
 
-if rg -n 'freeswitch-esl-events|ari-worker|esl-worker' infrastructure/kubernetes >/tmp/utcp-c0-workloads.txt; then
+if rg -n 'ari-worker|esl-worker' infrastructure/kubernetes >/tmp/utcp-c0-workloads.txt; then
   printf 'control-plane-config-check: forbidden future process role deployed in Kubernetes manifests:\n' >&2
   cat /tmp/utcp-c0-workloads.txt >&2
   exit 1

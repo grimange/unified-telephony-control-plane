@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+command -v rg >/dev/null 2>&1 || { printf 'media config check failed: required tool missing: rg\n' >&2; exit 1; }
 VERSIONS_FILE="$ROOT/versions.env"
 
 # shellcheck disable=SC1090

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TARGET="$ROOT/apps/api/app/ControlPlane/Shared/ExecutionContext.php"
+TMP="$(mktemp -d)"
+trap 'cp "$TMP/ExecutionContext.php" "$TARGET"; rm -rf "$TMP"' EXIT
+cp "$TARGET" "$TMP/ExecutionContext.php"
+
+if ! make control-plane-config-check >"$TMP/out" 2>"$TMP/err"; then
+  cat "$TMP/err" >&2
+  exit 1
+fi
+
+printf '%s\n' '// forbidden FreeSWITCH leakage into the C0 kernel' >> "$TARGET"
+if make control-plane-config-check >"$TMP/out" 2>"$TMP/err"; then
+  printf 'control-plane vendor leakage mutation unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -Fq 'forbidden runtime-specific vocabulary' "$TMP/err" || { cat "$TMP/err" >&2; exit 1; }
+
+printf 'Control-plane adapter-boundary and vendor-leakage tests passed\n'

@@ -464,6 +464,9 @@ observability-delete: ## Remove K4-owned resources and Helm releases while retai
 control-plane-config-check: ## Validate C0 application-kernel boundaries without mutating runtime state.
 	@./scripts/control-plane/config-check
 
+control-plane-config-check-test: ## Run focused C0 guard mutation tests.
+	@./scripts/control-plane/config-check-test
+
 control-plane-test: ## Run focused C0 unit and PostgreSQL integration tests.
 	@./scripts/control-plane/test
 
@@ -499,6 +502,9 @@ user-access-reset-password: ## Issue a bounded temporary password through the ca
 
 runtime-registry-config-check: ## Validate C2 runtime-node registry schema, routes, catalogs, and boundaries.
 	@./scripts/runtime-registry/config-check
+
+runtime-registry-config-check-test: ## Run focused C2 guard mutation tests.
+	@./scripts/runtime-registry/config-check-test
 
 runtime-registry-test: ## Run focused C2 runtime registry tests.
 	@./scripts/runtime-registry/test
@@ -556,6 +562,9 @@ telephony-domain-status: ## Report safe aggregate C5 telephony-domain status.
 
 asterisk-ari-config-check: ## Validate T0 Asterisk ARI adapter, listener, Kubernetes, and boundary configuration.
 	@./scripts/asterisk-ari/config-check
+
+asterisk-ari-config-check-test: ## Run focused T0 guard mutation tests.
+	@./scripts/asterisk-ari/config-check-test
 
 asterisk-ari-test: ## Run focused T0 Asterisk ARI adapter, listener, epoch, and boundary tests.
 	@./scripts/asterisk-ari/test
