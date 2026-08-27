@@ -332,8 +332,8 @@ class AsteriskAriClient
         $channel = $channels[0] ?? null;
         $callId = (string) ($payload['call_id'] ?? ($legs[0]['call_id'] ?? ''));
 
-        $request = function (string $method, string $resource, array $query = [], array $statuses = [200, 201, 202, 204]) use ($runtimeNodeId, $timeout): array {
-            return $this->ariRequest($runtimeNodeId, $method, $resource, $query, $timeout, $statuses);
+        $request = function (string $method, string $resource, array $query = [], array $statuses = [200, 201, 202, 204], ?array $body = null) use ($runtimeNodeId, $timeout): array {
+            return $this->ariRequest($runtimeNodeId, $method, $resource, $query, $timeout, $statuses, $body);
         };
 
         if ($operationType === 'call.leg.originate') {
@@ -354,11 +354,14 @@ class AsteriskAriClient
                 'priority' => '1',
                 'timeout' => (string) ($payload['timeout_seconds'] ?? 30),
                 'channelId' => $runtimeChannelId,
-                'variables[__UTCP_CALL_LEG_ID]' => $legId,
-                'variables[__UTCP_ROUTE_DECISION_ID]' => (string) ($payload['route_decision_id'] ?? ''),
-                'variables[__UTCP_TRUNK_ENDPOINT_ID]' => (string) ($payload['trunk_endpoint_id'] ?? ''),
-                'variables[__UTCP_CALLER_IDENTITY_ID]' => (string) ($payload['caller_identity_id'] ?? ''),
-            ], [200, 201, 202]);
+            ], [200, 201, 202], [
+                'variables' => [
+                    '__UTCP_CALL_LEG_ID' => $legId,
+                    '__UTCP_ROUTE_DECISION_ID' => (string) ($payload['route_decision_id'] ?? ''),
+                    '__UTCP_TRUNK_ENDPOINT_ID' => (string) ($payload['trunk_endpoint_id'] ?? ''),
+                    '__UTCP_CALLER_IDENTITY_ID' => (string) ($payload['caller_identity_id'] ?? ''),
+                ],
+            ]);
 
             return ['provider_action' => 'channels.originate', 'destination_ref' => (string) ($payload['destination_ref'] ?? ''), 'runtime_channel_id' => $runtimeChannelId];
         }
@@ -721,9 +724,10 @@ class AsteriskAriClient
     /**
      * @param  array<string, string>  $query
      * @param  list<int>  $acceptedStatuses
+     * @param  array<string, mixed>|null  $body
      * @return array{status:int,body:string}
      */
-    protected function ariRequest(string $runtimeNodeId, string $method, string $resource, array $query, int $timeoutMs, array $acceptedStatuses): array
+    protected function ariRequest(string $runtimeNodeId, string $method, string $resource, array $query, int $timeoutMs, array $acceptedStatuses, ?array $body = null): array
     {
         $endpoint = $this->endpoint($runtimeNodeId, 'control', ['http', 'https']);
         $credential = $this->credential($runtimeNodeId);
@@ -731,12 +735,23 @@ class AsteriskAriClient
         if ($query !== []) {
             $url .= '?'.http_build_query($query, '', '&', PHP_QUERY_RFC3986);
         }
-        $response = $this->request($method, $url, [
+        $headers = [
             'Authorization: Basic '.$this->basicToken($credential),
             'Accept: application/json',
-            'Content-Length: 0',
             'User-Agent: utcp-asterisk-ari-t2a',
-        ], $timeoutMs);
+        ];
+        $encodedBody = null;
+        if ($body !== null) {
+            try {
+                $encodedBody = json_encode($body, JSON_THROW_ON_ERROR);
+            } catch (JsonException) {
+                throw new AsteriskAriException(FailureClass::InternalError, 'ari_request_body_invalid', 'ARI request body could not be serialized.');
+            }
+            $headers[] = 'Content-Type: application/json';
+        } else {
+            $headers[] = 'Content-Length: 0';
+        }
+        $response = $this->request($method, $url, $headers, $timeoutMs, $encodedBody);
 
         $status = (int) $response['status'];
         if (in_array($status, $acceptedStatuses, true)) {
@@ -879,16 +894,20 @@ class AsteriskAriClient
      * @param  list<string>  $headers
      * @return array{status:int,body:string}
      */
-    private function request(string $method, string $url, array $headers, int $timeoutMs): array
+    protected function request(string $method, string $url, array $headers, int $timeoutMs, ?string $body = null): array
     {
+        $options = [
+            'method' => $method,
+            'header' => implode("\r\n", $headers),
+            'timeout' => max(1, (int) ceil($timeoutMs / 1000)),
+            'ignore_errors' => true,
+            'max_redirects' => 0,
+        ];
+        if ($body !== null) {
+            $options['content'] = $body;
+        }
         $context = stream_context_create([
-            'http' => [
-                'method' => $method,
-                'header' => implode("\r\n", $headers),
-                'timeout' => max(1, (int) ceil($timeoutMs / 1000)),
-                'ignore_errors' => true,
-                'max_redirects' => 0,
-            ],
+            'http' => $options,
         ]);
         $body = @file_get_contents($url, false, $context, 0, (int) config('asterisk_ari.max_payload_bytes', 32768));
         if ($body === false) {

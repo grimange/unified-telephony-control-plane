@@ -58,10 +58,63 @@ final class AsteriskAriAdapterTest extends TestCase
         $request = $client->requests[0];
         $this->assertSame('POST', $request['method']);
         $this->assertSame('channels', $request['resource']);
-        $this->assertSame('leg-1', $request['query']['variables[__UTCP_CALL_LEG_ID]']);
-        $this->assertSame('route-decision-1', $request['query']['variables[__UTCP_ROUTE_DECISION_ID]']);
-        $this->assertSame('endpoint-1', $request['query']['variables[__UTCP_TRUNK_ENDPOINT_ID]']);
-        $this->assertSame('caller-1', $request['query']['variables[__UTCP_CALLER_IDENTITY_ID]']);
+        $this->assertSame([
+            'endpoint' => 'Local/97001@utcp-outbound',
+            'context' => 'utcp-outbound',
+            'extension' => '97001',
+            'priority' => '1',
+            'timeout' => '30',
+            'channelId' => RuntimeChannelIdentity::forCallLeg('leg-1'),
+        ], $request['query']);
+        $this->assertSame([
+            'variables' => [
+                '__UTCP_CALL_LEG_ID' => 'leg-1',
+                '__UTCP_ROUTE_DECISION_ID' => 'route-decision-1',
+                '__UTCP_TRUNK_ENDPOINT_ID' => 'endpoint-1',
+                '__UTCP_CALLER_IDENTITY_ID' => 'caller-1',
+            ],
+        ], $request['body']);
+    }
+
+    public function test_ari_request_serializes_json_body_and_passes_it_to_http_transport(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithTransportCapture();
+
+        $method = new ReflectionMethod($client, 'requestAri');
+        $method->invoke($client, $nodeId, 'POST', 'channels', [
+            'endpoint' => 'Local/97001@utcp-outbound',
+            'context' => 'utcp-outbound',
+            'extension' => '97001',
+            'priority' => '1',
+            'timeout' => '30',
+            'channelId' => 'utcp-call-leg-leg-1',
+        ], 1000, [201], [
+            'variables' => ['__UTCP_CALL_LEG_ID' => 'leg-1'],
+        ]);
+
+        $request = $client->transportRequests[0];
+        $this->assertSame('POST', $request['method']);
+        $this->assertStringContainsString('endpoint=Local%2F97001%40utcp-outbound', $request['url']);
+        $this->assertStringContainsString('Content-Type: application/json', $request['headers']);
+        $this->assertStringNotContainsString('Content-Length: 0', $request['headers']);
+        $this->assertSame('{"variables":{"__UTCP_CALL_LEG_ID":"leg-1"}}', $request['body']);
+    }
+
+    public function test_bodyless_ari_request_retains_empty_transport_body(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithTransportCapture();
+
+        $method = new ReflectionMethod($client, 'requestAri');
+        $method->invoke($client, $nodeId, 'GET', 'channels/channel-1', [], 1000, [200]);
+
+        $request = $client->transportRequests[0];
+        $this->assertNull($request['body']);
+        $this->assertStringNotContainsString('Content-Type: application/json', $request['headers']);
+        $this->assertStringContainsString('Content-Length: 0', $request['headers']);
     }
 
     public function test_asterisk_playback_resolves_generic_media_and_rejects_invalid_syntax_before_ari_execution(): void
@@ -2260,7 +2313,7 @@ final class AsteriskAriAdapterTest extends TestCase
         return new class(new AsteriskCatalog, app(AsteriskAriProfileService::class), $responses) extends AsteriskAriClient
         {
             /**
-             * @var list<array{method:string,resource:string,query?:array<string,string>,timeout_ms:int,accepted_statuses:list<int>}>
+             * @var list<array{method:string,resource:string,query?:array<string,string>,body?:array<string,mixed>,timeout_ms:int,accepted_statuses:list<int>}>
              */
             public array $requests = [];
 
@@ -2272,13 +2325,14 @@ final class AsteriskAriAdapterTest extends TestCase
                 parent::__construct($catalog, $profiles);
             }
 
-            protected function ariRequest(string $runtimeNodeId, string $method, string $resource, array $query, int $timeoutMs, array $acceptedStatuses): array
+            protected function ariRequest(string $runtimeNodeId, string $method, string $resource, array $query, int $timeoutMs, array $acceptedStatuses, ?array $body = null): array
             {
                 unset($runtimeNodeId);
                 $this->requests[] = [
                     'method' => $method,
                     'resource' => $resource,
                     ...($query === [] ? [] : ['query' => $query]),
+                    ...($body === null ? [] : ['body' => $body]),
                     'timeout_ms' => $timeoutMs,
                     'accepted_statuses' => $acceptedStatuses,
                 ];
@@ -2311,6 +2365,32 @@ final class AsteriskAriAdapterTest extends TestCase
                 }
 
                 throw new AsteriskAriException(FailureClass::RuntimeUnavailable, 'ari_http_unavailable', 'ARI HTTP request did not return success.', true);
+            }
+        };
+    }
+
+    private function ariClientWithTransportCapture(): AsteriskAriClient
+    {
+        return new class(new AsteriskCatalog, app(AsteriskAriProfileService::class)) extends AsteriskAriClient
+        {
+            public array $transportRequests = [];
+
+            public function requestAri(string $runtimeNodeId, string $method, string $resource, array $query, int $timeoutMs, array $acceptedStatuses, ?array $body = null): array
+            {
+                return $this->ariRequest($runtimeNodeId, $method, $resource, $query, $timeoutMs, $acceptedStatuses, $body);
+            }
+
+            protected function request(string $method, string $url, array $headers, int $timeoutMs, ?string $body = null): array
+            {
+                $this->transportRequests[] = [
+                    'method' => $method,
+                    'url' => $url,
+                    'headers' => implode("\r\n", $headers),
+                    'timeout_ms' => $timeoutMs,
+                    'body' => $body,
+                ];
+
+                return ['status' => 201, 'body' => ''];
             }
         };
     }
