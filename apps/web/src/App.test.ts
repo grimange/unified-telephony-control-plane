@@ -154,6 +154,8 @@ const session = {
     'telephony.conferences.participants.manage',
     'telephony.external_connectivity.view',
     'telephony.external_connectivity.manage',
+    'telephony.routing.view',
+    'telephony.routing.manage',
   ],
   catalog_version: 'c2.test',
   expires_at: '2026-07-14T10:00:00Z',
@@ -1194,6 +1196,7 @@ describe('C1 App shell', () => {
     expect(groups.map((group) => group.find('.side-nav__group-label').text())).toEqual([
       'Overview',
       'External Connectivity',
+      'Routing',
       'Calls',
       'Telephony Infrastructure',
       'System',
@@ -1201,6 +1204,7 @@ describe('C1 App shell', () => {
     expect(groups.map((group) => group.findAll('a').map((link) => link.text()))).toEqual([
       ['Dashboard'],
       ['External Trunks', 'Numbers & Addresses'],
+      ['Routes', 'Caller Identities'],
       ['Conferences'],
       ['Telephony Nodes'],
       ['Tenants', 'Users', 'Memberships', 'Audit', 'Advanced operations', 'Runtime reconciliations'],
@@ -1209,6 +1213,8 @@ describe('C1 App shell', () => {
       'Dashboard',
       'External Trunks',
       'Numbers & Addresses',
+      'Routes',
+      'Caller Identities',
       'Conferences',
       'Telephony Nodes',
       'Tenants',
@@ -1230,6 +1236,7 @@ describe('C1 App shell', () => {
     expect(wrapper.find('nav[aria-label="Primary"]').findAll('.side-nav__group').map((group) => group.find('.side-nav__group-label').text())).toEqual([
       'Overview',
       'External Connectivity',
+      'Routing',
       'Calls',
       'Telephony Infrastructure',
       'System',
@@ -1335,7 +1342,7 @@ describe('C1 App shell', () => {
     expect(wrapper.find('h2').text()).toBe('Numbers & Addresses')
     expect(wrapper.text()).toContain('+15550100')
     expect(wrapper.text()).toContain('active')
-    expect(wrapper.text()).not.toContain('Routes')
+    expect(wrapper.text()).not.toContain('Add Route')
     await assertNoSeriousAxeViolations(wrapper.element)
   })
 

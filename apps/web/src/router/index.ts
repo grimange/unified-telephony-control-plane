@@ -10,6 +10,7 @@ import AppShell from '../layouts/AppShell.vue'
 import AuditRecordsView from '../views/AuditRecordsView.vue'
 import ChangePasswordView from '../views/ChangePasswordView.vue'
 import CallConsoleView from '../views/CallConsoleView.vue'
+import CallerIdentitiesView from '../views/CallerIdentitiesView.vue'
 import ConferenceOperationsView from '../views/ConferenceOperationsView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import ExternalTrunkDetailView from '../views/ExternalTrunkDetailView.vue'
@@ -23,6 +24,7 @@ import RuntimeNodesView from '../views/RuntimeNodesView.vue'
 import RuntimeOperationsView from '../views/RuntimeOperationsView.vue'
 import RuntimeReconciliationsView from '../views/RuntimeReconciliationsView.vue'
 import ReferenceDialerView from '../views/ReferenceDialerView.vue'
+import RoutingView from '../views/RoutingView.vue'
 import TenantsView from '../views/TenantsView.vue'
 import UserDetailView from '../views/UserDetailView.vue'
 import UsersView from '../views/UsersView.vue'
@@ -54,6 +56,8 @@ export const routes = [
       { path: 'external-connectivity/addresses', name: 'external-addresses', component: TelephonyAddressesView, meta: { requiresAuth: true, title: 'Numbers & Addresses', capability: 'telephony.external_connectivity.view', requiresActiveTenant: true } },
       { path: 'dialer', name: 'reference-dialer', component: ReferenceDialerView, meta: { requiresAuth: true, title: 'Reference Telephony Client', capability: 'telephony.sessions.view_own', requiresActiveTenant: true } },
       { path: 'calls', name: 'calls', component: CallConsoleView, meta: { requiresAuth: true, title: 'Calls', capability: 'telephony.calls.view', requiresActiveTenant: true } },
+      { path: 'routing/routes', name: 'routing-routes', component: RoutingView, meta: { requiresAuth: true, title: 'Routes', capability: 'telephony.routing.view', requiresActiveTenant: true } },
+      { path: 'routing/caller-identities', name: 'routing-caller-identities', component: CallerIdentitiesView, meta: { requiresAuth: true, title: 'Caller Identities', capability: 'telephony.external_connectivity.view', requiresActiveTenant: true } },
       { path: 'admin/tenants', name: 'admin-tenants', component: TenantsView, meta: { requiresAuth: true, title: 'Tenants', capability: 'platform.tenants.view' } },
       { path: 'admin/memberships', name: 'admin-memberships', component: MembershipsView, meta: { requiresAuth: true, title: 'Memberships', capability: 'tenant.memberships.view' } },
       { path: 'admin/audit-records', name: 'admin-audit-records', component: AuditRecordsView, meta: { requiresAuth: true, title: 'Audit records', capability: 'tenant.memberships.manage', requiresActiveTenant: true } },

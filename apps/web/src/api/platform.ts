@@ -313,6 +313,48 @@ export type TelephonyAddress = {
   desired_state: string
 }
 
+export type RouteDestinationRef = {
+  type: 'telephony_address' | 'opaque' | string
+  value: string
+}
+
+export type InboundRoute = {
+  id: string
+  tenant_id: string
+  name: string
+  slug: string
+  external_trunk_id: string
+  telephony_address_id: string
+  destination_ref: RouteDestinationRef | null
+  caller_identity_id: string | null
+  priority: number
+  desired_state: string
+  direction: 'inbound'
+}
+
+export type OutboundRoute = Omit<InboundRoute, 'destination_ref' | 'direction'> & {
+  direction: 'outbound'
+  destination_ref: null
+}
+
+export type CallerIdentityPolicy = {
+  id: string
+  external_trunk_id: string
+  external_trunk_name: string
+  desired_state: string
+}
+
+export type CallerIdentity = {
+  id: string
+  tenant_id: string
+  name: string
+  telephony_address_id: string
+  telephony_address: TelephonyAddress
+  display_name: string | null
+  desired_state: string
+  policies: CallerIdentityPolicy[]
+}
+
 export type RuntimeManagedOperation = {
   id: string
   status: RuntimeOperationStatus
@@ -1190,6 +1232,16 @@ export const identityApi = {
   telephonyAddresses: () => fetchJson<{ telephony_addresses: TelephonyAddress[] }>('/api/v1/admin/telephony-addresses'),
   createTelephonyAddress: (payload: Record<string, unknown>) => postJson<{ telephony_address: TelephonyAddress }>('/api/v1/admin/telephony-addresses', payload, [201]),
   setTelephonyAddressState: (addressId: string, desiredState: string) => postJson<{ telephony_address: TelephonyAddress }>(`/api/v1/admin/telephony-addresses/${addressId}/desired-state`, { desired_state: desiredState }),
+  inboundRoutes: () => fetchJson<{ inbound_routes: InboundRoute[] }>('/api/v1/admin/inbound-routes'),
+  outboundRoutes: () => fetchJson<{ outbound_routes: OutboundRoute[] }>('/api/v1/admin/outbound-routes'),
+  createInboundRoute: (payload: Record<string, unknown>) => postJson<{ inbound_route: InboundRoute }>('/api/v1/admin/inbound-routes', payload, [201], { 'Idempotency-Key': crypto.randomUUID() }),
+  createOutboundRoute: (payload: Record<string, unknown>) => postJson<{ outbound_route: OutboundRoute }>('/api/v1/admin/outbound-routes', payload, [201], { 'Idempotency-Key': crypto.randomUUID() }),
+  setInboundRouteState: (routeId: string, desiredState: string) => postJson<{ inbound_route: InboundRoute }>(`/api/v1/admin/inbound-routes/${routeId}/desired-state`, { desired_state: desiredState }),
+  setOutboundRouteState: (routeId: string, desiredState: string) => postJson<{ outbound_route: OutboundRoute }>(`/api/v1/admin/outbound-routes/${routeId}/desired-state`, { desired_state: desiredState }),
+  callerIdentities: () => fetchJson<{ caller_identities: CallerIdentity[] }>('/api/v1/admin/caller-identities'),
+  createCallerIdentity: (payload: Record<string, unknown>) => postJson<{ caller_identity: CallerIdentity }>('/api/v1/admin/caller-identities', payload, [201], { 'Idempotency-Key': crypto.randomUUID() }),
+  setCallerIdentityState: (identityId: string, desiredState: string) => postJson<{ caller_identity: CallerIdentity }>(`/api/v1/admin/caller-identities/${identityId}/desired-state`, { desired_state: desiredState }),
+  createCallerIdentityPolicy: (identityId: string, externalTrunkId: string) => postJson<{ caller_identity: CallerIdentity }>(`/api/v1/admin/caller-identities/${identityId}/policies`, { external_trunk_id: externalTrunkId }, [201]),
   conferences: () => fetchJson<{ conferences: Conference[] }>('/api/v1/admin/conferences'),
   conference: (conferenceId: string) => fetchJson<{ conference: Conference }>(`/api/v1/admin/conferences/${conferenceId}`),
   conferenceParticipants: (conferenceId: string) =>
