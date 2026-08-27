@@ -21,6 +21,7 @@
   --color-info-muted: #e6efff;
   --color-disabled: #e5e7eb;
   --color-disabled-text: #6b7280;
+  --color-navigation-active: #e8f0fb;
   --focus-ring: 0 0 0 3px rgb(32 84 147 / 32%);
   --space-1: 4px;
   --space-2: 8px;
@@ -46,6 +47,9 @@
   --radius-md: 8px;
   --radius-pill: 999px;
   --shadow-panel: 0 1px 2px rgb(15 23 42 / 8%);
+  --shadow-surface: 0 8px 24px rgb(15 23 42 / 6%);
+  --sidebar-width: 248px;
+  --header-height: 76px;
   --layout-app: 1180px;
   --layout-wide: 1280px;
   --layout-readable: 760px;
@@ -75,8 +79,10 @@
   --color-info-muted: #213b60;
   --color-disabled: #2a3645;
   --color-disabled-text: #94a3b8;
+  --color-navigation-active: #223b59;
   --focus-ring: 0 0 0 3px rgb(138 180 248 / 45%);
   --shadow-panel: 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-surface: 0 8px 24px rgb(0 0 0 / 18%);
 }
 
 @media (prefers-reduced-motion: reduce) {

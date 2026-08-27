@@ -206,7 +206,7 @@ describe('ReferenceDialerView', () => {
 
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Reference dialer unavailable')
+    expect(wrapper.text()).toContain('Reference Telephony Client unavailable')
     expect(wrapper.text()).toContain('Active tenant context is required.')
     expect(mocks.createTelephonySession).not.toHaveBeenCalled()
   })

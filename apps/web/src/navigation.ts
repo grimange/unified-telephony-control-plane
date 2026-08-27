@@ -3,7 +3,7 @@ import type { IdentitySession } from './api/platform'
 export type NavigationEntry = {
   route: string
   label: string
-  group: 'overview' | 'access-tenancy' | 'runtime-control' | 'evidence'
+  group: 'overview' | 'external-connectivity' | 'calls' | 'telephony-infrastructure' | 'routing' | 'system'
   exact?: boolean
   requiredCapability?: string
   requiresActiveTenant?: boolean
@@ -18,9 +18,11 @@ export type NavigationGroup = {
 
 const navigationGroups: Array<{ key: NavigationEntry['group']; label: string }> = [
   { key: 'overview', label: 'Overview' },
-  { key: 'access-tenancy', label: 'Access and tenancy' },
-  { key: 'runtime-control', label: 'Runtime control' },
-  { key: 'evidence', label: 'Evidence' },
+  { key: 'external-connectivity', label: 'External Connectivity' },
+  { key: 'calls', label: 'Calls' },
+  { key: 'telephony-infrastructure', label: 'Telephony Infrastructure' },
+  { key: 'routing', label: 'Routing' },
+  { key: 'system', label: 'System' },
 ]
 
 export function hasCapability(session: IdentitySession | null, capability: string): boolean {
@@ -29,31 +31,22 @@ export function hasCapability(session: IdentitySession | null, capability: strin
 
 export const navigationEntries: NavigationEntry[] = [
   { route: '/dashboard', label: 'Dashboard', group: 'overview', exact: true },
-  {
-    route: '/dialer',
-    label: 'Reference dialer',
-    group: 'overview',
-    exact: true,
-    requiresActiveTenant: true,
-    isVisible: (session) =>
-      ['telephony.sessions.view_own', 'telephony.signaling.view_own'].every((capability) => hasCapability(session, capability)),
-  },
-  { route: '/calls', label: 'Calls', group: 'runtime-control', exact: true, requiredCapability: 'telephony.calls.view', requiresActiveTenant: true },
-  { route: '/admin/tenants', label: 'Tenants', group: 'access-tenancy', exact: true, requiredCapability: 'platform.tenants.view' },
+  { route: '/calls', label: 'Calls', group: 'calls', exact: true, requiredCapability: 'telephony.calls.view', requiresActiveTenant: true },
+  { route: '/operations/conferences', label: 'Conferences', group: 'calls', exact: true, requiredCapability: 'telephony.conferences.view' },
+  { route: '/admin/runtime-nodes', label: 'Telephony Nodes', group: 'telephony-infrastructure', exact: true, requiredCapability: 'runtime.nodes.view' },
+  { route: '/admin/tenants', label: 'Tenants', group: 'system', exact: true, requiredCapability: 'platform.tenants.view' },
   {
     route: '/admin/users',
     label: 'Users',
-    group: 'access-tenancy',
+    group: 'system',
     isVisible: (session) =>
       hasCapability(session, 'platform.users.view') ||
       hasCapability(session, 'tenant.memberships.view'),
   },
-  { route: '/admin/memberships', label: 'Memberships', group: 'access-tenancy', exact: true, requiredCapability: 'tenant.memberships.view' },
-  { route: '/admin/audit-records', label: 'Audit records', group: 'evidence', exact: true, requiredCapability: 'tenant.memberships.manage', requiresActiveTenant: true },
-  { route: '/admin/runtime-nodes', label: 'Runtime nodes', group: 'runtime-control', exact: true, requiredCapability: 'runtime.nodes.view' },
-  { route: '/operations/runtime-operations', label: 'Runtime operations', group: 'runtime-control', exact: true, requiredCapability: 'runtime.nodes.view' },
-  { route: '/operations/runtime-reconciliations', label: 'Runtime reconciliations', group: 'runtime-control', exact: true, requiredCapability: 'runtime.nodes.view' },
-  { route: '/operations/conferences', label: 'Conference operations', group: 'runtime-control', exact: true, requiredCapability: 'telephony.conferences.view' },
+  { route: '/admin/memberships', label: 'Memberships', group: 'system', exact: true, requiredCapability: 'tenant.memberships.view' },
+  { route: '/admin/audit-records', label: 'Audit', group: 'system', exact: true, requiredCapability: 'tenant.memberships.manage', requiresActiveTenant: true },
+  { route: '/operations/runtime-operations', label: 'Advanced operations', group: 'system', exact: true, requiredCapability: 'runtime.nodes.view' },
+  { route: '/operations/runtime-reconciliations', label: 'Runtime reconciliations', group: 'system', exact: true, requiredCapability: 'runtime.nodes.view' },
 ]
 
 export function visibleNavigationEntries(session: IdentitySession | null): NavigationEntry[] {

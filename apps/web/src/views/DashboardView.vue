@@ -45,7 +45,7 @@
 
       <DashboardSummaryCard
         v-if="can('runtime.nodes.view')"
-        title="Runtime nodes"
+        title="Telephony Nodes"
         label="Operations"
         :state="runtimeCard"
       />
@@ -173,13 +173,13 @@ async function loadRuntimeSummary(): Promise<void> {
   try {
     const response = await identityApi.runtimeNodes()
     if (response.runtime_nodes.length === 0) {
-      runtimeCard.value = { status: 'empty', emptyText: 'No runtime nodes were returned.' }
+      runtimeCard.value = { status: 'empty', emptyText: 'No telephony nodes were returned.' }
     } else {
       runtimeAttention.value = response.runtime_nodes.flatMap(runtimeAttentionFor)
       runtimeCard.value = {
         status: 'success',
         countLabel: String(response.runtime_nodes.length),
-        emptyText: 'No runtime nodes were returned.',
+        emptyText: 'No telephony nodes were returned.',
         items: response.runtime_nodes.slice(0, 4).map((node) => `${node.name}: desired ${node.desired_state}, observed ${node.observed_state}`),
       }
     }

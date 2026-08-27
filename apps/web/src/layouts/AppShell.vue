@@ -1,11 +1,20 @@
 <template>
   <main class="app-shell app-shell--wide">
     <header class="topbar app-topbar">
-      <div>
-        <p class="eyebrow">
-          Unified Telephony Control Plane
-        </p>
-        <h1>{{ pageTitle }}</h1>
+      <div class="product-context">
+        <div
+          class="product-identity"
+          aria-label="UTCP product identity"
+        >
+          <span class="product-mark">UTCP</span>
+          <span class="product-name">Unified Telephony Control Plane</span>
+        </div>
+        <div>
+          <p class="eyebrow">
+            Operator console
+          </p>
+          <h1>{{ pageTitle }}</h1>
+        </div>
         <p class="meta">
           {{ session?.user.display_name }} · {{ session?.user.email }}
         </p>
@@ -83,9 +92,12 @@
         class="shell-sidebar"
         :class="{ open: navigationOpen }"
       >
-        <p class="panel-label">
-          Navigation
-        </p>
+        <div class="sidebar-heading">
+          <p class="panel-label">
+            Workspace
+          </p>
+          <span class="sidebar-status">Operational view</span>
+        </div>
         <nav
           class="side-nav"
           aria-label="Primary"
@@ -112,7 +124,7 @@
           </div>
         </nav>
         <div class="tenant-context">
-          <strong>Tenant context</strong>
+          <strong>Active tenant</strong>
           <p class="meta">
             {{ session?.active_tenant?.display_name ?? 'No tenant selected' }}
           </p>

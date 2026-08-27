@@ -6,7 +6,7 @@
     <div class="section-heading">
       <div>
         <h2 id="conference-operations-title">
-          Conference operations
+          Conferences
         </h2>
         <p class="meta">
           Inspect conference lifecycle operations and their execution state.

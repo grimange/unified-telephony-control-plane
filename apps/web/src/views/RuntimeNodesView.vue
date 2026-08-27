@@ -6,10 +6,10 @@
     <div class="section-heading">
       <div>
         <h2 id="runtime-nodes-title">
-          Runtime nodes
+          Telephony Nodes
         </h2>
         <p class="meta">
-          Register and inspect telephony runtime nodes managed by the control plane. Add and operate an existing or externally managed runtime through UTCP.
+          Register and inspect telephony engines managed by the control plane. Add and operate an existing or externally managed integration through UTCP.
         </p>
       </div>
       <UiStatusBadge
@@ -30,8 +30,8 @@
 
     <UiPanel
       v-if="can('runtime.nodes.manage')"
-      title="Add runtime"
-      label="Runtime registry"
+      title="Add Telephony Node"
+      label="Telephony infrastructure"
     >
       <div
         v-if="onboardingPath === null"
@@ -43,26 +43,26 @@
           variant="secondary"
           @click="selectManagedOnboarding()"
         >
-          Create a new runtime
+          Add Telephony Node
         </UiButton>
         <UiButton
           type="button"
           variant="secondary"
           @click="onboardingPath = 'external'"
         >
-          Register an existing runtime
+          Register an existing integration
         </UiButton>
       </div>
       <p
         v-if="onboardingPath === null"
         class="meta"
       >
-        Create a new runtime and UTCP will configure it automatically, or register an existing runtime as an advanced integration.
+        Add a telephony node and UTCP will configure it automatically, or register an existing engine as an advanced integration.
       </p>
       <form
         v-if="onboardingPath === 'external'"
         class="inline-form"
-        @submit.prevent="runRuntimeAction(runtimeCreateActionKey, createRuntimeNode, 'Runtime node created.')"
+        @submit.prevent="runRuntimeAction(runtimeCreateActionKey, createRuntimeNode, 'Telephony node created.')"
       >
         <UiFormField
           id="runtime-name"
@@ -100,7 +100,7 @@
         </UiFormField>
         <UiFormField
           id="runtime-family"
-          label="Runtime family"
+          label="Engine type"
         >
           <template #default="{ id, describedBy, invalid }">
             <UiSelect
@@ -151,7 +151,7 @@
           :loading="runtimeActionSubmitting(runtimeCreateActionKey)"
           loading-label="Creating"
         >
-          Create runtime node
+          Create Telephony Node
         </UiButton>
       </form>
       <p
@@ -270,7 +270,7 @@
     <UiAlert
       v-if="runtimeActionError(runtimeCreateActionKey)"
       variant="error"
-      title="Runtime node action failed"
+      title="Telephony node action failed"
     >
       {{ runtimeActionError(runtimeCreateActionKey) }}
     </UiAlert>
@@ -278,19 +278,19 @@
       :status="runtimeNodesResource.state.status"
       :error="runtimeNodesResource.state.error"
       :has-data="runtimeNodes.length > 0"
-      title="Runtime node list"
-      label="Runtime registry"
-      loading-label="Loading runtime nodes."
-      refreshing-label="Refreshing runtime nodes."
-      empty-title="No runtime nodes"
-      empty-message="No runtime nodes were returned."
-      error-title="Runtime nodes unavailable"
-      forbidden-title="Runtime nodes forbidden"
+      title="Telephony node list"
+      label="Telephony infrastructure"
+      loading-label="Loading telephony nodes."
+      refreshing-label="Refreshing telephony nodes."
+      empty-title="No telephony nodes"
+      empty-message="No telephony nodes were returned."
+      error-title="Telephony nodes unavailable"
+      forbidden-title="Telephony nodes forbidden"
     >
       <template #actions>
         <UiListSummary
           :count="runtimeNodes.length"
-          item-label="runtime nodes"
+          item-label="telephony nodes"
         />
       </template>
       <div class="data-table">
@@ -364,7 +364,7 @@
               variant="secondary"
               :disabled="runtimeActionSubmitting(runtimeDesiredStateActionKey(node, node.desired_state === 'active' ? 'draining' : 'active'))"
               :loading="runtimeActionSubmitting(runtimeDesiredStateActionKey(node, node.desired_state === 'active' ? 'draining' : 'active'))"
-              @click="runRuntimeAction(runtimeDesiredStateActionKey(node, node.desired_state === 'active' ? 'draining' : 'active'), () => setRuntimeDesiredState(node.id, node.desired_state === 'active' ? 'draining' : 'active'), node.desired_state === 'draining' ? 'Runtime node drain cancelled.' : node.desired_state === 'drained' ? 'Runtime node reactivated.' : 'Runtime node drain requested.')"
+              @click="runRuntimeAction(runtimeDesiredStateActionKey(node, node.desired_state === 'active' ? 'draining' : 'active'), () => setRuntimeDesiredState(node.id, node.desired_state === 'active' ? 'draining' : 'active'), node.desired_state === 'draining' ? 'Telephony node drain cancelled.' : node.desired_state === 'drained' ? 'Telephony node reactivated.' : 'Telephony node drain requested.')"
             >
               {{ node.desired_state === 'active' ? 'Drain' : node.desired_state === 'draining' ? 'Cancel drain' : node.desired_state === 'drained' ? 'Reactivate' : 'Activate' }}
             </UiButton>
@@ -384,7 +384,7 @@
               variant="danger"
               :disabled="runtimeActionSubmitting(runtimeDesiredStateActionKey(node, 'disabled'))"
               :loading="runtimeActionSubmitting(runtimeDesiredStateActionKey(node, 'disabled'))"
-              @click="runRuntimeAction(runtimeDesiredStateActionKey(node, 'disabled'), () => setRuntimeDesiredState(node.id, 'disabled'), 'Runtime node disabled.')"
+              @click="runRuntimeAction(runtimeDesiredStateActionKey(node, 'disabled'), () => setRuntimeDesiredState(node.id, 'disabled'), 'Telephony node disabled.')"
             >
               Disable
             </UiButton>

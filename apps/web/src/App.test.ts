@@ -1170,7 +1170,7 @@ describe('C1 App shell', () => {
     expect(wrapper.text()).toContain('Tenants')
     expect(wrapper.text()).toContain('Users')
     expect(wrapper.text()).toContain('Memberships')
-    expect(wrapper.text()).toContain('Runtime nodes')
+    expect(wrapper.text()).toContain('Telephony Nodes')
     expect(wrapper.text()).toContain('Local Tenant')
   })
 
@@ -1184,29 +1184,29 @@ describe('C1 App shell', () => {
 
     expect(groups.map((group) => group.find('.side-nav__group-label').text())).toEqual([
       'Overview',
-      'Access and tenancy',
-      'Evidence',
-      'Runtime control',
+      'Calls',
+      'Telephony Infrastructure',
+      'System',
     ])
     expect(groups.map((group) => group.findAll('a').map((link) => link.text()))).toEqual([
       ['Dashboard'],
-      ['Tenants', 'Users', 'Memberships'],
-      ['Audit records'],
-      ['Runtime nodes', 'Runtime operations', 'Runtime reconciliations', 'Conference operations'],
+      ['Conferences'],
+      ['Telephony Nodes'],
+      ['Tenants', 'Users', 'Memberships', 'Audit', 'Advanced operations', 'Runtime reconciliations'],
     ])
     expect(nav.findAll('a').map((link) => link.text())).toEqual([
       'Dashboard',
+      'Conferences',
+      'Telephony Nodes',
       'Tenants',
       'Users',
       'Memberships',
-      'Audit records',
-      'Runtime nodes',
-      'Runtime operations',
+      'Audit',
+      'Advanced operations',
       'Runtime reconciliations',
-      'Conference operations',
     ])
     expect(nav.find('a[aria-current="page"]').text()).toBe('Dashboard')
-    for (const groupLabel of ['Overview', 'Access and tenancy', 'Runtime control', 'Evidence']) {
+    for (const groupLabel of ['Overview', 'External Connectivity', 'Calls', 'Telephony Infrastructure', 'Routing', 'System']) {
       expect(nav.findAll('a').some((link) => link.text() === groupLabel)).toBe(false)
       expect(nav.findAll('button').some((button) => button.text() === groupLabel)).toBe(false)
     }
@@ -1216,11 +1216,26 @@ describe('C1 App shell', () => {
     expect(wrapper.find('#primary-navigation').classes()).toContain('open')
     expect(wrapper.find('nav[aria-label="Primary"]').findAll('.side-nav__group').map((group) => group.find('.side-nav__group-label').text())).toEqual([
       'Overview',
-      'Access and tenancy',
-      'Evidence',
-      'Runtime control',
+      'Calls',
+      'Telephony Infrastructure',
+      'System',
     ])
     await assertNoSeriousAxeViolations(wrapper.element)
+  })
+
+  it('keeps the reference telephony client direct route without promoting it to navigation', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockPrimaryRouteFetch(calls)
+
+    const wrapper = await mountApp('/dashboard')
+    const navText = wrapper.find('nav[aria-label="Primary"]').text()
+    const referenceRoute = router.resolve('/dialer')
+
+    expect(navText).not.toContain('Reference Telephony Client')
+    expect(referenceRoute.name).toBe('reference-dialer')
+    expect(referenceRoute.path).toBe('/dialer')
+    expect(referenceRoute.meta.capability).toBe('telephony.sessions.view_own')
+    expect(referenceRoute.meta.requiresActiveTenant).toBe(true)
   })
 
   it('suppresses capability-empty navigation groups', async () => {
@@ -1233,10 +1248,10 @@ describe('C1 App shell', () => {
     const wrapper = await mountApp('/dashboard')
     const nav = wrapper.find('nav[aria-label="Primary"]')
 
-    expect(nav.findAll('.side-nav__group-label').map((label) => label.text())).toEqual(['Overview', 'Runtime control'])
-    expect(nav.findAll('a').map((link) => link.text())).toEqual(['Dashboard', 'Conference operations'])
-    expect(nav.text()).not.toContain('Access and tenancy')
-    expect(nav.text()).not.toContain('Evidence')
+    expect(nav.findAll('.side-nav__group-label').map((label) => label.text())).toEqual(['Overview', 'Calls'])
+    expect(nav.findAll('a').map((link) => link.text())).toEqual(['Dashboard', 'Conferences'])
+    expect(nav.text()).not.toContain('Telephony Infrastructure')
+    expect(nav.text()).not.toContain('System')
   })
 
   it('builds production RuntimeNode Reverb options for the canonical WSS route', () => {
@@ -1315,7 +1330,7 @@ describe('C1 App shell', () => {
     const catalogCallsBeforeNavigation = calls.filter((call) => call.url.endsWith('/api/v1/admin/runtime-node-catalog')).length
     const listCallsBeforeNavigation = calls.filter((call) => call.url.endsWith('/api/v1/admin/runtime-nodes')).length
 
-    await wrapper.findAll('a').find((link) => link.text() === 'Runtime nodes')?.trigger('click')
+    await wrapper.findAll('a').find((link) => link.text() === 'Telephony Nodes')?.trigger('click')
     await flushPromises()
     await flushPromises()
 
@@ -1452,7 +1467,7 @@ describe('C1 App shell', () => {
     const wrapper = await mountApp('/operations/conferences')
 
     expect(router.currentRoute.value.path).toBe('/operations/conferences')
-    expect(wrapper.text()).toContain('Conference operations')
+    expect(wrapper.text()).toContain('Conferences')
     expect(wrapper.text()).toContain('Daily Ops')
     expect(wrapper.text()).toContain('Support Room')
     expect(wrapper.text()).toContain('Live updates connecting')
@@ -3514,15 +3529,15 @@ describe('C1 App shell', () => {
         description: 'Assign users to tenants and manage tenant-scoped access.',
       },
       {
-        routeName: 'Runtime nodes',
+        routeName: 'Telephony Nodes',
         source: runtimeNodesViewSource,
-        h2: 'Runtime nodes',
-        description: 'Register and inspect telephony runtime nodes managed by the control plane.',
+        h2: 'Telephony Nodes',
+        description: 'Register and inspect telephony engines managed by the control plane.',
       },
       {
-        routeName: 'Conference operations',
+        routeName: 'Conferences',
         source: conferenceOperationsViewSource,
-        h2: 'Conference operations',
+        h2: 'Conferences',
         description: 'Inspect conference lifecycle operations and their execution state.',
       },
       {

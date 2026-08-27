@@ -2,7 +2,7 @@
   <div class="view-stack">
     <UiPanel
       label="V0 reference dialer"
-      title="Reference dialer"
+      title="Reference Telephony Client"
       description="Session-scoped SIP registration through the canonical UTCP WSS path."
     >
       <UiLoadingState
@@ -12,7 +12,7 @@
       <UiAlert
         v-else-if="state === 'error'"
         variant="error"
-        title="Reference dialer unavailable"
+        title="Reference Telephony Client unavailable"
       >
         {{ errorMessage }}
       </UiAlert>
@@ -47,7 +47,7 @@
       <div
         v-if="bootstrap !== null"
         class="detail-grid"
-        aria-label="Reference dialer session details"
+        aria-label="Reference Telephony Client session details"
       >
         <div>
           <span class="panel-label">Tenant</span>

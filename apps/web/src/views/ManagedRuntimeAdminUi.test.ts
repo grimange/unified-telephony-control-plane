@@ -39,9 +39,9 @@ describe('RNP-5 managed RuntimeNode Admin UI contract', () => {
     expect(catalogOptions(['http', 'https', 'ws']).map((option) => option.key)).not.toEqual(['0', '1', '2'])
   })
   it('keeps managed onboarding inside the existing Runtime Nodes surface', () => {
-    expect(runtimeNodesViewSource).toContain('title="Add runtime"')
-    expect(runtimeNodesViewSource).toContain('Create a new runtime')
-    expect(runtimeNodesViewSource).toContain('Register an existing runtime')
+    expect(runtimeNodesViewSource).toContain('title="Add Telephony Node"')
+    expect(runtimeNodesViewSource).toContain('Add Telephony Node')
+    expect(runtimeNodesViewSource).toContain('Register an existing integration')
     expect(runtimeNodesViewSource).not.toContain('Managed Runtimes')
   })
 
