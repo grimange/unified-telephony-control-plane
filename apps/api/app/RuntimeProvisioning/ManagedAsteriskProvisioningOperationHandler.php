@@ -11,6 +11,7 @@ use App\RuntimeAdapters\Asterisk\AsteriskCatalog;
 use App\RuntimeEngine\Commands\RunsWithoutRuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeOperationHandler;
+use App\RuntimeRegistry\RuntimeExecutionContract;
 use App\RuntimeRegistry\RuntimeRegistryService;
 use Illuminate\Support\Facades\DB;
 
@@ -66,7 +67,7 @@ final class ManagedAsteriskProvisioningOperationHandler implements ManagedRuntim
             return $this->failure(FailureClass::InvalidRequest, 'provisioning_target_invalid', 'managed provisioning target is invalid');
         }
         $image = (string) config('asterisk_ari.managed_image', '');
-        if (! self::isQualifiedImageReference($image)) {
+        if (! RuntimeExecutionContract::isQualifiedImmutableImageReference($image)) {
             return $this->failure(FailureClass::InvalidRequest, 'managed_asterisk_image_invalid', 'managed Asterisk image configuration is invalid');
         }
         $context = ExecutionContext::system(tenantId: $tenantId, reason: 'managed Asterisk provisioning', origin: 'runtime-engine');
@@ -125,16 +126,11 @@ final class ManagedAsteriskProvisioningOperationHandler implements ManagedRuntim
     public function desiredDeployment(string $runtimeNodeId, string $slug): array
     {
         $image = (string) config('asterisk_ari.managed_image', '');
-        if (! self::isQualifiedImageReference($image)) {
+        if (! RuntimeExecutionContract::isQualifiedImmutableImageReference($image)) {
             throw new \InvalidArgumentException('managed Asterisk image configuration is invalid');
         }
 
         return $this->deployment(ManagedAsteriskResourceIdentity::names($slug, $runtimeNodeId), $slug, $image);
-    }
-
-    private static function isQualifiedImageReference(string $image): bool
-    {
-        return (bool) preg_match('/^[^\/\s]+\/utcp\/asterisk-ari@sha256:[0-9a-f]{64}$/', $image);
     }
 
     private function service(array $names, string $slug): array

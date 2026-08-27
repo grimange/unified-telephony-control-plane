@@ -7,6 +7,43 @@ use PHPUnit\Framework\TestCase;
 
 final class RuntimeExecutionContractTest extends TestCase
 {
+    public function test_qualified_immutable_image_reference_accepts_explicit_registries_without_path_allowlists(): void
+    {
+        $digest = 'sha256:'.str_repeat('a', 64);
+
+        foreach ([
+            'ghcr.io/grimange/utcp-asterisk@'.$digest,
+            'ghcr.io/grimange/utcp-freeswitch@'.$digest,
+            'registry.example.test/utcp/asterisk-ari@'.$digest,
+            'registry.example.test/utcp/freeswitch@'.$digest,
+            'utcp-local-registry:5000/utcp/asterisk-ari@'.$digest,
+            'utcp-local-registry:5000/utcp/freeswitch@'.$digest,
+        ] as $image) {
+            $this->assertTrue(RuntimeExecutionContract::isQualifiedImmutableImageReference($image), $image);
+        }
+    }
+
+    public function test_qualified_immutable_image_reference_rejects_unqualified_mutable_or_corrupt_references(): void
+    {
+        $digest = str_repeat('a', 64);
+
+        foreach ([
+            '',
+            'utcp-asterisk',
+            'utcp-asterisk:latest',
+            'ghcr.io/grimange/utcp-asterisk:latest',
+            'ghcr.io/grimange/utcp-asterisk',
+            'utcp-asterisk@sha256:'.$digest,
+            'registry.example.test/utcp/asterisk-ari@sha256:short',
+            'registry.example.test/utcp/asterisk-ari@sha256:'.strtoupper($digest),
+            "ghcr.io/grimange/utcp-asterisk @sha256:$digest",
+            "ghcr.io/grimange/utcp-asterisk@sha256:$digest\n",
+            'docker.io/library/utcp-asterisk@sha256:'.$digest.'?tag=latest',
+        ] as $image) {
+            $this->assertFalse(RuntimeExecutionContract::isQualifiedImmutableImageReference($image), $image);
+        }
+    }
+
     public function test_digest_qualified_desired_reference_matches_kubernetes_image_id_by_digest(): void
     {
         $digest = 'sha256:'.str_repeat('a', 64);

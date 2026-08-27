@@ -112,7 +112,13 @@ final class ManagedAsteriskProvisioningOperationTest extends TestCase
 
     public function test_configured_managed_asterisk_image_is_used_without_source_changes(): void
     {
-        config(['asterisk_ari.managed_image' => 'registry.example.test/utcp/asterisk-ari@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb']);
+        config(['asterisk_ari.managed_image' => 'ghcr.io/grimange/utcp-asterisk@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb']);
+        $deployment = app(ManagedAsteriskProvisioningOperationHandler::class)
+            ->desiredDeployment('11111111-2222-3333-4444-555555555555', 'configured-image-asterisk');
+        $this->assertSame(
+            'ghcr.io/grimange/utcp-asterisk@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            $deployment['spec']['template']['spec']['containers'][0]['image'],
+        );
         [$admin, $tenantId] = $this->tenantAdmin('rnp6-image@utcp.local.test', 'rnp6-image');
         $session = ['user_session_version' => 1, 'active_tenant_id' => $tenantId];
         $target = $this->actingAs($admin)->withSession($session)->getJson('/api/v1/admin/deployment-targets')->json('deployment_targets.0');
@@ -124,7 +130,7 @@ final class ManagedAsteriskProvisioningOperationTest extends TestCase
         $this->mock(KubernetesWorkloadClient::class, function (MockInterface $mock): void {
             $mock->shouldReceive('applySecret')->once()->andReturn([]);
             $mock->shouldReceive('applyDeployment')->once()->withArgs(function (array $desired): bool {
-                return $desired['spec']['template']['spec']['containers'][0]['image'] === 'registry.example.test/utcp/asterisk-ari@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+                return $desired['spec']['template']['spec']['containers'][0]['image'] === 'ghcr.io/grimange/utcp-asterisk@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
             })->andReturn([]);
             $mock->shouldReceive('applyService')->once()->andReturn([]);
         });

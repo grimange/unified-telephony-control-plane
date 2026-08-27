@@ -1340,6 +1340,7 @@ final class AsteriskAriAdapterTest extends TestCase
 
     public function test_managed_asterisk_reconciliation_converges_capabilities_and_leaves_external_nodes_unchanged(): void
     {
+        config(['asterisk_ari.managed_image' => 'ghcr.io/grimange/utcp-asterisk@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']);
         [$tenantId, $managedNodeId] = $this->runtimeNode();
         $this->configureAriNode($tenantId, $managedNodeId);
         $this->makeManaged($tenantId, $managedNodeId);

@@ -59,7 +59,7 @@ final class AsteriskRuntimeNodeReconciler implements Reconciler
 
         if ($this->registry !== null && $this->registry->isManagedNode((string) $node->tenant_id, (string) $node->id)) {
             $image = (string) config('asterisk_ari.managed_image', '');
-            if (! preg_match('/^[^\/\s]+\/utcp\/asterisk-ari@sha256:[0-9a-f]{64}$/', $image)) {
+            if (! RuntimeExecutionContract::isQualifiedImmutableImageReference($image)) {
                 return ReconciliationResult::blocked('managed_asterisk_image_invalid');
             }
             $this->registry->ensureManagedExecutionImage(

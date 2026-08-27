@@ -31,7 +31,7 @@ final class ManagedFreeSwitchProvisioningTest extends TestCase
         $this->assertSame('freeswitch-managed-node-'.substr(hash('sha256', '11111111-2222-3333-4444-555555555555'), 0, 8), $freeswitch['deployment']);
         $this->assertNotSame($asterisk['deployment'], $freeswitch['deployment']);
 
-        config(['freeswitch_esl.managed_image' => 'registry.example.test/utcp/freeswitch@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']);
+        config(['freeswitch_esl.managed_image' => 'ghcr.io/grimange/utcp-freeswitch@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']);
         $this->app->instance(KubernetesWorkloadClient::class, $this->createMock(KubernetesWorkloadClient::class));
         $handler = app(ManagedFreeSwitchProvisioningOperationHandler::class);
         $deployment = $handler->desiredDeployment('11111111-2222-3333-4444-555555555555', 'managed-node');
@@ -58,7 +58,7 @@ final class ManagedFreeSwitchProvisioningTest extends TestCase
             ...$deployment['metadata']['labels'],
             'utcp.io/network-role' => 'freeswitch-esl',
         ], $deployment['spec']['template']['metadata']['labels']);
-        $this->assertSame('registry.example.test/utcp/freeswitch@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', $container['image']);
+        $this->assertSame('ghcr.io/grimange/utcp-freeswitch@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', $container['image']);
         $this->assertSame('freeswitch-esl', $deployment['spec']['template']['metadata']['labels']['utcp.io/network-role']);
         $this->assertContains(['name' => 'sip', 'containerPort' => 5060, 'protocol' => 'UDP'], $container['ports']);
         $this->assertContains(['name' => 'esl', 'containerPort' => 8021, 'protocol' => 'TCP'], $container['ports']);
@@ -217,7 +217,7 @@ final class ManagedFreeSwitchProvisioningTest extends TestCase
 
     public function test_managed_provisioning_projects_the_exact_catalog_capabilities(): void
     {
-        config(['freeswitch_esl.managed_image' => 'registry.example.test/utcp/freeswitch@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc']);
+        config(['freeswitch_esl.managed_image' => 'ghcr.io/grimange/utcp-freeswitch@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc']);
         [$user, $tenantId] = $this->tenantAdmin('managed-freeswitch-capabilities@utcp.local.test', 'managed-freeswitch-capabilities');
         $session = ['user_session_version' => 1, 'active_tenant_id' => $tenantId];
         $target = $this->actingAs($user)->withSession($session)->getJson('/api/v1/admin/deployment-targets')->json('deployment_targets.0');

@@ -8,6 +8,7 @@ use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClient;
 use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClientException;
 use App\RuntimeAdapters\FreeSwitch\FreeSwitchCatalog;
 use App\RuntimeEngine\Commands\RuntimeAdapter;
+use App\RuntimeRegistry\RuntimeExecutionContract;
 use App\RuntimeRegistry\RuntimeRegistryService;
 use Illuminate\Support\Facades\DB;
 
@@ -40,7 +41,7 @@ final class ManagedFreeSwitchProvisioningOperationHandler implements ManagedRunt
             return $this->failure(FailureClass::InvalidRequest, 'provisioning_target_invalid', 'managed provisioning target is invalid');
         }
         $image = (string) config('freeswitch_esl.managed_image', '');
-        if (! self::isQualifiedImageReference($image)) {
+        if (! RuntimeExecutionContract::isQualifiedImmutableImageReference($image)) {
             return $this->failure(FailureClass::InvalidRequest, 'managed_freeswitch_image_invalid', 'managed FreeSWITCH image configuration is invalid');
         }
         $context = ExecutionContext::system(tenantId: $tenantId, reason: 'managed FreeSWITCH provisioning', origin: 'runtime-engine');
@@ -105,7 +106,7 @@ final class ManagedFreeSwitchProvisioningOperationHandler implements ManagedRunt
     public function desiredDeployment(string $runtimeNodeId, string $slug): array
     {
         $image = (string) config('freeswitch_esl.managed_image', '');
-        if (! self::isQualifiedImageReference($image)) {
+        if (! RuntimeExecutionContract::isQualifiedImmutableImageReference($image)) {
             throw new \InvalidArgumentException('managed FreeSWITCH image configuration is invalid');
         }
 
@@ -157,11 +158,6 @@ final class ManagedFreeSwitchProvisioningOperationHandler implements ManagedRunt
         $labels = data_get($resource, 'metadata.labels', []);
 
         return is_array($labels) && ($labels['app.kubernetes.io/part-of'] ?? '') === 'utcp' && ($labels['utcp.dev/runtime-node'] ?? '') === $slug;
-    }
-
-    private static function isQualifiedImageReference(string $image): bool
-    {
-        return (bool) preg_match('/^[^\/\s]+\/utcp\/freeswitch@sha256:[0-9a-f]{64}$/', $image);
     }
 
     private function failure(FailureClass $class, string $code, string $message): array
