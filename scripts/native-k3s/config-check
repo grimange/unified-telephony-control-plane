@@ -15,9 +15,32 @@ import yaml
 
 docs = [doc for doc in yaml.safe_load_all(Path(sys.argv[1]).read_text()) if isinstance(doc, dict)]
 services = [doc for doc in docs if doc.get("kind") == "Service"]
+config_maps = [doc for doc in docs if doc.get("kind") == "ConfigMap"]
 external = [doc for doc in services if (doc.get("metadata") or {}).get("name") == "kamailio-sip-external"]
 if len(external) != 1:
     raise SystemExit("native-k3s: exactly one kamailio-sip-external Service is required")
+
+application_configs = [
+    doc for doc in config_maps
+    if (doc.get("metadata") or {}).get("namespace") == "utcp-platform"
+    and (doc.get("metadata") or {}).get("name", "").startswith("utcp-application-config-")
+]
+if len(application_configs) != 1:
+    raise SystemExit("native-k3s: exactly one generated platform application ConfigMap is required")
+if (application_configs[0].get("data") or {}).get("KAMAILIO_REGISTRATION_CONTROL_URL") != "http://kamailio-registration-control.utcp-platform.svc.cluster.local:8090/rpc":
+    raise SystemExit("native-k3s: application ConfigMap must define the canonical Kamailio registration-control URL")
+
+registration_services = [
+    doc for doc in services
+    if (doc.get("metadata") or {}).get("name") == "kamailio-registration-control"
+    and (doc.get("metadata") or {}).get("namespace") == "utcp-platform"
+]
+if len(registration_services) != 1:
+    raise SystemExit("native-k3s: canonical Kamailio registration-control Service is required")
+if (registration_services[0].get("spec") or {}).get("ports") != [{
+    "name": "jsonrpc", "protocol": "TCP", "port": 8090, "targetPort": "reg-control",
+}]:
+    raise SystemExit("native-k3s: Kamailio registration-control Service must expose TCP/8090 to reg-control")
 
 service = external[0]
 spec = service.get("spec") or {}
