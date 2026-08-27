@@ -7,6 +7,35 @@ manifest="$(mktemp)"
 trap 'rm -f "$manifest"' EXIT
 render_server > "$manifest"
 grep -Fq 'storageClassName: local-path' "$manifest" || fail 'server overlay must use local-path persistence'
-if grep -Eq 'utcp-local-registry|127\.0\.0\.1:5001|kind: (NodePort|LoadBalancer)|hostPort:|nodePort:' "$manifest"; then fail 'native manifest contains a local-registry or externally exposed resource'; fi
-if grep -Eq 'kind: Service[[:space:]]*$' "$manifest" && grep -Eq 'type: (NodePort|LoadBalancer)' "$manifest"; then fail 'native foundation must not expose telephony edge ports'; fi
+if grep -Eq 'utcp-local-registry|127\.0\.0\.1:5001|hostPort:|nodePort:' "$manifest"; then fail 'native manifest contains a local-registry, hostPort, or NodePort resource'; fi
+python3 - "$manifest" <<'PY'
+from pathlib import Path
+import sys
+import yaml
+
+docs = [doc for doc in yaml.safe_load_all(Path(sys.argv[1]).read_text()) if isinstance(doc, dict)]
+services = [doc for doc in docs if doc.get("kind") == "Service"]
+external = [doc for doc in services if (doc.get("metadata") or {}).get("name") == "kamailio-sip-external"]
+if len(external) != 1:
+    raise SystemExit("native-k3s: exactly one kamailio-sip-external Service is required")
+
+service = external[0]
+spec = service.get("spec") or {}
+if spec.get("type") != "LoadBalancer":
+    raise SystemExit("native-k3s: external Kamailio SIP Service must be LoadBalancer")
+if spec.get("allocateLoadBalancerNodePorts") is not False:
+    raise SystemExit("native-k3s: external Kamailio SIP Service must disable NodePort allocation")
+if spec.get("externalTrafficPolicy") != "Local":
+    raise SystemExit("native-k3s: external Kamailio SIP Service must use externalTrafficPolicy Local")
+if spec.get("ports") != [{
+    "name": "sip-udp", "protocol": "UDP", "port": 5060,
+    "targetPort": "sip-ext-udp",
+}]:
+    raise SystemExit("native-k3s: external Kamailio SIP Service must expose only UDP/5060")
+
+for candidate in services:
+    if candidate is not service and (candidate.get("spec") or {}).get("type") in {"NodePort", "LoadBalancer"}:
+        meta = candidate.get("metadata") or {}
+        raise SystemExit(f"native-k3s: unapproved externally exposed Service {meta.get('namespace')}/{meta.get('name')}")
+PY
 printf 'native k3s configuration check passed\n'
