@@ -241,6 +241,78 @@ export type RuntimeNode = {
   }
 }
 
+export type ExternalTrunkRegistrationObservation = {
+  state: string
+  failure_category: string | null
+  last_attempt_at: string | null
+  last_success_at: string | null
+  expires_at: string | null
+  observed_at: string | null
+  observation_version: number
+}
+
+export type ExternalTrunkEndpoint = {
+  id: string
+  external_trunk_id: string
+  endpoint_uri: string
+  signaling_mode: string
+  transport: string
+  authentication_mode: string
+  credential_reference_id: string | null
+  registration_target: string | null
+  registration_realm: string | null
+  registration_identity: string | null
+  registration_observation: ExternalTrunkRegistrationObservation | null
+  capabilities: string[]
+  desired_state: string
+  priority: number
+}
+
+export type ExternalTrunkCredentialReference = {
+  id: string
+  credential_type: string
+  identifier: string | null
+  version: number
+  status: string
+  rotated_at: string
+  expires_at: string | null
+}
+
+export type ExternalTrunkAddress = {
+  id: string
+  type: string
+  value: string
+  direction: string
+  desired_state: string
+}
+
+export type ExternalTrunk = {
+  id: string
+  tenant_id: string
+  name: string
+  slug: string
+  description: string | null
+  supported_directions: string[]
+  capabilities: string[]
+  desired_state: string
+  observed_health: string
+  observed_health_reason: string | null
+  configuration_version: number
+  ready: boolean
+  eligible_for_future_use: boolean
+  endpoints: ExternalTrunkEndpoint[]
+  credential_references: ExternalTrunkCredentialReference[]
+  addresses: ExternalTrunkAddress[]
+}
+
+export type TelephonyAddress = {
+  id: string
+  tenant_id: string
+  type: string
+  value: string
+  desired_state: string
+}
+
 export type RuntimeManagedOperation = {
   id: string
   status: RuntimeOperationStatus
@@ -1107,6 +1179,17 @@ export const identityApi = {
   },
   getAuditRecord: (auditRecordId: string) =>
     fetchJson<{ audit_record: AuditRecordDetail }>(`/api/v1/admin/audit-records/${auditRecordId}`),
+  externalTrunks: () => fetchJson<{ external_trunks: ExternalTrunk[] }>('/api/v1/admin/external-trunks'),
+  externalTrunk: (trunkId: string) => fetchJson<{ external_trunk: ExternalTrunk }>(`/api/v1/admin/external-trunks/${trunkId}`),
+  createExternalTrunk: (payload: Record<string, unknown>) => postJson<{ external_trunk: ExternalTrunk }>('/api/v1/admin/external-trunks', payload, [201]),
+  setExternalTrunkState: (trunkId: string, desiredState: string) => postJson<{ external_trunk: ExternalTrunk }>(`/api/v1/admin/external-trunks/${trunkId}/desired-state`, { desired_state: desiredState }),
+  createExternalTrunkEndpoint: (trunkId: string, payload: Record<string, unknown>) => postJson<{ endpoint: ExternalTrunkEndpoint }>(`/api/v1/admin/external-trunks/${trunkId}/endpoints`, payload, [201]),
+  setExternalTrunkEndpointState: (trunkId: string, endpointId: string, desiredState: string) => postJson<{ endpoint: ExternalTrunkEndpoint }>(`/api/v1/admin/external-trunks/${trunkId}/endpoints/${endpointId}/desired-state`, { desired_state: desiredState }),
+  createExternalTrunkCredential: (trunkId: string, payload: Record<string, unknown>) => postJson<{ credential_reference: ExternalTrunkCredentialReference }>(`/api/v1/admin/external-trunks/${trunkId}/credentials`, payload, [201]),
+  attachExternalTrunkAddress: (trunkId: string, payload: Record<string, unknown>) => postJson<{ external_trunk: ExternalTrunk }>(`/api/v1/admin/external-trunks/${trunkId}/addresses`, payload, [201]),
+  telephonyAddresses: () => fetchJson<{ telephony_addresses: TelephonyAddress[] }>('/api/v1/admin/telephony-addresses'),
+  createTelephonyAddress: (payload: Record<string, unknown>) => postJson<{ telephony_address: TelephonyAddress }>('/api/v1/admin/telephony-addresses', payload, [201]),
+  setTelephonyAddressState: (addressId: string, desiredState: string) => postJson<{ telephony_address: TelephonyAddress }>(`/api/v1/admin/telephony-addresses/${addressId}/desired-state`, { desired_state: desiredState }),
   conferences: () => fetchJson<{ conferences: Conference[] }>('/api/v1/admin/conferences'),
   conference: (conferenceId: string) => fetchJson<{ conference: Conference }>(`/api/v1/admin/conferences/${conferenceId}`),
   conferenceParticipants: (conferenceId: string) =>

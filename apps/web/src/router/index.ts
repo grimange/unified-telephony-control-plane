@@ -12,6 +12,9 @@ import ChangePasswordView from '../views/ChangePasswordView.vue'
 import CallConsoleView from '../views/CallConsoleView.vue'
 import ConferenceOperationsView from '../views/ConferenceOperationsView.vue'
 import DashboardView from '../views/DashboardView.vue'
+import ExternalTrunkDetailView from '../views/ExternalTrunkDetailView.vue'
+import ExternalTrunksView from '../views/ExternalTrunksView.vue'
+import TelephonyAddressesView from '../views/TelephonyAddressesView.vue'
 import ForbiddenView from '../views/ForbiddenView.vue'
 import LoginView from '../views/LoginView.vue'
 import MembershipsView from '../views/MembershipsView.vue'
@@ -46,6 +49,9 @@ export const routes = [
     meta: { requiresAuth: true },
     children: [
       { path: 'dashboard', name: 'dashboard', component: DashboardView, meta: { requiresAuth: true, title: 'Dashboard' } },
+      { path: 'external-connectivity/trunks', name: 'external-trunks', component: ExternalTrunksView, meta: { requiresAuth: true, title: 'External Trunks', capability: 'telephony.external_connectivity.view', requiresActiveTenant: true } },
+      { path: 'external-connectivity/trunks/:id', name: 'external-trunk-detail', component: ExternalTrunkDetailView, meta: { requiresAuth: true, title: 'External Trunk', capability: 'telephony.external_connectivity.view', requiresActiveTenant: true } },
+      { path: 'external-connectivity/addresses', name: 'external-addresses', component: TelephonyAddressesView, meta: { requiresAuth: true, title: 'Numbers & Addresses', capability: 'telephony.external_connectivity.view', requiresActiveTenant: true } },
       { path: 'dialer', name: 'reference-dialer', component: ReferenceDialerView, meta: { requiresAuth: true, title: 'Reference Telephony Client', capability: 'telephony.sessions.view_own', requiresActiveTenant: true } },
       { path: 'calls', name: 'calls', component: CallConsoleView, meta: { requiresAuth: true, title: 'Calls', capability: 'telephony.calls.view', requiresActiveTenant: true } },
       { path: 'admin/tenants', name: 'admin-tenants', component: TenantsView, meta: { requiresAuth: true, title: 'Tenants', capability: 'platform.tenants.view' } },

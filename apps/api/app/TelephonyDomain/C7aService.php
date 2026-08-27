@@ -520,7 +520,15 @@ return $value;
 
     private function serializeEndpoint(object $row): array
     {
-        return ['id' => $row->id, 'external_trunk_id' => $row->external_trunk_id, 'endpoint_uri' => $row->endpoint_uri, 'signaling_mode' => $row->signaling_mode ?? 'static', 'transport' => $row->transport, 'authentication_mode' => $row->authentication_mode, 'credential_reference_id' => $row->credential_reference_id, 'registration_target' => $row->registration_target ?? null, 'registration_realm' => $row->registration_realm ?? null, 'registration_identity' => $row->registration_identity ?? null, 'capabilities' => $this->decode($row->capabilities), 'desired_state' => $row->desired_state, 'priority' => (int) $row->priority];
+        $observation = null;
+        if (($row->signaling_mode ?? 'static') === 'outbound_registration') {
+            $observation = DB::table('external_trunk_registration_observations')
+                ->where('tenant_id', $row->tenant_id)
+                ->where('trunk_endpoint_id', $row->id)
+                ->first();
+        }
+
+        return ['id' => $row->id, 'external_trunk_id' => $row->external_trunk_id, 'endpoint_uri' => $row->endpoint_uri, 'signaling_mode' => $row->signaling_mode ?? 'static', 'transport' => $row->transport, 'authentication_mode' => $row->authentication_mode, 'credential_reference_id' => $row->credential_reference_id, 'registration_target' => $row->registration_target ?? null, 'registration_realm' => $row->registration_realm ?? null, 'registration_identity' => $row->registration_identity ?? null, 'registration_observation' => $observation === null ? null : ['state' => $observation->state, 'failure_category' => $observation->failure_category, 'last_attempt_at' => $observation->last_attempt_at, 'last_success_at' => $observation->last_success_at, 'expires_at' => $observation->expires_at, 'observed_at' => $observation->updated_at, 'observation_version' => (int) $observation->observation_version], 'capabilities' => $this->decode($row->capabilities), 'desired_state' => $row->desired_state, 'priority' => (int) $row->priority];
     }
 
     /** @param array<string, mixed> $input */

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { createMemoryHistory } from 'vue-router'
 import App from './App.vue'
-import type { IdentitySession, RuntimeManagementCatalog } from './api/platform'
+import type { ExternalTrunk, IdentitySession, RuntimeManagementCatalog, TelephonyAddress } from './api/platform'
 import {
   buildRuntimeNodeEchoOptions,
   disconnectRuntimeNodeRealtime,
@@ -152,6 +152,8 @@ const session = {
     'runtime.credentials.rotate',
     'telephony.conferences.view',
     'telephony.conferences.participants.manage',
+    'telephony.external_connectivity.view',
+    'telephony.external_connectivity.manage',
   ],
   catalog_version: 'c2.test',
   expires_at: '2026-07-14T10:00:00Z',
@@ -880,7 +882,12 @@ function mockUserAdminFetch(calls: Array<{ url: string; body?: unknown }>): void
   })
 }
 
-function mockPrimaryRouteFetch(calls: Array<{ url: string; body?: unknown }>, activeSession: IdentitySession = session): void {
+function mockPrimaryRouteFetch(
+  calls: Array<{ url: string; body?: unknown }>,
+  activeSession: IdentitySession = session,
+  externalTrunks: ExternalTrunk[] = [],
+  telephonyAddresses: TelephonyAddress[] = [],
+): void {
   vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString()
     calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
@@ -924,6 +931,8 @@ function mockPrimaryRouteFetch(calls: Array<{ url: string; body?: unknown }>, ac
     if (url.endsWith('/api/v1/admin/runtime-node-catalog')) return Promise.resolve(jsonResponse({ catalog: runtimeCatalog }))
     if (url.endsWith('/api/v1/admin/runtime-nodes')) return Promise.resolve(jsonResponse({ runtime_nodes: [runtimeNode] }))
     if (url.endsWith('/api/v1/admin/conferences')) return Promise.resolve(jsonResponse({ conferences: [conference] }))
+    if (url.endsWith('/api/v1/admin/external-trunks')) return Promise.resolve(jsonResponse({ external_trunks: externalTrunks }))
+    if (url.endsWith('/api/v1/admin/telephony-addresses')) return Promise.resolve(jsonResponse({ telephony_addresses: telephonyAddresses }))
     if (url.includes('/api/v1/admin/runtime-operations')) {
       return Promise.resolve(jsonResponse({
         runtime_operations: [runtimeOperation],
@@ -1184,18 +1193,22 @@ describe('C1 App shell', () => {
 
     expect(groups.map((group) => group.find('.side-nav__group-label').text())).toEqual([
       'Overview',
+      'External Connectivity',
       'Calls',
       'Telephony Infrastructure',
       'System',
     ])
     expect(groups.map((group) => group.findAll('a').map((link) => link.text()))).toEqual([
       ['Dashboard'],
+      ['External Trunks', 'Numbers & Addresses'],
       ['Conferences'],
       ['Telephony Nodes'],
       ['Tenants', 'Users', 'Memberships', 'Audit', 'Advanced operations', 'Runtime reconciliations'],
     ])
     expect(nav.findAll('a').map((link) => link.text())).toEqual([
       'Dashboard',
+      'External Trunks',
+      'Numbers & Addresses',
       'Conferences',
       'Telephony Nodes',
       'Tenants',
@@ -1216,6 +1229,7 @@ describe('C1 App shell', () => {
     expect(wrapper.find('#primary-navigation').classes()).toContain('open')
     expect(wrapper.find('nav[aria-label="Primary"]').findAll('.side-nav__group').map((group) => group.find('.side-nav__group-label').text())).toEqual([
       'Overview',
+      'External Connectivity',
       'Calls',
       'Telephony Infrastructure',
       'System',
@@ -1236,6 +1250,93 @@ describe('C1 App shell', () => {
     expect(referenceRoute.path).toBe('/dialer')
     expect(referenceRoute.meta.capability).toBe('telephony.sessions.view_own')
     expect(referenceRoute.meta.requiresActiveTenant).toBe(true)
+  })
+
+  it('renders the External Trunks empty state through the canonical tenant-scoped read', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    mockPrimaryRouteFetch(calls)
+
+    const wrapper = await mountApp('/external-connectivity/trunks')
+
+    expect(wrapper.find('h2').text()).toBe('External Trunks')
+    expect(wrapper.text()).toContain('No External Trunks configured')
+    expect(wrapper.text()).toContain('Add External Trunk')
+    expect(calls.some((call) => call.url.endsWith('/api/v1/admin/external-trunks'))).toBe(true)
+    await assertNoSeriousAxeViolations(wrapper.element)
+  })
+
+  it('renders safe registration observation status for a canonical trunk', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    const trunk: ExternalTrunk = {
+      id: 'trunk-1',
+      tenant_id: 'tenant-1',
+      name: 'Primary Provider',
+      slug: 'primary-provider',
+      description: 'Primary SIP provider',
+      supported_directions: ['inbound', 'outbound'],
+      capabilities: [],
+      desired_state: 'active',
+      observed_health: 'ready',
+      observed_health_reason: null,
+      configuration_version: 1,
+      ready: true,
+      eligible_for_future_use: true,
+      endpoints: [{
+        id: 'endpoint-1',
+        external_trunk_id: 'trunk-1',
+        endpoint_uri: 'sip:provider.example',
+        signaling_mode: 'outbound_registration',
+        transport: 'udp',
+        authentication_mode: 'credentials',
+        credential_reference_id: 'credential-1',
+        registration_target: 'provider.example',
+        registration_realm: 'provider.example',
+        registration_identity: 'utcp-v1',
+        capabilities: [],
+        desired_state: 'active',
+        priority: 10,
+        registration_observation: {
+          state: 'registered',
+          failure_category: null,
+          last_attempt_at: '2026-08-27T06:00:00Z',
+          last_success_at: '2026-08-27T06:01:00Z',
+          expires_at: '2026-08-27T06:11:00Z',
+          observed_at: '2026-08-27T06:01:00Z',
+          observation_version: 2,
+        },
+      }],
+      credential_references: [],
+      addresses: [],
+    }
+    mockPrimaryRouteFetch(calls, session, [trunk])
+
+    const wrapper = await mountApp('/external-connectivity/trunks')
+
+    expect(wrapper.text()).toContain('Primary Provider')
+    expect(wrapper.text()).toContain('SIP Registration')
+    expect(wrapper.text()).toContain('Registered')
+    expect(wrapper.text()).not.toContain('Reference Telephony Client')
+    await assertNoSeriousAxeViolations(wrapper.element)
+  })
+
+  it('renders canonical Numbers & Addresses data without routing controls', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    const address: TelephonyAddress = {
+      id: 'address-1',
+      tenant_id: 'tenant-1',
+      type: 'e164',
+      value: '+15550100',
+      desired_state: 'active',
+    }
+    mockPrimaryRouteFetch(calls, session, [], [address])
+
+    const wrapper = await mountApp('/external-connectivity/addresses')
+
+    expect(wrapper.find('h2').text()).toBe('Numbers & Addresses')
+    expect(wrapper.text()).toContain('+15550100')
+    expect(wrapper.text()).toContain('active')
+    expect(wrapper.text()).not.toContain('Routes')
+    await assertNoSeriousAxeViolations(wrapper.element)
   })
 
   it('suppresses capability-empty navigation groups', async () => {

@@ -39,6 +39,44 @@ final class V1ARegistrationExternalTrunkTest extends TestCase
         $this->assertSame('outbound_registration', $endpoint['signaling_mode']);
     }
 
+    public function test_external_trunk_reads_expose_safe_registration_observation_for_registration_endpoints_only(): void
+    {
+        [$admin, $tenant] = $this->tenantAdmin('v1a-observation-read@utcp.local.test', 'v1a-observation-read');
+        $session = ['user_session_version' => 1, 'active_tenant_id' => $tenant];
+        $trunk = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/admin/external-trunks', ['name' => 'Observation read', 'slug' => 'observation-read'])->assertCreated()->json('external_trunk');
+        $credential = $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/external-trunks/{$trunk['id']}/credentials", ['credential_type' => 'sip', 'identifier' => 'safe-user', 'secret' => 'safe-secret'])->assertCreated()->json('credential_reference');
+        $registration = $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/external-trunks/{$trunk['id']}/endpoints", ['endpoint_uri' => 'sip:registrar.example.test', 'signaling_mode' => 'outbound_registration', 'authentication_mode' => 'credentials', 'credential_reference_id' => $credential['id'], 'registration_target' => 'sip:registrar.example.test', 'registration_realm' => 'example.test', 'registration_identity' => 'safe-user', 'priority' => 10])->assertCreated()->json('endpoint');
+        $static = $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/external-trunks/{$trunk['id']}/endpoints", ['endpoint_uri' => 'sip:static.example.test', 'priority' => 20])->assertCreated()->json('endpoint');
+
+        $this->assertNull($registration['registration_observation']);
+        $this->assertNull($static['registration_observation']);
+
+        DB::table('external_trunk_registration_observations')->insert([
+            'trunk_endpoint_id' => $registration['id'],
+            'tenant_id' => $tenant,
+            'external_trunk_id' => $trunk['id'],
+            'state' => 'registered',
+            'failure_category' => null,
+            'last_attempt_at' => '2026-08-27 10:00:00+00',
+            'last_success_at' => '2026-08-27 10:01:00+00',
+            'expires_at' => '2026-08-27 10:31:00+00',
+            'contact_fingerprint' => str_repeat('a', 64),
+            'observation_version' => 7,
+            'desired_generation' => 1,
+            'created_at' => now(),
+            'updated_at' => '2026-08-27 10:02:00+00',
+        ]);
+
+        $response = $this->actingAs($admin)->withSession($session)->getJson("/api/v1/admin/external-trunks/{$trunk['id']}")->assertOk();
+        $response->assertJsonPath('external_trunk.endpoints.0.registration_observation.state', 'registered');
+        $response->assertJsonPath('external_trunk.endpoints.0.registration_observation.observation_version', 7);
+        $response->assertJsonPath('external_trunk.endpoints.0.registration_observation.last_success_at', '2026-08-27 10:01:00+00');
+        $response->assertJsonPath('external_trunk.endpoints.0.registration_observation.expires_at', '2026-08-27 10:31:00+00');
+        $response->assertJsonPath('external_trunk.endpoints.0.registration_observation.observed_at', '2026-08-27 10:02:00+00');
+        $response->assertJsonMissing(['contact_fingerprint' => str_repeat('a', 64)]);
+        $response->assertJsonMissing(['secret' => 'safe-secret']);
+    }
+
     public function test_t6_registration_projection_contains_intent_and_ha1_only(): void
     {
         [$admin, $tenant] = $this->tenantAdmin('v1a-projection@utcp.local.test', 'v1a-projection');

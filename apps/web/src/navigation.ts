@@ -31,6 +31,8 @@ export function hasCapability(session: IdentitySession | null, capability: strin
 
 export const navigationEntries: NavigationEntry[] = [
   { route: '/dashboard', label: 'Dashboard', group: 'overview', exact: true },
+  { route: '/external-connectivity/trunks', label: 'External Trunks', group: 'external-connectivity', exact: true, requiredCapability: 'telephony.external_connectivity.view', requiresActiveTenant: true },
+  { route: '/external-connectivity/addresses', label: 'Numbers & Addresses', group: 'external-connectivity', exact: true, requiredCapability: 'telephony.external_connectivity.view', requiresActiveTenant: true },
   { route: '/calls', label: 'Calls', group: 'calls', exact: true, requiredCapability: 'telephony.calls.view', requiresActiveTenant: true },
   { route: '/operations/conferences', label: 'Conferences', group: 'calls', exact: true, requiredCapability: 'telephony.conferences.view' },
   { route: '/admin/runtime-nodes', label: 'Telephony Nodes', group: 'telephony-infrastructure', exact: true, requiredCapability: 'runtime.nodes.view' },
