@@ -4,7 +4,13 @@
     :label="label"
   >
     <template #actions>
-      <strong v-if="state.status === 'success'">{{ state.countLabel }}</strong>
+      <div class="dashboard-card__status">
+        <strong v-if="state.status === 'success'">{{ state.countLabel }}</strong>
+        <UiStatusBadge
+          :label="statusLabel"
+          :category="statusCategory"
+        />
+      </div>
     </template>
     <UiLoadingState
       v-if="state.status === 'loading'"
@@ -44,10 +50,12 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import UiAlert from '../ui/UiAlert.vue'
 import UiEmptyState from '../ui/UiEmptyState.vue'
 import UiLoadingState from '../ui/UiLoadingState.vue'
 import UiPanel from '../ui/UiPanel.vue'
+import UiStatusBadge from '../ui/UiStatusBadge.vue'
 
 export type DashboardCardState =
   | { status: 'loading' }
@@ -56,9 +64,25 @@ export type DashboardCardState =
   | { status: 'failure'; message: string }
   | { status: 'success'; countLabel: string; emptyText: string; items: string[] }
 
-defineProps<{
+const props = defineProps<{
   title: string
   label: string
   state: DashboardCardState
 }>()
+
+const statusLabel = computed(() => ({
+  loading: 'Loading',
+  success: 'Available',
+  empty: 'Not configured',
+  unauthorized: 'Restricted',
+  failure: 'Unavailable',
+}[props.state.status]))
+
+const statusCategory = computed(() => ({
+  loading: 'information',
+  success: 'success',
+  empty: 'neutral',
+  unauthorized: 'neutral',
+  failure: 'danger',
+}[props.state.status] as 'neutral' | 'success' | 'danger' | 'information'))
 </script>

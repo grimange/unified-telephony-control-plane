@@ -527,6 +527,70 @@ h3 {
   gap: var(--space-4);
 }
 
+.dashboard-grid--status {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dashboard-context {
+  background: var(--color-surface);
+}
+
+.dashboard-context__details {
+  max-width: 760px;
+}
+
+.dashboard-section {
+  display: grid;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.dashboard-section__heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.dashboard-section__heading p,
+.dashboard-section__heading h3 {
+  margin: 0;
+}
+
+.dashboard-status-card {
+  min-height: 190px;
+}
+
+.dashboard-status-card__summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.dashboard-status-card__summary strong {
+  color: var(--color-primary);
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.dashboard-status-card__summary span {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+}
+
+.dashboard-status-card a {
+  width: fit-content;
+  color: var(--color-primary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.dashboard-card__status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 .dashboard-card,
 .ui-panel,
 .detail-section {
@@ -882,8 +946,14 @@ code {
 
   .status-grid,
   .shell-grid,
-  .dashboard-grid {
+  .dashboard-grid,
+  .dashboard-grid--status {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-section__heading {
+    align-items: start;
+    flex-direction: column;
   }
 
   .topbar,

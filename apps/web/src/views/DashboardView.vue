@@ -6,10 +6,10 @@
     <div class="section-heading">
       <div>
         <h2 id="dashboard-title">
-          Dashboard
+          Overview
         </h2>
         <p class="meta">
-          Review current control-plane state and move into management, runtime, reconciliation, and audit workflows.
+          Review the current operational observations available to your account and move into the right management workflow.
         </p>
       </div>
       <UiButton
@@ -23,44 +23,105 @@
       </UiButton>
     </div>
 
-    <div class="dashboard-grid">
-      <UiPanel
-        id="identity-card-title"
-        label="Identity"
-        :title="session?.user.display_name ?? 'Current user'"
-      >
-        <dl class="definition-grid">
-          <dt>Email</dt>
-          <dd>{{ session?.user.email }}</dd>
-          <dt>Status</dt>
-          <dd>{{ session?.user.status }}</dd>
-          <dt>Tenant</dt>
-          <dd>{{ session?.active_tenant?.display_name ?? 'No tenant selected' }}</dd>
-          <dt>Tenant selection</dt>
-          <dd>{{ session?.active_tenant ? 'Selected' : 'Required for tenant-scoped operations' }}</dd>
-          <dt>Session expires</dt>
-          <dd>{{ session?.expires_at }}</dd>
-        </dl>
-      </UiPanel>
+    <UiPanel
+      class="dashboard-context"
+      label="Current scope"
+      title="Context"
+      description="The tenant and operator context applied to this overview."
+    >
+      <dl class="definition-grid dashboard-context__details">
+        <dt>Active tenant</dt>
+        <dd>{{ session?.active_tenant?.display_name ?? 'No tenant selected' }}</dd>
+        <dt>Operator</dt>
+        <dd>{{ session?.user.display_name }} · {{ session?.user.email }}</dd>
+        <dt>Session</dt>
+        <dd>
+          <UiStatusBadge
+            label="Active"
+            category="success"
+          />
+        </dd>
+        <template v-if="session?.catalog_version">
+          <dt>Catalog</dt>
+          <dd>{{ session.catalog_version }}</dd>
+        </template>
+      </dl>
+    </UiPanel>
 
-      <DashboardSummaryCard
+    <section
+      class="dashboard-section"
+      aria-labelledby="operational-status-title"
+    >
+      <div class="dashboard-section__heading">
+        <div>
+          <p class="panel-label">
+            Operational status
+          </p>
+          <h3 id="operational-status-title">
+            Available service observations
+          </h3>
+        </div>
+        <p class="meta">
+          Status is limited to the authorized summaries returned for this tenant.
+        </p>
+      </div>
+    </section>
+
+    <div class="dashboard-grid dashboard-grid--status">
+      <UiPanel
         v-if="can('runtime.nodes.view')"
+        class="dashboard-status-card"
+        label="Telephony infrastructure"
         title="Telephony Nodes"
-        label="Operations"
-        :state="runtimeCard"
-      />
+        description="Engines available for runtime-backed telephony operations."
+      >
+        <template v-if="runtimeCard.status === 'loading'">
+          <UiLoadingState />
+        </template>
+        <template v-else-if="runtimeCard.status === 'empty'">
+          <UiEmptyState
+            title="No Telephony Nodes configured"
+            message="Calls requiring a runtime cannot execute until a Telephony Node is available."
+          />
+          <RouterLink to="/admin/runtime-nodes">
+            Manage Telephony Nodes
+          </RouterLink>
+        </template>
+        <template v-else-if="runtimeCard.status === 'failure'">
+          <UiAlert
+            variant="error"
+            title="Telephony Node summary unavailable"
+          >
+            {{ runtimeCard.message }}
+          </UiAlert>
+        </template>
+        <template v-else-if="runtimeCard.status === 'success'">
+          <div class="dashboard-status-card__summary">
+            <strong>{{ runtimeCard.countLabel }}</strong>
+            <span>configured node{{ runtimeCard.countLabel === '1' ? '' : 's' }}</span>
+          </div>
+          <ul>
+            <li
+              v-for="item in runtimeCard.items"
+              :key="item"
+            >
+              {{ item }}
+            </li>
+          </ul>
+        </template>
+      </UiPanel>
 
       <DashboardSummaryCard
         v-if="canViewUsers"
         title="Users and telephony sessions"
-        label="Management"
+        label="Access and activity"
         :state="usersCard"
       />
 
       <DashboardSummaryCard
         v-if="can('tenant.memberships.view')"
         title="Memberships"
-        label="Tenant access"
+        label="Access administration"
         :state="membershipsCard"
       />
 
@@ -83,14 +144,14 @@
         <UiEmptyState
           v-else
           title="No attention items"
-          message="No degraded or unavailable state was returned by authorized summary requests."
+          message="No current operational issues were returned by the services available to your account."
         />
       </UiPanel>
 
       <UiPanel
         id="quick-links-title"
-        label="Quick navigation"
-        title="Available management"
+        label="Operations"
+        title="Available tools"
       >
         <div class="quick-links">
           <RouterLink
@@ -111,10 +172,12 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { identityApi, type AdminUser, type RuntimeNode } from '../api/platform'
 import DashboardSummaryCard, { type DashboardCardState } from '../components/dashboard/DashboardSummaryCard.vue'
+import UiAlert from '../components/ui/UiAlert.vue'
 import UiButton from '../components/ui/UiButton.vue'
 import UiEmptyState from '../components/ui/UiEmptyState.vue'
 import UiLoadingState from '../components/ui/UiLoadingState.vue'
 import UiPanel from '../components/ui/UiPanel.vue'
+import UiStatusBadge from '../components/ui/UiStatusBadge.vue'
 import {
   apiErrorMessage,
   can,
@@ -135,13 +198,17 @@ const loadingSections = ref(0)
 const attentionItems = computed(() => [...runtimeAttention.value, ...userAttention.value, ...membershipAttention.value])
 const attentionLoading = computed(() => loadingSections.value > 0)
 
+function formatState(state: string): string {
+  return state.replaceAll('_', ' ')
+}
+
 function runtimeAttentionFor(node: RuntimeNode): string[] {
   const items: string[] = []
   if (['degraded', 'failed', 'unavailable'].includes(node.observed_state)) {
-    items.push(`${node.name}: observed ${node.observed_state}`)
+    items.push(`${node.name} is ${formatState(node.observed_state)}`)
   }
   if (['recovering', 'failed'].includes(node.desired_state)) {
-    items.push(`${node.name}: desired ${node.desired_state}`)
+    items.push(`${node.name} requires attention (desired ${formatState(node.desired_state)})`)
   }
 
   return items
@@ -150,11 +217,11 @@ function runtimeAttentionFor(node: RuntimeNode): string[] {
 function userAttentionFor(user: AdminUser): string[] {
   const items: string[] = []
   if (user.active_telephony_session && user.active_telephony_session.status !== 'active') {
-    items.push(`${user.display_name}: telephony session ${user.active_telephony_session.status}`)
+    items.push(`${user.display_name} has a ${formatState(user.active_telephony_session.status)} telephony session`)
   }
   const registration = user.signaling_registration_summary
   if (registration?.pending_removal || ['failed', 'unavailable', 'expired'].includes(registration?.observed_state ?? '')) {
-    items.push(`${user.display_name}: signaling ${registration?.desired_state ?? 'unavailable'} / ${registration?.observed_state ?? 'unavailable'}`)
+    items.push(`${user.display_name}: signaling requires attention (${formatState(registration?.observed_state ?? 'unavailable')}; desired ${formatState(registration?.desired_state ?? 'unavailable')})`)
   }
 
   return items
@@ -180,7 +247,7 @@ async function loadRuntimeSummary(): Promise<void> {
         status: 'success',
         countLabel: String(response.runtime_nodes.length),
         emptyText: 'No telephony nodes were returned.',
-        items: response.runtime_nodes.slice(0, 4).map((node) => `${node.name}: desired ${node.desired_state}, observed ${node.observed_state}`),
+        items: response.runtime_nodes.slice(0, 4).map((node) => `${node.name}: ${formatState(node.observed_state)} (desired ${formatState(node.desired_state)})`),
       }
     }
   } catch (errorValue) {

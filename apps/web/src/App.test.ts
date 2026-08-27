@@ -3053,7 +3053,11 @@ describe('C1 App shell', () => {
 
     const rootWrapper = await mountApp('/')
     expect(router.currentRoute.value.path).toBe('/dashboard')
-    expect(rootWrapper.text()).toContain('Dashboard')
+    expect(rootWrapper.text()).toContain('Overview')
+    expect(rootWrapper.text()).toContain('No Telephony Nodes configured')
+    expect(rootWrapper.text()).toContain('Manage Telephony Nodes')
+    expect(rootWrapper.text()).toContain('No current operational issues were returned by the services available to your account.')
+    expect(rootWrapper.text()).not.toContain('Everything is healthy')
 
     const loginWrapper = await mountApp('/login')
     expect(router.currentRoute.value.path).toBe('/dashboard')
@@ -3094,10 +3098,31 @@ describe('C1 App shell', () => {
     const wrapper = await mountApp('/dashboard')
 
     expect(wrapper.text()).toContain('Dashboard')
-    expect(wrapper.text()).toContain('Available management')
+    expect(wrapper.text()).toContain('Available tools')
     expect(wrapper.text()).not.toContain('Tenants')
     expect(wrapper.text()).not.toContain('Runtime nodes')
+    expect(wrapper.text()).not.toContain('Reference Telephony Client')
+    expect(wrapper.find('a[href="/admin/runtime-nodes"]').exists()).toBe(false)
     expect(calls.every((call) => !String(call.body ?? '').includes('role'))).toBe(true)
+  })
+
+  it('turns degraded Telephony Node observations into operator-facing attention items', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
+      const url = input.toString()
+      if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(session))
+      if (url.endsWith('/api/v1/admin/runtime-nodes')) {
+        return Promise.resolve(jsonResponse({ runtime_nodes: [{ ...runtimeNode, observed_state: 'degraded', desired_state: 'ready' }] }))
+      }
+      if (url.includes('/api/v1/admin/users')) return Promise.resolve(jsonResponse({ users: [], pagination: { page: 1, per_page: 5, total: 0, has_more: false } }))
+      if (url.endsWith('/api/v1/admin/memberships')) return Promise.resolve(jsonResponse({ memberships: [] }))
+
+      return Promise.resolve(jsonResponse({ message: 'not found' }, 404))
+    })
+
+    const wrapper = await mountApp('/dashboard')
+
+    expect(wrapper.text()).toContain('Proof Runtime is degraded')
+    expect(wrapper.text()).not.toContain('observed degraded')
   })
 
   it('renders the local theme control for a limited user without API persistence', async () => {
@@ -3505,10 +3530,10 @@ describe('C1 App shell', () => {
   it('codifies UI-E12 route-purpose descriptions without replacing the section-heading hook', () => {
     const primaryRouteSources = [
       {
-        routeName: 'Dashboard',
+        routeName: 'Overview',
         source: dashboardViewSource,
-        h2: 'Dashboard',
-        description: 'Review current control-plane state and move into management, runtime, reconciliation, and audit workflows.',
+        h2: 'Overview',
+        description: 'Review the current operational observations available to your account and move into the right management workflow.',
       },
       {
         routeName: 'Users',
