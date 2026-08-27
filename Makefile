@@ -375,6 +375,9 @@ gateway-apply: ## Apply the K2 Traefik and Gateway API lifecycle.
 gateway-status: ## Report K2 Traefik, Gateway API, route, TLS, and edge status.
 	@./scripts/gateway/status
 
+gateway-proof-test: ## Test canonical UTCP runtime workload inventory classification.
+	@./scripts/gateway/workload-inventory-test
+
 gateway-proof: ## Prove K2 external HTTP/HTTPS Gateway behavior.
 	@./scripts/gateway/proof
 

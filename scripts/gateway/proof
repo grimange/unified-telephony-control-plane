@@ -74,9 +74,11 @@ if kube get service -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.met
   exit 1
 fi
 
-runtime_workloads="$(kube -n utcp-runtime get pods,deployments,statefulsets,daemonsets,jobs,cronjobs --ignore-not-found --no-headers 2>/dev/null || true)"
-unexpected_runtime_workloads="$(printf '%s\n' "$runtime_workloads" | awk 'NF > 0 && $1 !~ /^(pod|deployment\.apps)\/asterisk-ari(-|$)/ { print }')"
-if [ -n "$unexpected_runtime_workloads" ]; then
+if ! runtime_workloads="$(kube -n utcp-runtime get pods,deployments,statefulsets,daemonsets,jobs,cronjobs --ignore-not-found -o json 2>/dev/null)"; then
+  printf 'unable to inspect utcp-runtime workload inventory\n' >&2
+  exit 1
+fi
+if ! unexpected_runtime_workloads="$(printf '%s\n' "$runtime_workloads" | python3 "$SCRIPT_DIR/workload-inventory.py")"; then
   printf 'utcp-runtime contains unexpected workload resources\n' >&2
   printf '%s\n' "$unexpected_runtime_workloads" >&2
   exit 1

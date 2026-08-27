@@ -65,7 +65,7 @@ export HELM_DATA_HOME="${HELM_DATA_HOME:-$ROOT/.runtime/helm/data}"
 
 required_tools() {
   local missing=0
-  for tool in kubectl curl awk grep sed openssl helm; do
+  for tool in kubectl curl awk grep sed openssl helm python3; do
     if ! command -v "$tool" >/dev/null 2>&1; then
       printf 'missing required K2 tool: %s\n' "$tool" >&2
       missing=1

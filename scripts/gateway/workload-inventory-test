@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+CLASSIFIER="$ROOT/scripts/gateway/workload-inventory.py"
+
+valid_resource() {
+  local kind="$1" name="$2" component="$3" node="$4" role="$5"
+  python3 - "$kind" "$name" "$component" "$node" "$role" <<'PY'
+import json
+import sys
+
+kind, name, component, node, role = sys.argv[1:]
+print(json.dumps({
+    "apiVersion": "apps/v1" if kind == "Deployment" else "v1",
+    "kind": kind,
+    "metadata": {"name": name, "labels": {
+        "app.kubernetes.io/part-of": "utcp",
+        "app.kubernetes.io/component": component,
+        "utcp.dev/runtime-node": node,
+        **({"utcp.io/network-role": role} if kind == "Pod" else {}),
+    }},
+}))
+PY
+}
+
+positive_fixture="$(mktemp)"
+negative_fixture="$(mktemp)"
+trap 'rm -f "$positive_fixture" "$negative_fixture"' EXIT
+
+{
+  printf '{"items":['
+  valid_resource Deployment asterisk-ari asterisk-ari local-asterisk-ari ignored
+  printf ','
+  valid_resource Pod asterisk-ari-7d9f asterisk-ari local-asterisk-ari asterisk-ari
+  printf ','
+  valid_resource Deployment asterisk-v1-managed-abc123 asterisk-ari managed-asterisk-abc123 ignored
+  printf ','
+  valid_resource Pod asterisk-v1-managed-abc123-xyz asterisk-ari managed-asterisk-abc123 asterisk-ari
+  printf ','
+  valid_resource Deployment freeswitch-runtime-q7x9 freeswitch-esl managed-freeswitch-q7x9 ignored
+  printf ','
+  valid_resource Pod freeswitch-runtime-q7x9-pod freeswitch-esl managed-freeswitch-q7x9 freeswitch-esl
+  printf ']}'
+} >"$positive_fixture"
+python3 "$CLASSIFIER" <"$positive_fixture" >/dev/null
+
+for invalid in \
+  '{"kind":"Deployment","metadata":{"name":"random","labels":{}}}' \
+  '{"kind":"Pod","metadata":{"name":"random-pod","labels":{"app.kubernetes.io/part-of":"utcp","app.kubernetes.io/component":"asterisk-ari"}}}' \
+  '{"kind":"Deployment","metadata":{"name":"missing-node","labels":{"app.kubernetes.io/part-of":"utcp","app.kubernetes.io/component":"asterisk-ari"}}}' \
+  '{"kind":"Deployment","metadata":{"name":"unknown-component","labels":{"app.kubernetes.io/part-of":"utcp","app.kubernetes.io/component":"unknown","utcp.dev/runtime-node":"node-1"}}}' \
+  '{"kind":"StatefulSet","metadata":{"name":"unexpected-statefulset","labels":{"app.kubernetes.io/part-of":"utcp","app.kubernetes.io/component":"asterisk-ari","utcp.dev/runtime-node":"node-1"}}}' \
+  '{"kind":"Job","metadata":{"name":"unexpected-job","labels":{"app.kubernetes.io/part-of":"utcp","app.kubernetes.io/component":"asterisk-ari","utcp.dev/runtime-node":"node-1"}}}' \
+  '{"kind":"Pod","metadata":{"name":"wrong-role","labels":{"app.kubernetes.io/part-of":"utcp","app.kubernetes.io/component":"freeswitch-esl","utcp.dev/runtime-node":"node-1","utcp.io/network-role":"asterisk-ari"}}}'; do
+  printf '{"items":[%s]}\n' "$invalid" >"$negative_fixture"
+  if python3 "$CLASSIFIER" <"$negative_fixture" >/dev/null; then
+    printf 'invalid workload fixture was accepted: %s\n' "$invalid" >&2
+    exit 1
+  fi
+done
+
+printf 'gateway runtime workload inventory regression tests passed\n'
