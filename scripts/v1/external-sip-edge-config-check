@@ -70,6 +70,14 @@ if any(doc.get("kind") == "NetworkPolicy" and "0.0.0.0/0" in str(doc) for doc in
 kamailio = next(doc for doc in platform if doc.get("metadata", {}).get("name") == "kamailio-config")
 if "5060" not in str(kamailio) and "5060" not in str(platform):
     fail("native SIP Kamailio listener configuration is missing")
+
+probe_log = next((line for line in "".join((kamailio.get("data") or {}).values()).splitlines()
+                  if "kamailio_synthetic_request_received" in line), None)
+if probe_log is None:
+    fail("external probe request logging is missing")
+for token in ("method=$rm", "ruri=$ru", "call_id=$ci", "source_ip=$si", "receive_port=$Rp"):
+    if token not in probe_log:
+        fail(f"external probe request logging must expose {token}")
 PY
 
 grep -Fq 'port: 0.0.0.0:5060:30560/udp' infrastructure/k3d/cluster.yaml || fail 'k3d must publish only the approved UDP/5060 edge'

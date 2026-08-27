@@ -95,7 +95,7 @@ data:
     modparam("rtpengine", "rtpengine_sock", "udp:rtpengine.utcp-platform.svc.cluster.local:2223")
 
     request_route {
-        xlog("L_INFO", "kamailio_synthetic_request_received method=$rm ruri=$ru call_id=$ci\n");
+        xlog("L_INFO", "kamailio_synthetic_request_received method=$rm ruri=$ru call_id=$ci source_ip=$si receive_port=$Rp\n");
         if (!mf_process_maxfwd_header("10")) {
             sl_send_reply("483", "Too Many Hops");
             exit;
