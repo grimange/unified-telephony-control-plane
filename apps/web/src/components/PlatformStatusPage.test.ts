@@ -30,12 +30,13 @@ function client(overrides: Partial<PlatformApiClient> = {}): PlatformApiClient {
 }
 
 describe('PlatformStatusPage', () => {
-  it('renders the application title', () => {
+  it('renders the operator system status surface', () => {
     const wrapper = mount(PlatformStatusPage, {
       props: { client: client() },
     })
 
-    expect(wrapper.text()).toContain('Unified Telephony Control Plane')
+    expect(wrapper.text()).toContain('System status')
+    expect(wrapper.text()).toContain('Health semantics')
   })
 
   it('renders the loading state', () => {
@@ -44,7 +45,8 @@ describe('PlatformStatusPage', () => {
     })
 
     expect(wrapper.text()).toContain('Loading')
-    expect(wrapper.text()).toContain('checking')
+    expect(wrapper.text()).toContain('Checking API liveness')
+    expect(wrapper.text()).toContain('Checking API readiness')
   })
 
   it('renders a healthy API state', async () => {
@@ -54,7 +56,8 @@ describe('PlatformStatusPage', () => {
 
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Healthy')
+    expect(wrapper.text()).toContain('API live')
+    expect(wrapper.text()).toContain('API ready')
     expect(wrapper.text()).toContain('ready')
     expect(wrapper.text()).toContain('postgres')
     expect(wrapper.text()).toContain('ok')
@@ -71,7 +74,7 @@ describe('PlatformStatusPage', () => {
 
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Degraded')
+    expect(wrapper.text()).toContain('API not ready')
     expect(wrapper.text()).toContain('not_ready')
     expect(wrapper.text()).toContain('unavailable')
   })
@@ -87,8 +90,8 @@ describe('PlatformStatusPage', () => {
 
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Unreachable')
-    expect(wrapper.text()).toContain('unreachable')
+    expect(wrapper.text()).toContain('Liveness unavailable')
+    expect(wrapper.text()).toContain('canonical liveness endpoint could not be read')
   })
 
   it('renders backend version metadata', async () => {
@@ -114,7 +117,45 @@ describe('PlatformStatusPage', () => {
 
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Unreachable')
+    expect(wrapper.text()).toContain('Version unavailable')
     expect(wrapper.text()).not.toContain('stack trace should not render')
+  })
+
+  it('keeps successful health facts visible when another read fails', async () => {
+    const wrapper = mount(PlatformStatusPage, {
+      props: {
+        client: client({
+          getReadiness: () => Promise.reject(new Error('readiness unavailable')),
+        }),
+      },
+    })
+
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('API live')
+    expect(wrapper.text()).toContain('Version')
+    expect(wrapper.text()).toContain('Readiness unavailable')
+  })
+
+  it('refreshes canonical reads without exposing mutation controls', async () => {
+    const calls = { live: 0, ready: 0, version: 0 }
+    const wrapper = mount(PlatformStatusPage, {
+      props: {
+        client: client({
+          getLiveness: () => { calls.live += 1; return Promise.resolve(live) },
+          getReadiness: () => { calls.ready += 1; return Promise.resolve(ready('ready')) },
+          getVersion: () => { calls.version += 1; return Promise.resolve(version) },
+        }),
+      },
+    })
+
+    await flushPromises()
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+
+    expect(calls).toEqual({ live: 2, ready: 2, version: 2 })
+    expect(wrapper.text()).not.toContain('Repair')
+    expect(wrapper.text()).not.toContain('Reconcile now')
+    expect(wrapper.text()).not.toContain('Restart')
   })
 })

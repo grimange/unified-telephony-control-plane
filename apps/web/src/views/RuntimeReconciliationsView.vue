@@ -6,7 +6,7 @@
     <div class="section-heading">
       <div>
         <h2 id="runtime-reconciliations-title">
-          Runtime reconciliations
+          Reconciliations
         </h2>
         <p class="meta">
           Compare desired state with observed state and review reconciliation outcomes.

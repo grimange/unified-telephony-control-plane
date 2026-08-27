@@ -49,8 +49,9 @@ export const navigationEntries: NavigationEntry[] = [
   },
   { route: '/admin/memberships', label: 'Memberships', group: 'system', exact: true, requiredCapability: 'tenant.memberships.view' },
   { route: '/admin/audit-records', label: 'Audit', group: 'system', exact: true, requiredCapability: 'tenant.memberships.manage', requiresActiveTenant: true },
-  { route: '/operations/runtime-operations', label: 'Advanced operations', group: 'system', exact: true, requiredCapability: 'runtime.nodes.view' },
-  { route: '/operations/runtime-reconciliations', label: 'Runtime reconciliations', group: 'system', exact: true, requiredCapability: 'runtime.nodes.view' },
+  { route: '/operations/runtime-operations', label: 'Runtime operations', group: 'system', exact: true, requiredCapability: 'runtime.nodes.view' },
+  { route: '/operations/runtime-reconciliations', label: 'Reconciliations', group: 'system', exact: true, requiredCapability: 'runtime.nodes.view' },
+  { route: '/system/status', label: 'System status', group: 'system', exact: true },
 ]
 
 export function visibleNavigationEntries(session: IdentitySession | null): NavigationEntry[] {

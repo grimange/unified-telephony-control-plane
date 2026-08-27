@@ -895,6 +895,9 @@ function mockPrimaryRouteFetch(
     calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : undefined })
     if (url.endsWith('/api/v1/auth/session')) return Promise.resolve(jsonResponse(activeSession))
     if (url.endsWith('/api/v1/auth/csrf')) return Promise.resolve(jsonResponse({ csrf_token: 'csrf' }))
+    if (url.endsWith('/api/health/live')) return Promise.resolve(jsonResponse({ status: 'ok', service: 'utcp-api' }))
+    if (url.endsWith('/api/health/ready')) return Promise.resolve(jsonResponse({ status: 'ready', service: 'utcp-api', dependencies: {} }))
+    if (url.endsWith('/api/version')) return Promise.resolve(jsonResponse({ service: 'utcp-api', version: 'test', commit: 'test', built_at: 'test' }))
     if (url.endsWith('/api/v1/admin/tenants')) {
       return Promise.resolve(jsonResponse({
         tenants: [{ id: 'tenant-1', slug: 'local', display_name: 'Local Tenant', status: 'active' }],
@@ -1151,8 +1154,9 @@ describe('C1 App shell', () => {
     ['/admin/runtime-nodes', 'Proof Runtime'],
     ['/operations/conferences', 'Daily Ops'],
     ['/operations/runtime-operations', 'runtime.node.inspect'],
-    ['/operations/runtime-reconciliations', 'Runtime reconciliations'],
+    ['/operations/runtime-reconciliations', 'Reconciliations'],
     ['/admin/audit-records', 'runtime_node.created'],
+    ['/system/status', 'API live'],
   ])('has no serious or critical axe violations on %s', async (path, expectedText) => {
     const calls: Array<{ url: string; body?: unknown }> = []
     mockPrimaryRouteFetch(calls)
@@ -1207,7 +1211,7 @@ describe('C1 App shell', () => {
       ['Routes', 'Caller Identities'],
       ['Conferences'],
       ['Telephony Nodes'],
-      ['Tenants', 'Users', 'Memberships', 'Audit', 'Advanced operations', 'Runtime reconciliations'],
+      ['Tenants', 'Users', 'Memberships', 'Audit', 'Runtime operations', 'Reconciliations', 'System status'],
     ])
     expect(nav.findAll('a').map((link) => link.text())).toEqual([
       'Dashboard',
@@ -1221,8 +1225,9 @@ describe('C1 App shell', () => {
       'Users',
       'Memberships',
       'Audit',
-      'Advanced operations',
-      'Runtime reconciliations',
+      'Runtime operations',
+      'Reconciliations',
+      'System status',
     ])
     expect(nav.find('a[aria-current="page"]').text()).toBe('Dashboard')
     for (const groupLabel of ['Overview', 'External Connectivity', 'Calls', 'Telephony Infrastructure', 'Routing', 'System']) {
@@ -1356,10 +1361,10 @@ describe('C1 App shell', () => {
     const wrapper = await mountApp('/dashboard')
     const nav = wrapper.find('nav[aria-label="Primary"]')
 
-    expect(nav.findAll('.side-nav__group-label').map((label) => label.text())).toEqual(['Overview', 'Calls'])
-    expect(nav.findAll('a').map((link) => link.text())).toEqual(['Dashboard', 'Conferences'])
+    expect(nav.findAll('.side-nav__group-label').map((label) => label.text())).toEqual(['Overview', 'Calls', 'System'])
+    expect(nav.findAll('a').map((link) => link.text())).toEqual(['Dashboard', 'Conferences', 'System status'])
     expect(nav.text()).not.toContain('Telephony Infrastructure')
-    expect(nav.text()).not.toContain('System')
+    expect(nav.text()).toContain('System status')
   })
 
   it('builds production RuntimeNode Reverb options for the canonical WSS route', () => {
@@ -1850,7 +1855,7 @@ describe('C1 App shell', () => {
     const wrapper = await mountApp('/operations/runtime-reconciliations')
 
     expect(router.currentRoute.value.path).toBe('/operations/runtime-reconciliations')
-    expect(wrapper.text()).toContain('Runtime reconciliations')
+    expect(wrapper.text()).toContain('Reconciliations')
     expect(wrapper.text()).toContain('Runtime reconciliation list')
     expect(wrapper.text()).toContain('Proof Runtime')
     expect(wrapper.text()).toContain('operation required')
@@ -2450,7 +2455,7 @@ describe('C1 App shell', () => {
     })
 
     const wrapper = await mountApp('/dashboard')
-    expect(wrapper.text()).not.toContain('Runtime reconciliations')
+    expect(wrapper.text()).not.toContain('Reconciliations')
 
     await router.push('/operations/runtime-reconciliations')
     await flushPromises()
@@ -3680,9 +3685,9 @@ describe('C1 App shell', () => {
         description: 'Track control-plane operations issued to telephony runtimes.',
       },
       {
-        routeName: 'Runtime reconciliations',
+        routeName: 'Reconciliations',
         source: runtimeReconciliationsViewSource,
-        h2: 'Runtime reconciliations',
+        h2: 'Reconciliations',
         description: 'Compare desired state with observed state and review reconciliation outcomes.',
       },
       {

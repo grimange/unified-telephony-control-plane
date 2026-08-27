@@ -25,6 +25,7 @@ import RuntimeOperationsView from '../views/RuntimeOperationsView.vue'
 import RuntimeReconciliationsView from '../views/RuntimeReconciliationsView.vue'
 import ReferenceDialerView from '../views/ReferenceDialerView.vue'
 import RoutingView from '../views/RoutingView.vue'
+import PlatformStatusPage from '../components/PlatformStatusPage.vue'
 import TenantsView from '../views/TenantsView.vue'
 import UserDetailView from '../views/UserDetailView.vue'
 import UsersView from '../views/UsersView.vue'
@@ -65,7 +66,8 @@ export const routes = [
       { path: 'admin/users/:id', name: 'admin-user-detail', component: UserDetailView, meta: { requiresAuth: true, title: 'User detail', capabilityAny: ['platform.users.view', 'tenant.memberships.view'] } },
       { path: 'admin/runtime-nodes', name: 'admin-runtime-nodes', component: RuntimeNodesView, meta: { requiresAuth: true, title: 'Telephony Nodes', capability: 'runtime.nodes.view' } },
       { path: 'operations/runtime-operations', name: 'operations-runtime-operations', component: RuntimeOperationsView, meta: { requiresAuth: true, title: 'Runtime operations', capability: 'runtime.nodes.view' } },
-      { path: 'operations/runtime-reconciliations', name: 'operations-runtime-reconciliations', component: RuntimeReconciliationsView, meta: { requiresAuth: true, title: 'Runtime reconciliations', capability: 'runtime.nodes.view' } },
+      { path: 'operations/runtime-reconciliations', name: 'operations-runtime-reconciliations', component: RuntimeReconciliationsView, meta: { requiresAuth: true, title: 'Reconciliations', capability: 'runtime.nodes.view' } },
+      { path: 'system/status', name: 'system-status', component: PlatformStatusPage, meta: { requiresAuth: true, title: 'System status' } },
       { path: 'operations/conferences', name: 'operations-conferences', component: ConferenceOperationsView, meta: { requiresAuth: true, title: 'Conferences', capability: 'telephony.conferences.view' } },
       { path: 'forbidden', name: 'forbidden', component: ForbiddenView, meta: { requiresAuth: true, title: 'Forbidden' } },
       { path: ':pathMatch(.*)*', name: 'not-found', component: NotFoundView, meta: { requiresAuth: true, title: 'Not found' } },
