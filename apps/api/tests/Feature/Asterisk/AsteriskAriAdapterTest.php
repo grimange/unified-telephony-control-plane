@@ -29,6 +29,7 @@ use App\RuntimeEngine\Sources\EventSourceRepository;
 use App\RuntimeProvisioning\ManagedAsteriskProvisioningOperationHandler;
 use App\RuntimeRegistry\RuntimeExecutionContract;
 use App\RuntimeRegistry\RuntimeRegistryService;
+use App\TelephonyDomain\RuntimeChannelIdentity;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
@@ -2390,7 +2391,7 @@ final class AsteriskAriAdapterTest extends TestCase
                     'body' => $body,
                 ];
 
-                return ['status' => 201, 'body' => ''];
+                return ['status' => $method === 'GET' ? 200 : 201, 'body' => ''];
             }
         };
     }
