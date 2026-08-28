@@ -4,8 +4,8 @@ namespace App\TelephonyDomain\Projection;
 
 use App\ControlPlane\Shared\StableJson;
 use App\TelephonyDomain\RouteDecision;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
 
@@ -53,10 +53,12 @@ final class ExternalTrunkProjectionService
                     if (in_array($key, $activeKeys, true)) {
                         return;
                     }
+
+                    $removedArtifact = StableJson::encode(['schema' => 'utcp.t6.projection.v2', 'desired_state' => 'removed']);
                     DB::table('external_trunk_projection_artifacts')->where('id', $row->id)->update([
                         'desired_state' => 'removed',
-                        'artifact' => json_encode(['schema' => 'utcp.t6.projection.v1', 'desired_state' => 'removed'], JSON_THROW_ON_ERROR),
-                        'artifact_hash' => hash('sha256', 'removed'),
+                        'artifact' => $removedArtifact,
+                        'artifact_hash' => hash('sha256', $removedArtifact),
                         'observed_state' => 'projected',
                         'projected_at' => now(),
                         'updated_at' => now(),
@@ -136,7 +138,7 @@ final class ExternalTrunkProjectionService
         $routes = $this->routes($tenantId, (string) $trunk->id, $removed);
 
         $artifact = [
-            'schema' => 'utcp.t6.projection.v1',
+            'schema' => 'utcp.t6.projection.v2',
             'provider' => $provider,
             'external_trunk_id' => $trunk->id,
             'desired_state' => $removed ? 'removed' : $state,
@@ -322,6 +324,7 @@ final class ExternalTrunkProjectionService
         $host = $parts[count($parts) - 1];
         $username = count($parts) === 2 ? $parts[0] : null;
         $host = explode(':', $host, 2)[0];
+
         return ['username' => $username, 'domain' => $host];
     }
 }

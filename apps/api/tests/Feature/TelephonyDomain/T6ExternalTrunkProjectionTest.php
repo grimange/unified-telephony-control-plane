@@ -4,6 +4,7 @@ namespace Tests\Feature\TelephonyDomain;
 
 use App\ControlPlane\Messaging\InboxRepository;
 use App\ControlPlane\Messaging\OutboxRepository;
+use App\ControlPlane\Shared\StableJson;
 use App\Identity\IdentityIds;
 use App\Models\User;
 use App\RuntimeEngine\Outbox\OutboxDispatcher;
@@ -45,7 +46,7 @@ final class T6ExternalTrunkProjectionTest extends TestCase
         $this->assertSame(array_column($first, 'artifact_hash'), array_column($second, 'artifact_hash'));
         $this->assertDatabaseCount('external_trunk_projection_artifacts', 2);
         $artifact = json_decode((string) $first[1]['artifact'], true, 512, JSON_THROW_ON_ERROR);
-        $this->assertSame('utcp.t6.projection.v1', $artifact['schema']);
+        $this->assertSame('utcp.t6.projection.v2', $artifact['schema']);
         $this->assertSame($trunk['id'], $artifact['external_trunk_id']);
         $this->assertSame($credential['id'], $artifact['endpoints'][0]['credential_reference_id']);
         $this->assertSame($route['id'], $artifact['routes'][0]['route_id']);
@@ -129,6 +130,21 @@ final class T6ExternalTrunkProjectionTest extends TestCase
         $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/outbound-routes/{$route['id']}/desired-state", ['desired_state' => 'active'])->assertOk();
 
         app(ExternalTrunkProjectionService::class)->projectTenant($tenant);
+
+        $kamailioArtifactRow = DB::table('external_trunk_projection_artifacts')->where('external_trunk_id', $trunk['id'])->where('provider', 'kamailio')->first();
+        $oldArtifact = json_decode((string) $kamailioArtifactRow->artifact, true, 512, JSON_THROW_ON_ERROR);
+        $oldArtifact['schema'] = 'utcp.t6.projection.v1';
+        foreach ($oldArtifact['routes'] as &$oldRoute) {
+            unset($oldRoute['destination_user']);
+        }
+        unset($oldRoute);
+        $oldEncoded = StableJson::encode($oldArtifact);
+        DB::table('external_trunk_projection_artifacts')->where('id', $kamailioArtifactRow->id)->update([
+            'artifact' => $oldEncoded,
+            'artifact_hash' => hash('sha256', $oldEncoded),
+        ]);
+        $migration = require dirname(__DIR__, 3).'/database/migrations/2026_08_28_130000_upgrade_external_trunk_projection_artifact_schema.php';
+        $migration->up();
 
         $types = DB::selectOne('select pg_typeof(route.trunk_endpoint_id)::text as route_type, pg_typeof(registration.trunk_endpoint_id)::text as registration_type from kamailio_external_trunk_route_view route left join kamailio_external_trunk_registration_view registration on registration.trunk_endpoint_id = route.trunk_endpoint_id where route.trunk_endpoint_id = ? limit 1', [$endpoint['id']]);
         $this->assertSame('uuid', $types->route_type);
