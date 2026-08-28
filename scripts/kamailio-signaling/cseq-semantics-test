@@ -1,0 +1,223 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+python3 - "$ROOT" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import os
+import socket
+import subprocess
+import tempfile
+import time
+import uuid
+from pathlib import Path
+
+root = Path(__import__("sys").argv[1])
+image = next(
+    line.split("=", 1)[1]
+    for line in (root / "versions.env").read_text(encoding="utf-8").splitlines()
+    if line.startswith("KAMAILIO_IMAGE=")
+)
+username = "utcp-cseq-user"
+realm = "utcp-cseq-realm"
+password = "utcp-cseq-password"
+ha1 = hashlib.md5(f"{username}:{realm}:{password}".encode()).hexdigest()
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def docker(args: list[str], timeout: float = 20.0) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            ["docker", *args], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        output = error.stdout or ""
+        if isinstance(output, bytes):
+            output = output.decode(errors="replace")
+        return subprocess.CompletedProcess(["docker", *args], 124, output)
+
+
+def config(port: int, uas_port: int, managed: bool) -> str:
+    dlg = "        dlg_manage();\n" if managed else ""
+    return f'''#!KAMAILIO
+debug=2
+log_stderror=yes
+children=1
+listen=udp:127.0.0.1:{port}
+
+loadmodule "tm.so"
+loadmodule "sl.so"
+loadmodule "rr.so"
+loadmodule "pv.so"
+loadmodule "xlog.so"
+loadmodule "textops.so"
+loadmodule "uac.so"
+loadmodule "dialog.so"
+
+modparam("uac", "auth_username_avp", "$avp(auser)")
+modparam("uac", "auth_password_avp", "$avp(apass)")
+modparam("uac", "auth_realm_avp", "$avp(arealm)")
+modparam("dialog", "track_cseq_updates", 1)
+
+request_route {{
+    if (is_method("INVITE")) {{
+        $du = "sip:127.0.0.1:{uas_port}";
+        $avp(auser) = "{username}";
+        $avp(apass) = "{ha1}";
+        $avp(arealm) = "{realm}";
+{dlg}        t_on_failure("AUTH");
+        if (!t_relay()) {{
+            sl_reply_error();
+        }}
+        exit;
+    }}
+    sl_send_reply("405", "Method Not Allowed");
+}}
+
+failure_route[AUTH] {{
+    if (t_check_status("401|407")) {{
+        if (uac_auth("1")) {{
+            t_relay();
+        }}
+        exit;
+    }}
+}}
+'''
+
+
+def header(message: str, name: str) -> str:
+    prefix = name.lower() + ":"
+    for line in message.split("\r\n"):
+        if line.lower().startswith(prefix):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def parse_request(message: str) -> tuple[int, str]:
+    first = message.split("\r\n", 1)[0]
+    cseq = int(header(message, "CSeq").split()[0])
+    return cseq, first
+
+
+def response(request: str, status: str, challenge: bool = False) -> bytes:
+    via = header(request, "Via")
+    from_header = header(request, "From")
+    to_header = header(request, "To")
+    call_id = header(request, "Call-ID")
+    cseq = header(request, "CSeq")
+    if status.startswith("200"):
+        to_header += ";tag=utcp-uas"
+    lines = [
+        f"SIP/2.0 {status}", f"Via: {via}", f"From: {from_header}",
+        f"To: {to_header}", f"Call-ID: {call_id}", f"CSeq: {cseq}",
+    ]
+    if challenge:
+        lines.append('WWW-Authenticate: Digest realm="utcp-cseq-realm", nonce="utcp-nonce", algorithm=MD5, qop="auth"')
+    lines.append("Content-Length: 0")
+    return ("\r\n".join(lines) + "\r\n\r\n").encode()
+
+
+def run_case(managed: bool) -> tuple[list[int], str, str]:
+    kamailio_port = free_port()
+    uas_port = free_port()
+    container = f"utcp-kamailio-cseq-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    uas = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    uas.bind(("127.0.0.1", uas_port))
+    uas.settimeout(5)
+    logs = ""
+    messages: list[str] = []
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "kamailio.cfg"
+        path.write_text(config(kamailio_port, uas_port, managed), encoding="utf-8")
+        try:
+            started = docker([
+                "run", "-d", "--name", container, "--network", "host",
+                "--entrypoint", "/usr/sbin/kamailio", "-v", f"{path}:/tmp/utcp-cseq.cfg:ro",
+                image, "-E", "-DD", "-f", "/tmp/utcp-cseq.cfg",
+            ])
+            if started.returncode != 0:
+                raise RuntimeError(f"docker start failed: {started.stdout}")
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                status = docker(["inspect", "-f", "{{.State.Status}}", container]).stdout.strip()
+                logs = docker(["logs", container]).stdout
+                if status == "running" and "Listening on" in logs:
+                    break
+                if status in {"exited", "dead"}:
+                    break
+                time.sleep(0.2)
+            status = docker(["inspect", "-f", "{{.State.Status}}", container]).stdout.strip()
+            if status != "running" or "Listening on" not in logs:
+                raise RuntimeError(f"Kamailio not ready: status={status}\nstartup_logs={logs}")
+
+            request = (
+                "INVITE sip:provider.invalid SIP/2.0\r\n"
+                "Via: SIP/2.0/UDP 127.0.0.1:5099;branch=z9hG4bK-utcp-cseq\r\n"
+                "Max-Forwards: 70\r\n"
+                "From: <sip:caller@utcp.local>;tag=utcp-cseq\r\n"
+                "To: <sip:provider.invalid>\r\n"
+                "Call-ID: utcp-cseq-semantics\r\n"
+                "CSeq: 4242 INVITE\r\n"
+                "Contact: <sip:caller@127.0.0.1:5099>\r\n"
+                "Content-Length: 0\r\n\r\n"
+            ).encode()
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+                sender.sendto(request, ("127.0.0.1", kamailio_port))
+            while len(messages) < 2:
+                message, address = uas.recvfrom(65535)
+                text = message.decode(errors="replace")
+                if not text.startswith("INVITE "):
+                    continue
+                messages.append(text)
+                if len(messages) == 1:
+                    uas.sendto(response(text, "401 Unauthorized", challenge=True), address)
+                else:
+                    uas.sendto(response(text, "200 OK"), address)
+            cseqs = [parse_request(message)[0] for message in messages]
+            auth = header(messages[1], "Authorization")
+            if not auth.startswith("Digest ") or 'username="utcp-cseq-user"' not in auth or 'realm="utcp-cseq-realm"' not in auth or "response=" not in auth:
+                raise RuntimeError(f"Authorization assertion failed: {auth!r}")
+            return cseqs, logs, auth
+        except Exception as error:
+            logs = docker(["logs", container]).stdout or logs
+            raise RuntimeError(
+                f"semantic fixture managed={managed} failed: {error}\n"
+                f"container_status={docker(['inspect', '-f', '{{.State.Status}}', container]).stdout.strip()}\n"
+                f"startup_and_runtime_logs={logs}\n"
+                f"captured_messages={len(messages)}"
+            ) from error
+        finally:
+            docker(["rm", "-f", container])
+            uas.close()
+
+
+positive, _, auth = run_case(True)
+if positive[1] != positive[0] + 1:
+    raise SystemExit(f"CSeq tracking assertion failed: {positive}")
+print(f"cseq_runtime_initial={positive[0]}")
+print(f"cseq_runtime_authenticated_retry={positive[1]}")
+print(f"cseq_runtime_delta={positive[1] - positive[0]}")
+print("authorization_retry=present_digest_username_realm_response")
+
+try:
+    negative, _, _ = run_case(False)
+except RuntimeError as error:
+    print("cseq_negative_without_dlg_manage=acceptance_failed")
+    print(f"cseq_negative_diagnostic={error}")
+else:
+    if negative[1] == negative[0]:
+        print(f"cseq_negative_without_dlg_manage=observed_same_cseq_{negative[0]}")
+    else:
+        raise SystemExit(f"negative mutation unexpectedly tracked CSeq: {negative}")
+
+print("kamailio_cseq_semantics=pass")
+PY

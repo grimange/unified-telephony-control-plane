@@ -36,3 +36,21 @@ This is repository implementation evidence. Provider-bound INVITE emission,
 trust-boundary header stripping, natural authentication behavior, final
 provider response, and canonical Call/CallLeg observation remain for the next
 controlled live proof.
+
+## Authenticated-provider CSeq continuation
+
+The subsequent live diagnostic measured Kamailio 6.0.7 reusing the initial
+provider INVITE CSeq after `uac_auth("1")` (`N -> N`). The bounded repair loads
+`dialog.so`, enables `track_cseq_updates=1`, and calls `dlg_manage()` only in
+`route[RUNTIME_EXTERNAL_TRUNK]` before the first provider transaction. The HA1
+AVP contract and `uac_auth("1")` are unchanged.
+
+The exact pinned runtime semantic fixture uses a disposable synthetic UAS and
+an explicit readiness log before sending traffic. It observed `4242 -> 4243`
+and a Digest Authorization retry on three consecutive runs. A focused negative
+mutation removing `dlg_manage()` observed the former `4242 -> 4242` behavior;
+source mutations also protect the dialog module and tracking parameter. The
+Request-URI semantic regression and valid quoted function-argument behavior
+remain covered. Provider post-auth response, CallerIdentity projection,
+provider-facing header stripping, and canonical Call/CallLeg observation remain
+pending the next controlled live proof.

@@ -31,6 +31,7 @@ data:
 
     loadmodule "tm.so"
     loadmodule "sl.so"
+    loadmodule "dialog.so"
     loadmodule "rr.so"
     loadmodule "siputils.so"
     loadmodule "pv.so"
@@ -60,6 +61,8 @@ data:
     modparam("auth_db", "calculate_ha1", 0)
     modparam("auth_db", "use_domain", 1)
     modparam("auth_db", "load_credentials", "")
+
+    modparam("dialog", "track_cseq_updates", 1)
 
     modparam("sqlops", "sqlcon", "conference=>postgres://__KAMAILIO_AUTH_DB_USER__:__KAMAILIO_AUTH_DB_PASSWORD__@postgres.utcp-data.svc.cluster.local:5432/utcp")
 
@@ -360,6 +363,7 @@ data:
         remove_hf("X-UTCP-Call-Leg-ID");
         remove_hf("X-UTCP-Route-Decision-ID");
         remove_hf("X-UTCP-Trunk-Endpoint-ID");
+        dlg_manage();
         t_on_failure("RUNTIME_EXTERNAL_TRUNK_AUTH");
         if (!t_relay()) {
             xlog("L_WARN", "kamailio_runtime_external_route result=relay_failed endpoint_id=$hdr(X-UTCP-Trunk-Endpoint-ID) call_id=$ci\n");

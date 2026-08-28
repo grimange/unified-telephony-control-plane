@@ -15,7 +15,7 @@ spec:
   template:
     metadata:
       annotations:
-        utcp.io/kamailio-config-sha256: 3b132c0aca71b4e54fb6fbbe63b1c2e2ba8812dfbbb34b9211027efce4dac078
+        utcp.io/kamailio-config-sha256: ae6e04ff9796c26019c3acedcc5b4c6027f2ac0db097cd5338d610a00ba8b542
       labels:
         app.kubernetes.io/part-of: utcp
         app.kubernetes.io/component: kamailio

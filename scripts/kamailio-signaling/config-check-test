@@ -209,6 +209,10 @@ def validate(state: dict[str, Any]) -> None:
     )
     require("rtpengine_manage" not in kamailio, "rtpengine_manage forbidden; use explicit offer/answer/delete")
     require('$fsn = "provider";' in runtime_external_trunk_block, "provider relay must select the named provider socket")
+    require('loadmodule "dialog.so"' in kamailio, "dialog module required for authenticated provider CSeq tracking")
+    require('modparam("dialog", "track_cseq_updates", 1)' in kamailio, "dialog CSeq tracking must remain enabled")
+    require("dlg_manage();" in runtime_external_trunk_block, "provider INVITE must be dialog-managed before relay")
+    require(kamailio.count("dlg_manage();") == 1, "dialog management must remain scoped to the provider INVITE corridor")
     require('force_send_socket("udp:0.0.0.0:5060")' not in kamailio, "legacy quoted force_send_socket provider selection is forbidden")
     require('modparam("uac", "default_socket", "udp:0.0.0.0:5060")' in kamailio, "UAC registration must pin the external send socket")
     for forbidden in (
@@ -336,6 +340,8 @@ def validate(state: dict[str, Any]) -> None:
             '$var(utcp_destination_user) = $rU;',
             '$var(utcp_provider_host) = $dbr(runtime_external_route=>[0,1]);',
             '$ru = "sip:" + $var(utcp_destination_user) + "@" + $var(utcp_provider_host);',
+            'dlg_manage();',
+            't_on_failure("RUNTIME_EXTERNAL_TRUNK_AUTH");',
         ],
         "runtime external route Request-URI construction",
     )
@@ -1285,6 +1291,8 @@ fail_case("comparing the full normalized SIP URI to the request user fails", lam
 fail_case("joining registration through the text endpoint alias fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("r.trunk_endpoint_id = v.trunk_endpoint_id", "r.trunk_endpoint_id = v.endpoint_id"), update_checksum=True))
 fail_case("restoring quoted outbound pseudo-variable assignment fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('$ru = "sip:" + $var(utcp_destination_user) + "@" + $var(utcp_provider_host);', '$ru = "sip:$rU@$dbr(runtime_external_route=>[0,1])";'), update_checksum=True))
 fail_case("restoring quoted inbound pseudo-variable assignment fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('$rU = "utcp-in-" + $var(utcp_ingress_address_id);', '$rU = "utcp-in-$dbr(external_trunk_route=>[0,2])";'), update_checksum=True))
+fail_case("removing provider dlg_manage fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("    dlg_manage();\n", "", 1), update_checksum=True))
+fail_case("removing dialog CSeq tracking fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('modparam("dialog", "track_cseq_updates", 1)\n', "", 1), update_checksum=True))
 fail_case("adding second Asterisk UDP relay destination fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('route[APPLICATION_RUNTIME_RELAY] {', 'route[APPLICATION_RUNTIME_RELAY] {\n        $du = "sip:asterisk-alt.utcp-runtime.svc.cluster.local:5060;transport=udp";'), update_checksum=True))
 fail_case("Kamailio HostPort fails", lambda s: mutate_doc(s, "Deployment/utcp-platform/kamailio", lambda d: d["spec"]["template"]["spec"]["containers"][0]["ports"][1].update(hostPort=5060)))
 fail_case("Kamailio UDP Service exposure fails", lambda s: mutate_doc(s, "Service/utcp-platform/kamailio", lambda d: d["spec"]["ports"].append({"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-udp"})))
