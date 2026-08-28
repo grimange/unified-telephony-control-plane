@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+python3 - "$ROOT" <<'PY'
+from __future__ import annotations
+
+import os
+import socket
+import subprocess
+import tempfile
+import time
+import uuid
+from pathlib import Path
+
+root = Path(__import__("sys").argv[1])
+image = next(
+    line.split("=", 1)[1]
+    for line in (root / "versions.env").read_text(encoding="utf-8").splitlines()
+    if line.startswith("KAMAILIO_IMAGE=")
+)
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def docker(args: list[str], *, timeout: float = 20.0, check: bool = False) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            ["docker", *args],
+            check=check,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as error:
+        if check:
+            raise
+        output = error.stdout or ""
+        if isinstance(output, bytes):
+            output = output.decode(errors="replace")
+        return subprocess.CompletedProcess(["docker", *args], 124, output)
+
+
+def run_config(config: str, expected: list[str], label: str) -> str:
+    port = free_port()
+    config = config.replace("__PORT__", str(port))
+    container = f"utcp-kamailio-uri-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    sent = 0
+    send_error = ""
+    readiness = ""
+    output = ""
+    with tempfile.TemporaryDirectory() as directory:
+        config_path = Path(directory) / "kamailio.cfg"
+        config_path.write_text(config, encoding="utf-8")
+        try:
+            started = docker(
+                [
+                    "run",
+                    "-d",
+                    "--name",
+                    container,
+                    "--network",
+                    "host",
+                    "--entrypoint",
+                    "/usr/sbin/kamailio",
+                    "-v",
+                    f"{config_path}:/tmp/utcp-kamailio.cfg:ro",
+                    image,
+                    "-E",
+                    "-DD",
+                    "-f",
+                    "/tmp/utcp-kamailio.cfg",
+                ],
+                check=True,
+            )
+            if not started.stdout.strip():
+                raise SystemExit(f"{label}: Docker did not return a container identifier")
+
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                status = docker(["inspect", "-f", "{{.State.Status}}", container]).stdout.strip()
+                readiness = docker(["logs", container]).stdout
+                if status == "running" and "Listening on" in readiness:
+                    break
+                if status in {"exited", "dead"}:
+                    break
+                time.sleep(0.2)
+            else:
+                raise SystemExit(
+                    f"{label}: Kamailio readiness timeout\n"
+                    f"status={docker(['inspect', '-f', '{{.State.Status}}', container]).stdout.strip()}\n"
+                    f"readiness_logs={readiness}"
+                )
+
+            status = docker(["inspect", "-f", "{{.State.Status}}", container]).stdout.strip()
+            if status != "running" or "Listening on" not in readiness:
+                raise SystemExit(
+                    f"{label}: Kamailio did not become ready\n"
+                    f"status={status}\nreadiness_logs={readiness}"
+                )
+
+            request = (
+                "OPTIONS sip:97001@provider.invalid SIP/2.0\r\n"
+                "Via: SIP/2.0/UDP 127.0.0.1:5068;branch=z9hG4bK-utcp\r\n"
+                "Max-Forwards: 70\r\n"
+                "From: <sip:test@utcp.local>;tag=utcp\r\n"
+                "To: <sip:97001@provider.invalid>\r\n"
+                "Call-ID: utcp-request-uri-semantics\r\n"
+                "CSeq: 1 OPTIONS\r\n"
+                "Content-Length: 0\r\n\r\n"
+            ).encode()
+            for _ in range(20):
+                try:
+                    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+                        client.sendto(request, ("127.0.0.1", port))
+                        sent += 1
+                except OSError as error:
+                    send_error = repr(error)
+                    break
+                time.sleep(0.1)
+            output = ""
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                output = docker(["logs", container], check=False, timeout=5).stdout
+                if all(value in output for value in expected):
+                    break
+                time.sleep(0.2)
+        finally:
+            status = docker(["inspect", "-f", "{{.State.Status}}", container], check=False).stdout.strip()
+            startup_logs = docker(["logs", container], check=False).stdout if status else readiness
+            if not output or not all(value in output for value in expected):
+                docker(["kill", container], check=False, timeout=5)
+                output = docker(["logs", container], check=False, timeout=5).stdout
+            docker(["rm", "-f", container], check=False, timeout=5)
+            if not all(value in output for value in expected):
+                raise SystemExit(
+                    f"{label}: expected runtime value missing\n"
+                    f"container_status_before_cleanup={status or 'unavailable'}\n"
+                    f"startup_or_readiness_logs={startup_logs}\n"
+                    f"requests_sent={sent}\n"
+                    f"request_send_error={send_error or 'none'}\n"
+                    f"final_logs={output}\n"
+                    f"expected={expected}"
+                )
+    for value in expected:
+        if value not in output:
+            raise SystemExit(f"{label}: expected runtime value missing: {value!r}\n{output}")
+    return output
+
+
+base = """#!KAMAILIO
+debug=2
+log_stderror=yes
+children=1
+listen=udp:0.0.0.0:__PORT__
+loadmodule "sl.so"
+loadmodule "pv.so"
+loadmodule "xlog.so"
+request_route {
+    if ($rU == "97001") {
+        $var(utcp_destination_user) = $rU;
+        $var(utcp_provider_host) = "38.146.161.46:5060";
+        $ru = "sip:" + $var(utcp_destination_user) + "@" + $var(utcp_provider_host);
+        xlog("L_INFO", "UTCP_REQUEST_URI=$ru\\n");
+    } else {
+        $var(utcp_ingress_address_id) = "address-id";
+        $rU = "utcp-in-" + $var(utcp_ingress_address_id);
+        xlog("L_INFO", "UTCP_INBOUND_RUSER=$rU\\n");
+    }
+    sl_send_reply("200", "OK");
+    exit;
+}
+"""
+
+outbound = run_config(base, ["UTCP_REQUEST_URI=sip:97001@38.146.161.46:5060"], "outbound")
+inbound_config = base.replace('if ($rU == "97001") {', 'if ($rU == "not-outbound") {')
+run_config(inbound_config, ["UTCP_INBOUND_RUSER=utcp-in-address-id"], "inbound")
+
+unsafe = base.replace(
+    '$ru = "sip:" + $var(utcp_destination_user) + "@" + $var(utcp_provider_host);',
+    '$ru = "sip:$rU@$var(utcp_provider_host)";',
+)
+unsafe_output = run_config(unsafe, ["UTCP_REQUEST_URI=sip:$rU@$var(utcp_provider_host)"], "former quoted assignment")
+if "UTCP_REQUEST_URI=sip:97001@38.146.161.46:5060" in unsafe_output:
+    raise SystemExit("former quoted pseudo-variable assignment unexpectedly interpolated")
+
+print("kamailio_request_uri_runtime_semantics=pass")
+print("outbound=" + "sip:97001@38.146.161.46:5060")
+print("inbound=utcp-in-address-id")
+print("former_assignment=literal_rhs_confirmed")
+PY

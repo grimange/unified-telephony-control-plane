@@ -316,7 +316,8 @@ data:
         append_hf("X-UTCP-Ingress-Telephony-Address-ID: $dbr(external_trunk_route=>[0,2])\r\n");
         append_hf("X-UTCP-Ingress-Trunk-Endpoint-ID: $dbr(external_trunk_route=>[0,3])\r\n");
         append_hf("X-UTCP-Ingress-Runtime-Node-ID: $dbr(inbound_runtime_target=>[0,0])\r\n");
-        $rU = "utcp-in-$dbr(external_trunk_route=>[0,2])";
+        $var(utcp_ingress_address_id) = $dbr(external_trunk_route=>[0,2]);
+        $rU = "utcp-in-" + $var(utcp_ingress_address_id);
         $du = $dbr(inbound_runtime_target=>[0,1]);
         route(MEDIA_OFFER);
         record_route();
@@ -349,7 +350,9 @@ data:
         }
 
         $du = $dbr(runtime_external_route=>[0,0]);
-        $ru = "sip:$rU@$dbr(runtime_external_route=>[0,1])";
+        $var(utcp_destination_user) = $rU;
+        $var(utcp_provider_host) = $dbr(runtime_external_route=>[0,1]);
+        $ru = "sip:" + $var(utcp_destination_user) + "@" + $var(utcp_provider_host);
         $avp(auser) = $dbr(runtime_external_route=>[0,2]);
         $avp(apass) = $dbr(runtime_external_route=>[0,3]);
         $avp(arealm) = $dbr(runtime_external_route=>[0,4]);

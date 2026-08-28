@@ -328,6 +328,26 @@ def validate(state: dict[str, Any]) -> None:
     require("r.trunk_endpoint_id = v.trunk_endpoint_id" in runtime_external_trunk_block, "runtime external route must join the UUID-compatible endpoint identity")
     require("destination_user = '$rU'" in runtime_external_trunk_block, "runtime external route must use the projected destination user")
     require("normalized_address = '$rU'" not in runtime_external_trunk_block, "runtime external route must not compare a full SIP URI to the SIP user")
+    require('$ru = "sip:$rU@$dbr(runtime_external_route=>[0,1])";' not in runtime_external_trunk_block, "runtime external route must not use a quoted pseudo-variable assignment")
+    require('$rU = "utcp-in-$dbr(external_trunk_route=>[0,2])";' not in external_trunk_block, "external ingress must not use a quoted pseudo-variable assignment")
+    require_in_order(
+        runtime_external_trunk_block,
+        [
+            '$var(utcp_destination_user) = $rU;',
+            '$var(utcp_provider_host) = $dbr(runtime_external_route=>[0,1]);',
+            '$ru = "sip:" + $var(utcp_destination_user) + "@" + $var(utcp_provider_host);',
+        ],
+        "runtime external route Request-URI construction",
+    )
+    require_in_order(
+        external_trunk_block,
+        [
+            '$var(utcp_ingress_address_id) = $dbr(external_trunk_route=>[0,2]);',
+            '$rU = "utcp-in-" + $var(utcp_ingress_address_id);',
+        ],
+        "external ingress Request-URI-user construction",
+    )
+    require('append_hf("X-UTCP-Ingress-External-Trunk-ID: $dbr(external_trunk_route=>[0,1])\\r\\n");' in external_trunk_block, "quoted function-argument pseudo-variable interpolation must remain supported")
     options_reply = external_trunk_block.find('sl_send_reply("200", "External Trunk Route Matched")')
     relay = external_trunk_block.find("t_relay()")
     require(options_reply >= 0 and external_trunk_block.find('if ($rm == "OPTIONS")') < options_reply < relay, "OPTIONS verification must terminate before the INVITE relay path")
@@ -1263,6 +1283,8 @@ fail_case("changing Asterisk relay destination UDP port fails", lambda s: set_ka
 fail_case("adding duplicate Kamailio UDP listener fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('listen=udp:0.0.0.0:5062 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060 name "runtime"', 'listen=udp:0.0.0.0:5062 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060 name "runtime"\n    listen=udp:0.0.0.0:5062 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060 name "runtime"'), update_checksum=True))
 fail_case("comparing the full normalized SIP URI to the request user fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("destination_user = '$rU'", "normalized_address = '$rU'"), update_checksum=True))
 fail_case("joining registration through the text endpoint alias fails", lambda s: set_kamailio_config(s, s["kamailio"].replace("r.trunk_endpoint_id = v.trunk_endpoint_id", "r.trunk_endpoint_id = v.endpoint_id"), update_checksum=True))
+fail_case("restoring quoted outbound pseudo-variable assignment fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('$ru = "sip:" + $var(utcp_destination_user) + "@" + $var(utcp_provider_host);', '$ru = "sip:$rU@$dbr(runtime_external_route=>[0,1])";'), update_checksum=True))
+fail_case("restoring quoted inbound pseudo-variable assignment fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('$rU = "utcp-in-" + $var(utcp_ingress_address_id);', '$rU = "utcp-in-$dbr(external_trunk_route=>[0,2])";'), update_checksum=True))
 fail_case("adding second Asterisk UDP relay destination fails", lambda s: set_kamailio_config(s, s["kamailio"].replace('route[APPLICATION_RUNTIME_RELAY] {', 'route[APPLICATION_RUNTIME_RELAY] {\n        $du = "sip:asterisk-alt.utcp-runtime.svc.cluster.local:5060;transport=udp";'), update_checksum=True))
 fail_case("Kamailio HostPort fails", lambda s: mutate_doc(s, "Deployment/utcp-platform/kamailio", lambda d: d["spec"]["template"]["spec"]["containers"][0]["ports"][1].update(hostPort=5060)))
 fail_case("Kamailio UDP Service exposure fails", lambda s: mutate_doc(s, "Service/utcp-platform/kamailio", lambda d: d["spec"]["ports"].append({"name": "sip-udp", "protocol": "UDP", "port": 5060, "targetPort": "sip-udp"})))
