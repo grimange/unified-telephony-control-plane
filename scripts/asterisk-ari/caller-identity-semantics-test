@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ASTERISK_IMAGE="${ASTERISK_ARI_IMAGE:-utcp-asterisk-ari:dev}"
+PEER_IMAGE="${EXTERNAL_SIP_PEER_IMAGE:-utcp-external-sip-peer:dev}"
+suffix="$(printf '%s' "${BASHPID}-$(date +%s%N)" | sha256sum | cut -c1-12)"
+network="utcp-caller-identity-${suffix}"
+asterisk="utcp-caller-identity-asterisk-${suffix}"
+peer="utcp-caller-identity-peer-${suffix}"
+tmp="$(mktemp -d)"
+failure=0
+
+cleanup() {
+  local rc=$?
+  if [ "$rc" -ne 0 ] || [ "$failure" -ne 0 ]; then
+    printf '%s\n' 'caller_identity_semantics=diagnostic' >&2
+    docker inspect -f 'name={{.Name}} status={{.State.Status}} exit={{.State.ExitCode}}' "$asterisk" "$peer" 2>&1 || true
+    printf '%s\n' '--- synthetic peer logs ---' >&2
+    docker logs "$peer" 2>&1 | tail -120 || true
+    printf '%s\n' '--- asterisk logs ---' >&2
+    docker logs "$asterisk" 2>&1 | tail -160 || true
+  fi
+  docker rm -f "$asterisk" "$peer" >/dev/null 2>&1 || true
+  docker network rm "$network" >/dev/null 2>&1 || true
+  rm -rf "$tmp"
+  exit "$rc"
+}
+trap cleanup EXIT
+
+fail() {
+  failure=1
+  printf 'caller identity semantic test failed: %s\n' "$1" >&2
+  exit 1
+}
+
+command -v docker >/dev/null 2>&1 || fail 'docker is required'
+docker image inspect "$ASTERISK_IMAGE" >/dev/null 2>&1 || fail "missing Asterisk image: $ASTERISK_IMAGE"
+docker image inspect "$PEER_IMAGE" >/dev/null 2>&1 || fail "missing peer image: $PEER_IMAGE"
+
+docker network create "$network" >/dev/null
+docker run -d --name "$peer" --network "$network" \
+  -e EXTERNAL_SIP_PEER_USERNAME=utcp-synthetic \
+  -e EXTERNAL_SIP_PEER_PASSWORD=utcp-synthetic-secret \
+  "$PEER_IMAGE" >/dev/null
+
+peer_ready=0
+for attempt in $(seq 1 30); do
+  if timeout 5 docker exec "$peer" /usr/local/bin/external-sip-peer-readiness >/dev/null 2>&1; then
+    peer_ready=1
+    break
+  fi
+  sleep 1
+done
+[ "$peer_ready" -eq 1 ] || fail 'synthetic peer did not become ready'
+
+cp "$ROOT/infrastructure/docker/asterisk/config/pjsip.conf" "$tmp/pjsip.conf"
+sed -i "s#kamailio-sip-internal\.utcp-platform\.svc\.cluster\.local:5060#${peer}:5060#g" "$tmp/pjsip.conf"
+
+docker run -d --name "$asterisk" --network "$network" \
+  -p 127.0.0.1::8088 \
+  -e ARI_USERNAME=utcp-ari \
+  -e ARI_PASSWORD=utcp-ari-secret \
+  -v "$tmp/pjsip.conf:/opt/utcp-asterisk-local-config/pjsip.conf:ro" \
+  "$ASTERISK_IMAGE" >/dev/null
+
+asterisk_ready=0
+for attempt in $(seq 1 45); do
+  if timeout 5 docker exec "$asterisk" /usr/local/bin/utcp-asterisk-readiness >/dev/null 2>&1; then
+    asterisk_ready=1
+    break
+  fi
+  state="$(docker inspect -f '{{.State.Status}}' "$asterisk" 2>/dev/null || true)"
+  [ "$state" = exited ] || [ "$state" = dead ] && break || true
+  sleep 1
+done
+[ "$asterisk_ready" -eq 1 ] || fail 'Asterisk did not become ready'
+
+docker exec "$peer" asterisk -rx 'pjsip set logger on' >/dev/null
+host_port="$(docker port "$asterisk" 8088/tcp | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
+[ -n "$host_port" ] || fail 'Asterisk ARI port was not published'
+
+body='{"variables":{"__UTCP_CALL_LEG_ID":"leg-semantic","__UTCP_ROUTE_DECISION_ID":"route-semantic","__UTCP_TRUNK_ENDPOINT_ID":"endpoint-semantic","__UTCP_CALLER_IDENTITY_ID":"caller-semantic"}}'
+response="$tmp/ari-response"
+ari_url="http://127.0.0.1:${host_port}/ari/channels?endpoint=Local%2F97001%40utcp-outbound&context=utcp-outbound&extension=97001&priority=1&timeout=30&formats=ulaw&callerId=utcp-v1%20%3Cutcp-v1%3E&channelId=caller-identity-semantic"
+http_code="$(curl -sS -o "$response" -w '%{http_code}' --user utcp-ari:utcp-ari-secret \
+  -H 'Content-Type: application/json' --data-binary "$body" "$ari_url")"
+[ "$http_code" = 200 ] || fail "ARI originate failed: http=${http_code} response=$(tr '\n' ' ' < "$response")"
+
+from_user=''
+for attempt in $(seq 1 30); do
+  logs="$(docker logs "$peer" 2>&1 || true)"
+  if printf '%s\n' "$logs" | rg -q '^From: .*<sip:utcp-v1@'; then
+    from_user=utcp-v1
+    break
+  fi
+  sleep 1
+done
+[ "$from_user" = utcp-v1 ] || fail 'synthetic peer did not observe From user utcp-v1'
+if printf '%s\n' "$logs" | rg -q '^From: .*<sip:(anonymous|asterisk)@'; then
+  fail 'synthetic peer observed an anonymous/default From user'
+fi
+
+printf 'asterisk_caller_identity_runtime_semantics=pass from_user=%s caller_id="utcp-v1 <utcp-v1>"\n' "$from_user"

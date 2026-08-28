@@ -82,6 +82,7 @@ check: repository-hygiene media-config-check media-config-check-test media-edge-
 
 .PHONY: rtpengine-advertised-address-check media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test media-edge-apply media-edge-failure-proof-overlay-test t3-media-prover-host-check t3-media-prover-host-check-test k3d-config-check-test k3d-verifier-check-test api-entrypoint-check-test
 .PHONY: k8s-config-check-test kamailio-signaling-request-uri-semantics-test kamailio-signaling-cseq-semantics-test kamailio-signaling-external-trunk-runtime-proof kamailio-signaling-registration-runtime-proof asterisk-external-trunk-config-check asterisk-external-trunk-config-check-test asterisk-external-trunk-runtime-proof v1-external-sip-peer-config-check v1-external-sip-peer-smoke v1-external-sip-edge-config-check
+.PHONY: asterisk-ari-caller-identity-semantics-test
 .PHONY: runtime-engine-config-check-test simulator-config-check-test telephony-domain-config-check-test
 
 k3d-config-check-test: ## Run canonical utcp-local RTP publication mutation checks.
@@ -575,6 +576,9 @@ asterisk-ari-config-check: ## Validate T0 Asterisk ARI adapter, listener, Kubern
 
 asterisk-ari-config-check-test: ## Run focused T0 guard mutation tests.
 	@./scripts/asterisk-ari/config-check-test
+
+asterisk-ari-caller-identity-semantics-test: ## Prove managed Asterisk projects CallerIdentity into PJSIP From.
+	@./scripts/asterisk-ari/caller-identity-semantics-test
 
 asterisk-ari-test: ## Run focused T0 Asterisk ARI adapter, listener, epoch, and boundary tests.
 	@./scripts/asterisk-ari/test

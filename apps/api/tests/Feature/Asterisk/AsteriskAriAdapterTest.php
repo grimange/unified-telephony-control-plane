@@ -56,6 +56,7 @@ final class AsteriskAriAdapterTest extends TestCase
             'route_decision_id' => 'route-decision-1',
             'trunk_endpoint_id' => 'endpoint-1',
             'caller_identity_id' => 'caller-1',
+            'caller_identity_address' => 'sip:utcp-v1@synthetic.example',
         ], [['id' => 'leg-1', 'call_id' => 'call-1', 'runtime_channel_id' => 'channel-1']]);
 
         $request = $client->requests[0];
@@ -69,6 +70,7 @@ final class AsteriskAriAdapterTest extends TestCase
             'timeout' => '30',
             'channelId' => RuntimeChannelIdentity::forCallLeg('leg-1'),
             'formats' => 'ulaw',
+            'callerId' => 'utcp-v1 <utcp-v1>',
         ], $request['query']);
         $this->assertSame([
             'variables' => [
@@ -78,6 +80,44 @@ final class AsteriskAriAdapterTest extends TestCase
                 '__UTCP_CALLER_IDENTITY_ID' => 'caller-1',
             ],
         ], $request['body']);
+    }
+
+    public function test_originate_rejects_selected_caller_identity_without_a_resolved_address(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([['status' => 201]]);
+
+        try {
+            $client->executeCallOperation($tenantId, $nodeId, 'call.leg.originate', [
+                'leg_id' => 'leg-1',
+                'destination_uri' => '97001',
+                'caller_identity_id' => 'caller-1',
+            ], [['id' => 'leg-1', 'call_id' => 'call-1', 'runtime_channel_id' => 'channel-1']]);
+            $this->fail('selected caller identity without an address must fail before ARI execution');
+        } catch (AsteriskAriException $exception) {
+            $this->assertSame('ari_caller_identity_invalid', $exception->failureCode);
+        }
+
+        $this->assertSame([], $client->requests);
+    }
+
+    public function test_originate_derives_asterisk_caller_id_from_the_canonical_sip_address(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([['status' => 201]]);
+
+        $client->executeCallOperation($tenantId, $nodeId, 'call.leg.originate', [
+            'leg_id' => 'leg-1',
+            'destination_uri' => '97001',
+            'caller_identity_id' => 'caller-1',
+            'caller_identity_address' => 'sip:utcp-v1@synthetic.example',
+        ], [['id' => 'leg-1', 'call_id' => 'call-1', 'runtime_channel_id' => 'channel-1']]);
+
+        $this->assertSame('utcp-v1 <utcp-v1>', $client->requests[0]['query']['callerId']);
+        $this->assertSame('ulaw', $client->requests[0]['query']['formats']);
+        $this->assertArrayNotHasKey('originator', $client->requests[0]['query']);
     }
 
     public function test_originate_fails_closed_when_canonical_execution_media_formats_are_invalid(): void

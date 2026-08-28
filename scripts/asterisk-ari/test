@@ -6,5 +6,7 @@ cd "$ROOT"
 
 "$ROOT/scripts/asterisk-ari/config-check" >/dev/null
 
+"$ROOT/scripts/asterisk-ari/caller-identity-semantics-test"
+
 cd "$ROOT/apps/api"
 php artisan test tests/Feature/Asterisk tests/Feature/Infrastructure/AsteriskTwoNodeTopologyTest.php

@@ -343,6 +343,7 @@ class AsteriskAriClient
                 throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_call_leg_missing', 'A normalized originate operation requires a CallLeg target.');
             }
             $formats = $this->originateFormats();
+            $callerId = $this->callerIdForOriginate($payload);
             $runtimeChannelId = RuntimeChannelIdentity::forCallLeg($legId);
             $request('POST', 'channels', [
                 'endpoint' => $destination,
@@ -356,6 +357,7 @@ class AsteriskAriClient
                 'timeout' => (string) ($payload['timeout_seconds'] ?? 30),
                 'channelId' => $runtimeChannelId,
                 'formats' => implode(',', $formats),
+                ...($callerId === null ? [] : ['callerId' => $callerId]),
             ], [200, 201, 202], [
                 'variables' => [
                     '__UTCP_CALL_LEG_ID' => $legId,
@@ -451,6 +453,29 @@ class AsteriskAriClient
         }
 
         return $formats;
+    }
+
+    private function callerIdForOriginate(array $payload): ?string
+    {
+        $identityId = trim((string) ($payload['caller_identity_id'] ?? ''));
+        $address = trim((string) ($payload['caller_identity_address'] ?? ''));
+        if ($identityId === '' && $address === '') {
+            return null;
+        }
+        if ($identityId === '' || $address === '') {
+            throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_caller_identity_invalid', 'A normalized originate operation requires a resolvable canonical caller identity address.');
+        }
+
+        if (preg_match('/^sips?:([^@;\s]+)@[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/i', $address, $matches) === 1) {
+            $user = $matches[1];
+
+            return $user.' <'.$user.'>';
+        }
+        if (preg_match('/^\+[1-9][0-9]{7,14}$/', $address) === 1) {
+            return $address.' <'.$address.'>';
+        }
+
+        throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_caller_identity_invalid', 'The canonical caller identity address is not a supported SIP or E.164 address.');
     }
 
     private function asteriskEndpoint(string $destination): string

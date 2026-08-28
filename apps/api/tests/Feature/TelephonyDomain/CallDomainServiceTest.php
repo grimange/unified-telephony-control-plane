@@ -53,6 +53,74 @@ final class CallDomainServiceTest extends TestCase
         $this->assertDatabaseHas('runtime_reconciliation_states', ['target_type' => 'call_leg_origination', 'target_id' => $result['leg_id']]);
     }
 
+    public function test_c7b_selected_caller_identity_address_is_carried_into_originate_operation(): void
+    {
+        $tenantId = $this->tenant();
+        $trunkId = Str::uuid()->toString();
+        $endpointId = Str::uuid()->toString();
+        $destinationId = Str::uuid()->toString();
+        $callerAddressId = Str::uuid()->toString();
+        $callerIdentityId = Str::uuid()->toString();
+        $routeId = Str::uuid()->toString();
+        $now = now();
+
+        DB::table('external_trunks')->insert([
+            'id' => $trunkId, 'tenant_id' => $tenantId, 'name' => 'C7B Carrier', 'slug' => 'c7b-carrier',
+            'supported_directions' => json_encode(['outbound']), 'capabilities' => json_encode([]),
+            'desired_state' => 'active', 'observed_health' => 'ready', 'configuration_version' => 1,
+            'created_at' => $now, 'updated_at' => $now,
+        ]);
+        DB::table('trunk_endpoints')->insert([
+            'id' => $endpointId, 'tenant_id' => $tenantId, 'external_trunk_id' => $trunkId,
+            'endpoint_uri' => 'sip:provider.example:5060', 'transport' => 'udp', 'authentication_mode' => 'none',
+            'signaling_mode' => 'static', 'desired_state' => 'active', 'priority' => 100,
+            'created_at' => $now, 'updated_at' => $now,
+        ]);
+        DB::table('telephony_addresses')->insert([
+            'id' => $destinationId, 'tenant_id' => $tenantId, 'address_type' => 'sip_uri',
+            'normalized_value' => 'sip:97001@38.146.161.46', 'desired_state' => 'active',
+            'created_at' => $now, 'updated_at' => $now,
+        ]);
+        DB::table('external_trunk_addresses')->insert([
+            'external_trunk_id' => $trunkId, 'telephony_address_id' => $destinationId,
+            'direction' => 'outbound', 'created_at' => $now, 'updated_at' => $now,
+        ]);
+        DB::table('telephony_addresses')->insert([
+            'id' => $callerAddressId, 'tenant_id' => $tenantId, 'address_type' => 'sip_uri',
+            'normalized_value' => 'sip:utcp-v1@38.146.161.46', 'desired_state' => 'active',
+            'created_at' => $now, 'updated_at' => $now,
+        ]);
+        DB::table('caller_identities')->insert([
+            'id' => $callerIdentityId, 'tenant_id' => $tenantId, 'name' => 'V1 Caller',
+            'telephony_address_id' => $callerAddressId, 'desired_state' => 'active',
+            'created_at' => $now, 'updated_at' => $now,
+        ]);
+        DB::table('caller_identity_policies')->insert([
+            'id' => Str::uuid()->toString(), 'tenant_id' => $tenantId, 'caller_identity_id' => $callerIdentityId,
+            'external_trunk_id' => $trunkId, 'desired_state' => 'active', 'created_at' => $now, 'updated_at' => $now,
+        ]);
+        DB::table('outbound_routes')->insert([
+            'id' => $routeId, 'tenant_id' => $tenantId, 'name' => 'C7B Route', 'slug' => 'c7b-route',
+            'external_trunk_id' => $trunkId, 'telephony_address_id' => $destinationId,
+            'caller_identity_id' => $callerIdentityId, 'priority' => 100, 'desired_state' => 'active',
+            'created_at' => $now, 'updated_at' => $now,
+        ]);
+
+        $result = app(CallDomainService::class)->createOutboundCall(
+            $tenantId,
+            ExecutionContext::system(tenantId: $tenantId),
+            null,
+            null,
+            'telephony_address:'.$destinationId,
+        );
+        $operation = DB::table('runtime_operations')->where('id', $result['operation_id'])->first();
+        $payload = json_decode($operation->payload, true, 512, JSON_THROW_ON_ERROR);
+
+        $this->assertSame($callerIdentityId, $payload['caller_identity_id']);
+        $this->assertSame('sip:utcp-v1@38.146.161.46', $payload['caller_identity_address']);
+        $this->assertSame('sip:97001@38.146.161.46', $payload['destination_uri']);
+    }
+
     public function test_additional_outbound_leg_inherits_call_runtime_and_is_idempotent(): void
     {
         $tenantId = $this->tenant();

@@ -249,6 +249,26 @@ final class C7bService
         return trim($value);
     }
 
+    public function executionCallerIdentityAddress(string $tenantId, ?string $identityId): string
+    {
+        if ($identityId === null || trim($identityId) === '') {
+            throw new InvalidArgumentException('caller_identity_required');
+        }
+
+        $value = DB::table('caller_identities as i')
+            ->join('telephony_addresses as a', 'a.id', '=', 'i.telephony_address_id')
+            ->where('i.tenant_id', $tenantId)
+            ->where('i.id', $identityId)
+            ->where('i.desired_state', 'active')
+            ->where('a.desired_state', 'active')
+            ->value('a.normalized_value');
+        if (! is_string($value) || trim($value) === '') {
+            throw new InvalidArgumentException('caller_identity_address_unavailable');
+        }
+
+        return trim($value);
+    }
+
     private function routeValues(Request $request, string $tenantId, array $input, string $id, ?string $destination, ?string $caller, string $slug): array
     {
         return ['id' => $id, 'tenant_id' => $tenantId, 'name' => $input['name'], 'slug' => $slug, 'external_trunk_id' => $input['external_trunk_id'], 'telephony_address_id' => $input['telephony_address_id'], 'destination_ref' => $destination, 'caller_identity_id' => $caller, 'priority' => (int) ($input['priority'] ?? 100), 'desired_state' => 'draft', 'created_by' => $request->user()->id, 'updated_by' => $request->user()->id, 'created_at' => now(), 'updated_at' => now()];
@@ -338,7 +358,7 @@ final class C7bService
             throw new InvalidArgumentException('Invalid route kind.');
         }
 
-return $kind.'_routes';
+        return $kind.'_routes';
     }
 
     private function serialize(object $row, string $kind): array
@@ -353,7 +373,7 @@ return $kind.'_routes';
             throw new InvalidArgumentException('Invalid route slug.');
         }
 
-return $slug;
+        return $slug;
     }
 
     private function emit(Request $request, string $tenantId, string $id, string $event, array $payload): void

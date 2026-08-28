@@ -78,6 +78,10 @@ final class CallDomainService
             }
             $endpoint = $decision === null ? null : $this->routes->resolveOutboundEndpoint($tenantId, $decision);
             $executionDestination = $decision === null ? $destinationRef : $this->routes->executionDestination($tenantId, $decision);
+            $callerIdentityId = $decision?->callerIdentityId();
+            $callerIdentityAddress = $decision === null || $callerIdentityId === null
+                ? null
+                : $this->routes->executionCallerIdentityAddress($tenantId, $callerIdentityId);
             $decisionData = $decision === null ? null : [...$decision->toArray(), 'trunk_endpoint_id' => (string) $endpoint->id];
 
             $callId = TelephonyDomainIds::new();
@@ -92,7 +96,7 @@ final class CallDomainService
                 'observed_state' => CallState::Requested->value,
                 'runtime_node_id' => $runtimeNodeId,
                 'destination_ref' => $decision?->destination()?->canonical() ?? $destinationRef,
-                'caller_identity_ref' => $decision?->callerIdentityId(),
+                'caller_identity_ref' => $callerIdentityId,
                 'route_decision' => $decisionData === null ? null : json_encode($decisionData, JSON_THROW_ON_ERROR),
                 'route_decision_source' => $decision === null ? null : 'c7b',
                 'requested_by_user_id' => $context->actorId,
@@ -107,7 +111,7 @@ final class CallDomainService
                 'runtime_node_id' => $runtimeNodeId,
                 'runtime_channel_id' => self::runtimeChannelId($legId),
                 'destination_ref' => $decision?->destination()?->canonical() ?? $destinationRef,
-                'caller_identity_ref' => $decision?->callerIdentityId(),
+                'caller_identity_ref' => $callerIdentityId,
                 'route_decision_id' => $decision?->id(),
                 'outbound_route_id' => $decision?->routeId(),
                 'external_trunk_id' => $decision?->externalTrunkId(),
@@ -126,7 +130,8 @@ final class CallDomainService
                 'leg_id' => $legId,
                 'runtime_node_id' => $runtimeNodeId,
                 'destination_ref' => $decision?->destination()?->canonical() ?? $destinationRef,
-                'caller_identity_id' => $decision?->callerIdentityId(),
+                'caller_identity_id' => $callerIdentityId,
+                'caller_identity_address' => $callerIdentityAddress,
                 'route_decision_id' => $decision?->id(),
                 'outbound_route_id' => $decision?->routeId(),
                 'external_trunk_id' => $decision?->externalTrunkId(),
@@ -365,7 +370,7 @@ final class CallDomainService
      * runtime channel. The ingress values are trusted only after the Kamailio
      * boundary and are revalidated against the observation receipt here.
      *
-     * @param array<string, mixed> $ingress
+     * @param  array<string, mixed>  $ingress
      * @return array{status:string,route_decision_id:?string}
      */
     public function evaluateAndBindInboundRoute(
