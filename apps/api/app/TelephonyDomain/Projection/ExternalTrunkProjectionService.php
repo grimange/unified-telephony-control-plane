@@ -191,7 +191,7 @@ final class ExternalTrunkProjectionService
                 'a.normalized_value',
             ])
             ->where('r.tenant_id', $tenantId)->where('r.external_trunk_id', $trunkId)->where('r.desired_state', 'active')->orderBy('r.priority')->orderBy('r.id')->get()
-            ->map(fn (object $route): array => ['direction' => 'inbound', 'route_id' => $route->route_id, 'priority' => (int) $route->priority, 'address_id' => $route->telephony_address_id, 'address' => $route->normalized_value, 'destination_ref' => $route->destination_ref, 'caller_identity_id' => null])->all();
+            ->map(fn (object $route): array => ['direction' => 'inbound', 'route_id' => $route->route_id, 'priority' => (int) $route->priority, 'address_id' => $route->telephony_address_id, 'address' => $route->normalized_value, 'destination_user' => $this->destinationUser((string) $route->normalized_value), 'destination_ref' => $route->destination_ref, 'caller_identity_id' => null])->all();
         $outbound = DB::table('outbound_routes as r')
             ->join('telephony_addresses as a', 'a.id', '=', 'r.telephony_address_id')
             ->select([
@@ -203,7 +203,7 @@ final class ExternalTrunkProjectionService
                 'a.normalized_value',
             ])
             ->where('r.tenant_id', $tenantId)->where('r.external_trunk_id', $trunkId)->where('r.desired_state', 'active')->orderBy('r.priority')->orderBy('r.id')->get()
-            ->map(fn (object $route): array => ['direction' => 'outbound', 'route_id' => $route->route_id, 'priority' => (int) $route->priority, 'address_id' => $route->telephony_address_id, 'address' => $route->normalized_value, 'destination_ref' => 'telephony_address:'.$route->telephony_address_id, 'caller_identity_id' => $route->caller_identity_id])->all();
+            ->map(fn (object $route): array => ['direction' => 'outbound', 'route_id' => $route->route_id, 'priority' => (int) $route->priority, 'address_id' => $route->telephony_address_id, 'address' => $route->normalized_value, 'destination_user' => $this->destinationUser((string) $route->normalized_value), 'destination_ref' => 'telephony_address:'.$route->telephony_address_id, 'caller_identity_id' => $route->caller_identity_id])->all();
 
         return [...$inbound, ...$outbound];
     }
@@ -243,6 +243,15 @@ final class ExternalTrunkProjectionService
     private function providerLocalId(string $provider, string $trunkId): string
     {
         return 'utcp-'.$provider.'-'.str_replace('-', '', strtolower($trunkId));
+    }
+
+    private function destinationUser(string $normalizedAddress): string
+    {
+        if (preg_match('/^sips?:([^@]+)@/i', $normalizedAddress, $matches) === 1) {
+            return $matches[1];
+        }
+
+        return $normalizedAddress;
     }
 
     private function projectKamailioRegistrations(string $tenantId, object $trunk): void

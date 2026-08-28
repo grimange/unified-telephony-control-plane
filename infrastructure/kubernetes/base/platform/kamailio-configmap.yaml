@@ -278,7 +278,7 @@ data:
         remove_hf("X-UTCP-Ingress-Trunk-Endpoint-ID");
         remove_hf("X-UTCP-Ingress-Runtime-Node-ID");
 
-        if (!sql_query("conference", "select tenant_id, canonical_external_trunk_id, telephony_address_id, trunk_endpoint_id from kamailio_external_trunk_route_view where normalized_address = '$rU' and direction = 'inbound' and provider_host = '$si'", "external_trunk_route")) {
+        if (!sql_query("conference", "select tenant_id, canonical_external_trunk_id, telephony_address_id, trunk_endpoint_id from kamailio_external_trunk_route_view where destination_user = '$rU' and direction = 'inbound' and provider_host = '$si'", "external_trunk_route")) {
             xlog("L_WARN", "kamailio_external_trunk_route result=projection_query_failed method=$rm call_id=$ci\n");
             sl_send_reply("503", "External Trunk Projection Unavailable");
             exit;
@@ -336,7 +336,7 @@ data:
             exit;
         }
 
-        if (!sql_query("conference", "select endpoint_uri, regexp_replace(endpoint_uri, '^sip:', '') as provider_host, r.auth_username, r.auth_ha1, r.realm from kamailio_external_trunk_route_view v left join kamailio_external_trunk_registration_view r on r.trunk_endpoint_id = v.endpoint_id where v.endpoint_id = '$hdr(X-UTCP-Trunk-Endpoint-ID)' and v.normalized_address = '$rU' and v.direction = 'outbound' and v.desired_state = 'active' and v.accept_new_calls = true", "runtime_external_route")) {
+        if (!sql_query("conference", "select endpoint_uri, regexp_replace(endpoint_uri, '^sip:', '') as provider_host, r.auth_username, r.auth_ha1, r.realm from kamailio_external_trunk_route_view v left join kamailio_external_trunk_registration_view r on r.trunk_endpoint_id = v.trunk_endpoint_id where v.trunk_endpoint_id = '$hdr(X-UTCP-Trunk-Endpoint-ID)' and v.destination_user = '$rU' and v.direction = 'outbound' and v.desired_state = 'active' and v.accept_new_calls = true", "runtime_external_route")) {
             xlog("L_WARN", "kamailio_runtime_external_route result=projection_query_failed call_id=$ci\n");
             sl_send_reply("503", "External Trunk Projection Unavailable");
             exit;

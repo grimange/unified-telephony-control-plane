@@ -22,7 +22,7 @@ final class T6ExternalTrunkProjectionTest extends TestCase
     {
         [$admin, $tenant] = $this->tenantAdmin('t6-projection@utcp.local.test', 't6-projection');
         $session = ['user_session_version' => 1, 'active_tenant_id' => $tenant];
-        $address = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/admin/telephony-addresses', ['address_type' => 'e164', 'value' => '+1 202 555 0199'])->assertCreated()->json('telephony_address');
+        $address = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/admin/telephony-addresses', ['address_type' => 'sip_uri', 'value' => 'sip:97001@38.146.161.46'])->assertCreated()->json('telephony_address');
         $trunk = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/admin/external-trunks', ['name' => 'T6 Carrier', 'slug' => 't6-carrier', 'supported_directions' => ['outbound']])->assertCreated()->json('external_trunk');
         $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/external-trunks/{$trunk['id']}/addresses", ['telephony_address_id' => $address['id'], 'direction' => 'both'])->assertCreated();
         $credential = $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/external-trunks/{$trunk['id']}/credentials", ['credential_type' => 'sip', 'identifier' => 'synthetic-user', 'secret' => 'synthetic-secret-123'])->assertCreated()->json('credential_reference');
@@ -50,6 +50,8 @@ final class T6ExternalTrunkProjectionTest extends TestCase
         $this->assertSame($credential['id'], $artifact['endpoints'][0]['credential_reference_id']);
         $this->assertSame($route['id'], $artifact['routes'][0]['route_id']);
         $this->assertSame($address['id'], $artifact['routes'][0]['address_id']);
+        $this->assertSame('sip:97001@38.146.161.46', $artifact['routes'][0]['address']);
+        $this->assertSame('97001', $artifact['routes'][0]['destination_user']);
         $this->assertStringNotContainsString('synthetic-secret-123', json_encode($artifact, JSON_THROW_ON_ERROR));
         $this->assertStringContainsString('utcp-', $artifact['provider_local_trunk_id']);
 
@@ -103,6 +105,52 @@ final class T6ExternalTrunkProjectionTest extends TestCase
         $this->assertSame('removed', $artifact['desired_state']);
         $this->assertNull($artifact['provider_representation']);
         $this->assertDatabaseHas('external_trunk_projection_artifacts', ['external_trunk_id' => $trunk['id'], 'desired_state' => 'removed', 'observed_state' => 'projected']);
+    }
+
+    public function test_postgresql_route_projection_selects_one_canonical_registration_route_and_fails_closed(): void
+    {
+        if (DB::getDriverName() !== 'pgsql') {
+            $this->markTestSkipped('The route view contract requires PostgreSQL JSONB and UUID semantics.');
+        }
+
+        [$admin, $tenant] = $this->tenantAdmin('t6-sql@utcp.local.test', 't6-sql');
+        $session = ['user_session_version' => 1, 'active_tenant_id' => $tenant];
+        $address = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/admin/telephony-addresses', ['address_type' => 'sip_uri', 'value' => 'sip:97001@38.146.161.46'])->assertCreated()->json('telephony_address');
+        $trunk = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/admin/external-trunks', ['name' => 'SQL Carrier', 'slug' => 'sql-carrier', 'supported_directions' => ['outbound']])->assertCreated()->json('external_trunk');
+        $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/external-trunks/{$trunk['id']}/addresses", ['telephony_address_id' => $address['id'], 'direction' => 'outbound'])->assertCreated();
+        $credential = $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/external-trunks/{$trunk['id']}/credentials", ['credential_type' => 'sip', 'identifier' => 'sql-user', 'secret' => 'sql-secret-123'])->assertCreated()->json('credential_reference');
+        $endpoint = $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/external-trunks/{$trunk['id']}/endpoints", ['endpoint_uri' => 'sip:38.146.161.46:5060', 'signaling_mode' => 'outbound_registration', 'authentication_mode' => 'credentials', 'credential_reference_id' => $credential['id'], 'registration_target' => 'sip:38.146.161.46:5060', 'registration_realm' => '38.146.161.46', 'registration_identity' => 'sql-user'])->assertCreated()->json('endpoint');
+        $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/external-trunks/{$trunk['id']}/desired-state", ['desired_state' => 'active'])->assertOk();
+        DB::table('external_trunks')->where('id', $trunk['id'])->update(['observed_health' => 'ready']);
+        $identity = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/admin/caller-identities', ['name' => 'SQL Caller', 'telephony_address_id' => $address['id']])->assertCreated()->json('caller_identity');
+        $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/caller-identities/{$identity['id']}/desired-state", ['desired_state' => 'active'])->assertOk();
+        $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/caller-identities/{$identity['id']}/policies", ['external_trunk_id' => $trunk['id']])->assertCreated();
+        $route = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/admin/outbound-routes', ['name' => 'SQL outbound', 'slug' => 'sql-outbound', 'external_trunk_id' => $trunk['id'], 'telephony_address_id' => $address['id'], 'caller_identity_id' => $identity['id'], 'priority' => 10])->assertCreated()->json('outbound_route');
+        $this->actingAs($admin)->withSession($session)->postJson("/api/v1/admin/outbound-routes/{$route['id']}/desired-state", ['desired_state' => 'active'])->assertOk();
+
+        app(ExternalTrunkProjectionService::class)->projectTenant($tenant);
+
+        $types = DB::selectOne('select pg_typeof(route.trunk_endpoint_id)::text as route_type, pg_typeof(registration.trunk_endpoint_id)::text as registration_type from kamailio_external_trunk_route_view route left join kamailio_external_trunk_registration_view registration on registration.trunk_endpoint_id = route.trunk_endpoint_id where route.trunk_endpoint_id = ? limit 1', [$endpoint['id']]);
+        $this->assertSame('uuid', $types->route_type);
+        $this->assertSame('uuid', $types->registration_type);
+
+        $select = fn (string $endpointId, string $destination, string $direction = 'outbound') => DB::table('kamailio_external_trunk_route_view')->where('trunk_endpoint_id', $endpointId)->where('destination_user', $destination)->where('direction', $direction)->where('desired_state', 'active')->where('accept_new_calls', true);
+        $row = $select($endpoint['id'], '97001')->first();
+        $this->assertNotNull($row);
+        $this->assertSame(1, $select($endpoint['id'], '97001')->count());
+        $this->assertSame('sip:38.146.161.46:5060', $row->endpoint_uri);
+        $this->assertSame('sip:97001@38.146.161.46', $row->normalized_address);
+        $this->assertSame('97001', $row->destination_user);
+        $this->assertSame(0, $select(IdentityIds::new(), '97001')->count());
+        $this->assertSame(0, $select($endpoint['id'], '97002')->count());
+        $this->assertSame(0, $select($endpoint['id'], '97001', 'inbound')->count());
+
+        DB::table('outbound_routes')->where('id', $route['id'])->update(['desired_state' => 'disabled']);
+        app(ExternalTrunkProjectionService::class)->projectTenant($tenant);
+        $this->assertSame(0, $select($endpoint['id'], '97001')->count());
+
+        DB::table('external_trunk_projection_artifacts')->where('external_trunk_id', $trunk['id'])->where('provider', 'kamailio')->update(['desired_state' => 'disabled']);
+        $this->assertSame(0, $select($endpoint['id'], '97001')->count());
     }
 
     private function tenantAdmin(string $email, string $slug): array
