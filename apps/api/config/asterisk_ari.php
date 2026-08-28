@@ -7,6 +7,10 @@ return [
     'listener_kind' => 'asterisk-ari-events',
     'credential_type' => 'ari-basic',
     'managed_image' => env('UTCP_MANAGED_ASTERISK_IMAGE'),
+    // Managed Asterisk V1-A channels must be allocated in the codec accepted
+    // by the canonical Kamailio-facing PJSIP endpoint.  This is consumed by
+    // AsteriskAriClient as the ARI originate formats capability.
+    'execution_media_formats' => ['ulaw'],
     'defaults' => [
         'application_name' => env('UTCP_ASTERISK_ARI_APPLICATION', 'utcp-t0-observation'),
         'connect_timeout_ms' => (int) env('UTCP_ASTERISK_ARI_CONNECT_TIMEOUT_MS', 2000),

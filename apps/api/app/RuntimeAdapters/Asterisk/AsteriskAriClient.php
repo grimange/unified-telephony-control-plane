@@ -342,6 +342,7 @@ class AsteriskAriClient
             if ($legId === '') {
                 throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_call_leg_missing', 'A normalized originate operation requires a CallLeg target.');
             }
+            $formats = $this->originateFormats();
             $runtimeChannelId = RuntimeChannelIdentity::forCallLeg($legId);
             $request('POST', 'channels', [
                 'endpoint' => $destination,
@@ -354,6 +355,7 @@ class AsteriskAriClient
                 'priority' => '1',
                 'timeout' => (string) ($payload['timeout_seconds'] ?? 30),
                 'channelId' => $runtimeChannelId,
+                'formats' => implode(',', $formats),
             ], [200, 201, 202], [
                 'variables' => [
                     '__UTCP_CALL_LEG_ID' => $legId,
@@ -424,6 +426,31 @@ class AsteriskAriClient
         $request($method, $target, $query);
 
         return ['provider_action' => $providerAction, 'runtime_channel_id' => $channel];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function originateFormats(): array
+    {
+        $configured = config('asterisk_ari.execution_media_formats');
+        if (! is_array($configured) || $configured === []) {
+            throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_execution_media_formats_invalid', 'Managed Asterisk originate media formats are not configured.');
+        }
+
+        $formats = [];
+        foreach ($configured as $format) {
+            if (! is_string($format) || trim($format) === '') {
+                throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_execution_media_formats_invalid', 'Managed Asterisk originate media formats must contain only non-blank strings.');
+            }
+            $formats[] = trim($format);
+        }
+
+        if (count(array_unique($formats)) !== count($formats)) {
+            throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_execution_media_formats_invalid', 'Managed Asterisk originate media formats must not contain duplicates.');
+        }
+
+        return $formats;
     }
 
     private function asteriskEndpoint(string $destination): string

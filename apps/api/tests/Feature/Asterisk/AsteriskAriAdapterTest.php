@@ -18,27 +18,26 @@ use App\RuntimeAdapters\Asterisk\AsteriskAriReconnectBackoff;
 use App\RuntimeAdapters\Asterisk\AsteriskCatalog;
 use App\RuntimeAdapters\Asterisk\AsteriskRuntimeAdapter;
 use App\RuntimeAdapters\Asterisk\AsteriskRuntimeNodeReconciler;
+use App\RuntimeEngine\Commands\CommandWorker;
 use App\RuntimeEngine\Commands\RuntimeAdapterRegistry;
 use App\RuntimeEngine\Commands\RuntimeConferenceInspectionService;
 use App\RuntimeEngine\Events\EventNormalizerWorker;
 use App\RuntimeEngine\Events\RuntimeEventReceiptRepository;
 use App\RuntimeEngine\Listeners\RuntimeListenerLeaseRepository;
 use App\RuntimeEngine\Projection\ProjectionService;
+use App\RuntimeEngine\Reconciliation\ReconcilerRegistry;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use App\RuntimeEngine\Reconciliation\ReconciliationWorker;
-use App\RuntimeEngine\Reconciliation\ReconcilerRegistry;
 use App\RuntimeEngine\Sources\EventSourceRepository;
-use App\RuntimeProvisioning\ManagedAsteriskProvisioningOperationHandler;
-use App\RuntimeRegistry\RuntimeExecutionContract;
 use App\RuntimeRegistry\RuntimeRegistryService;
 use App\TelephonyDomain\RuntimeChannelIdentity;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
+use Mockery\MockInterface;
 use ReflectionMethod;
 use ReflectionProperty;
 use RuntimeException;
-use Mockery\MockInterface;
 use Tests\TestCase;
 
 final class AsteriskAriAdapterTest extends TestCase
@@ -69,6 +68,7 @@ final class AsteriskAriAdapterTest extends TestCase
             'priority' => '1',
             'timeout' => '30',
             'channelId' => RuntimeChannelIdentity::forCallLeg('leg-1'),
+            'formats' => 'ulaw',
         ], $request['query']);
         $this->assertSame([
             'variables' => [
@@ -78,6 +78,37 @@ final class AsteriskAriAdapterTest extends TestCase
                 '__UTCP_CALLER_IDENTITY_ID' => 'caller-1',
             ],
         ], $request['body']);
+    }
+
+    public function test_originate_fails_closed_when_canonical_execution_media_formats_are_invalid(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        config(['asterisk_ari.execution_media_formats' => []]);
+        $client = $this->ariClientWithResponses([['status' => 201]]);
+
+        try {
+            $client->executeCallOperation($tenantId, $nodeId, 'call.leg.originate', [
+                'leg_id' => 'leg-1',
+                'destination_uri' => '97001',
+            ], [['id' => 'leg-1', 'call_id' => 'call-1', 'runtime_channel_id' => 'channel-1']]);
+            $this->fail('originate must reject missing execution media authority before ARI execution');
+        } catch (AsteriskAriException $exception) {
+            $this->assertSame('ari_execution_media_formats_invalid', $exception->failureCode);
+        }
+
+        $this->assertSame([], $client->requests);
+    }
+
+    public function test_managed_asterisk_execution_media_authority_matches_the_kamailio_facing_endpoint(): void
+    {
+        $this->assertSame(['ulaw'], config('asterisk_ari.execution_media_formats'));
+
+        $pjsip = file_get_contents(base_path('../../infrastructure/docker/asterisk/config/pjsip.conf'));
+        $this->assertIsString($pjsip);
+        $this->assertMatchesRegularExpression('/\[kamailio-edge\][\s\S]*?allow=ulaw/', $pjsip);
+        $this->assertStringNotContainsString('allow=slin', $pjsip);
+        $this->assertStringNotContainsString('allow=alaw', $pjsip);
     }
 
     public function test_ari_request_serializes_json_body_and_passes_it_to_http_transport(): void
@@ -1412,7 +1443,6 @@ final class AsteriskAriAdapterTest extends TestCase
             DB::table('runtime_node_capabilities')->where('runtime_node_id', $managedNodeId)->orderBy('capability_key')->pluck('capability_key')->all(),
         );
 
-
         [$externalTenantId, $externalNodeId] = $this->runtimeNode();
         $this->configureAriNode($externalTenantId, $externalNodeId);
         $before = DB::table('runtime_node_capabilities')->where('runtime_node_id', $externalNodeId)->orderBy('capability_key')->pluck('capability_key')->all();
@@ -1465,11 +1495,11 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertIsString($operationId);
         $this->assertSame('runtime.node.workload.converge', DB::table('runtime_operations')->where('id', $operationId)->value('operation_type'));
 
-        $genericWorker = app(\App\RuntimeEngine\Commands\CommandWorker::class);
+        $genericWorker = app(CommandWorker::class);
         $this->assertSame(0, $genericWorker->workOnce('generic-worker', 10, 60, [], ['runtime.node.workload.converge']));
         $this->assertSame('pending', DB::table('runtime_operations')->where('id', $operationId)->value('status'));
 
-        $infrastructureWorker = app(\App\RuntimeEngine\Commands\CommandWorker::class);
+        $infrastructureWorker = app(CommandWorker::class);
         $this->assertSame(1, $infrastructureWorker->workOnce('infrastructure-worker', 10, 60, ['runtime.node.workload.converge']));
         $this->assertSame('succeeded', DB::table('runtime_operations')->where('id', $operationId)->value('status'));
         $this->assertSame('sha256:'.str_repeat('b', 64), DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_execution_image'));
