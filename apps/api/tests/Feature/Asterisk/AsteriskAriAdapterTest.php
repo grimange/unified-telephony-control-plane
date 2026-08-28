@@ -25,6 +25,8 @@ use App\RuntimeEngine\Events\RuntimeEventReceiptRepository;
 use App\RuntimeEngine\Listeners\RuntimeListenerLeaseRepository;
 use App\RuntimeEngine\Projection\ProjectionService;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
+use App\RuntimeEngine\Reconciliation\ReconciliationWorker;
+use App\RuntimeEngine\Reconciliation\ReconcilerRegistry;
 use App\RuntimeEngine\Sources\EventSourceRepository;
 use App\RuntimeProvisioning\ManagedAsteriskProvisioningOperationHandler;
 use App\RuntimeRegistry\RuntimeExecutionContract;
@@ -36,6 +38,7 @@ use Illuminate\Support\Facades\DB;
 use ReflectionMethod;
 use ReflectionProperty;
 use RuntimeException;
+use Mockery\MockInterface;
 use Tests\TestCase;
 
 final class AsteriskAriAdapterTest extends TestCase
@@ -1399,36 +1402,16 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->configureAriNode($tenantId, $managedNodeId);
         $this->makeManaged($tenantId, $managedNodeId);
 
-        $deployments = [];
-        $kubernetes = $this->mock(KubernetesWorkloadClient::class, function ($mock) use (&$deployments): void {
-            $mock->shouldReceive('applyDeployment')->twice()->andReturnUsing(function (array $desired, string $slug) use (&$deployments): array {
-                $deployments[] = [$desired, $slug];
-
-                return $desired;
-            });
-        });
-        $reconciler = new AsteriskRuntimeNodeReconciler(
-            new AsteriskCatalog,
-            app(RuntimeRegistryService::class),
-            $kubernetes,
-            app(ManagedAsteriskProvisioningOperationHandler::class),
-        );
+        $reconciler = new AsteriskRuntimeNodeReconciler(new AsteriskCatalog, app(RuntimeRegistryService::class));
         $target = (object) ['target_id' => $managedNodeId, 'last_operation_id' => null];
-        $reconciler->evaluate($target);
+        $required = $reconciler->evaluate($target);
+        $this->assertSame('runtime.node.workload.converge', $required->operationType);
 
-        $expected = config('runtime_registry.adapter_keys.asterisk-ari.supported_capabilities');
-        sort($expected);
-        $this->assertSame($expected, DB::table('runtime_node_capabilities')->where('runtime_node_id', $managedNodeId)->orderBy('capability_key')->pluck('capability_key')->all());
+        $this->assertSame(
+            ['conference.lifecycle', 'conference.participation', 'event.stream', 'runtime.observation'],
+            DB::table('runtime_node_capabilities')->where('runtime_node_id', $managedNodeId)->orderBy('capability_key')->pluck('capability_key')->all(),
+        );
 
-        $node = DB::table('runtime_nodes')->where('id', $managedNodeId)->first();
-        DB::table('runtime_nodes')->where('id', $managedNodeId)->update(['observed_configuration_version' => $node->configuration_version]);
-        $reconciler->evaluate($target);
-        $second = DB::table('runtime_nodes')->where('id', $managedNodeId)->first();
-        $this->assertSame((int) $node->configuration_version, (int) $second->configuration_version);
-        $this->assertCount(2, $deployments);
-        $this->assertSame($deployments[0], $deployments[1]);
-        $this->assertSame('asterisk-local-sip-fixtures', $deployments[0][0]['spec']['template']['spec']['volumes'][0]['configMap']['name']);
-        $this->assertSame('/opt/utcp-asterisk-local-config', $deployments[0][0]['spec']['template']['spec']['containers'][0]['volumeMounts'][0]['mountPath']);
 
         [$externalTenantId, $externalNodeId] = $this->runtimeNode();
         $this->configureAriNode($externalTenantId, $externalNodeId);
@@ -1437,42 +1420,74 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertSame($before, DB::table('runtime_node_capabilities')->where('runtime_node_id', $externalNodeId)->orderBy('capability_key')->pluck('capability_key')->all());
     }
 
-    public function test_managed_asterisk_reconciler_observes_running_image_digest_and_requires_matching_execution_contract(): void
+    public function test_managed_asterisk_reconciler_requests_infrastructure_workload_convergence(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode();
         $this->configureAriNode($tenantId, $nodeId);
         $this->makeManaged($tenantId, $nodeId);
-        $digest = RuntimeExecutionContract::digest((string) config('asterisk_ari.managed_image'));
-        $this->assertNotNull($digest);
-        DB::table('runtime_nodes')->where('id', $nodeId)->update([
-            'labels' => json_encode(['kubernetes_workload' => ['namespace' => 'utcp-runtime', 'deployment' => 'asterisk-ari']], JSON_THROW_ON_ERROR),
-        ]);
-
-        $this->mock(KubernetesWorkloadClient::class, function ($mock) use ($digest): void {
-            $mock->shouldReceive('applyDeployment')->twice()->andReturn([]);
-            $mock->shouldReceive('listOwnedPods')->twice()->andReturn([[
-                'status' => ['containerStatuses' => [['name' => 'asterisk', 'imageID' => 'docker-pullable://registry.example.test/utcp/asterisk-ari@'.$digest]]],
-            ]]);
-        });
-        $reconciler = new AsteriskRuntimeNodeReconciler(
-            new AsteriskCatalog,
-            app(RuntimeRegistryService::class),
-            app(KubernetesWorkloadClient::class),
-            app(ManagedAsteriskProvisioningOperationHandler::class),
-        );
+        $reconciler = new AsteriskRuntimeNodeReconciler(new AsteriskCatalog, app(RuntimeRegistryService::class));
         $target = (object) ['target_id' => $nodeId, 'last_operation_id' => null];
 
         $first = $reconciler->evaluate($target);
         $this->assertSame('operation_required', $first->status);
-        $this->assertSame($digest, DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_execution_image'));
-        $node = DB::table('runtime_nodes')->where('id', $nodeId)->first();
+        $this->assertSame('runtime.node.workload.converge', $first->operationType);
+    }
+
+    public function test_managed_workload_drift_is_recovered_by_infrastructure_worker_without_a_convergence_loop(): void
+    {
+        config(['asterisk_ari.managed_image' => 'registry.example.test/utcp/asterisk@sha256:'.str_repeat('b', 64)]);
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $this->makeManaged($tenantId, $nodeId);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'labels' => json_encode(['kubernetes_workload' => ['namespace' => 'utcp-runtime', 'deployment' => 'asterisk-managed-drift-test']]),
+        ]);
+        $imageId = 'docker-pullable://registry.example.test/utcp/asterisk@sha256:'.str_repeat('b', 64);
+
+        $this->mock(KubernetesWorkloadClient::class, function (MockInterface $mock) use ($imageId): void {
+            $mock->shouldReceive('applyDeployment')->once()->andReturn([]);
+            $mock->shouldReceive('listOwnedPods')->once()->andReturn([
+                ['status' => ['containerStatuses' => [['name' => 'asterisk', 'imageID' => $imageId]]]],
+            ]);
+        });
+
+        $reconciliation = app(ReconciliationRepository::class);
+        $stateId = $reconciliation->ensureTarget($tenantId, 'runtime_node', $nodeId, 1);
+        $reconciler = new AsteriskRuntimeNodeReconciler(new AsteriskCatalog, app(RuntimeRegistryService::class));
+        $reconciliationWorker = new ReconciliationWorker(
+            $reconciliation,
+            new ReconcilerRegistry([$reconciler]),
+            new RuntimeOperationRepository,
+        );
+
+        $this->assertSame(1, $reconciliationWorker->workOnce('telephony-reconciler', 1));
+        $operationId = DB::table('runtime_reconciliation_states')->where('id', $stateId)->value('last_operation_id');
+        $this->assertIsString($operationId);
+        $this->assertSame('runtime.node.workload.converge', DB::table('runtime_operations')->where('id', $operationId)->value('operation_type'));
+
+        $genericWorker = app(\App\RuntimeEngine\Commands\CommandWorker::class);
+        $this->assertSame(0, $genericWorker->workOnce('generic-worker', 10, 60, [], ['runtime.node.workload.converge']));
+        $this->assertSame('pending', DB::table('runtime_operations')->where('id', $operationId)->value('status'));
+
+        $infrastructureWorker = app(\App\RuntimeEngine\Commands\CommandWorker::class);
+        $this->assertSame(1, $infrastructureWorker->workOnce('infrastructure-worker', 10, 60, ['runtime.node.workload.converge']));
+        $this->assertSame('succeeded', DB::table('runtime_operations')->where('id', $operationId)->value('status'));
+        $this->assertSame('sha256:'.str_repeat('b', 64), DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_execution_image'));
+
         DB::table('runtime_nodes')->where('id', $nodeId)->update([
             'observed_state' => 'ready',
-            'observed_configuration_version' => $node->configuration_version,
+            'observed_configuration_version' => DB::table('runtime_nodes')->where('id', $nodeId)->value('configuration_version'),
         ]);
-
-        $second = $reconciler->evaluate($target);
-        $this->assertSame('converged', $second->status);
+        $completedOperation = DB::table('runtime_operations')->where('id', $operationId)->first();
+        $this->assertSame('runtime.node.workload.converge', $completedOperation->operation_type);
+        $this->assertSame('succeeded', $completedOperation->status);
+        $completedNode = DB::table('runtime_nodes')->where('id', $nodeId)->first();
+        $this->assertSame($completedNode->desired_execution_image, 'registry.example.test/utcp/asterisk@sha256:'.str_repeat('b', 64));
+        $this->assertSame($completedNode->observed_execution_image, 'sha256:'.str_repeat('b', 64));
+        $next = $reconciler->evaluate((object) ['target_id' => $nodeId, 'last_operation_id' => $operationId]);
+        $this->assertSame('operation_required', $next->status);
+        $this->assertSame('runtime.node.inspect', $next->operationType, 'a successful workload convergence must advance to readiness observation, not emit another convergence');
+        $this->assertSame(1, DB::table('runtime_operations')->where('runtime_node_id', $nodeId)->where('operation_type', 'runtime.node.workload.converge')->count());
     }
 
     public function test_taking_over_a_lease_closes_any_epoch_left_open_by_a_superseded_owner(): void

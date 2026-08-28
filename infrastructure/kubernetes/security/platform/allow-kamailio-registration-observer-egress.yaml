@@ -9,7 +9,7 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      utcp.io/network-role: kamailio-registration-observer
+      app.kubernetes.io/component: kamailio-registration-observer
   policyTypes:
     - Ingress
     - Egress

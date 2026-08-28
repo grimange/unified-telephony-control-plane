@@ -81,7 +81,11 @@ if rg -n "api/v1/admin/(ari|esl|asterisk|freeswitch)|simulator/(advance|emit|rec
   fail "found forbidden runtime-specific or manual simulator control route"
 fi
 
-if rg -n "Http::|curl_init|stream_socket_client|WebSocket|Ratchet|Ari|ARI|ESL|FreeSwitch|Asterisk" apps/api/app/Simulator >/dev/null; then
+if printf '%s\n' 'SCENARIO_VERSION' 'SCENARIO_KEY_MIN_LENGTH' 'SCENARIO_TIMEOUT_SECONDS' | rg -n "Http::|curl_init|stream_socket_client|WebSocket|Ratchet|\bAri(?:Client)?\b|\bARI\b|\bESL\b|\bFreeSwitch\b|\bAsterisk\b" >/dev/null; then
+  fail "neutral simulator scenario identifiers matched vendor vocabulary"
+fi
+
+if rg -n "Http::|curl_init|stream_socket_client|WebSocket|Ratchet|\bAri(?:Client)?\b|\bARI\b|\bESL\b|\bFreeSwitch\b|\bAsterisk\b" apps/api/app/Simulator >/dev/null; then
   fail "simulator contains live runtime client or vendor-specific implementation"
 fi
 

@@ -3,22 +3,16 @@
 namespace App\RuntimeAdapters\FreeSwitch;
 
 use App\ControlPlane\Shared\ExecutionContext;
-use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClient;
-use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClientException;
 use App\RuntimeEngine\Reconciliation\Reconciler;
 use App\RuntimeEngine\Reconciliation\ReconciliationResult;
-use App\RuntimeProvisioning\ManagedFreeSwitchProvisioningOperationHandler;
 use App\RuntimeRegistry\RuntimeRegistryService;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 
 final class FreeSwitchRuntimeNodeReconciler implements Reconciler
 {
     public function __construct(
         private readonly FreeSwitchCatalog $catalog,
         private readonly ?RuntimeRegistryService $registry = null,
-        private readonly ?KubernetesWorkloadClient $kubernetes = null,
-        private readonly ?ManagedFreeSwitchProvisioningOperationHandler $provisioning = null,
     ) {}
 
     public function targetType(): string
@@ -48,9 +42,19 @@ final class FreeSwitchRuntimeNodeReconciler implements Reconciler
         if (! $this->hasRequiredShape((string) $node->id)) {
             return ReconciliationResult::blocked('freeswitch_esl_configuration_incomplete');
         }
+        $lastOperation = $target->last_operation_id === null ? null : DB::table('runtime_operations')->where('id', $target->last_operation_id)->first();
         if ($this->registry !== null && $this->registry->isManagedNode((string) $node->tenant_id, (string) $node->id)) {
-            if (! $this->convergeManagedDeployment($node)) {
-                return ReconciliationResult::waiting('managed_deployment_convergence_failed', 30);
+            $convergeType = (string) config('telephony_domain.operation_types.runtime_node_workload_converge', 'runtime.node.workload.converge');
+            if ($lastOperation === null || (string) $lastOperation->operation_type !== $convergeType || $lastOperation->status === 'terminal_failed') {
+                if ($lastOperation !== null && (string) $lastOperation->operation_type === $convergeType && ! in_array($lastOperation->status, ['succeeded', 'cancelled', 'expired', 'terminal_failed'], true)) {
+                    return ReconciliationResult::waiting('runtime_operation_in_progress', 30);
+                }
+
+                return ReconciliationResult::operationRequired($convergeType, [
+                    'runtime_node_id' => $node->id,
+                    'configuration_generation' => (int) $node->configuration_version,
+                    'reason' => 'managed_deployment_convergence_required',
+                ], 'managed_deployment_convergence_required', (string) $node->id);
             }
             $this->registry->ensureManagedCapabilities(ExecutionContext::system(tenantId: (string) $node->tenant_id, reason: 'managed FreeSWITCH capability convergence', origin: 'runtime-engine'), (string) $node->tenant_id, (string) $node->id, config('runtime_registry.adapter_keys.freeswitch-esl.supported_capabilities', []));
             $node = DB::table('runtime_nodes')->where('id', $node->id)->first();
@@ -61,22 +65,6 @@ final class FreeSwitchRuntimeNodeReconciler implements Reconciler
         }
 
         return ReconciliationResult::operationRequired('runtime.node.inspect', ['runtime_node_id' => $node->id, 'configuration_generation' => (int) $node->configuration_version, 'reason' => 'freeswitch_esl_readiness_missing'], 'freeswitch_esl_readiness_missing');
-    }
-
-    private function convergeManagedDeployment(object $node): bool
-    {
-        if ($this->kubernetes === null || $this->provisioning === null) {
-            return true;
-        }
-        try {
-            $this->kubernetes->applyDeployment($this->provisioning->desiredDeployment((string) $node->id, (string) $node->slug), (string) $node->slug);
-
-            return true;
-        } catch (KubernetesWorkloadClientException $exception) {
-            Log::warning('managed FreeSWITCH Deployment convergence failed', ['runtime_node_id' => (string) $node->id, 'reason' => $exception->reason]);
-
-            return false;
-        }
     }
 
     private function hasRequiredShape(string $nodeId): bool

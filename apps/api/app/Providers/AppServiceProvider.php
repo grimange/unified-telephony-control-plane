@@ -35,6 +35,7 @@ use App\RuntimeProvisioning\ManagedAsteriskProvisioningOperationHandler;
 use App\RuntimeProvisioning\ManagedFreeSwitchProvisioningOperationHandler;
 use App\RuntimeProvisioning\ManagedRuntimeDeprovisioningOperationHandler;
 use App\RuntimeProvisioning\ManagedRuntimeProvisioningOperationHandler;
+use App\RuntimeProvisioning\ManagedRuntimeWorkloadConvergenceOperationHandler;
 use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationRegistry;
 use App\RuntimeRegistry\RuntimeNodeDecommissionOperationHandler;
 use App\RuntimeRegistry\RuntimeRegistryService;
@@ -103,6 +104,14 @@ class AppServiceProvider extends ServiceProvider
                     $app->make(ManagedAsteriskProvisioningOperationHandler::class),
                     $app->make(ManagedFreeSwitchProvisioningOperationHandler::class),
                 ]),
+                new ManagedRuntimeWorkloadConvergenceOperationHandler(
+                    $app->make(KubernetesWorkloadClient::class),
+                    $app->make(RuntimeRegistryService::class),
+                    [
+                    $app->make(ManagedAsteriskProvisioningOperationHandler::class),
+                    $app->make(ManagedFreeSwitchProvisioningOperationHandler::class),
+                    ],
+                ),
                 new ManagedRuntimeDeprovisioningOperationHandler([
                     $app->make(ManagedAsteriskDeprovisioningOperationHandler::class),
                     $app->make(ManagedFreeSwitchProvisioningOperationHandler::class),
@@ -174,14 +183,10 @@ class AppServiceProvider extends ServiceProvider
                 new AsteriskRuntimeNodeReconciler(
                     $app->make(AsteriskCatalog::class),
                     $app->make(RuntimeRegistryService::class),
-                    $app->make(KubernetesWorkloadClient::class),
-                    $app->make(ManagedAsteriskProvisioningOperationHandler::class),
                 ),
                 new FreeSwitchRuntimeNodeReconciler(
                     $app->make(FreeSwitchCatalog::class),
                     $app->make(RuntimeRegistryService::class),
-                    $app->make(KubernetesWorkloadClient::class),
-                    $app->make(ManagedFreeSwitchProvisioningOperationHandler::class),
                 ),
                 $app->make(SimulatorRuntimeNodeReconciler::class),
             ]),

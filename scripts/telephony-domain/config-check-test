@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TARGET="$ROOT/apps/api/app/TelephonyDomain/TelephonyDomainService.php"
+TMP="$(mktemp -d)"
+trap 'cp "$TMP/TelephonyDomainService.php" "$TARGET"; rm -rf "$TMP"' EXIT
+cp "$TARGET" "$TMP/TelephonyDomainService.php"
+
+make telephony-domain-config-check >"$TMP/out" 2>"$TMP/err"
+
+printf '%s\n' '// AsteriskAriClient vendor decision authority mutation' >> "$TARGET"
+if make telephony-domain-config-check >"$TMP/out" 2>"$TMP/err"; then
+  printf 'telephony-domain vendor-authority mutation unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -Fq 'C5 authority surface contains direct vendor/runtime decision authority' "$TMP/err" || { cat "$TMP/err" >&2; exit 1; }
+
+cp "$TMP/TelephonyDomainService.php" "$TARGET"
+
+printf '%s\n' '// KubernetesWorkloadClient infrastructure leakage mutation' >> "$TARGET"
+if make telephony-domain-config-check >"$TMP/out" 2>"$TMP/err"; then
+  printf 'telephony-domain Kubernetes-authority mutation unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -Fq 'C5 decision or runtime-adapter surface contains direct Kubernetes infrastructure authority' "$TMP/err" || { cat "$TMP/err" >&2; exit 1; }
+cp "$TMP/TelephonyDomainService.php" "$TARGET"
+
+if ! rg -n 'Http::timeout\(5\)->post' apps/api/app/TelephonyDomain/Signaling/KamailioRegistrationControlClient.php >/dev/null; then
+  printf 'canonical Kamailio signaling HTTP seam is missing\n' >&2
+  exit 1
+fi
+printf 'Telephony-domain canonical vocabulary and vendor-authority tests passed\n'

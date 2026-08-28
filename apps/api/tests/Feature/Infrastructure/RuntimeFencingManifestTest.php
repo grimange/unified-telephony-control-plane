@@ -34,7 +34,7 @@ final class RuntimeFencingManifestTest extends TestCase
             }
         }
 
-        $this->assertSame(['Deployment/utcp-platform/telephony-reconciler'], $ordinaryApiClients);
+        $this->assertSame([], $ordinaryApiClients);
     }
 
     public function test_canonical_local_overlay_activates_only_the_dedicated_infrastructure_identity(): void
@@ -60,11 +60,10 @@ final class RuntimeFencingManifestTest extends TestCase
         }
 
         $reconciler = $objects['Deployment/utcp-platform/telephony-reconciler'];
-        $this->assertSame('utcp-runtime-fencer', $reconciler['spec']['template']['spec']['serviceAccountName']);
-        $this->assertSame('true', $reconciler['spec']['template']['metadata']['labels']['utcp.io/kubernetes-api-client']);
         $this->assertFalse($reconciler['spec']['template']['spec']['automountServiceAccountToken']);
-        $this->assertSame('/var/run/secrets/kubernetes.io/serviceaccount', $reconciler['spec']['template']['spec']['containers'][0]['volumeMounts'][0]['mountPath']);
-        $this->assertSame('kubernetes-api-credentials', $reconciler['spec']['template']['spec']['volumes'][0]['name']);
+        $this->assertArrayNotHasKey('serviceAccountName', $reconciler['spec']['template']['spec']);
+        $this->assertArrayNotHasKey('volumeMounts', $reconciler['spec']['template']['spec']['containers'][0]);
+        $this->assertArrayNotHasKey('volumes', $reconciler['spec']['template']['spec']);
     }
 
     public function test_common_worker_egress_is_reused_without_duplicate_data_service_policy(): void
@@ -90,7 +89,26 @@ final class RuntimeFencingManifestTest extends TestCase
 
         $ports = $this->networkPolicyPorts($workerPolicies['NetworkPolicy/utcp-platform/allow-worker-required-egress']);
         sort($ports);
-        $this->assertSame(['TCP:53', 'TCP:5432', 'TCP:6379', 'TCP:8080', 'TCP:8090', 'UDP:53'], $ports);
+        $this->assertSame(['TCP:53', 'TCP:5432', 'TCP:6379', 'TCP:8080', 'UDP:53'], $ports);
+
+        $allPolicies = $this->kustomizeObjects('infrastructure/kubernetes/security');
+        $registrationPolicy = $allPolicies['NetworkPolicy/utcp-platform/allow-kamailio-registration-observer-required-egress'];
+        $this->assertSame(
+            ['app.kubernetes.io/component' => 'kamailio-registration-observer'],
+            $registrationPolicy['spec']['podSelector']['matchLabels'],
+        );
+        $registrationRules = array_values(array_filter(
+            $registrationPolicy['spec']['egress'],
+            static fn (array $rule): bool => collect($rule['ports'] ?? [])->contains(
+                static fn (array $port): bool => ($port['protocol'] ?? 'TCP') === 'TCP' && (int) $port['port'] === 8090,
+            ),
+        ));
+        $this->assertCount(1, $registrationRules);
+        $this->assertSame(
+            [['podSelector' => ['matchLabels' => ['app.kubernetes.io/component' => 'kamailio']]]],
+            $registrationRules[0]['to'],
+        );
+        $this->assertSame([['port' => 8090, 'protocol' => 'TCP']], $registrationRules[0]['ports']);
 
         $freeswitchPolicy = $workerPolicies['NetworkPolicy/utcp-platform/allow-command-worker-to-freeswitch-esl'];
         $this->assertSame(['Egress'], $freeswitchPolicy['spec']['policyTypes']);

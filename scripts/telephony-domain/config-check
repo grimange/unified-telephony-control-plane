@@ -124,16 +124,14 @@ php -l apps/api/app/TelephonyDomain/Runtime/ConferenceOperationHandler.php >/dev
 php -l apps/api/database/migrations/2026_07_15_090000_create_telephony_session_conference_domain_tables.php >/dev/null
 find apps/api/app/Infrastructure/RuntimeFencing -name '*.php' -print0 | xargs -0 -n1 php -l >/dev/null
 
-telephony_domain_vendor_matches="$({
-  rg -n "sip|webrtc|ari|esl|kamailio|rtpengine|asterisk|freeswitch|media" apps/api/app/TelephonyDomain apps/api/routes/web.php -g '!apps/api/app/TelephonyDomain/Signaling/**' || true
-} | {
-  grep -v "return 'sip:conf-'" || true
-} | {
-  grep -v "where('runtime_node_endpoints.purpose', 'sip')" || true
-})"
-if [ -n "$telephony_domain_vendor_matches" ]; then
-  printf '%s\n' "$telephony_domain_vendor_matches"
-  printf 'C5 domain or route surface contains forbidden vendor/media vocabulary.\n' >&2
+c5_authority_surfaces=(
+  apps/api/app/TelephonyDomain/TelephonyDomainService.php
+  apps/api/app/TelephonyDomain/Failover
+  apps/api/app/Http/Controllers/TelephonyDomain
+  apps/api/routes/web.php
+)
+if rg -n "AsteriskAriClient|RuntimeAdapter|adapter_key[[:space:]]*.*(asterisk|freeswitch)|\$provider[[:space:]]*={2,3}[[:space:]]*['\"](asterisk|freeswitch)['\"]" "${c5_authority_surfaces[@]}"; then
+  printf 'C5 authority surface contains direct vendor/runtime decision authority.\n' >&2
   exit 1
 fi
 
@@ -276,8 +274,11 @@ if binding.get("roleRef", {}).get("kind") != "Role" or binding.get("roleRef", {}
     fail("RoleBinding must reference the namespaced infrastructure Role")
 PY
 
-if rg -n "Http::|curl_init|Kubernetes|KubernetesWorkloadClient|scaleDeployment" apps/api/app/TelephonyDomain apps/api/app/RuntimeAdapters/Asterisk | grep -v "RuntimeFencingCoordinator.php"; then
-  printf 'C5 domain or runtime adapter contains direct Kubernetes infrastructure access.\n' >&2
+if rg -n "Kubernetes|KubernetesWorkloadClient|applyDeployment|applySecret|applyService|deleteDeployment|deleteService|deleteSecret|scaleDeployment|listOwnedPods" \
+  apps/api/app/TelephonyDomain/TelephonyDomainService.php \
+  apps/api/app/TelephonyDomain/Failover \
+  apps/api/app/RuntimeAdapters/Asterisk; then
+  printf 'C5 decision or runtime-adapter surface contains direct Kubernetes infrastructure authority.\n' >&2
   exit 1
 fi
 

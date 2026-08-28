@@ -321,6 +321,7 @@ Artisan::command('runtime-engine:command-worker {--once : Process one batch and 
                 (string) config('telephony_domain.operation_types.runtime_fence'),
                 (string) config('telephony_domain.operation_types.runtime_node_restore'),
                 (string) config('telephony_domain.operation_types.runtime_node_provision'),
+                (string) config('telephony_domain.operation_types.runtime_node_workload_converge'),
                 (string) config('telephony_domain.operation_types.runtime_node_deprovision'),
             ],
         );
@@ -342,6 +343,7 @@ Artisan::command('runtime-engine:infrastructure-worker {--once : Process one inf
                 (string) config('telephony_domain.operation_types.runtime_fence'),
                 (string) config('telephony_domain.operation_types.runtime_node_restore'),
                 (string) config('telephony_domain.operation_types.runtime_node_provision'),
+                (string) config('telephony_domain.operation_types.runtime_node_workload_converge'),
                 (string) config('telephony_domain.operation_types.runtime_node_deprovision'),
             ],
         );

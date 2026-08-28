@@ -185,25 +185,19 @@ final class ManagedFreeSwitchProvisioningTest extends TestCase
             ]);
         }
 
-        $this->mock(KubernetesWorkloadClient::class, function (MockInterface $mock): void {
-            $mock->shouldReceive('applyDeployment')->twice()->withArgs(function (array $deployment): bool {
-                return $deployment['spec']['template']['spec']['containers'][0]['image'] === 'registry.example.test/utcp/freeswitch@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-            })->andReturn([]);
-        });
         $reconciler = new FreeSwitchRuntimeNodeReconciler(
             new FreeSwitchCatalog,
             app(RuntimeRegistryService::class),
-            app(KubernetesWorkloadClient::class),
-            app(ManagedFreeSwitchProvisioningOperationHandler::class),
         );
         $target = (object) ['target_id' => $nodeId, 'last_operation_id' => null];
         $waiting = $reconciler->evaluate($target);
 
         $this->assertSame('operation_required', $waiting->status);
-        $this->assertSame('freeswitch_esl_readiness_missing', $waiting->reasonCode);
+        $this->assertSame('managed_deployment_convergence_required', $waiting->reasonCode);
+        $this->assertSame('runtime.node.workload.converge', $waiting->operationType);
 
         $this->assertSame(
-            ['call.control', 'call.dtmf.send', 'call.hold', 'call.origination', 'media.playback'],
+            ['call.transfer', 'recording'],
             DB::table('runtime_node_capabilities')->where('runtime_node_id', $nodeId)->orderBy('capability_key')->pluck('capability_key')->all(),
         );
 
@@ -212,7 +206,8 @@ final class ManagedFreeSwitchProvisioningTest extends TestCase
             'observed_configuration_version' => DB::table('runtime_nodes')->where('id', $nodeId)->value('configuration_version'),
         ]);
 
-        $this->assertSame('converged', $reconciler->evaluate($target)->status);
+        $this->assertSame('operation_required', $reconciler->evaluate($target)->status);
+        $this->assertSame('runtime.node.workload.converge', $reconciler->evaluate($target)->operationType);
     }
 
     public function test_managed_provisioning_projects_the_exact_catalog_capabilities(): void

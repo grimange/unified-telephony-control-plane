@@ -82,6 +82,7 @@ check: repository-hygiene media-config-check media-config-check-test media-edge-
 
 .PHONY: rtpengine-advertised-address-check media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test media-edge-apply media-edge-failure-proof-overlay-test t3-media-prover-host-check t3-media-prover-host-check-test k3d-config-check-test k3d-verifier-check-test api-entrypoint-check-test
 .PHONY: k8s-config-check-test kamailio-signaling-external-trunk-runtime-proof kamailio-signaling-registration-runtime-proof asterisk-external-trunk-config-check asterisk-external-trunk-config-check-test asterisk-external-trunk-runtime-proof v1-external-sip-peer-config-check v1-external-sip-peer-smoke v1-external-sip-edge-config-check
+.PHONY: runtime-engine-config-check-test simulator-config-check-test telephony-domain-config-check-test
 
 k3d-config-check-test: ## Run canonical utcp-local RTP publication mutation checks.
 	@./scripts/k3d/config-check-test
@@ -521,6 +522,9 @@ runtime-registry-status: ## Report non-sensitive C2 runtime registry counts.
 runtime-engine-config-check: ## Validate C3 command, event, projection, reconciliation, role, and TLS boundaries.
 	@./scripts/runtime-engine/config-check
 
+runtime-engine-config-check-test: ## Run C3 runtime-engine guard mutation tests.
+	@./scripts/runtime-engine/config-check-test
+
 runtime-engine-test: ## Run focused C3 unit and PostgreSQL integration tests.
 	@./scripts/runtime-engine/test
 
@@ -532,6 +536,9 @@ runtime-engine-status: ## Report non-sensitive C3 runtime-engine counts and back
 
 simulator-config-check: ## Validate C4 deterministic simulator catalogs, roles, routes, and boundaries.
 	@./scripts/simulator/config-check
+
+simulator-config-check-test: ## Run C4 simulator guard mutation tests.
+	@./scripts/simulator/config-check-test
 
 simulator-test: ## Run focused C4 deterministic simulator tests.
 	@./scripts/simulator/test
@@ -547,6 +554,9 @@ simulator-status: ## Report non-sensitive C4 simulator counts and process-role s
 
 telephony-domain-config-check: ## Validate C5 telephony session and conference domain boundaries.
 	@./scripts/telephony-domain/config-check
+
+telephony-domain-config-check-test: ## Run C5 telephony-domain guard mutation tests.
+	@./scripts/telephony-domain/config-check-test
 
 telephony-domain-test: ## Run focused C5 telephony session and conference domain tests.
 	@./scripts/telephony-domain/test

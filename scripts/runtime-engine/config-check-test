@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TARGET="$ROOT/apps/api/app/RuntimeEngine/Commands/CommandWorker.php"
+TMP="$(mktemp -d)"
+trap 'cp "$TMP/CommandWorker.php" "$TARGET"; rm -rf "$TMP"' EXIT
+cp "$TARGET" "$TMP/CommandWorker.php"
+
+make runtime-engine-config-check >"$TMP/out" 2>"$TMP/err"
+
+printf '%s\n' '// forbidden legacy ari-worker vocabulary' >> "$TARGET"
+if make runtime-engine-config-check >"$TMP/out" 2>"$TMP/err"; then
+  printf 'runtime-engine forbidden vocabulary mutation unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -Fq 'found forbidden runtime-specific worker' "$TMP/err" || { cat "$TMP/err" >&2; exit 1; }
+
+cp "$TMP/CommandWorker.php" "$TARGET"
+
+WORKER_POLICY="$ROOT/infrastructure/kubernetes/security/platform/allow-worker.yaml"
+cp "$WORKER_POLICY" "$TMP/allow-worker.yaml"
+printf '%s\n' \
+  '    - to:' \
+  '        - podSelector:' \
+  '            matchLabels:' \
+  '              utcp.io/network-role: worker' \
+  '      ports:' \
+  '        - protocol: TCP' \
+  '          port: 8090' >> "$WORKER_POLICY"
+if make runtime-engine-config-check >"$TMP/out" 2>"$TMP/err"; then
+  printf 'runtime-engine broad Kamailio egress mutation unexpectedly passed\n' >&2
+  exit 1
+fi
+grep -Fq 'common worker egress policy changed away from DNS/PostgreSQL/Redis/Reverb only' "$TMP/err" || { cat "$TMP/err" >&2; exit 1; }
+cp "$TMP/allow-worker.yaml" "$WORKER_POLICY"
+
+printf 'Runtime-engine canonical listener and legacy-vocabulary tests passed\n'
