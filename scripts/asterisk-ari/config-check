@@ -124,6 +124,9 @@ fi
 grep -Fq "utcp-outbound" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "Asterisk adapter must use the canonical outbound dialplan"
 grep -Fqi "kamailio" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "Asterisk adapter must document the internal Kamailio execution seam"
 grep -Fq "UTCP_TRUNK_ENDPOINT_ID" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "Asterisk adapter must carry the selected trunk endpoint correlation"
+if rg -n "'context' => 'utcp-outbound'|'priority' => '1'" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php; then
+  fail "call.leg.originate must use the Local endpoint as its sole outbound dialplan-entry authority"
+fi
 for variable in \
   __UTCP_CALL_LEG_ID \
   __UTCP_ROUTE_DECISION_ID \
@@ -138,7 +141,6 @@ if rg -n "variables\[[^]]+\]" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriC
 fi
 grep -Fq 'json_encode($body' apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "Asterisk ARI request path must serialize the JSON body"
 grep -Fq "'endpoint' =>" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "ordinary originate endpoint must remain a query parameter"
-grep -Fq "'context' => 'utcp-outbound'" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "ordinary originate context must remain a query parameter"
 grep -Fq "'execution_media_formats' => ['ulaw']" apps/api/config/asterisk_ari.php || fail "managed Asterisk execution media authority must be the canonical ulaw declaration"
 grep -Fq "'formats' => implode(',', \$formats)" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "Asterisk originate must serialize canonical execution media formats"
 grep -Fq "ari_execution_media_formats_invalid" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "Asterisk originate must fail closed when execution media formats are invalid"

@@ -337,7 +337,9 @@ class AsteriskAriClient
         };
 
         if ($operationType === 'call.leg.originate') {
-            $destination = $this->asteriskEndpoint((string) ($payload['destination_uri'] ?? $payload['destination_ref'] ?? ''));
+            $destinationAddress = (string) ($payload['destination_uri'] ?? $payload['destination_ref'] ?? '');
+            $destination = $this->asteriskEndpoint($destinationAddress);
+            $destinationExtension = $this->dialplanExtension($destinationAddress);
             $legId = (string) ($payload['leg_id'] ?? ($legs[0]['id'] ?? ''));
             if ($legId === '') {
                 throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_call_leg_missing', 'A normalized originate operation requires a CallLeg target.');
@@ -350,10 +352,13 @@ class AsteriskAriClient
                 // Local channels must enter the canonical outbound dialplan. Its
                 // Dial() pre-dial handler applies trusted UTCP correlation
                 // headers to the outbound PJSIP channel before Kamailio receives
-                // it; placing the channel directly in Stasis bypasses that seam.
-                'context' => 'utcp-outbound',
-                'extension' => $this->dialplanExtension((string) ($payload['destination_uri'] ?? $payload['destination_ref'] ?? '')),
-                'priority' => '1',
+                // it; the Local endpoint is the sole dialplan-entry authority.
+                // Supplying context/extension/priority as well would cause the
+                // two Local channel halves to enter this Dial() path twice.
+                // ARI still requires an extension landing value for this
+                // Local-channel originate; it does not select a second
+                // dialplan authority.
+                'extension' => $destinationExtension,
                 'timeout' => (string) ($payload['timeout_seconds'] ?? 30),
                 'channelId' => $runtimeChannelId,
                 'formats' => implode(',', $formats),

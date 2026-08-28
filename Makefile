@@ -577,7 +577,7 @@ asterisk-ari-config-check: ## Validate T0 Asterisk ARI adapter, listener, Kubern
 asterisk-ari-config-check-test: ## Run focused T0 guard mutation tests.
 	@./scripts/asterisk-ari/config-check-test
 
-asterisk-ari-caller-identity-semantics-test: ## Prove managed Asterisk projects CallerIdentity into PJSIP From.
+asterisk-ari-caller-identity-semantics-test: ## Prove managed Asterisk caller identity and single provider origination semantics.
 	@./scripts/asterisk-ari/caller-identity-semantics-test
 
 asterisk-ari-test: ## Run focused T0 Asterisk ARI adapter, listener, epoch, and boundary tests.

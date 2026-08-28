@@ -64,9 +64,7 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertSame('channels', $request['resource']);
         $this->assertSame([
             'endpoint' => 'Local/97001@utcp-outbound',
-            'context' => 'utcp-outbound',
             'extension' => '97001',
-            'priority' => '1',
             'timeout' => '30',
             'channelId' => RuntimeChannelIdentity::forCallLeg('leg-1'),
             'formats' => 'ulaw',

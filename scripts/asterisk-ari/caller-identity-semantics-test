@@ -38,10 +38,11 @@ command -v docker >/dev/null 2>&1 || fail 'docker is required'
 docker image inspect "$ASTERISK_IMAGE" >/dev/null 2>&1 || fail "missing Asterisk image: $ASTERISK_IMAGE"
 docker image inspect "$PEER_IMAGE" >/dev/null 2>&1 || fail "missing peer image: $PEER_IMAGE"
 
-docker network create "$network" >/dev/null
-docker run -d --name "$peer" --network "$network" \
-  -e EXTERNAL_SIP_PEER_USERNAME=utcp-synthetic \
+docker network create --subnet 172.31.0.0/24 "$network" >/dev/null
+docker run -d --name "$peer" --network "$network" --ip 172.31.0.2 \
+  -e EXTERNAL_SIP_PEER_USERNAME=utcp-v1 \
   -e EXTERNAL_SIP_PEER_PASSWORD=utcp-synthetic-secret \
+  -e UTCP_SIGNALING_IP=172.31.0.3 \
   "$PEER_IMAGE" >/dev/null
 
 peer_ready=0
@@ -57,7 +58,7 @@ done
 cp "$ROOT/infrastructure/docker/asterisk/config/pjsip.conf" "$tmp/pjsip.conf"
 sed -i "s#kamailio-sip-internal\.utcp-platform\.svc\.cluster\.local:5060#${peer}:5060#g" "$tmp/pjsip.conf"
 
-docker run -d --name "$asterisk" --network "$network" \
+docker run -d --name "$asterisk" --network "$network" --ip 172.31.0.3 \
   -p 127.0.0.1::8088 \
   -e ARI_USERNAME=utcp-ari \
   -e ARI_PASSWORD=utcp-ari-secret \
@@ -82,7 +83,7 @@ host_port="$(docker port "$asterisk" 8088/tcp | sed -n 's/.*:\([0-9][0-9]*\)$/\1
 
 body='{"variables":{"__UTCP_CALL_LEG_ID":"leg-semantic","__UTCP_ROUTE_DECISION_ID":"route-semantic","__UTCP_TRUNK_ENDPOINT_ID":"endpoint-semantic","__UTCP_CALLER_IDENTITY_ID":"caller-semantic"}}'
 response="$tmp/ari-response"
-ari_url="http://127.0.0.1:${host_port}/ari/channels?endpoint=Local%2F97001%40utcp-outbound&context=utcp-outbound&extension=97001&priority=1&timeout=30&formats=ulaw&callerId=utcp-v1%20%3Cutcp-v1%3E&channelId=caller-identity-semantic"
+ari_url="http://127.0.0.1:${host_port}/ari/channels?endpoint=Local%2F97001%40utcp-outbound&extension=97001&timeout=30&formats=ulaw&callerId=utcp-v1%20%3Cutcp-v1%3E&channelId=caller-identity-semantic"
 http_code="$(curl -sS -o "$response" -w '%{http_code}' --user utcp-ari:utcp-ari-secret \
   -H 'Content-Type: application/json' --data-binary "$body" "$ari_url")"
 [ "$http_code" = 200 ] || fail "ARI originate failed: http=${http_code} response=$(tr '\n' ' ' < "$response")"
@@ -97,8 +98,25 @@ for attempt in $(seq 1 30); do
   sleep 1
 done
 [ "$from_user" = utcp-v1 ] || fail 'synthetic peer did not observe From user utcp-v1'
+invite_count="$(printf '%s\n' "$logs" | rg -c '^INVITE sip:' || true)"
+[ "$invite_count" -eq 1 ] || fail "synthetic peer observed ${invite_count} provider INVITEs; expected exactly one"
+
+answered=0
+for attempt in $(seq 1 10); do
+  logs="$(docker logs "$peer" 2>&1 || true)"
+  if printf '%s\n' "$logs" | rg -q 'SIP/2.0 200 OK'; then
+    answered=1
+    break
+  fi
+  sleep 1
+done
+[ "$answered" -eq 1 ] || fail 'synthetic peer did not answer the single provider INVITE with 200 OK'
+
+logs="$(docker logs "$peer" 2>&1 || true)"
+invite_count="$(printf '%s\n' "$logs" | rg -c '^INVITE sip:' || true)"
+[ "$invite_count" -eq 1 ] || fail "synthetic peer observed a duplicate provider INVITE after answer: count=${invite_count}"
 if printf '%s\n' "$logs" | rg -q '^From: .*<sip:(anonymous|asterisk)@'; then
   fail 'synthetic peer observed an anonymous/default From user'
 fi
 
-printf 'asterisk_caller_identity_runtime_semantics=pass from_user=%s caller_id="utcp-v1 <utcp-v1>"\n' "$from_user"
+printf 'asterisk_caller_identity_runtime_semantics=pass from_user=%s provider_invites=%s provider_answer=200\n' "$from_user" "$invite_count"
