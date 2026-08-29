@@ -20,7 +20,7 @@ run_validation() {
 run_validation provider.example.test 5060 pass
 run_validation 192.168.254.124 30560 pass
 run_validation 2001:db8::10 5060 pass
-run_validation '' '' fail
+run_validation '' '' pass
 run_validation provider.example.test '' fail
 run_validation '' 5060 fail
 run_validation provider.example.test 0 fail
@@ -47,6 +47,66 @@ if grep -Fq 'listen=udp:0.0.0.0:5060 advertise kamailio-sip-external.utcp-platfo
   printf 'native rendered provider socket retained cluster-internal advertisement\n' >&2
   exit 1
 fi
+
+stable_route() {
+  sed -n '/route\[RUNTIME_EXTERNAL_TRUNK\]/,/route\[WITHINDLG\]/p' "$1"
+}
+
+stable_route_body="$(stable_route "$rendered")"
+grep -Fq 'record_route();' <<<"$stable_route_body"
+grep -Fq 'dlg_manage();' <<<"$stable_route_body"
+grep -Fq 'has_totag()' <<<"$stable_route_body" && {
+  printf 'unexpected registration fallback in outbound route\n' >&2
+  exit 1
+}
+
+unset UTCP_SERVER_PROVIDER_SIP_ADDRESS UTCP_SERVER_PROVIDER_SIP_PORT
+SERVER_PROVIDER_SIP_ADDRESS=""
+SERVER_PROVIDER_SIP_PORT=""
+export UTCP_SERVER_STATE_DIR="$TMP/nat-render-state"
+mkdir -p "$UTCP_SERVER_STATE_DIR"
+nat_rendered="$TMP/nat-server.yaml"
+render_server > "$nat_rendered"
+grep -Fq 'listen=udp:0.0.0.0:5060 advertise kamailio-sip-external.utcp-platform.svc.cluster.local:5060 name "provider"' "$nat_rendered"
+grep -Fq 'listen=udp:0.0.0.0:5062 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060 name "runtime"' "$nat_rendered"
+nat_route="$(python3 - "$nat_rendered" <<'PY'
+from pathlib import Path
+import sys
+import yaml
+
+documents = [document for document in yaml.safe_load_all(Path(sys.argv[1]).read_text()) if isinstance(document, dict)]
+config = next(document for document in documents if document.get("kind") == "ConfigMap" and document.get("metadata", {}).get("name") == "kamailio-config")
+body = config["data"]["kamailio.cfg"]
+print(body.split("route[RUNTIME_EXTERNAL_TRUNK]", 1)[1].split("route[WITHINDLG]", 1)[0])
+PY
+)"
+if printf '%s' "$nat_route" | grep -Fq 'record_route();'; then
+  printf 'registration/NAT provider route unexpectedly retained Record-Route\n' >&2
+  exit 1
+fi
+printf '%s' "$nat_route" | grep -Fq 'dlg_manage();'
+grep -Fq 'provider_host = '\''$si'\''' "$nat_rendered"
+grep -Fq 'dlg_set_ruri()' "$nat_rendered"
+
+parse_rendered_kamailio() {
+  local manifest="$1" variant="$2" config
+  config="$TMP/$variant.cfg"
+  python3 - "$manifest" "$config" <<'PY'
+from pathlib import Path
+import sys
+import yaml
+
+documents = [document for document in yaml.safe_load_all(Path(sys.argv[1]).read_text()) if isinstance(document, dict)]
+config = next(document for document in documents if document.get("kind") == "ConfigMap" and document.get("metadata", {}).get("name") == "kamailio-config")
+Path(sys.argv[2]).write_text(config["data"]["kamailio.cfg"], encoding="utf-8")
+PY
+  docker run --rm --entrypoint /usr/sbin/kamailio \
+    -v "$config:/tmp/kamailio.cfg:ro" ghcr.io/kamailio/kamailio:6.0.7-bookworm \
+    -c -f /tmp/kamailio.cfg >/dev/null
+}
+
+parse_rendered_kamailio "$rendered" stable-edge
+parse_rendered_kamailio "$nat_rendered" registration-nat
 
 python3 - "$rendered" <<'PY'
 import hashlib

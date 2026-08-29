@@ -25,8 +25,9 @@ server_kube() {
 fail() { printf 'native-k3s: %s\n' "$1" >&2; exit 1; }
 
 validate_provider_sip_identity() {
-  [ -n "$SERVER_PROVIDER_SIP_ADDRESS" ] && [ -n "$SERVER_PROVIDER_SIP_PORT" ] \
-    || fail 'provider-facing SIP signaling identity is not configured (set UTCP_SERVER_PROVIDER_SIP_ADDRESS and UTCP_SERVER_PROVIDER_SIP_PORT)'
+  local identity_state
+  identity_state="$(provider_sip_identity_state)"
+  [ "$identity_state" = COMPLETE ] || return 0
 
   printf '%s' "$SERVER_PROVIDER_SIP_PORT" | grep -Eq '^[0-9]+$' \
     || fail 'UTCP_SERVER_PROVIDER_SIP_PORT must be a bare integer'
@@ -71,7 +72,21 @@ PY
   fi
 }
 
+provider_sip_identity_state() {
+  if [ -z "$SERVER_PROVIDER_SIP_ADDRESS" ] && [ -z "$SERVER_PROVIDER_SIP_PORT" ]; then
+    printf 'ABSENT'
+  elif [ -n "$SERVER_PROVIDER_SIP_ADDRESS" ] && [ -n "$SERVER_PROVIDER_SIP_PORT" ]; then
+    printf 'COMPLETE'
+  else
+    fail 'provider-facing SIP signaling identity must set both UTCP_SERVER_PROVIDER_SIP_ADDRESS and UTCP_SERVER_PROVIDER_SIP_PORT'
+  fi
+}
+
 provider_sip_advertise() {
+  if [ "$(provider_sip_identity_state)" = ABSENT ]; then
+    printf 'kamailio-sip-external.utcp-platform.svc.cluster.local:5060'
+    return 0
+  fi
   validate_provider_sip_identity
   if printf '%s' "$SERVER_PROVIDER_SIP_ADDRESS" | grep -q ':'; then
     printf '[%s]:%s' "$SERVER_PROVIDER_SIP_ADDRESS" "$SERVER_PROVIDER_SIP_PORT"
@@ -201,6 +216,7 @@ replace_app_key() {
 
 render_server() {
   require_image_lock
+  provider_identity_state="$(provider_sip_identity_state)"
   provider_advertise="$(provider_sip_advertise)"
   write_credentials
   render_root="$(mktemp -d)"
@@ -210,6 +226,9 @@ render_server() {
   provider_config="$render_root/infrastructure/kubernetes/base/platform/kamailio-configmap.yaml"
   escaped_provider_advertise="$(printf '%s' "$provider_advertise" | sed 's/[&|]/\\&/g')"
   sed -i "s|advertise kamailio-sip-external.utcp-platform.svc.cluster.local:5060 name|advertise $escaped_provider_advertise name|" "$provider_config"
+  if [ "$provider_identity_state" = ABSENT ]; then
+    sed -i '/# UTCP_PROVIDER_RECORD_ROUTE_BEGIN/,/# UTCP_PROVIDER_RECORD_ROUTE_END/d' "$provider_config"
+  fi
   provider_config_checksum="$(python3 - "$provider_config" <<'PY'
 import hashlib
 import sys

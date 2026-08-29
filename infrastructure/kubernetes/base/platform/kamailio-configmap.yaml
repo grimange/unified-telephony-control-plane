@@ -10,6 +10,8 @@ data:
   kamailio.cfg: |
     #!KAMAILIO
     #!define FLT_MEDIA_RELAY_REQUIRED 10
+    # Stable provider identity is the native-k3s default source configuration;
+    # registration/NAT rendering removes this bounded provider anchor block.
 
     debug=2
     log_stderror=yes
@@ -364,7 +366,9 @@ data:
         remove_hf("X-UTCP-Route-Decision-ID");
         remove_hf("X-UTCP-Trunk-Endpoint-ID");
         dlg_manage();
+        # UTCP_PROVIDER_RECORD_ROUTE_BEGIN
         record_route();
+        # UTCP_PROVIDER_RECORD_ROUTE_END
         t_on_failure("RUNTIME_EXTERNAL_TRUNK_AUTH");
         if (!t_relay()) {
             xlog("L_WARN", "kamailio_runtime_external_route result=relay_failed endpoint_id=$hdr(X-UTCP-Trunk-Endpoint-ID) call_id=$ci\n");
