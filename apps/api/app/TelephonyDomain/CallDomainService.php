@@ -833,7 +833,11 @@ final class CallDomainService
         if (! in_array($next->value, self::CALL_TRANSITIONS[$current->value] ?? [], true)) {
             return;
         }
-        DB::table('calls')->where('id', $callId)->update(['observed_state' => $next->value, 'updated_at' => now()]);
+        $updates = ['observed_state' => $next->value, 'updated_at' => now()];
+        if ($next === CallState::Answered && $call->answered_at === null) {
+            $updates['answered_at'] = now();
+        }
+        DB::table('calls')->where('id', $callId)->update($updates);
         $this->record(ExecutionContext::system(reason: 'call state follows leg', tenantId: $tenantId, origin: $source), 'call.state_changed', 'call', $callId, ['from' => $current->value, 'to' => $next->value, 'source' => $source]);
     }
 

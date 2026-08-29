@@ -8,6 +8,7 @@ use App\TelephonyDomain\CallDomainService;
 use App\TelephonyDomain\CallOperationCatalog;
 use App\TelephonyDomain\CallState;
 use App\TelephonyDomain\Reconciliation\CallOriginationReconciler;
+use Carbon\Carbon;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -270,6 +271,58 @@ final class CallDomainServiceTest extends TestCase
 
         $this->expectException(LogicException::class);
         $service->terminalize($tenantId, 'call', $result['call_id'], CallState::Failed, 'busy', 'remote');
+    }
+
+    public function test_answered_leg_advances_call_with_first_canonical_answer_timestamp_and_replay_is_idempotent(): void
+    {
+        $tenantId = $this->tenant();
+        $nodeId = Str::uuid()->toString();
+        $now = Carbon::parse('2026-08-29 12:00:00 UTC');
+        DB::table('runtime_nodes')->insert([
+            'id' => $nodeId, 'tenant_id' => $tenantId, 'name' => 'C6 answer node',
+            'slug' => 'c6-answer-'.str_replace('-', '', $nodeId), 'runtime_family' => 'simulator',
+            'adapter_key' => 'simulator-deterministic', 'desired_state' => 'active',
+            'observed_state' => 'ready', 'configuration_version' => 1,
+            'created_at' => $now, 'updated_at' => $now,
+        ]);
+        Carbon::setTestNow($now);
+
+        try {
+            $result = app(CallDomainService::class)->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId), null, $nodeId);
+            $service = app(CallDomainService::class);
+            $channelId = (string) DB::table('call_legs')->where('id', $result['leg_id'])->value('runtime_channel_id');
+
+            $this->assertTrue($service->applyObservedLegTransition($tenantId, $result['leg_id'], $nodeId, $channelId, CallState::Answered));
+            $this->assertSame('answered', DB::table('calls')->where('id', $result['call_id'])->value('observed_state'));
+            $this->assertSame($now->toISOString(), Carbon::parse((string) DB::table('calls')->where('id', $result['call_id'])->value('answered_at'))->toISOString());
+            $this->assertSame($now->toISOString(), Carbon::parse((string) DB::table('call_legs')->where('id', $result['leg_id'])->value('answered_at'))->toISOString());
+
+            Carbon::setTestNow($now->copy()->addMinute());
+            $firstAnswerAt = DB::table('calls')->where('id', $result['call_id'])->value('answered_at');
+            $this->assertFalse($service->applyObservedLegTransition($tenantId, $result['leg_id'], $nodeId, $channelId, CallState::Answered));
+            $this->assertSame($firstAnswerAt, DB::table('calls')->where('id', $result['call_id'])->value('answered_at'));
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_answered_call_completion_preserves_answered_at_and_pre_answer_failure_does_not_stamp_it(): void
+    {
+        $tenantId = $this->tenant();
+        $service = app(CallDomainService::class);
+        $answered = $service->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId));
+        $service->applyCallTransition($tenantId, $answered['call_id'], CallState::Ringing, 'observation-confirmed');
+        $service->applyCallTransition($tenantId, $answered['call_id'], CallState::Answered, 'observation-confirmed');
+        $answeredAt = DB::table('calls')->where('id', $answered['call_id'])->value('answered_at');
+
+        $this->assertNotNull($answeredAt);
+        $this->assertTrue($service->terminalize($tenantId, 'call', $answered['call_id'], CallState::Completed, 'requested', 'local'));
+        $this->assertSame($answeredAt, DB::table('calls')->where('id', $answered['call_id'])->value('answered_at'));
+
+        $failed = $service->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId));
+        $this->assertNull(DB::table('calls')->where('id', $failed['call_id'])->value('answered_at'));
+        $this->assertTrue($service->terminalize($tenantId, 'call', $failed['call_id'], CallState::Failed, 'no_answer'));
+        $this->assertNull(DB::table('calls')->where('id', $failed['call_id'])->value('answered_at'));
     }
 
     public function test_successful_local_hold_and_resume_are_command_confirmed_without_observations(): void
