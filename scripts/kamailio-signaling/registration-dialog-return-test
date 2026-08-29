@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Focused source-contract regression for registration-based dialog return."""
+
+from pathlib import Path
+
+
+CONFIG = Path(__file__).resolve().parents[2] / "infrastructure/kubernetes/base/platform/kamailio-configmap.yaml"
+
+
+def route_body(source: str, name: str) -> str:
+    marker = f"route[{name}] {{"
+    start = source.index(marker) + len(marker)
+    depth = 1
+    index = start
+    while depth:
+        if source[index] == "{":
+            depth += 1
+        elif source[index] == "}":
+            depth -= 1
+        index += 1
+    return source[start : index - 1]
+
+
+def assert_contract(body: str) -> None:
+    loose = body.index("if (loose_route())")
+    fallback = body.index('if ($Rp == 5060 && $rm == "BYE" && has_totag() && is_known_dlg())')
+    known_dialog = body.index("is_known_dlg()", fallback)
+    source_query = body.index("kamailio_external_trunk_route_view", fallback)
+    set_ruri = body.index("dlg_set_ruri()", known_dialog)
+    media_delete = body.index("route(MEDIA_DELETE);", set_ruri)
+    relay = body.index("t_relay()", media_delete)
+    ack = body.index('if ($rm == "ACK")')
+
+    assert loose < fallback < known_dialog < source_query < set_ruri < media_delete < relay < ack
+    assert "provider_host = '$si'" in body
+    assert "direction = 'outbound'" in body
+    assert "desired_state = 'active'" in body
+    assert "has_totag()" in body
+    assert "dlg_set_ruri()" in body
+    assert "route(MEDIA_DELETE)" in body
+    assert "record_route()" not in body
+    assert "dlg_match_mode" not in body
+    assert "fix_nated_contact" not in body
+    assert "set_contact_alias" not in body
+    assert "uac_replace_contact" not in body
+    assert "X-UTCP" not in body
+    assert "Call-ID" not in body
+    assert "CallLeg" not in body
+    assert "RuntimeNode" not in body
+
+
+def mutation_must_fail(body: str, mutation: str) -> None:
+    try:
+        assert_contract(mutation)
+    except (AssertionError, ValueError):
+        return
+    raise AssertionError("contract guard accepted an invalid mutation")
+
+
+def main() -> None:
+    source = CONFIG.read_text(encoding="utf-8")
+    body = route_body(source, "WITHINDLG")
+    assert_contract(body)
+
+    mutation_must_fail(body, body.replace(
+        'if ($Rp == 5060 && $rm == "BYE" && has_totag() && is_known_dlg())',
+        'if ($Rp == 5060 && $rm == "BYE" && is_known_dlg())',
+        1,
+    ))
+    mutation_must_fail(body, body.replace("if (dlg_set_ruri())", "if (dlg_set_ruri_removed())", 1))
+    mutation_must_fail(body, body.replace("if (loose_route())", "if (loose_route_removed())", 1))
+
+    print("registration-dialog-return-test: PASS")
+
+
+if __name__ == "__main__":
+    main()

@@ -411,6 +411,28 @@ data:
             exit;
         }
 
+        # Registration/NAT providers may send an in-dialog BYE without a
+        # Route header.  Keep loose_route() as the first authority, then use
+        # the existing provider-source projection only as a trust predicate.
+        # dlg_set_ruri() resolves the upstream request to the managed runtime
+        # leg; this fallback never selects a target from registration state.
+        if ($Rp == 5060 && $rm == "BYE" && has_totag() && is_known_dlg()) {
+            if (sql_query("conference", "select provider_host from kamailio_external_trunk_route_view where provider_host = '$si' and direction = 'outbound' and desired_state = 'active' limit 1", "provider_dialog_source")) {
+                if ($dbr(provider_dialog_source=>rows) > 0) {
+                    if (dlg_set_ruri()) {
+                        route(MEDIA_DELETE);
+                        if (!t_relay()) {
+                            sl_reply_error();
+                        }
+                        exit;
+                    }
+                    xlog("L_WARN", "WITHINDLG known provider dialog has no runtime target callid=$ci source=$si\n");
+                }
+            } else {
+                xlog("L_WARN", "WITHINDLG provider source trust query failed callid=$ci source=$si\n");
+            }
+        }
+
         if ($rm == "ACK") {
             if (t_check_trans()) {
                 t_relay();
