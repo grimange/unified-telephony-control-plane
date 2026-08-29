@@ -364,6 +364,7 @@ data:
         remove_hf("X-UTCP-Route-Decision-ID");
         remove_hf("X-UTCP-Trunk-Endpoint-ID");
         dlg_manage();
+        record_route();
         t_on_failure("RUNTIME_EXTERNAL_TRUNK_AUTH");
         if (!t_relay()) {
             xlog("L_WARN", "kamailio_runtime_external_route result=relay_failed endpoint_id=$hdr(X-UTCP-Trunk-Endpoint-ID) call_id=$ci\n");

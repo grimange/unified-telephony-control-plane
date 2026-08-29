@@ -11,6 +11,8 @@ SERVER_KUBECONFIG="${UTCP_SERVER_KUBECONFIG:-${KUBECONFIG:-$HOME/.kube/config}}"
 SERVER_CONTEXT="${UTCP_SERVER_CONTEXT:-default}"
 SERVER_NODE_NAME="${UTCP_SERVER_NODE_NAME:-utcp-dev01}"
 SERVER_IMAGE_LOCK="${UTCP_SERVER_IMAGE_LOCK:-$SERVER_STATE_DIR/image-lock.env}"
+SERVER_PROVIDER_SIP_ADDRESS="${UTCP_SERVER_PROVIDER_SIP_ADDRESS:-}"
+SERVER_PROVIDER_SIP_PORT="${UTCP_SERVER_PROVIDER_SIP_PORT:-}"
 SERVER_PROOF_PORT="${UTCP_SERVER_PROOF_PORT:-18090}"
 SERVER_NAMESPACE_PLATFORM="utcp-platform"
 SERVER_NAMESPACE_DATA="utcp-data"
@@ -21,6 +23,62 @@ server_kube() {
 }
 
 fail() { printf 'native-k3s: %s\n' "$1" >&2; exit 1; }
+
+validate_provider_sip_identity() {
+  [ -n "$SERVER_PROVIDER_SIP_ADDRESS" ] && [ -n "$SERVER_PROVIDER_SIP_PORT" ] \
+    || fail 'provider-facing SIP signaling identity is not configured (set UTCP_SERVER_PROVIDER_SIP_ADDRESS and UTCP_SERVER_PROVIDER_SIP_PORT)'
+
+  printf '%s' "$SERVER_PROVIDER_SIP_PORT" | grep -Eq '^[0-9]+$' \
+    || fail 'UTCP_SERVER_PROVIDER_SIP_PORT must be a bare integer'
+  [ "$SERVER_PROVIDER_SIP_PORT" -ge 1 ] 2>/dev/null && [ "$SERVER_PROVIDER_SIP_PORT" -le 65535 ] 2>/dev/null \
+    || fail 'UTCP_SERVER_PROVIDER_SIP_PORT must be between 1 and 65535'
+
+  case "$SERVER_PROVIDER_SIP_ADDRESS" in
+    *[[:space:]]*|sip:*|sips:*|*'/'*|*'@'*|*'?'*|*';'*|*'<'*|*'>'*|*'{'*|*'}'*|*'$'*|__*)
+      fail 'UTCP_SERVER_PROVIDER_SIP_ADDRESS must be a host-only address without a URI, port, or unresolved placeholder'
+      ;;
+    *.svc|*.svc.cluster.local|localhost|localhost.localdomain|127.*|0.0.0.0|::1|10.42.*|10.43.*)
+      fail 'UTCP_SERVER_PROVIDER_SIP_ADDRESS must not be loopback or a cluster-internal identity'
+      ;;
+  esac
+
+  if printf '%s' "$SERVER_PROVIDER_SIP_ADDRESS" | grep -q ':'; then
+    python3 - "$SERVER_PROVIDER_SIP_ADDRESS" <<'PY' || fail 'UTCP_SERVER_PROVIDER_SIP_ADDRESS must be a valid IPv6 literal or hostname'
+import ipaddress
+import sys
+
+try:
+    value = ipaddress.ip_address(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+if not isinstance(value, ipaddress.IPv6Address) or value.is_loopback or value.is_unspecified:
+    raise SystemExit(1)
+PY
+  elif printf '%s' "$SERVER_PROVIDER_SIP_ADDRESS" | grep -Eq '^[0-9.]+$'; then
+    python3 - "$SERVER_PROVIDER_SIP_ADDRESS" <<'PY' || fail 'UTCP_SERVER_PROVIDER_SIP_ADDRESS must be a valid IPv4 literal'
+import ipaddress
+import sys
+
+try:
+    value = ipaddress.ip_address(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+if not isinstance(value, ipaddress.IPv4Address) or value.is_loopback or value.is_unspecified:
+    raise SystemExit(1)
+PY
+  elif ! printf '%s' "$SERVER_PROVIDER_SIP_ADDRESS" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$'; then
+    fail 'UTCP_SERVER_PROVIDER_SIP_ADDRESS must be a valid IPv4 literal or DNS hostname'
+  fi
+}
+
+provider_sip_advertise() {
+  validate_provider_sip_identity
+  if printf '%s' "$SERVER_PROVIDER_SIP_ADDRESS" | grep -q ':'; then
+    printf '[%s]:%s' "$SERVER_PROVIDER_SIP_ADDRESS" "$SERVER_PROVIDER_SIP_PORT"
+  else
+    printf '%s:%s' "$SERVER_PROVIDER_SIP_ADDRESS" "$SERVER_PROVIDER_SIP_PORT"
+  fi
+}
 
 require_canonical_identity() {
   [ "$SERVER_CONTEXT" = "default" ] || fail "canonical native context must be default: $SERVER_CONTEXT"
@@ -143,11 +201,26 @@ replace_app_key() {
 
 render_server() {
   require_image_lock
+  provider_advertise="$(provider_sip_advertise)"
   write_credentials
   render_root="$(mktemp -d)"
   render_dir="$render_root/infrastructure/kubernetes/overlays/server"
   mkdir -p "$render_dir"
   cp -R "$ROOT/infrastructure/kubernetes"/. "$render_root/infrastructure/kubernetes/"
+  provider_config="$render_root/infrastructure/kubernetes/base/platform/kamailio-configmap.yaml"
+  escaped_provider_advertise="$(printf '%s' "$provider_advertise" | sed 's/[&|]/\\&/g')"
+  sed -i "s|advertise kamailio-sip-external.utcp-platform.svc.cluster.local:5060 name|advertise $escaped_provider_advertise name|" "$provider_config"
+  provider_config_checksum="$(python3 - "$provider_config" <<'PY'
+import hashlib
+import sys
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    document = yaml.safe_load(stream)
+print(hashlib.sha256(document["data"]["kamailio.cfg"].encode("utf-8")).hexdigest())
+PY
+)"
+  sed -i "s|utcp.io/kamailio-config-sha256: [0-9a-f]*|utcp.io/kamailio-config-sha256: $provider_config_checksum|" "$render_root/infrastructure/kubernetes/base/platform/kamailio-deployment.yaml"
   render_kustomization "$render_dir/kustomization.yaml"
   sed -e "s#__UTCP_ASTERISK_IMAGE__#$UTCP_SERVER_ASTERISK_IMAGE#g" -e "s#__UTCP_FREESWITCH_IMAGE__#$UTCP_SERVER_FREESWITCH_IMAGE#g" "$SERVER_OVERLAY/application-config.properties.in" > "$render_dir/application-config.properties"
   cp "$SERVER_STATE_DIR/server-data-credentials.properties" "$render_dir/server-data-credentials.properties"

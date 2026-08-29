@@ -80,7 +80,7 @@ test: api-test web-test ## Run backend and frontend tests.
 
 check: repository-hygiene media-config-check media-config-check-test media-edge-config-check media-edge-config-check-test media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test media-edge-containment-check media-edge-failure-proof-test t3-media-candidate-assertions-test rtpengine-advertised-address-check freeswitch-config-check freeswitch-config-check-test freeswitch-overlay-check t3-media-prover-config-check t3-media-prover-config-check-test t3-media-prover-host-check security-config-check-test kamailio-signaling-config-check api-check web-lint web-typecheck ## Run repository, backend, frontend, media, security, and Kamailio signaling static checks.
 
-.PHONY: rtpengine-advertised-address-check media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test media-edge-apply media-edge-failure-proof-overlay-test t3-media-prover-host-check t3-media-prover-host-check-test k3d-config-check-test k3d-verifier-check-test api-entrypoint-check-test native-k3s-authority-check-test
+.PHONY: rtpengine-advertised-address-check media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test media-edge-apply media-edge-failure-proof-overlay-test t3-media-prover-host-check t3-media-prover-host-check-test k3d-config-check-test k3d-verifier-check-test api-entrypoint-check-test native-k3s-authority-check-test native-k3s-provider-sip-config-check-test
 .PHONY: k8s-config-check-test kamailio-signaling-request-uri-semantics-test kamailio-signaling-cseq-semantics-test kamailio-signaling-external-trunk-runtime-proof kamailio-signaling-registration-runtime-proof asterisk-external-trunk-config-check asterisk-external-trunk-config-check-test asterisk-external-trunk-runtime-proof v1-external-sip-peer-config-check v1-external-sip-peer-smoke v1-external-sip-edge-config-check
 .PHONY: asterisk-ari-caller-identity-semantics-test
 .PHONY: runtime-engine-config-check-test simulator-config-check-test telephony-domain-config-check-test
@@ -90,6 +90,9 @@ k3d-config-check-test: ## Run optional non-canonical utcp-local RTP publication 
 
 native-k3s-authority-check-test: ## Run native canonical-context and historical-edge collision mutation checks.
 	@./scripts/native-k3s/authority-check-test
+
+native-k3s-provider-sip-config-check-test: ## Run native provider-facing SIP identity and rendering mutation checks.
+	@./scripts/native-k3s/provider-sip-config-check-test
 
 k3d-verifier-check-test: ## Run optional non-canonical k3d verifier command-order regression checks.
 	@./scripts/k3d/verifier-check-test

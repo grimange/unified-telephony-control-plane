@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+run_validation() {
+  local address="${1:-}" port="${2:-}" expected="${3:-pass}"
+  if UTCP_SERVER_PROVIDER_SIP_ADDRESS="$address" UTCP_SERVER_PROVIDER_SIP_PORT="$port" \
+    UTCP_SERVER_STATE_DIR="$TMP/state" UTCP_SERVER_IMAGE_LOCK="$ROOT/.runtime/native-k3s/image-lock.env" \
+    bash -c ". '$ROOT/scripts/native-k3s/lib'; validate_provider_sip_identity" >/dev/null 2>&1; then
+    result=pass
+  else
+    result=fail
+  fi
+  [ "$result" = "$expected" ] || { printf 'provider identity validation expected %s for %s:%s, got %s\n' "$expected" "$address" "$port" "$result" >&2; exit 1; }
+}
+
+run_validation provider.example.test 5060 pass
+run_validation 192.168.254.124 30560 pass
+run_validation 2001:db8::10 5060 pass
+run_validation '' '' fail
+run_validation provider.example.test '' fail
+run_validation '' 5060 fail
+run_validation provider.example.test 0 fail
+run_validation provider.example.test 65536 fail
+run_validation provider.example.test:5060 5060 fail
+run_validation sip:provider.example.test 5060 fail
+run_validation 127.0.0.1 5060 fail
+run_validation provider.svc.cluster.local 5060 fail
+run_validation '${PROVIDER_ADDRESS}' 5060 fail
+
+export UTCP_SERVER_PROVIDER_SIP_ADDRESS=provider.example.test
+export UTCP_SERVER_PROVIDER_SIP_PORT=5060
+export UTCP_SERVER_STATE_DIR="$TMP/render-state"
+export UTCP_SERVER_IMAGE_LOCK="$ROOT/.runtime/native-k3s/image-lock.env"
+mkdir -p "$UTCP_SERVER_STATE_DIR"
+# shellcheck source=scripts/native-k3s/lib
+. "$ROOT/scripts/native-k3s/lib"
+rendered="$TMP/server.yaml"
+render_server > "$rendered"
+
+grep -Fq 'listen=udp:0.0.0.0:5060 advertise provider.example.test:5060 name "provider"' "$rendered"
+grep -Fq 'listen=udp:0.0.0.0:5062 advertise kamailio-sip-internal.utcp-platform.svc.cluster.local:5060 name "runtime"' "$rendered"
+if grep -Fq 'listen=udp:0.0.0.0:5060 advertise kamailio-sip-external.utcp-platform.svc.cluster.local:5060' "$rendered"; then
+  printf 'native rendered provider socket retained cluster-internal advertisement\n' >&2
+  exit 1
+fi
+
+python3 - "$rendered" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+import yaml
+
+documents = [document for document in yaml.safe_load_all(Path(sys.argv[1]).read_text(encoding="utf-8")) if isinstance(document, dict)]
+config = next(document for document in documents if document.get("kind") == "ConfigMap" and document.get("metadata", {}).get("name") == "kamailio-config")
+deployment = next(document for document in documents if document.get("kind") == "Deployment" and document.get("metadata", {}).get("name") == "kamailio")
+actual = hashlib.sha256(config["data"]["kamailio.cfg"].encode("utf-8")).hexdigest()
+expected = deployment["spec"]["template"]["metadata"]["annotations"]["utcp.io/kamailio-config-sha256"]
+if actual != expected:
+    raise SystemExit("native rendered Kamailio checksum does not match the substituted ConfigMap")
+PY
+
+python3 - "$ROOT/infrastructure/kubernetes/base/platform/kamailio-configmap.yaml" <<'PY'
+from pathlib import Path
+import sys
+
+config = Path(sys.argv[1]).read_text(encoding="utf-8")
+route = config.split("route[RUNTIME_EXTERNAL_TRUNK]", 1)[1].split("route[WITHINDLG]", 1)[0]
+if route.index("dlg_manage();") > route.index("record_route();"):
+    raise SystemExit("provider dialog must be managed before Record-Route anchoring")
+if route.index("record_route();") > route.index("t_relay()"):
+    raise SystemExit("provider Record-Route must be inserted before relay")
+PY
+
+printf 'native provider-facing SIP identity and rendering mutation tests passed\n'

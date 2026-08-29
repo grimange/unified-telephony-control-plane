@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+validate_provider_sip_identity
 require_image_lock
 ensure_target
 manifest="$(mktemp)"
