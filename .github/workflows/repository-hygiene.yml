@@ -21,17 +21,21 @@ jobs:
       - name: Checkout
         # release: actions/checkout v7.0.0
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
 
       - name: Validate shell scripts
         run: bash -n scripts/doctor scripts/check-repository-hygiene scripts/container/api-smoke scripts/container/web-smoke scripts/container/image-inspect scripts/compose/compose-proof scripts/compose/persistence-proof scripts/ci/install-actionlint scripts/ci/install-kubernetes-tools scripts/ci/install-quality-tools scripts/ci/workflow-check scripts/ci/dependency-audit scripts/ci/compose-ci scripts/ci/local-ci scripts/local/config-check scripts/local/down scripts/local/lib scripts/local/proof scripts/local/status scripts/local/up scripts/control-plane/config-check scripts/control-plane/config-check-test scripts/control-plane/migrate-proof scripts/control-plane/proof scripts/control-plane/status scripts/control-plane/test scripts/identity/api-proof scripts/identity/bootstrap-local scripts/identity/browser-proof scripts/identity/config-check scripts/identity/status scripts/identity/test scripts/runtime-registry/api-proof scripts/runtime-registry/browser-proof scripts/runtime-registry/config-check scripts/runtime-registry/config-check-test scripts/runtime-registry/status scripts/runtime-registry/test scripts/k3d/config-check scripts/k3d/create scripts/k3d/delete scripts/k3d/kube scripts/k3d/lib scripts/k3d/recreate-proof scripts/k3d/registry-container-check scripts/k3d/registry-proof scripts/k3d/status scripts/k3d/test-registry-container-check scripts/k3d/verify scripts/kubernetes/apply scripts/kubernetes/config-check scripts/kubernetes/delete scripts/kubernetes/image-build scripts/kubernetes/image-push scripts/kubernetes/lib scripts/kubernetes/persistence-proof scripts/kubernetes/proof scripts/kubernetes/restart-proof scripts/kubernetes/static-check scripts/kubernetes/status scripts/gateway/apply scripts/gateway/config-check scripts/gateway/delete scripts/gateway/generate-local-tls scripts/gateway/install-crds scripts/gateway/install-traefik scripts/gateway/lib scripts/gateway/proof scripts/gateway/status scripts/gateway/tls-apply scripts/asterisk-ari/config-check-test
 
       - name: Validate Python scripts
-        run: python3 -m py_compile scripts/compose/static_check.py scripts/ci/check-action-pinning.py scripts/ci/secret-scan
+        run: python3 -m py_compile scripts/compose/static_check.py scripts/ci/check-action-pinning.py scripts/ci/secret-scan scripts/repository/phase-status-consistency-check scripts/repository/phase-status-consistency-check-test
 
       - name: Show make help
         run: make help
 
       - name: Run repository hygiene
+        env:
+          STATUS_LEDGER_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: make repository-hygiene
 
       - name: Validate workflows

@@ -46,6 +46,8 @@ if ! python3 scripts/validate-phase-status \
   exit 1
 fi
 
+python3 scripts/repository/phase-status-consistency-check
+
 scripts/local/config-check
 
 python3 - <<'PY'

@@ -28,3 +28,14 @@ Keep AI instruction files behavioral and concise; link to architecture/history
 instead of copying it. Update the canonical document when a code change alters
 an accepted contract, roadmap status, runbook, or proof result. Review links,
 terminology, dates, phase markers, and status consistency before handoff.
+
+## Current-state evidence impact
+
+Prospectively, every new or modified file under `docs/evidence/` MUST contain
+exactly one declaration: `Current-State-Impact: yes` or
+`Current-State-Impact: no`. `yes` means the evidence changes authoritative
+current phase, gap, blocker, topology, proof classification, closure,
+deferred state, or next action; `no` means it is historical, supporting,
+diagnostic, or proof detail without a current-state change. A `yes` evidence
+change MUST reconcile `docs/roadmap/phase-status.md` in the same bounded diff.
+Untouched historical evidence is not retroactively migrated.

@@ -148,6 +148,25 @@ files; commands and tests; failures; divergences; proof gaps; deferred work;
 commit/push status; preservation; scope changes; and the smallest next action.
 List only genuine operator prerequisites, or write `None.`.
 
+## Current-state ledger reconciliation
+
+`docs/roadmap/phase-status.md` is the sole canonical current-state ledger.
+Any bounded task that materially changes a current phase, gap, blocker,
+canonical topology or environment authority, implementation/test/live-proof
+classification, closure or deferred state, or canonical next action MUST
+reconcile that ledger in the same bounded packet. Do not defer reconciliation
+to a later documentation cleanup when the task establishes the new authority;
+historical evidence remains immutable in meaning.
+
+A status-impacting task is incomplete until its supporting implementation or
+evidence is complete, `phase-status.md` reflects the resulting state, and the
+phase-status consistency check passes. Work that does not change authoritative
+current state does not require a ledger edit merely to satisfy this rule.
+
+Bounded implementation and proof handoffs also report:
+`Current-State Ledger Impact: UPDATED` or `NO_CHANGE_REQUIRED`, and
+`Phase-Status Consistency Check: PASS`.
+
 ## Canonical references
 
 * `README.md` — purpose, topology, and product boundary.

@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""Enforce current-state evidence markers and ledger reconciliation."""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+
+LEDGER = "docs/roadmap/phase-status.md"
+EVIDENCE_PREFIX = "docs/evidence/"
+MARKER = re.compile(r"^\s*Current-State-Impact\s*:\s*(yes|no)\s*$")
+MARKER_PREFIX = re.compile(r"^\s*Current-State-Impact\s*:")
+
+
+def git(root: Path, *args: str, check: bool = True) -> str:
+    result = subprocess.run(
+        ["git", "-C", str(root), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if check and result.returncode:
+        raise RuntimeError(result.stderr.strip() or f"git {' '.join(args)} failed")
+    return result.stdout
+
+
+def changed_from_diff(root: Path, args: list[str]) -> tuple[set[str], set[str]]:
+    result = subprocess.run(
+        ["git", "-C", str(root), *args],
+        text=False,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
+        return set(), set()
+    fields = result.stdout.decode().split("\0")
+    all_paths: set[str] = set()
+    current_paths: set[str] = set()
+    index = 0
+    while index < len(fields) and fields[index]:
+        status = fields[index]
+        index += 1
+        path_count = 2 if status[:1] in {"R", "C"} else 1
+        paths = fields[index : index + path_count]
+        index += path_count
+        if not paths:
+            continue
+        all_paths.update(paths)
+        if status[:1] != "D":
+            current_paths.add(paths[-1])
+    return all_paths, current_paths
+
+
+def changed_paths(root: Path) -> tuple[set[str], set[str]]:
+    explicit_base = os.environ.get("STATUS_LEDGER_BASE_SHA", "").strip()
+    changed: set[str] = set()
+    current_files: set[str] = set()
+
+    if explicit_base and set(explicit_base) != {"0"}:
+        if not git(root, "rev-parse", "--verify", f"{explicit_base}^{{commit}}", check=False).strip():
+            raise RuntimeError(f"STATUS_LEDGER_BASE_SHA is not available: {explicit_base}")
+        range_all, range_current = changed_from_diff(
+            root, ["diff", "--name-status", "--find-renames", "-z", f"{explicit_base}..HEAD"]
+        )
+        changed.update(range_all)
+        current_files.update(range_current)
+
+    for args in (
+        ["diff", "--name-status", "--find-renames", "-z"],
+        ["diff", "--cached", "--name-status", "--find-renames", "-z"],
+    ):
+        diff_all, diff_current = changed_from_diff(root, args)
+        changed.update(diff_all)
+        current_files.update(diff_current)
+
+    untracked = git(root, "ls-files", "--others", "--exclude-standard", "-z", check=False)
+    for path in untracked.split("\0"):
+        if path:
+            changed.add(path)
+            current_files.add(path)
+
+    if not explicit_base and not changed:
+        head_parent = git(root, "rev-parse", "HEAD^", check=False).strip()
+        if head_parent:
+            range_all, range_current = changed_from_diff(
+                root, ["diff", "--name-status", "--find-renames", "-z", f"{head_parent}..HEAD"]
+            )
+            changed.update(range_all)
+            current_files.update(range_current)
+
+    return changed, current_files
+
+
+def main() -> int:
+    try:
+        root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").strip())
+    except RuntimeError as error:
+        print(f"phase-status consistency check: {error}", file=sys.stderr)
+        return 1
+
+    try:
+        changed, current_files = changed_paths(root)
+    except RuntimeError as error:
+        print(f"phase-status consistency check: {error}", file=sys.stderr)
+        return 1
+    evidence = sorted(
+        path for path in current_files if path.startswith(EVIDENCE_PREFIX) and path.endswith(".md")
+    )
+    impact_yes = False
+    for path in evidence:
+        file_path = root / path
+        declarations = []
+        for line_number, line in enumerate(file_path.read_text(encoding="utf-8").splitlines(), 1):
+            if MARKER_PREFIX.match(line):
+                match = MARKER.match(line)
+                if not match:
+                    print(
+                        f"{path}:{line_number}: invalid Current-State-Impact declaration; use yes or no",
+                        file=sys.stderr,
+                    )
+                    return 1
+                declarations.append(match.group(1))
+        if len(declarations) != 1:
+            print(
+                f"{path}: expected exactly one Current-State-Impact: yes|no declaration, found {len(declarations)}",
+                file=sys.stderr,
+            )
+            return 1
+        impact_yes |= declarations[0] == "yes"
+
+    if impact_yes and LEDGER not in changed:
+        print(
+            "status-impacting evidence changed without current-state ledger reconciliation",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(
+        f"phase-status consistency check: PASS (changed={len(changed)}, evidence={len(evidence)}, "
+        f"status-impact={('yes' if impact_yes else 'no')})"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

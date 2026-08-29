@@ -22,27 +22,23 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** continue V1 preparation on canonical native k3s
-(`utcp-dev01`, `192.168.254.124`) through the authenticated API, then run the
-narrow natural inbound/outbound proof against the independent PBX at
-`38.146.161.46` only after the shared Kubernetes/Kamailio repairs are closed
-and proven on native.
-The synthetic fixture remains deterministic regression only. The edge
-implementation and current runtime limitation are recorded in the
-[`V1 Level-2 edge evidence`](../evidence/v1/v1-level2-external-sip-lab-edge-implementation.md);
-the earlier fixture preparation evidence remains historical preparation.
-C7A now also supports the bounded V1-A `outbound_registration` signaling mode;
-see [`V1-A registration implementation evidence`](../evidence/v1/v1a-registration-external-trunk-implementation.md).
-C7B closed on 2026-08-24 after deterministic tenant-scoped inbound/outbound
-route evaluation, canonical destination references, C7A eligibility enforcement,
-and focused implementation tests passed.
+**Exactly one next action:** deploy the exact committed registration/NAT
+topology through the canonical native-k3s lifecycle with no stable
+provider-facing SIP identity configured, then run one fresh V1-A controlled
+proof of natural provider answer and provider BYE return through the trusted
+known-dialog fallback to orderly managed-runtime termination. See the
+[`topology-coherent anchoring evidence`](../evidence/v1/v1-provider-dialog-topology-coherent-anchoring.md)
+and [`registration-dialog return evidence`](../evidence/v1/v1-registration-dialog-return-path-implementation.md).
+
+The synthetic fixture remains deterministic regression only. C7A supports the
+bounded V1-A `outbound_registration` signaling mode; C7B closed on 2026-08-24
+after deterministic tenant-scoped route evaluation and focused tests passed.
 
 **Current topology authority:** native k3s on `utcp-dev01` at
 `192.168.254.124` is the canonical V1 environment. `utcp-local` remains a
 supported secondary development/regression topology and is not current V1
-acceptance authority. Shared Kubernetes/Kamailio defects found during the
-temporary k3d recovery are repaired in the working tree and must be closed and
-proven against native before natural external SIP acceptance. The accidental
+acceptance authority. Shared Kubernetes/Kamailio repairs are committed and
+native-k3s is the current acceptance authority. The accidental
 synthetic V1 fixture with slug `v1-canonical-peer-1787783954` is known cleanup
 debt and is deferred to a separate bounded packet. External PBX prerequisites
 remain separate.
@@ -90,7 +86,7 @@ documentation task. Current T4 implementation evidence:
 | C7A | Complete | Tenant-scoped ExternalTrunk, endpoint/credential-reference lifecycle, TelephonyAddress, CallerIdentity, policy, and provider-neutral Admin API; see `docs/evidence/c7a/` |
 | C7B | Complete | Inbound/outbound routes, derived RouteDecision, and runtime-neutral DestinationRef; see `docs/evidence/c7b/` |
 | T6 | Complete | Provider projection and Kamailio/Asterisk synthetic consumption verified; V1 owns natural external SIP acceptance |
-| V1 | Active | Fixture and bounded V1-A registration implementation are present; deployment readiness is separated from strict inactive V1-B topology verification; least-privilege registration-reader provisioning and live V1-A deployment are complete, with external REGISTER/interoperability and normalized call control acceptance still pending |
+| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, and the Gap B registration/NAT dialog-return implementation are repository-proven; Gap B controlled live proof remains pending |
 | A0 | Planned | Follows V1; minimal outbound, inbound, and IVR-style reference consumers |
 | R0 | Planned | Finite release boundary after the mainline evidence is complete |
 
@@ -112,12 +108,21 @@ authorities; Kubernetes remains authoritative for Nodes, Pods, scheduling, and
 workload placement. Full multi-cluster federation remains future-compatible,
 not an R0 requirement.
 
+V1 gap status is explicit: Gap A remains open for delayed-observation versus
+origination-timeout precedence; Gap B has topology-coherent implementation
+proof passed while its controlled registration/NAT live proof is pending; Gap E
+remains open for SIP/Q.850 failure taxonomy and `failure_class`/`failure_code`;
+and Gap F remains a `PROOF_GAP_ONLY` provider-wire trust-boundary proof gap.
+ADR-031 implementation is
+complete, while stable-public-edge live acceptance is
+`DEFERRED_BY_ENVIRONMENT`, not abandoned, and does not block the registration/
+NAT acceptance corridor. Gap C and Gap D are closed; see their linked evidence
+and ADRs for detail.
+
 RMA is the planned Recording & Media Archive track. It follows completed K5E
 and the established V1 Call/CallLeg corridor; it is not the current phase and
-does not technically gate A0. The immediate V1 engineering blocker remains
-the managed Asterisk/FreeSWITCH image-reference validation correction for
-canonical digest-pinned native-k3s GHCR references; this documentation task
-does not repair or reclassify that defect.
+does not technically gate A0. K5 and RMA remain deferred according to the
+current V1/R0 sequencing.
 
 ## Historical status rule
 

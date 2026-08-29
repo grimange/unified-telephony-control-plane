@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Mutation tests for phase-status-consistency-check."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+CHECKER = Path(__file__).with_name("phase-status-consistency-check")
+
+
+def run(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, cwd=cwd, env=env, text=True, capture_output=True, check=False)
+
+
+def repository() -> tuple[tempfile.TemporaryDirectory[str], Path, str]:
+    holder = tempfile.TemporaryDirectory(prefix="phase-status-check-")
+    root = Path(holder.name)
+    (root / "docs/evidence").mkdir(parents=True)
+    (root / "docs/roadmap").mkdir(parents=True)
+    (root / "docs/roadmap/phase-status.md").write_text("# Current state\n", encoding="utf-8")
+    (root / "source.txt").write_text("baseline\n", encoding="utf-8")
+    (root / "docs/evidence/historical.md").write_text("# Historical\n", encoding="utf-8")
+    assert run(["git", "init", "-q"], root).returncode == 0
+    for config in (("user.name", "Test"), ("user.email", "test@example.invalid")):
+        assert run(["git", "config", *config], root).returncode == 0
+    assert run(["git", "add", "."], root).returncode == 0
+    assert run(["git", "commit", "-qm", "baseline"], root).returncode == 0
+    base = run(["git", "rev-parse", "HEAD"], root).stdout.strip()
+    return holder, root, base
+
+
+def check(root: Path, base: str) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["STATUS_LEDGER_BASE_SHA"] = base
+    return run([sys.executable, str(CHECKER)], root, env)
+
+
+def expect(label: str, root: Path, base: str, success: bool) -> None:
+    result = check(root, base)
+    if (result.returncode == 0) != success:
+        raise AssertionError(f"{label}: expected {'PASS' if success else 'FAIL'}, got {result.stdout}{result.stderr}")
+
+
+def case(label: str, evidence: str | None, ledger: bool, success: bool, source_only: bool = False) -> None:
+    holder, root, base = repository()
+    try:
+        if source_only:
+            (root / "source.txt").write_text("changed\n", encoding="utf-8")
+        elif evidence is not None:
+            (root / "docs/evidence/change.md").write_text(evidence, encoding="utf-8")
+        if ledger:
+            (root / "docs/roadmap/phase-status.md").write_text("# Reconciled\n", encoding="utf-8")
+        expect(label, root, base, success)
+    finally:
+        holder.cleanup()
+
+
+def main() -> int:
+    case("yes without ledger", "Current-State-Impact: yes\n", False, False)
+    case("yes with ledger", "Current-State-Impact: yes\n", True, True)
+    case("no without ledger", "Current-State-Impact: no\n", False, True)
+    case("missing marker", "# Evidence\n", False, False)
+    case("invalid marker", "Current-State-Impact: maybe\n", False, False)
+    case("ordinary source only", None, False, True, source_only=True)
+    case("ledger only", None, True, True)
+    case("untouched historical evidence", None, False, True)
+    print("phase-status consistency mutation tests: PASS (8 cases)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
