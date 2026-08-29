@@ -21,6 +21,9 @@ cleanup() {
     printf '%s\n' '--- asterisk logs ---' >&2
     docker logs "$asterisk" 2>&1 | tail -160 || true
   fi
+  if [ -n "${stasis_listener_pid:-}" ]; then
+    kill "$stasis_listener_pid" >/dev/null 2>&1 || true
+  fi
   docker rm -f "$asterisk" "$peer" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
   rm -rf "$tmp"
@@ -38,11 +41,11 @@ command -v docker >/dev/null 2>&1 || fail 'docker is required'
 docker image inspect "$ASTERISK_IMAGE" >/dev/null 2>&1 || fail "missing Asterisk image: $ASTERISK_IMAGE"
 docker image inspect "$PEER_IMAGE" >/dev/null 2>&1 || fail "missing peer image: $PEER_IMAGE"
 
-docker network create --subnet 172.31.0.0/24 "$network" >/dev/null
-docker run -d --name "$peer" --network "$network" --ip 172.31.0.2 \
+docker network create --subnet 172.30.0.0/24 "$network" >/dev/null
+docker run -d --name "$peer" --network "$network" --ip 172.30.0.2 \
   -e EXTERNAL_SIP_PEER_USERNAME=utcp-v1 \
   -e EXTERNAL_SIP_PEER_PASSWORD=utcp-synthetic-secret \
-  -e UTCP_SIGNALING_IP=172.31.0.3 \
+  -e UTCP_SIGNALING_IP=172.30.0.3 \
   "$PEER_IMAGE" >/dev/null
 
 peer_ready=0
@@ -58,7 +61,7 @@ done
 cp "$ROOT/infrastructure/docker/asterisk/config/pjsip.conf" "$tmp/pjsip.conf"
 sed -i "s#kamailio-sip-internal\.utcp-platform\.svc\.cluster\.local:5060#${peer}:5060#g" "$tmp/pjsip.conf"
 
-docker run -d --name "$asterisk" --network "$network" --ip 172.31.0.3 \
+docker run -d --name "$asterisk" --network "$network" --ip 172.30.0.3 \
   -p 127.0.0.1::8088 \
   -e ARI_USERNAME=utcp-ari \
   -e ARI_PASSWORD=utcp-ari-secret \
@@ -81,9 +84,44 @@ docker exec "$peer" asterisk -rx 'pjsip set logger on' >/dev/null
 host_port="$(docker port "$asterisk" 8088/tcp | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
 [ -n "$host_port" ] || fail 'Asterisk ARI port was not published'
 
+# Register the repository-owned Stasis application through the same ARI event
+# WebSocket contract used by the managed listener. Without an active
+# subscription Asterisk correctly rejects an app= originate as unowned.
+ws_auth="$(printf '%s' 'utcp-ari:utcp-ari-secret' | base64 -w0)"
+docker exec "$asterisk" python3 -c 'import base64,socket,time
+host="127.0.0.1"; port=8088
+s=socket.create_connection((host,port),10)
+key=base64.b64encode(b"utcp-semantic-ws-key").decode()
+request=("GET /ari/events?app=utcp-t0-observation&subscribeAll=true HTTP/1.1\r\n"
+         "Host: 127.0.0.1:8088\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+         "Sec-WebSocket-Key: "+key+"\r\nSec-WebSocket-Version: 13\r\n"
+         "Authorization: Basic '"$ws_auth"'\r\n\r\n")
+s.sendall(request.encode())
+response=b""
+while b"\r\n\r\n" not in response:
+ response += s.recv(4096)
+if b" 101 " not in response.split(b"\r\n",1)[0]:
+ raise SystemExit("ARI WebSocket registration failed: "+response.decode(errors="replace"))
+while True:
+ data=s.recv(4096)
+ if not data: break
+' >"$tmp/stasis-listener.log" 2>&1 &
+stasis_listener_pid=$!
+stasis_registered=0
+for attempt in $(seq 1 20); do
+  app_status="$(curl -sS -o /dev/null -w '%{http_code}' --user utcp-ari:utcp-ari-secret \
+    "http://127.0.0.1:${host_port}/ari/applications/utcp-t0-observation" || true)"
+  if [ "$app_status" = 200 ]; then
+    stasis_registered=1
+    break
+  fi
+  sleep 1
+done
+[ "$stasis_registered" -eq 1 ] || fail 'canonical ARI Stasis application did not register'
+
 body='{"variables":{"__UTCP_CALL_LEG_ID":"leg-semantic","__UTCP_ROUTE_DECISION_ID":"route-semantic","__UTCP_TRUNK_ENDPOINT_ID":"endpoint-semantic","__UTCP_CALLER_IDENTITY_ID":"caller-semantic"}}'
 response="$tmp/ari-response"
-ari_url="http://127.0.0.1:${host_port}/ari/channels?endpoint=Local%2F97001%40utcp-outbound&extension=97001&timeout=30&formats=ulaw&callerId=utcp-v1%20%3Cutcp-v1%3E&channelId=caller-identity-semantic"
+ari_url="http://127.0.0.1:${host_port}/ari/channels?endpoint=Local%2F97001%40utcp-outbound&app=utcp-t0-observation&timeout=30&formats=ulaw&callerId=utcp-v1%20%3Cutcp-v1%3E&channelId=caller-identity-semantic"
 http_code="$(curl -sS -o "$response" -w '%{http_code}' --user utcp-ari:utcp-ari-secret \
   -H 'Content-Type: application/json' --data-binary "$body" "$ari_url")"
 [ "$http_code" = 200 ] || fail "ARI originate failed: http=${http_code} response=$(tr '\n' ' ' < "$response")"
@@ -119,4 +157,39 @@ if printf '%s\n' "$logs" | rg -q '^From: .*<sip:(anonymous|asterisk)@'; then
   fail 'synthetic peer observed an anonymous/default From user'
 fi
 
-printf 'asterisk_caller_identity_runtime_semantics=pass from_user=%s provider_invites=%s provider_answer=200\n' "$from_user" "$invite_count"
+local_control_half_valid=0
+answered_channel_sustained=1
+for attempt in $(seq 1 4); do
+  channel_json="$(curl -sS --user utcp-ari:utcp-ari-secret \
+    "http://127.0.0.1:${host_port}/ari/channels/caller-identity-semantic" 2>/dev/null || true)"
+  if ! printf '%s\n' "$channel_json" | rg -q '"name"[[:space:]]*:[[:space:]]*"Local/97001@utcp-outbound[^";]*;1'; then
+    answered_channel_sustained=0
+  fi
+  if printf '%s\n' "$channel_json" | rg -q '"name"[[:space:]]*:[[:space:]]*"Local/97001@utcp-outbound[^";]*;1'; then
+    local_control_half_valid=1
+  fi
+  sleep 1
+done
+[ "$local_control_half_valid" -eq 1 ] || fail "Local ;1 did not remain in the canonical ARI control landing: ${channel_json:-no channel response}"
+[ "$answered_channel_sustained" -eq 1 ] || fail 'answered Local pair was not sustained beyond the historical failure window'
+
+asterisk_logs="$(docker logs "$asterisk" 2>&1 || true)"
+if printf '%s\n' "$asterisk_logs" | rg -q 'No such extension/context|invalid extension|default,97001,1'; then
+  fail 'Asterisk reported an invalid Local ;1 dialplan landing'
+fi
+
+delete_code="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE --user utcp-ari:utcp-ari-secret \
+  "http://127.0.0.1:${host_port}/ari/channels/caller-identity-semantic" || true)"
+[ "$delete_code" = 204 ] || [ "$delete_code" = 404 ] || fail "ARI teardown failed: http=${delete_code}"
+for attempt in $(seq 1 10); do
+  channels="$(docker exec "$asterisk" asterisk -rx 'core show channels concise' 2>/dev/null || true)"
+  if ! printf '%s\n' "$channels" | rg -q 'Local/97001@utcp-outbound'; then
+    break
+  fi
+  sleep 1
+done
+if printf '%s\n' "$channels" | rg -q 'Local/97001@utcp-outbound|PJSIP/'; then
+  fail 'normal teardown left an Asterisk Local or provider channel behind'
+fi
+
+printf 'asterisk_caller_identity_runtime_semantics=pass from_user=%s provider_invites=%s provider_answer=200 local_control_half_valid=true answered_channel_sustained=true\n' "$from_user" "$invite_count"

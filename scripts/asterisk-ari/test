@@ -9,4 +9,16 @@ cd "$ROOT"
 "$ROOT/scripts/asterisk-ari/caller-identity-semantics-test"
 
 cd "$ROOT/apps/api"
-php artisan test tests/Feature/Asterisk tests/Feature/Infrastructure/AsteriskTwoNodeTopologyTest.php
+if command -v php >/dev/null 2>&1; then
+  php artisan test tests/Feature/Asterisk tests/Feature/Infrastructure/AsteriskTwoNodeTopologyTest.php
+elif command -v docker >/dev/null 2>&1 && docker image inspect utcp-api:dev-test >/dev/null 2>&1; then
+  docker run --rm \
+    -e APP_ENV=testing \
+    -e DB_CONNECTION=sqlite \
+    -e DB_DATABASE=:memory: \
+    -e DB_URL= \
+    utcp-api:dev-test php artisan test tests/Feature/Asterisk tests/Feature/Infrastructure/AsteriskTwoNodeTopologyTest.php
+else
+  printf '%s\n' 'Asterisk ARI tests require host php or the canonical utcp-api:dev-test image' >&2
+  exit 1
+fi

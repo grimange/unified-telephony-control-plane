@@ -64,7 +64,7 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertSame('channels', $request['resource']);
         $this->assertSame([
             'endpoint' => 'Local/97001@utcp-outbound',
-            'extension' => '97001',
+            'app' => 'utcp',
             'timeout' => '30',
             'channelId' => RuntimeChannelIdentity::forCallLeg('leg-1'),
             'formats' => 'ulaw',
@@ -78,6 +78,9 @@ final class AsteriskAriAdapterTest extends TestCase
                 '__UTCP_CALLER_IDENTITY_ID' => 'caller-1',
             ],
         ], $request['body']);
+        $this->assertArrayNotHasKey('extension', $request['query']);
+        $this->assertArrayNotHasKey('context', $request['query']);
+        $this->assertArrayNotHasKey('priority', $request['query']);
     }
 
     public function test_originate_rejects_selected_caller_identity_without_a_resolved_address(): void

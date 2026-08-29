@@ -339,7 +339,6 @@ class AsteriskAriClient
         if ($operationType === 'call.leg.originate') {
             $destinationAddress = (string) ($payload['destination_uri'] ?? $payload['destination_ref'] ?? '');
             $destination = $this->asteriskEndpoint($destinationAddress);
-            $destinationExtension = $this->dialplanExtension($destinationAddress);
             $legId = (string) ($payload['leg_id'] ?? ($legs[0]['id'] ?? ''));
             if ($legId === '') {
                 throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_call_leg_missing', 'A normalized originate operation requires a CallLeg target.');
@@ -355,10 +354,10 @@ class AsteriskAriClient
                 // it; the Local endpoint is the sole dialplan-entry authority.
                 // Supplying context/extension/priority as well would cause the
                 // two Local channel halves to enter this Dial() path twice.
-                // ARI still requires an extension landing value for this
-                // Local-channel originate; it does not select a second
-                // dialplan authority.
-                'extension' => $destinationExtension,
+                // The existing observation Stasis app is the valid
+                // non-provider-dialing control landing for Local ;1. ARI's
+                // app model is an alternative to context/extension/priority.
+                'app' => (string) $profile['application_name'],
                 'timeout' => (string) ($payload['timeout_seconds'] ?? 30),
                 'channelId' => $runtimeChannelId,
                 'formats' => implode(',', $formats),
@@ -495,18 +494,6 @@ class AsteriskAriClient
         }
         if (str_starts_with($destination, 'sip:')) {
             return 'PJSIP/'.substr($destination, 4);
-        }
-
-        throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_destination_invalid', 'DestinationRef is not a supported normalized telephony address.');
-    }
-
-    private function dialplanExtension(string $destination): string
-    {
-        $destination = preg_replace('/^sip:([^@]+)@.*$/', '$1', $destination) ?: $destination;
-        $destination = preg_replace('/^tel:/', '', $destination) ?: $destination;
-
-        if (preg_match('/^[A-Za-z0-9+_.-]+$/', $destination)) {
-            return $destination;
         }
 
         throw new AsteriskAriException(FailureClass::InvalidRequest, 'ari_destination_invalid', 'DestinationRef is not a supported normalized telephony address.');
