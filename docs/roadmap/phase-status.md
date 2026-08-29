@@ -22,11 +22,17 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** deploy the exact committed registration/NAT
-topology through the canonical native-k3s lifecycle with no stable
-provider-facing SIP identity configured, then run one fresh V1-A controlled
-proof of natural provider answer and provider BYE return through the trusted
-known-dialog fallback to orderly managed-runtime termination. See the
+**Exactly one next action:** apply the bounded Kamailio dialog-termination
+correction so a fallback-handled provider BYE closes its own dialog instead of
+waiting for `dlg_ontimeout()`, then re-run the Gap B controlled live proof. The
+2026-08-29 controlled live proof deployed the exact committed registration/NAT
+topology on native k3s and proved the full return corridor — no-Route provider
+BYE, trusted known-dialog match, `dlg_set_ruri()` retarget to the managed
+runtime Contact, `MEDIA_DELETE`, relay, managed Asterisk receipt, and canonical
+`completed / remote / remote` with `answered_at` preserved. It failed exactly
+one mandatory closure criterion: the proof dialog was reaped by `dlg_ontimeout`
+81.5 s after the BYE rather than closing as a result of it. See the
+[`registration-dialog return live proof`](../evidence/v1/v1-registration-dialog-return-path-live-proof.md),
 [`topology-coherent anchoring evidence`](../evidence/v1/v1-provider-dialog-topology-coherent-anchoring.md)
 and [`registration-dialog return evidence`](../evidence/v1/v1-registration-dialog-return-path-implementation.md).
 
@@ -86,7 +92,7 @@ documentation task. Current T4 implementation evidence:
 | C7A | Complete | Tenant-scoped ExternalTrunk, endpoint/credential-reference lifecycle, TelephonyAddress, CallerIdentity, policy, and provider-neutral Admin API; see `docs/evidence/c7a/` |
 | C7B | Complete | Inbound/outbound routes, derived RouteDecision, and runtime-neutral DestinationRef; see `docs/evidence/c7b/` |
 | T6 | Complete | Provider projection and Kamailio/Asterisk synthetic consumption verified; V1 owns natural external SIP acceptance |
-| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, and the Gap B registration/NAT dialog-return implementation are repository-proven; Gap B controlled live proof remains pending |
+| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, and the Gap B registration/NAT dialog-return implementation are repository-proven. The Gap B controlled live proof ran on 2026-08-29 and proved the return corridor through managed-runtime receipt and canonical remote termination; Gap B stays open on Kamailio dialog cleanup alone |
 | A0 | Planned | Follows V1; minimal outbound, inbound, and IVR-style reference consumers |
 | R0 | Planned | Finite release boundary after the mainline evidence is complete |
 
@@ -109,10 +115,14 @@ workload placement. Full multi-cluster federation remains future-compatible,
 not an R0 requirement.
 
 V1 gap status is explicit: Gap A remains open for delayed-observation versus
-origination-timeout precedence; Gap B has topology-coherent implementation
-proof passed while its controlled registration/NAT live proof is pending; Gap E
-remains open for SIP/Q.850 failure taxonomy and `failure_class`/`failure_code`;
-and Gap F remains a `PROOF_GAP_ONLY` provider-wire trust-boundary proof gap.
+origination-timeout precedence; Gap B remains open, now narrowed by the
+2026-08-29 controlled live proof to Kamailio dialog cleanup — the
+registration/NAT return path, managed-runtime BYE receipt, and canonical
+`completed / remote / remote` termination are live-proven, but a
+fallback-handled provider BYE does not close its own dialog and is reaped by
+`dlg_ontimeout()`; Gap E remains open for SIP/Q.850 failure taxonomy and
+`failure_class`/`failure_code`; and Gap F remains a `PROOF_GAP_ONLY`
+provider-wire trust-boundary proof gap.
 ADR-031 implementation is
 complete, while stable-public-edge live acceptance is
 `DEFERRED_BY_ENVIRONMENT`, not abandoned, and does not block the registration/
