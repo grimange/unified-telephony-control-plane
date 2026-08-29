@@ -24,7 +24,7 @@ grep -Eq '^compose-debug-up:' Makefile || fail 'Makefile must expose explicit co
 grep -Eq '^compose-up: compose-debug-up' Makefile || fail 'compose-up must be only a compatibility alias for debug mode'
 
 if grep -Eq 'make compose-up|compose-debug-up' scripts/local/up scripts/local/proof; then
-  fail 'canonical local lifecycle must not start Compose'
+  fail 'optional non-canonical local lifecycle must not start Compose'
 fi
 
 grep -Fq 'require_no_persistent_compose' scripts/local/up || fail 'local-up must detect persistent Compose authority drift'

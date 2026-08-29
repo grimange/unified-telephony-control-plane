@@ -20,11 +20,11 @@ The K4 Kubernetes platform deploys the existing UTCP application, PostgreSQL, Re
 
 C4 adds a deterministic, runtime-neutral simulator adapter (`runtime_family: simulator`, `adapter_key: simulator-deterministic`) selected only through the existing authenticated runtime-registry API, a `simulator-event-source` Kubernetes process role with no public exposure, and a deterministic scenario catalog (steady-ready, transient-failure-then-ready, terminal-failure, timeout-then-ready, duplicate-observation, disconnect-reconnect, configuration-drift-then-converge) proven live against the deployed C3 workers. It does not deploy telephony sessions, conference behavior, SIP registration, or any live Asterisk, FreeSWITCH, Kamailio, or rtpengine adapter.
 
-C5 is complete locally. PostgreSQL is authoritative for telephony sessions, conferences, runtime bindings, and conference participants; C3 observations remain runtime evidence only. The deployed canonical `utcp-local` Kubernetes runtime has proven authenticated session creation, simulator-bound conference open-to-ready, participant admit-to-joined, participant remove-to-left, draining admission rejection, conference close-to-closed, scheduler-driven session expiry, worker restart recovery, bounded metrics, alerts, security, and disposable Compose compatibility. A C5 `TelephonySession` is only an authenticated user's tenant-scoped control-plane telephony authorization session; it is not SIP registration, media connectivity, a call, microphone access, or a runtime channel.
+C5 is complete locally. PostgreSQL is authoritative for telephony sessions, conferences, runtime bindings, and conference participants; C3 observations remain runtime evidence only. The deployed canonical native k3s runtime has proven authenticated session creation, simulator-bound conference open-to-ready, participant admit-to-joined, participant remove-to-left, draining admission rejection, conference close-to-closed, scheduler-driven session expiry, worker restart recovery, bounded metrics, alerts, security, and disposable Compose compatibility. A C5 `TelephonySession` is only an authenticated user's tenant-scoped control-plane telephony authorization session; it is not SIP registration, media connectivity, a call, microphone access, or a runtime channel.
 
 T0 introduces the first real runtime-adapter boundary for Asterisk ARI. It adds an `asterisk-ari` adapter, internal `AsteriskAriClient`, dynamic `asterisk-ari-events` listener role, internal local Asterisk ARI Kubernetes fixture, node-scoped listener leases, C3 connection epochs, raw ARI evidence receipts, runtime-neutral readiness observations, bounded metrics, and alerts. RuntimeNode remains the canonical PBX-node management authority: the web-admin UI renders backend-provided runtime families, adapter keys, capability metadata, per-node adapter-configuration support, runtime evidence, and scoped audit history from the authenticated RuntimeNode APIs. Asterisk ARI adapter settings are explicit per-node PostgreSQL records; environment values provide only bounded defaults for creating those records. T0 is limited to ARI transport, authentication, inspection, WebSocket connectivity, event ingestion, and runtime-node readiness. It does not implement ConfBridge, conference execution, channel control, SIP, RTP, media, PJSIP endpoints, browser calling, or Asterisk support for C5 conference operations. Final natural browser acceptance and remaining T0 restart, authentication-failure, and recovery proofs are still pending.
 
-T1 is complete (`PHASE_T1_COMPLETE`, evidence `docs/evidence/t1/kamailio-sip-over-wss-signaling.md`), and so is T2 Asterisk conference execution. The UI Foundation track UI-A through UI-E is complete (see `docs/roadmap/ui-foundations.md`). T5 convergence, failover, and recovery is complete in the repository with closure evidence recorded; T3 rtpengine browser media and T3-S3B external failure/containment proof are complete on canonical `utcp-local`, while V0, T4 FreeSWITCH parity, and R0 remain planned. `UTCP_PHASE` remains `T1`, held deliberately as the CI-guarded marker for the authoritative completed phase rather than advanced automatically. `docs/roadmap/phase-status.md` is the authoritative status ledger. The paragraph below records the T1 corridor as originally delivered.
+T1 is complete (`PHASE_T1_COMPLETE`, evidence `docs/evidence/t1/kamailio-sip-over-wss-signaling.md`), and so is T2 Asterisk conference execution. The UI Foundation track UI-A through UI-E is complete (see `docs/roadmap/ui-foundations.md`). T5 convergence, failover, and recovery is complete in the repository with closure evidence recorded; T3 rtpengine browser media and T3-S3B external failure/containment proof are complete on the canonical native k3s environment, while V0, T4 FreeSWITCH parity, and R0 remain planned. `UTCP_PHASE` remains `T1`, held deliberately as the CI-guarded marker for the authoritative completed phase rather than advanced automatically. `docs/roadmap/phase-status.md` is the authoritative status ledger. The paragraph below records the T1 corridor as originally delivered.
 
 T1 implementation delivered the following. The backend TelephonySession-scoped short-lived SIP registration credentials through the authenticated telephony API, stores only MD5 HA1 verifier material, exposes metadata-only readback, and revokes active signaling credentials when the TelephonySession ends or expires. C3 event-source identity is generalized so RuntimeNode-backed listeners and shared platform observers use the same PostgreSQL lease, fencing, epoch, receipt, and checkpoint authority. The T1-B registrar foundation adds a pinned Kamailio runtime, least-privilege PostgreSQL authentication and usrloc roles, a trusted `sip.utcp.local.test` WSS route, REGISTER-only policy, native usrloc persistence, live digest REGISTER, refresh, replacement, explicit deregistration, session-end revocation, bounded runtime expiration, wrong-password and unsupported-algorithm rejection, Kamailio restart recovery, NetworkPolicy proof, and safe status/metrics foundation. The T1-C repository implementation adds the fenced registration observer, C3 registration receipts/projection, and registration reconciliation. The T1-D repository implementation adds canonical User & Access Management list/detail surfaces and places signaling metadata plus one-time credential issuance beneath the user's active TelephonySession. The T1-F repository implementation extends disposable Compose compatibility proof to start an isolated Kamailio registrar, disposable WSS edge, PostgreSQL role initialization, registration observer, SIP proof, projection proof, session-end expiry proof, safe status, and automatic cleanup using the same application and C3 authorities. It does not add browser SIP registration, permanent SIP accounts, provider-node binding, manual registrar/observer/projection/reconciliation controls, natural browser acceptance, or full T1 promotion; those were closed by the subsequent T1-E natural browser acceptance and T1-G final closure corridors recorded in the T1 evidence document.
 
@@ -42,7 +42,8 @@ T1 implementation delivered the following. The backend TelephonySession-scoped s
 - RTP/SRTP media relay: rtpengine, in T3; the canonical local external-media projection, positive browser scenarios, four negative failure cases, restoration, no-fallback assertions, and containment are proven. See `docs/evidence/t3/t3-s3b-external-browser-media-proof.md`.
 - Call execution runtimes: Asterisk and FreeSWITCH behind adapter contracts.
 - Control-plane kernel first; runtime-node registry second; command/event/reconciliation third; deterministic simulator and real runtime adapters are later phases.
-- Canonical integrated local runtime: the `utcp-local` Kubernetes cluster.
+- Canonical current V1 environment: native k3s on `utcp-dev01`, Kubernetes context `default`.
+- Optional non-canonical local integration environment: the historical `utcp-local` k3d cluster.
 - Disposable validation runtime: Docker Compose, used for container compatibility and integration proof only.
 - Docker Engine remains required for image builds, k3d node containers, and the local registry.
 
@@ -377,7 +378,7 @@ The frontend image serves compiled static assets through an unprivileged Nginx r
 
 ## Local Runtime Authority
 
-The canonical integrated local runtime is the `utcp-local` Kubernetes cluster. Normal browser proof, API proof, identity and runtime-node management, C3 processing, and future simulator work target:
+The canonical current V1 environment is native k3s on `utcp-dev01` in Kubernetes context `default`. Normal browser proof, API proof, identity and runtime-node management, C3 processing, and future simulator work target the native edge at `192.168.254.124` through the repository's `server-*` lifecycle.
 
 ```text
 https://app.utcp.local.test/
@@ -386,13 +387,14 @@ https://app.utcp.local.test/
 Use the top-level local lifecycle:
 
 ```sh
-make local-up
-make local-status
-make local-proof
-make local-down
+make server-config-check
+make server-image-preflight
+make server-apply
+make server-status
+make server-proof
 ```
 
-`local-up` and `local-proof` never start Docker Compose. If a persistent repository-owned UTCP Compose project is running, they fail clearly so Kubernetes and Compose cannot both act as integrated runtime authorities.
+The `local-*` lifecycle is retained only for explicitly optional, non-canonical k3d integration work. It must not be used as current V1 live or acceptance authority. If a historical k3d environment is running, native checks fail closed before canonical proof can proceed.
 
 Docker still matters locally:
 

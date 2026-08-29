@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=scripts/local/lib
 . "$ROOT/scripts/local/lib"
 
-printf 'canonical_integrated_local_runtime=utcp-local Kubernetes\n'
+printf 'optional_non_canonical_local_runtime=utcp-local Kubernetes\n'
 printf 'disposable_validation_runtime=Docker Compose\n'
 printf '\n== k3d ==\n'
 k3d cluster list || true

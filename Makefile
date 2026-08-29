@@ -80,21 +80,24 @@ test: api-test web-test ## Run backend and frontend tests.
 
 check: repository-hygiene media-config-check media-config-check-test media-edge-config-check media-edge-config-check-test media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test media-edge-containment-check media-edge-failure-proof-test t3-media-candidate-assertions-test rtpengine-advertised-address-check freeswitch-config-check freeswitch-config-check-test freeswitch-overlay-check t3-media-prover-config-check t3-media-prover-config-check-test t3-media-prover-host-check security-config-check-test kamailio-signaling-config-check api-check web-lint web-typecheck ## Run repository, backend, frontend, media, security, and Kamailio signaling static checks.
 
-.PHONY: rtpengine-advertised-address-check media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test media-edge-apply media-edge-failure-proof-overlay-test t3-media-prover-host-check t3-media-prover-host-check-test k3d-config-check-test k3d-verifier-check-test api-entrypoint-check-test
+.PHONY: rtpengine-advertised-address-check media-edge-overlay-applicability-check media-edge-overlay-applicability-check-test media-edge-apply media-edge-failure-proof-overlay-test t3-media-prover-host-check t3-media-prover-host-check-test k3d-config-check-test k3d-verifier-check-test api-entrypoint-check-test native-k3s-authority-check-test
 .PHONY: k8s-config-check-test kamailio-signaling-request-uri-semantics-test kamailio-signaling-cseq-semantics-test kamailio-signaling-external-trunk-runtime-proof kamailio-signaling-registration-runtime-proof asterisk-external-trunk-config-check asterisk-external-trunk-config-check-test asterisk-external-trunk-runtime-proof v1-external-sip-peer-config-check v1-external-sip-peer-smoke v1-external-sip-edge-config-check
 .PHONY: asterisk-ari-caller-identity-semantics-test
 .PHONY: runtime-engine-config-check-test simulator-config-check-test telephony-domain-config-check-test
 
-k3d-config-check-test: ## Run canonical utcp-local RTP publication mutation checks.
+k3d-config-check-test: ## Run optional non-canonical utcp-local RTP publication mutation checks.
 	@./scripts/k3d/config-check-test
 
-k3d-verifier-check-test: ## Run canonical k3d verifier command-order regression checks.
+native-k3s-authority-check-test: ## Run native canonical-context and historical-edge collision mutation checks.
+	@./scripts/native-k3s/authority-check-test
+
+k3d-verifier-check-test: ## Run optional non-canonical k3d verifier command-order regression checks.
 	@./scripts/k3d/verifier-check-test
 
 api-entrypoint-check-test: ## Run API container process-role regression checks.
 	@./scripts/kubernetes/api-entrypoint-check-test
 
-k3d-media-edge-config-check: k3d-config-check ## Validate canonical utcp-local media-edge publication.
+k3d-media-edge-config-check: k3d-config-check ## Validate optional non-canonical utcp-local media-edge publication.
 
 media-edge-config-check: ## Validate the external media-edge projection.
 	@./scripts/media-edge/config-check
@@ -110,7 +113,7 @@ media-edge-overlay-applicability-check: media-edge-config-check ## Validate plai
 media-edge-overlay-applicability-check-test: media-edge-overlay-applicability-check ## Run List-normalization applicability mutations.
 	@./scripts/media-edge/overlay-applicability-check-test
 
-media-edge-apply: ## Apply the external media-edge projection through canonical utcp-local lifecycle.
+media-edge-apply: ## Apply the external media-edge projection through the explicitly selected environment lifecycle.
 	@./scripts/media-edge/apply
 
 media-edge-containment-check: ## Validate the bounded external media surface without a live mutation.
@@ -221,16 +224,16 @@ container-check: repository-hygiene check build image-build image-test image-smo
 local-config-check: ## Validate the local Kubernetes authority cutoff without mutation.
 	@./scripts/local/config-check
 
-local-up: ## Start or reconcile the canonical Kubernetes local runtime; never starts Compose.
+local-up: ## Start or reconcile the optional non-canonical k3d local runtime; never starts Compose.
 	@./scripts/local/up
 
-local-status: ## Report canonical Kubernetes local runtime state and Compose authority drift.
+local-status: ## Report optional non-canonical k3d local runtime state and Compose authority drift.
 	@./scripts/local/status
 
-local-proof: ## Run the canonical Kubernetes proof corridor; never starts Compose.
+local-proof: ## Run the optional non-canonical k3d Kubernetes proof corridor; never starts Compose.
 	@./scripts/local/proof
 
-local-down: ## Stop only the utcp-local k3d cluster; preserve registry and data.
+local-down: ## Stop only the optional non-canonical utcp-local k3d cluster; preserve registry and data.
 	@./scripts/local/down
 
 compose-config: ## Validate the resolved disposable/debug Docker Compose configuration.
@@ -279,7 +282,7 @@ k3d-registry-check-test: ## Run focused K0 registry container verification regre
 k3d-create: ## Create or validate the local utcp-local k3d cluster and repository kubeconfig.
 	@./scripts/k3d/create
 
-k3d-start: ## Start or create the canonical utcp-local k3d cluster without deleting existing state.
+k3d-start: ## Start or create the optional non-canonical utcp-local k3d cluster without deleting existing state.
 	@./scripts/k3d/start
 
 k3d-cluster-dns-apply: ## Apply the repository-owned CoreDNS custom configuration and restart CoreDNS.

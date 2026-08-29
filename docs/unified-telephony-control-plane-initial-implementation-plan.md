@@ -412,7 +412,7 @@ make compose-logs
 make compose-status
 ```
 
-After the local runtime authority cutoff, the canonical integrated local runtime is the `utcp-local` Kubernetes cluster. Docker Compose remains available for disposable compatibility proof and explicit isolated debug sessions only. Future optional telephony profiles must not be introduced as a normal parallel runtime beside Kubernetes.
+After the local runtime authority cutoff, the canonical current V1 environment is native k3s on `utcp-dev01` in context `default`. The historical `utcp-local` k3d cluster remains optional non-canonical local integration tooling. Docker Compose remains available for disposable compatibility proof and explicit isolated debug sessions only. Future optional telephony profiles must not be introduced as a normal parallel runtime beside native k3s.
 
 ---
 
@@ -657,7 +657,7 @@ make local-down
 make compose-proof
 ```
 
-`local-up`, `local-status`, `local-proof`, and `local-down` operate on the canonical `utcp-local` Kubernetes runtime. `compose-proof` is disposable and must clean up containers, networks, and volumes after success or failure.
+`server-config-check`, `server-image-preflight`, `server-apply`, `server-status`, and `server-proof` operate on the canonical native k3s runtime. `local-up`, `local-status`, `local-proof`, and `local-down` are retained for explicitly optional non-canonical k3d integration work. `compose-proof` is disposable and must clean up containers, networks, and volumes after success or failure.
 
 ### Exit criteria
 

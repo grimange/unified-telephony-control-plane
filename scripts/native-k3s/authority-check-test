@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
+cat > "$tmpdir/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = ps ]; then
+  printf '%s\n' "${UTCP_NATIVE_EDGE_TEST_OUTPUT:-}"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$tmpdir/docker"
+
+run_guard() {
+  PATH="$tmpdir:$PATH" UTCP_NATIVE_EDGE_TEST_OUTPUT="${1:-}" bash -c \
+    ". '$ROOT/scripts/native-k3s/lib'; ensure_no_historical_edge_collision"
+}
+
+run_guard $'k3d-utcp-local-serverlb\t'
+if run_guard $'k3d-utcp-local-serverlb\t0.0.0.0:5060->30560/udp' >/dev/null 2>&1; then
+  printf 'historical k3d UDP/5060 collision unexpectedly passed\n' >&2
+  exit 1
+fi
+if run_guard $'k3d-utcp-local-serverlb\t127.0.0.1:80->80/tcp, 127.0.0.1:443->443/tcp' >/dev/null 2>&1; then
+  printf 'historical k3d HTTP edge collision unexpectedly passed\n' >&2
+  exit 1
+fi
+
+if ! grep -Fq 'canonical native context must be default' "$ROOT/scripts/native-k3s/lib" ||
+  ! grep -Fq 'canonical native node must be utcp-dev01' "$ROOT/scripts/native-k3s/lib"; then
+  printf 'native canonical identity guard is incomplete\n' >&2
+  exit 1
+fi
+if grep -Eq 'SERVER_CONTEXT.*\*k3d\*|SERVER_CONTEXT.*\*utcp-local\*' "$ROOT/scripts/native-k3s/lib"; then
+  printf 'native guard must enforce the exact canonical context, not only reject legacy names\n' >&2
+  exit 1
+fi
+
+printf 'native k3s authority and edge collision mutation tests passed\n'

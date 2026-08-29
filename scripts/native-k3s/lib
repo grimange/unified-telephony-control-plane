@@ -22,6 +22,21 @@ server_kube() {
 
 fail() { printf 'native-k3s: %s\n' "$1" >&2; exit 1; }
 
+require_canonical_identity() {
+  [ "$SERVER_CONTEXT" = "default" ] || fail "canonical native context must be default: $SERVER_CONTEXT"
+  [ "$SERVER_NODE_NAME" = "utcp-dev01" ] || fail "canonical native node must be utcp-dev01: $SERVER_NODE_NAME"
+}
+
+ensure_no_historical_edge_collision() {
+  command -v docker >/dev/null 2>&1 || fail 'docker is required to verify historical k3d edge ownership'
+  local owners
+  owners="$(docker ps --filter 'name=k3d-utcp-local' --format '{{.Names}}\t{{.Ports}}' 2>/dev/null || true)"
+  if printf '%s\n' "$owners" | grep -Eq '(:80->80/tcp|:443->443/tcp|:5060->30560/udp)'; then
+    printf '%s\n' "$owners" >&2
+    fail 'canonical native edge collision: historical k3d UTCP environment owns UDP/5060 or TCP/80/TCP/443'
+  fi
+}
+
 require_registry() {
   load_image_lock
   [ -n "$SERVER_REGISTRY" ] || fail 'image lock has no UTCP_SERVER_IMAGE_REGISTRY'
@@ -49,9 +64,10 @@ require_image_lock() {
 
 ensure_target() {
   [ -r "$SERVER_KUBECONFIG" ] || fail "native kubeconfig is not readable: $SERVER_KUBECONFIG"
-  case "$SERVER_CONTEXT" in *k3d*|*utcp-local*) fail "unsafe native context: $SERVER_CONTEXT";; esac
+  require_canonical_identity
   server_kube config get-contexts "$SERVER_CONTEXT" >/dev/null 2>&1 || fail "native context is not present: $SERVER_CONTEXT"
   server_kube get node "$SERVER_NODE_NAME" -o jsonpath='{.metadata.name}' 2>/dev/null | grep -Fxq "$SERVER_NODE_NAME" || fail "validated native node is unavailable: $SERVER_NODE_NAME"
+  ensure_no_historical_edge_collision
 }
 
 write_credentials() {

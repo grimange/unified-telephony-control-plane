@@ -30,4 +30,4 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 [ "$ready" = 1 ] || { printf 'rtpengine did not expose one available replica after rollout\n' >&2; exit 1; }
-printf 'external media-edge overlay applied through canonical utcp-local lifecycle\n'
+printf 'external media-edge overlay applied through explicitly selected non-canonical local lifecycle\n'

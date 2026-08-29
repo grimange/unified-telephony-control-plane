@@ -39,7 +39,7 @@ require_no_persistent_compose() {
   if [ -n "$projects" ]; then
     printf 'persistent UTCP Compose project makes local proof ambiguous:\n' >&2
     printf '%s\n' "$projects" >&2
-    printf 'Stop it explicitly before using Kubernetes as the canonical local runtime.\n' >&2
+    printf 'Stop it explicitly before using the selected Kubernetes runtime.\n' >&2
     exit 1
   fi
 }
