@@ -560,48 +560,103 @@ final class CallDomainService
         });
     }
 
-    public function terminalizeObservedLeg(string $tenantId, string $legId, string $runtimeNodeId, string $runtimeChannelId, CallState $terminalState, string $reason): bool
+    public function terminalizeObservedLeg(string $tenantId, string $legId, string $runtimeNodeId, string $runtimeChannelId, CallState $terminalState, ?string $observedAt = null): bool
     {
-        return DB::transaction(function () use ($tenantId, $legId, $runtimeNodeId, $runtimeChannelId, $terminalState, $reason): bool {
+        return DB::transaction(function () use ($tenantId, $legId, $runtimeNodeId, $runtimeChannelId, $terminalState, $observedAt): bool {
             $leg = DB::table('call_legs')->where('tenant_id', $tenantId)->where('id', $legId)->lockForUpdate()->first();
             if ($leg === null || (string) $leg->runtime_node_id !== $runtimeNodeId || (string) $leg->runtime_channel_id !== $runtimeChannelId) {
                 return false;
             }
             if (CallState::from($leg->observed_state)->terminal()) {
-                if ($leg->observed_state === $terminalState->value && $leg->termination_reason === $reason) {
-                    return false;
-                }
-
                 return false;
             }
-            DB::table('call_legs')->where('id', $legId)->update([
-                'desired_state' => 'terminated',
-                'observed_state' => $terminalState->value,
-                'termination_reason' => $reason,
-                'termination_party' => 'runtime',
-                'terminated_at' => now(),
-                'updated_at' => now(),
-            ]);
-            $this->record(ExecutionContext::system(reason: 'runtime call leg terminated', tenantId: $tenantId, origin: 'telephony-observation'), 'call_leg.terminated', 'call_leg', $legId, ['state' => $terminalState->value, 'reason' => $reason]);
-            $remaining = DB::table('call_legs')->where('tenant_id', $tenantId)->where('call_id', $leg->call_id)->whereNotIn('observed_state', array_map(static fn (CallState $state): string => $state->value, [CallState::Completed, CallState::Failed, CallState::Cancelled]))->exists();
-            if (! $remaining) {
-                $callState = $terminalState === CallState::Failed ? CallState::Failed : CallState::Completed;
-                $call = DB::table('calls')->where('tenant_id', $tenantId)->where('id', $leg->call_id)->lockForUpdate()->first();
-                if ($call !== null && ! CallState::from($call->observed_state)->terminal()) {
-                    DB::table('calls')->where('id', $call->id)->update([
-                        'desired_state' => 'terminated',
-                        'observed_state' => $callState->value,
-                        'termination_reason' => $reason,
-                        'termination_party' => 'runtime',
-                        'terminated_at' => now(),
-                        'updated_at' => now(),
-                    ]);
-                    $this->record(ExecutionContext::system(reason: 'runtime call terminated', tenantId: $tenantId, origin: 'telephony-observation'), 'call.terminated', 'call', (string) $call->id, ['state' => $callState->value, 'reason' => $reason]);
+            [$reason, $party] = $terminalState === CallState::Failed
+                ? ['runtime_lost', 'runtime']
+                : ($this->hasRequestedTerminationIntent($tenantId, (string) $leg->call_id, $legId, $observedAt) ? ['requested', 'control_plane'] : ['remote', 'remote']);
+
+            return $this->terminalizeObservedLegLocked($tenantId, $leg, $terminalState, $reason, $party, $terminalState === CallState::Failed ? 'call_leg.failed' : 'call_leg.terminated');
+        });
+    }
+
+    /**
+     * The stale projection is the existing authoritative event-source loss
+     * transition. Only legs still bound to that node and not already terminal
+     * are failed; an ordinary readiness update never calls this method.
+     */
+    public function failRuntimeLostLegs(string $tenantId, string $runtimeNodeId): int
+    {
+        return DB::transaction(function () use ($tenantId, $runtimeNodeId): int {
+            $legs = DB::table('call_legs')
+                ->where('tenant_id', $tenantId)
+                ->where('runtime_node_id', $runtimeNodeId)
+                ->whereNotNull('runtime_channel_id')
+                ->whereNotIn('observed_state', array_map(static fn (CallState $state): string => $state->value, [CallState::Completed, CallState::Failed, CallState::Cancelled]))
+                ->lockForUpdate()
+                ->get();
+            $failed = 0;
+            foreach ($legs as $leg) {
+                if ($this->terminalizeObservedLegLocked($tenantId, $leg, CallState::Failed, 'runtime_lost', 'runtime', 'call_leg.failed')) {
+                    $failed++;
                 }
             }
 
-            return true;
+            return $failed;
         });
+    }
+
+    private function hasRequestedTerminationIntent(string $tenantId, string $callId, string $legId, ?string $observedAt): bool
+    {
+        $operationTypes = ['call.hangup', 'call.leg.hangup', 'call.leg.cancel_origination'];
+        $query = DB::table('runtime_operations')
+            ->where('tenant_id', $tenantId)
+            ->whereIn('operation_type', $operationTypes)
+            ->where('status', '!=', 'terminal_failed')
+            ->where(function ($aggregate) use ($callId, $legId): void {
+                $aggregate->where(function ($call) use ($callId): void {
+                    $call->where('aggregate_type', 'call')->where('aggregate_id', $callId);
+                })->orWhere(function ($leg) use ($legId): void {
+                    $leg->where('aggregate_type', 'call_leg')->where('aggregate_id', $legId);
+                });
+            });
+        if ($observedAt !== null && $observedAt !== '') {
+            $query->where('created_at', '<=', $observedAt);
+        }
+
+        return $query->exists();
+    }
+
+    private function terminalizeObservedLegLocked(string $tenantId, object $leg, CallState $terminalState, string $reason, string $party, string $eventType): bool
+    {
+        if (CallState::from($leg->observed_state)->terminal()) {
+            return false;
+        }
+        DB::table('call_legs')->where('id', $leg->id)->update([
+            'desired_state' => 'terminated',
+            'observed_state' => $terminalState->value,
+            'termination_reason' => $reason,
+            'termination_party' => $party,
+            'terminated_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->record(ExecutionContext::system(reason: 'runtime call leg terminal fact', tenantId: $tenantId, origin: 'telephony-observation'), $eventType, 'call_leg', (string) $leg->id, ['state' => $terminalState->value, 'reason' => $reason, 'party' => $party]);
+        $remaining = DB::table('call_legs')->where('tenant_id', $tenantId)->where('call_id', $leg->call_id)->whereNotIn('observed_state', array_map(static fn (CallState $state): string => $state->value, [CallState::Completed, CallState::Failed, CallState::Cancelled]))->exists();
+        if (! $remaining) {
+            $callState = $terminalState === CallState::Failed ? CallState::Failed : CallState::Completed;
+            $call = DB::table('calls')->where('tenant_id', $tenantId)->where('id', $leg->call_id)->lockForUpdate()->first();
+            if ($call !== null && ! CallState::from($call->observed_state)->terminal()) {
+                DB::table('calls')->where('id', $call->id)->update([
+                    'desired_state' => 'terminated',
+                    'observed_state' => $callState->value,
+                    'termination_reason' => $reason,
+                    'termination_party' => $party,
+                    'terminated_at' => now(),
+                    'updated_at' => now(),
+                ]);
+                $this->record(ExecutionContext::system(reason: 'runtime call terminal fact', tenantId: $tenantId, origin: 'telephony-observation'), 'call.terminated', 'call', (string) $call->id, ['state' => $callState->value, 'reason' => $reason, 'party' => $party]);
+            }
+        }
+
+        return true;
     }
 
     /** @param list<string> $legIds */

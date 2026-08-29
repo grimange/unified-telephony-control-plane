@@ -113,7 +113,7 @@ final class FreeSwitchEventNormalizer implements EventNormalizer
             }
         }
         if ($type === 'call.leg.terminated') {
-            $this->copy($payload, 'Hangup-Cause', 'termination_reason', $safe);
+            $this->copy($payload, 'Hangup-Cause', 'hangup_cause', $safe);
         }
         if ($type === 'call.leg.dtmf_received') {
             $this->copy($payload, 'DTMF-Digit', 'digit', $safe);

@@ -960,6 +960,49 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertArrayNotHasKey('asterisk_version', $observations[0]['payload']);
     }
 
+    public function test_channel_destroyed_preserves_native_terminal_facts_without_canonical_reason(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $catalog = new AsteriskCatalog;
+        $normalizer = new AsteriskAriEventNormalizer($catalog, $catalog->eventType('channel_destroyed'));
+
+        $observations = $normalizer->normalize((object) [
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $nodeId,
+        ], [
+            'channel_id' => 'asterisk-channel-terminal-facts',
+            'ari_event_type' => 'ChannelDestroyed',
+            'cause' => 16,
+            'cause_txt' => 'Normal Clearing',
+            'tech_cause' => 'SIP 200',
+            'occurred_at' => now()->toISOString(),
+        ]);
+
+        $this->assertCount(1, $observations);
+        $payload = $observations[0]['payload'];
+        $this->assertSame('ChannelDestroyed', $payload['ari_event_type']);
+        $this->assertSame(16, $payload['cause']);
+        $this->assertSame('Normal Clearing', $payload['cause_txt']);
+        $this->assertSame('SIP 200', $payload['tech_cause']);
+        $this->assertArrayNotHasKey('termination_reason', $payload);
+    }
+
+    public function test_stasis_end_is_not_a_terminal_call_observation(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $catalog = new AsteriskCatalog;
+        $normalizer = new AsteriskAriEventNormalizer($catalog, $catalog->eventType('stasis_end'));
+
+        $this->assertSame([], $normalizer->normalize((object) [
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $nodeId,
+        ], [
+            'channel_id' => 'asterisk-channel-stasis-end',
+            'ari_event_type' => 'StasisEnd',
+            'occurred_at' => now()->toISOString(),
+        ]));
+    }
+
     public function test_unknown_native_ari_events_normalize_safely_without_touching_desired_state_or_conference_state(): void
     {
         [, $nodeId] = $this->runtimeNode();

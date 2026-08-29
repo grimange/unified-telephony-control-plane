@@ -286,16 +286,58 @@ final class CallObservationProcessorTest extends TestCase
         $this->emit('late-ring', $tenantId, $nodeId, 'call.leg.ringing', $legId, ['runtime_channel_id' => $channel]);
         $this->assertSame('answered', DB::table('call_legs')->where('id', $legId)->value('observed_state'));
 
+        app(CallDomainService::class)->requestOperation($tenantId, ExecutionContext::system(tenantId: $tenantId), 'call.leg.hangup', 'call_leg', $legId, [
+            'call_id' => DB::table('call_legs')->where('id', $legId)->value('call_id'),
+        ], runtimeNodeId: $nodeId);
         $this->emit('hangup', $tenantId, $nodeId, 'call.leg.terminated', $legId, ['runtime_channel_id' => $channel, 'termination_reason' => 'requested']);
         $this->emit('duplicate-hangup', $tenantId, $nodeId, 'call.leg.terminated', $legId, ['runtime_channel_id' => $channel, 'termination_reason' => 'requested']);
         $this->emit('conflicting-hangup', $tenantId, $nodeId, 'call.leg.terminated', $legId, ['runtime_channel_id' => $channel, 'termination_reason' => 'busy']);
 
         $this->assertSame('completed', DB::table('call_legs')->where('id', $legId)->value('observed_state'));
         $this->assertSame('requested', DB::table('call_legs')->where('id', $legId)->value('termination_reason'));
+        $this->assertSame('control_plane', DB::table('call_legs')->where('id', $legId)->value('termination_party'));
         $this->assertSame(1, DB::table('control_plane_audit_records')->where('action', 'call_leg.terminated')->count());
 
         $this->emit('late-old-channel', $tenantId, $nodeId, 'call.leg.terminated', $legId, ['runtime_channel_id' => 'old-channel', 'termination_reason' => 'busy']);
         $this->assertSame('requested', DB::table('call_legs')->where('id', $legId)->value('termination_reason'));
+    }
+
+    public function test_authoritative_runtime_stale_transition_fails_only_bound_non_terminal_legs(): void
+    {
+        [$tenantId, $staleNodeId] = $this->runtimeNode();
+        $healthyNodeId = Str::uuid()->toString();
+        DB::table('runtime_nodes')->insert([
+            'id' => $healthyNodeId,
+            'tenant_id' => $tenantId,
+            'name' => 'Healthy second runtime',
+            'slug' => 'healthy-'.str_replace('-', '', $healthyNodeId),
+            'runtime_family' => 'simulator',
+            'adapter_key' => 'simulator-deterministic',
+            'desired_state' => 'active',
+            'observed_state' => 'ready',
+            'observed_at' => now(),
+            'configuration_version' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('runtime_node_capabilities')->insert([
+            'id' => Str::uuid()->toString(),
+            'runtime_node_id' => $healthyNodeId,
+            'capability_key' => 'call.control',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('runtime_nodes')->where('id', $staleNodeId)->update(['observed_state' => 'ready', 'observed_at' => now()->subHour()]);
+
+        $staleCall = app(CallDomainService::class)->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId), runtimeNodeId: $staleNodeId);
+        $healthyCall = app(CallDomainService::class)->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId), runtimeNodeId: $healthyNodeId);
+
+        $this->assertSame(1, (new ProjectionService)->markStale(60));
+        $this->assertSame('failed', DB::table('call_legs')->where('id', $staleCall['leg_id'])->value('observed_state'));
+        $this->assertSame('runtime_lost', DB::table('call_legs')->where('id', $staleCall['leg_id'])->value('termination_reason'));
+        $this->assertSame('runtime', DB::table('call_legs')->where('id', $staleCall['leg_id'])->value('termination_party'));
+        $this->assertSame('originating', DB::table('call_legs')->where('id', $healthyCall['leg_id'])->value('observed_state'));
+        $this->assertSame(1, DB::table('control_plane_audit_records')->where('action', 'call_leg.failed')->where('subject_id', $staleCall['leg_id'])->count());
     }
 
     public function test_outbound_leg_progresses_from_originating_to_answered_only_from_observations(): void

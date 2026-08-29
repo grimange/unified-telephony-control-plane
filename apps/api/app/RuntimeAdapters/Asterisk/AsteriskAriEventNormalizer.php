@@ -153,8 +153,8 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
                 'up', 'answered' => 'call.leg.answered',
                 default => null,
             },
-            $this->catalog->eventType('channel_destroyed'),
-            $this->catalog->eventType('stasis_end') => 'call.leg.terminated',
+            $this->catalog->eventType('channel_destroyed') => 'call.leg.terminated',
+            $this->catalog->eventType('stasis_end') => null,
             $this->catalog->eventType('channel_dtmf_received') => 'call.leg.dtmf_received',
             $this->catalog->eventType('channel_entered_bridge') => 'call.legs.bridged',
             $this->catalog->eventType('channel_left_bridge') => 'call.legs.unbridged',
@@ -190,6 +190,9 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
             'runtime_node_id' => (string) $receipt->runtime_node_id,
             'runtime_channel_id' => $channelId,
         ];
+        if (is_string($payload['ari_event_type'] ?? null)) {
+            $safe['ari_event_type'] = $payload['ari_event_type'];
+        }
         if (is_string($payload['remote_identity'] ?? null) && trim($payload['remote_identity']) !== '') {
             $safe['remote_identity'] = trim($payload['remote_identity']);
         }
@@ -231,7 +234,11 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
             }
         }
         if ($type === 'call.leg.terminated') {
-            $safe['termination_reason'] = is_string($payload['termination_reason'] ?? null) ? $payload['termination_reason'] : 'runtime_lost';
+            foreach (['cause', 'cause_txt', 'tech_cause'] as $fact) {
+                if (array_key_exists($fact, $payload) && $payload[$fact] !== null) {
+                    $safe[$fact] = $payload[$fact];
+                }
+            }
         }
 
         return [

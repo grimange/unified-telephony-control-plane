@@ -81,7 +81,8 @@ final class CallObservationProcessor
 
         if ($type === 'call.leg.terminated' || $type === 'call.leg.failed') {
             $state = $type === 'call.leg.failed' ? CallState::Failed : CallState::Completed;
-            $this->calls->terminalizeObservedLeg($tenantId, $legId, $nodeId, $channelId, $state, $this->string($payload, 'termination_reason') ?? ($type === 'call.leg.failed' ? 'runtime_lost' : 'requested'));
+            $observedAt = is_string($observation['observed_at'] ?? null) ? $observation['observed_at'] : null;
+            $this->calls->terminalizeObservedLeg($tenantId, $legId, $nodeId, $channelId, $state, $observedAt);
 
             return;
         }

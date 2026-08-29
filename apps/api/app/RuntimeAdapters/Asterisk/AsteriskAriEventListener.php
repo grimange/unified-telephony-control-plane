@@ -230,6 +230,13 @@ final class AsteriskAriEventListener
             $payload['remote_identity'] = is_string($channel['caller']['number'] ?? null) ? $channel['caller']['number'] : null;
             $payload['connected_identity'] = is_string($channel['connected']['number'] ?? null) ? $channel['connected']['number'] : null;
         }
+        if ($type === 'ChannelDestroyed') {
+            foreach (['cause', 'cause_txt', 'tech_cause'] as $fact) {
+                if (array_key_exists($fact, $event) && $event[$fact] !== null) {
+                    $payload[$fact] = $event[$fact];
+                }
+            }
+        }
         if (is_string($event['digit'] ?? null)) {
             $payload['digit'] = $event['digit'];
         }

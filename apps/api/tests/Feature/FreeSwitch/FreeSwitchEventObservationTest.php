@@ -214,8 +214,11 @@ final class FreeSwitchEventObservationTest extends TestCase
         $this->assertSame($second, DB::table('call_legs')->where('id', $first)->value('bridged_to_leg_id'));
         $hangup = (new FreeSwitchEventNormalizer(new FreeSwitchCatalog, 'CHANNEL_HANGUP_COMPLETE'))->normalize($receipt, ['Unique-ID' => 'a', 'Hangup-Cause' => 'NORMAL_CLEARING']);
         $projection->apply($receipt, $hangup);
-        $this->assertSame('NORMAL_CLEARING', DB::table('call_legs')->where('id', $first)->value('termination_reason'));
-        $this->assertSame('NORMAL_CLEARING', json_decode((string) DB::table('runtime_observations')->where('observation_type', 'call.leg.terminated')->value('payload'), true)['termination_reason']);
+        $this->assertSame('remote', DB::table('call_legs')->where('id', $first)->value('termination_reason'));
+        $this->assertSame('remote', DB::table('call_legs')->where('id', $first)->value('termination_party'));
+        $payload = json_decode((string) DB::table('runtime_observations')->where('observation_type', 'call.leg.terminated')->value('payload'), true);
+        $this->assertSame('NORMAL_CLEARING', $payload['hangup_cause']);
+        $this->assertArrayNotHasKey('termination_reason', $payload);
     }
 
     public function test_listener_assigns_context_and_epoch_and_rejects_missing_event_name(): void

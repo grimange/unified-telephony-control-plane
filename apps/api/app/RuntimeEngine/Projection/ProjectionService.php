@@ -9,6 +9,7 @@ use App\ControlPlane\Shared\PayloadSafety;
 use App\ControlPlane\Shared\StableJson;
 use App\RuntimeEngine\EngineIds;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
+use App\TelephonyDomain\CallDomainService;
 use App\TelephonyDomain\CallObservationProcessor;
 use Illuminate\Support\Facades\DB;
 
@@ -649,6 +650,7 @@ final class ProjectionService
                     'runtime_node.observed_state_changed',
                     ['observed_state' => 'stale', 'reason' => 'stale_observation_timeout'],
                 );
+                app(CallDomainService::class)->failRuntimeLostLegs((string) $node->tenant_id, (string) $node->id);
             }
 
             return $nodes->count();
