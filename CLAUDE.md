@@ -12,6 +12,12 @@ This file provides Claude Code–specific guidance for working in the Unified Te
 
 This file complements `AGENTS.md`; it does not replace it.
 
+Path-local instructions refine the shared contract for their subtree:
+`apps/api/AGENTS.md`, `apps/web/AGENTS.md`, `infrastructure/AGENTS.md`, and
+`docs/AGENTS.md`. Keep architectural truth in the canonical repository
+documentation referenced by `AGENTS.md`; use this file for Claude-specific
+workflow guidance and shared principles that are not path-local.
+
 ---
 
 ## Mission

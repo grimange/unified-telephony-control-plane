@@ -62,26 +62,26 @@ documentation task. Current T4 implementation evidence:
 
 ## Completed phases and tracks
 
-| Track | Current status | Scope / canonical evidence |
-| --- | --- | --- |
-| F0–F4 | Complete | Repository, application, container, Compose, and CI foundation; `docs/evidence/f0/`–`f4/` |
-| K0–K4 | Complete | k3d/Kubernetes, gateway, security, and observability foundation; `docs/evidence/k0/`–`k4/` |
-| C0–C5 | Complete | Control-plane kernel, identity, RuntimeNode registry, reconciliation, simulator, sessions, and conferences; `docs/evidence/c0/`–`c5/` |
-| T1 Kamailio SIP-over-WSS signaling | Complete | CI-guarded foundation marker; current active roadmap phase is T4 |
-| T0–T3 | Complete | Asterisk, Kamailio, conference, and rtpengine execution slices; `docs/evidence/t0/`–`t3/` |
-| V0 | Complete | Natural login, SIP registration, conference admission, and reference-client acceptance; `docs/evidence/v0/` |
-| RT-1 / RT-1A | Complete | Runtime control-plane notifications and browser proof; `docs/evidence/rt-1/`, `docs/evidence/rt1/` |
-| RNM | Complete | RuntimeNode lifecycle and adversarial closure; `docs/evidence/rnm/` |
-| RNP | Complete | Managed runtime provisioning/deprovisioning and operator flow; `docs/evidence/rnp/` |
-| T5 | Complete | Multi-runtime convergence, failover, recovery, and closure; [`docs/evidence/t5/t5-phase-closure.md`](../evidence/t5/t5-phase-closure.md) |
-| C6 | Complete / live-proven / frozen | Canonical Call/CallLeg lifecycle and normalized call control; `docs/evidence/c6/` and [`ADR-023`](../decisions/ADR-023-canonical-call-lifecycle-and-call-control-authority.md) |
+| Track                              | Current status                  | Scope / canonical evidence                                                                                                                                                     |
+|------------------------------------|---------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| F0–F4                              | Complete                        | Repository, application, container, Compose, and CI foundation; `docs/evidence/f0/`–`f4/`                                                                                      |
+| K0–K4                              | Complete                        | k3d/Kubernetes, gateway, security, and observability foundation; `docs/evidence/k0/`–`k4/`                                                                                     |
+| C0–C5                              | Complete                        | Control-plane kernel, identity, RuntimeNode registry, reconciliation, simulator, sessions, and conferences; `docs/evidence/c0/`–`c5/`                                          |
+| T1 Kamailio SIP-over-WSS signaling | Complete                        | CI-guarded foundation marker; current active roadmap phase is T4                                                                                                               |
+| T0–T3                              | Complete                        | Asterisk, Kamailio, conference, and rtpengine execution slices; `docs/evidence/t0/`–`t3/`                                                                                      |
+| V0                                 | Complete                        | Natural login, SIP registration, conference admission, and reference-client acceptance; `docs/evidence/v0/`                                                                    |
+| RT-1 / RT-1A                       | Complete                        | Runtime control-plane notifications and browser proof; `docs/evidence/rt-1/`, `docs/evidence/rt1/`                                                                             |
+| RNM                                | Complete                        | RuntimeNode lifecycle and adversarial closure; `docs/evidence/rnm/`                                                                                                            |
+| RNP                                | Complete                        | Managed runtime provisioning/deprovisioning and operator flow; `docs/evidence/rnp/`                                                                                            |
+| T5                                 | Complete                        | Multi-runtime convergence, failover, recovery, and closure; [`docs/evidence/t5/t5-phase-closure.md`](../evidence/t5/t5-phase-closure.md)                                       |
+| C6                                 | Complete / live-proven / frozen | Canonical Call/CallLeg lifecycle and normalized call control; `docs/evidence/c6/` and [`ADR-023`](../decisions/ADR-023-canonical-call-lifecycle-and-call-control-authority.md) |
 
 ## Active phase
 
-| Phase | Status | Next bounded proof |
-| --- | --- | --- |
-| T4 | Complete | Timer-backed `media.playback` natural live proof passed 2026-08-24; see the T4 live-proof record above |
-| T6 | Complete | Kamailio and Asterisk provider-consumption seams implemented/tested with bounded synthetic runtime verification |
+| Phase | Status   | Next bounded proof                                                                                              |
+|-------|----------|-----------------------------------------------------------------------------------------------------------------|
+| T4    | Complete | Timer-backed `media.playback` natural live proof passed 2026-08-24; see the T4 live-proof record above          |
+| T6    | Complete | Kamailio and Asterisk provider-consumption seams implemented/tested with bounded synthetic runtime verification |
 
 ## Planned mainline
 
