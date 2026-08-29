@@ -136,6 +136,17 @@ final class CallApiTest extends TestCase
         $user = $this->user('c6d-'.$suffix.'@utcp.local.test');
         $tenant = IdentityIds::new();
         DB::table('tenants')->insert(['id' => $tenant, 'slug' => 'c6d-'.$suffix, 'display_name' => 'C6D', 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
+        $runtimeNodeId = IdentityIds::new();
+        DB::table('runtime_nodes')->insert([
+            'id' => $runtimeNodeId, 'tenant_id' => $tenant, 'name' => 'C6D runtime',
+            'slug' => 'c6d-runtime-'.str_replace('-', '', $runtimeNodeId), 'runtime_family' => 'simulator',
+            'adapter_key' => 'simulator-deterministic', 'desired_state' => 'active', 'observed_state' => 'ready',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('runtime_node_capabilities')->insert([
+            'id' => IdentityIds::new(), 'runtime_node_id' => $runtimeNodeId, 'capability_key' => 'call.control',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
         $this->attachRole($user->id, $tenant, 'tenant-admin');
 
         return [$user, $tenant];

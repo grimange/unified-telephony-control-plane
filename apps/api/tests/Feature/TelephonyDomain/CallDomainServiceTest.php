@@ -139,6 +139,10 @@ final class CallDomainServiceTest extends TestCase
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+        DB::table('runtime_node_capabilities')->insert([
+            'id' => Str::uuid()->toString(), 'runtime_node_id' => $runtimeId, 'capability_key' => 'call.control',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
         $call = $service->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId));
         DB::table('calls')->where('id', $call['call_id'])->update(['runtime_node_id' => $runtimeId]);
 
@@ -181,6 +185,10 @@ final class CallDomainServiceTest extends TestCase
                 'observed_state' => 'ready',
                 'created_at' => now(),
                 'updated_at' => now(),
+            ]);
+            DB::table('runtime_node_capabilities')->insert([
+                'id' => Str::uuid()->toString(), 'runtime_node_id' => $runtime, 'capability_key' => 'call.control',
+                'created_at' => now(), 'updated_at' => now(),
             ]);
         }
         $service = app(CallDomainService::class);
@@ -283,6 +291,10 @@ final class CallDomainServiceTest extends TestCase
             'slug' => 'c6-answer-'.str_replace('-', '', $nodeId), 'runtime_family' => 'simulator',
             'adapter_key' => 'simulator-deterministic', 'desired_state' => 'active',
             'observed_state' => 'ready', 'configuration_version' => 1,
+            'created_at' => $now, 'updated_at' => $now,
+        ]);
+        DB::table('runtime_node_capabilities')->insert([
+            'id' => Str::uuid()->toString(), 'runtime_node_id' => $nodeId, 'capability_key' => 'call.control',
             'created_at' => $now, 'updated_at' => $now,
         ]);
         Carbon::setTestNow($now);
@@ -394,6 +406,104 @@ final class CallDomainServiceTest extends TestCase
         app(CallDomainService::class)->requestOperation($tenantB, ExecutionContext::system(tenantId: $tenantB), 'call.leg.answer', 'call_leg', $result['leg_id'], ['call_id' => $result['call_id']]);
     }
 
+    public function test_outbound_call_without_runtime_node_selects_and_projects_an_eligible_node(): void
+    {
+        $tenantId = $this->tenant();
+        $result = app(CallDomainService::class)->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId));
+        $callNode = (string) DB::table('calls')->where('id', $result['call_id'])->value('runtime_node_id');
+        $legNode = (string) DB::table('call_legs')->where('id', $result['leg_id'])->value('runtime_node_id');
+        $operation = DB::table('runtime_operations')->where('id', $result['operation_id'])->first();
+        $payload = json_decode((string) $operation->payload, true, 512, JSON_THROW_ON_ERROR);
+
+        $this->assertNotSame('', $callNode);
+        $this->assertSame($callNode, $legNode);
+        $this->assertSame($callNode, (string) $operation->runtime_node_id);
+        $this->assertSame($callNode, $payload['runtime_node_id']);
+    }
+
+    public function test_outbound_runtime_selection_is_deterministic_and_requires_call_control(): void
+    {
+        $tenantId = $this->tenant();
+        $nodes = [];
+        foreach ([20, 10] as $priority) {
+            $id = Str::uuid()->toString();
+            $nodes[] = $id;
+            DB::table('runtime_nodes')->insert([
+                'id' => $id, 'tenant_id' => $tenantId, 'name' => 'candidate-'.$id,
+                'slug' => 'candidate-'.str_replace('-', '', $id), 'runtime_family' => 'asterisk', 'adapter_key' => 'asterisk-ari',
+                'desired_state' => 'active', 'observed_state' => 'ready', 'placement_priority' => $priority,
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+            DB::table('runtime_node_capabilities')->insert([
+                'id' => Str::uuid()->toString(), 'runtime_node_id' => $id, 'capability_key' => 'call.control',
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+        $withoutCapability = Str::uuid()->toString();
+        DB::table('runtime_nodes')->insert([
+            'id' => $withoutCapability, 'tenant_id' => $tenantId, 'name' => 'no-control',
+            'slug' => 'no-control-'.str_replace('-', '', $withoutCapability), 'runtime_family' => 'asterisk', 'adapter_key' => 'asterisk-ari',
+            'desired_state' => 'active', 'observed_state' => 'ready', 'placement_priority' => 1,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $result = app(CallDomainService::class)->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId));
+        $this->assertSame($nodes[1], DB::table('calls')->where('id', $result['call_id'])->value('runtime_node_id'));
+    }
+
+    public function test_eligible_explicit_runtime_node_overrides_automatic_ordering(): void
+    {
+        $tenantId = $this->tenant();
+        $automatic = Str::uuid()->toString();
+        $explicit = Str::uuid()->toString();
+        foreach ([[$automatic, 1], [$explicit, 50]] as [$id, $priority]) {
+            DB::table('runtime_nodes')->insert([
+                'id' => $id, 'tenant_id' => $tenantId, 'name' => 'explicit-test-'.$id,
+                'slug' => 'explicit-test-'.str_replace('-', '', $id), 'runtime_family' => 'simulator',
+                'adapter_key' => 'simulator-deterministic', 'desired_state' => 'active', 'observed_state' => 'ready',
+                'placement_priority' => $priority, 'created_at' => now(), 'updated_at' => now(),
+            ]);
+            DB::table('runtime_node_capabilities')->insert([
+                'id' => Str::uuid()->toString(), 'runtime_node_id' => $id, 'capability_key' => 'call.control',
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+
+        $result = app(CallDomainService::class)->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId), null, $explicit);
+        $this->assertSame($explicit, DB::table('calls')->where('id', $result['call_id'])->value('runtime_node_id'));
+        $this->assertSame($explicit, DB::table('call_legs')->where('id', $result['leg_id'])->value('runtime_node_id'));
+        $this->assertSame($explicit, DB::table('runtime_operations')->where('id', $result['operation_id'])->value('runtime_node_id'));
+    }
+
+    public function test_automatic_selection_fails_without_an_eligible_runtime_node_before_inserts(): void
+    {
+        $tenantId = $this->tenant();
+        DB::table('runtime_node_capabilities')->whereIn('runtime_node_id', DB::table('runtime_nodes')->where('tenant_id', $tenantId)->pluck('id'))->delete();
+        $before = [DB::table('calls')->count(), DB::table('call_legs')->count(), DB::table('runtime_operations')->count()];
+
+        $this->expectException(InvalidArgumentException::class);
+        try {
+            app(CallDomainService::class)->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId));
+        } finally {
+            $this->assertSame($before, [DB::table('calls')->count(), DB::table('call_legs')->count(), DB::table('runtime_operations')->count()]);
+        }
+    }
+
+    public function test_invalid_explicit_runtime_node_and_no_eligible_runtime_fail_without_partial_call_state(): void
+    {
+        $tenantId = $this->tenant();
+        $validNode = (string) DB::table('runtime_nodes')->where('tenant_id', $tenantId)->value('id');
+        DB::table('runtime_node_capabilities')->where('runtime_node_id', $validNode)->delete();
+        $before = [DB::table('calls')->count(), DB::table('call_legs')->count(), DB::table('runtime_operations')->count()];
+
+        $this->expectException(InvalidArgumentException::class);
+        try {
+            app(CallDomainService::class)->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId), null, $validNode);
+        } finally {
+            $this->assertSame($before, [DB::table('calls')->count(), DB::table('call_legs')->count(), DB::table('runtime_operations')->count()]);
+        }
+    }
+
     public function test_operation_catalog_has_the_normalized_targets_and_capabilities(): void
     {
         $catalog = CallOperationCatalog::all();
@@ -406,6 +516,18 @@ final class CallDomainServiceTest extends TestCase
     {
         $id = Str::uuid()->toString();
         DB::table('tenants')->insert(['id' => $id, 'slug' => 'tenant-'.str_replace('-', '', $id), 'display_name' => 'C6 tenant', 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
+
+        $runtimeNodeId = Str::uuid()->toString();
+        DB::table('runtime_nodes')->insert([
+            'id' => $runtimeNodeId, 'tenant_id' => $id, 'name' => 'call-test-runtime',
+            'slug' => 'call-test-runtime-'.str_replace('-', '', $runtimeNodeId), 'runtime_family' => 'simulator',
+            'adapter_key' => 'simulator-deterministic', 'desired_state' => 'active', 'observed_state' => 'ready',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('runtime_node_capabilities')->insert([
+            'id' => Str::uuid()->toString(), 'runtime_node_id' => $runtimeNodeId, 'capability_key' => 'call.control',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
 
         return $id;
     }

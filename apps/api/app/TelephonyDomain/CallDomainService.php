@@ -9,6 +9,7 @@ use App\ControlPlane\RuntimeOperations\RuntimeOperationRepository;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\IdempotencyKey;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
+use App\RuntimeRegistry\RuntimeNodeSelector;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
@@ -51,6 +52,7 @@ final class CallDomainService
         private readonly RuntimeOperationRepository $operations,
         private readonly ReconciliationRepository $reconciliation,
         private readonly C7bService $routes,
+        private readonly RuntimeNodeSelector $runtimeNodes,
     ) {}
 
     /** @return array{call_id:string, leg_id:string, operation_id:string} */
@@ -70,6 +72,8 @@ final class CallDomainService
             if ($existing !== null) {
                 return $existing;
             }
+
+            $selectedRuntimeNodeId = $this->runtimeNodes->selectForOutboundCall($tenantId, $runtimeNodeId);
 
             $routeableDestination = is_string($destinationRef) && str_starts_with($destinationRef, 'telephony_address:');
             $decision = ! $routeableDestination ? null : $this->routes->evaluateOutbound($tenantId, $destinationRef);
@@ -94,7 +98,7 @@ final class CallDomainService
                 'direction' => CallDirection::Outbound->value,
                 'desired_state' => 'active',
                 'observed_state' => CallState::Requested->value,
-                'runtime_node_id' => $runtimeNodeId,
+                'runtime_node_id' => $selectedRuntimeNodeId,
                 'destination_ref' => $decision?->destination()?->canonical() ?? $destinationRef,
                 'caller_identity_ref' => $callerIdentityId,
                 'route_decision' => $decisionData === null ? null : json_encode($decisionData, JSON_THROW_ON_ERROR),
@@ -108,7 +112,7 @@ final class CallDomainService
                 'id' => $legId,
                 'tenant_id' => $tenantId,
                 'call_id' => $callId,
-                'runtime_node_id' => $runtimeNodeId,
+                'runtime_node_id' => $selectedRuntimeNodeId,
                 'runtime_channel_id' => self::runtimeChannelId($legId),
                 'destination_ref' => $decision?->destination()?->canonical() ?? $destinationRef,
                 'caller_identity_ref' => $callerIdentityId,
@@ -128,7 +132,7 @@ final class CallDomainService
             $operationId = $this->requestOperation($tenantId, $context, 'call.leg.originate', 'call_leg', $legId, [
                 'call_id' => $callId,
                 'leg_id' => $legId,
-                'runtime_node_id' => $runtimeNodeId,
+                'runtime_node_id' => $selectedRuntimeNodeId,
                 'destination_ref' => $decision?->destination()?->canonical() ?? $destinationRef,
                 'caller_identity_id' => $callerIdentityId,
                 'caller_identity_address' => $callerIdentityAddress,
@@ -138,7 +142,7 @@ final class CallDomainService
                 'trunk_endpoint_id' => $endpoint?->id,
                 'runtime_channel_id' => self::runtimeChannelId($legId),
                 'destination_uri' => $executionDestination,
-            ], $idempotencyKey, $runtimeNodeId);
+            ], $idempotencyKey, $selectedRuntimeNodeId);
             $this->applyCallTransition($tenantId, $callId, CallState::Originating, 'command-requested');
             $this->applyLegTransition($tenantId, $legId, CallState::Originating, 'command-requested');
             $this->reconciliation->ensureTarget($tenantId, 'call_leg_origination', $legId, 1);

@@ -453,6 +453,7 @@ final class CallObservationProcessorTest extends TestCase
         $nodeId = Str::uuid()->toString();
         DB::table('tenants')->insert(['id' => $tenantId, 'slug' => 'c6c-'.str_replace('-', '', $tenantId), 'display_name' => 'C6C tenant', 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
         DB::table('runtime_nodes')->insert(['id' => $nodeId, 'tenant_id' => $tenantId, 'name' => 'C6C simulator', 'slug' => 'c6c-'.str_replace('-', '', $nodeId), 'runtime_family' => 'simulator', 'adapter_key' => 'simulator-deterministic', 'desired_state' => 'active', 'observed_state' => 'ready', 'configuration_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('runtime_node_capabilities')->insert(['id' => Str::uuid()->toString(), 'runtime_node_id' => $nodeId, 'capability_key' => 'call.control', 'created_at' => now(), 'updated_at' => now()]);
 
         return [$tenantId, $nodeId];
     }
