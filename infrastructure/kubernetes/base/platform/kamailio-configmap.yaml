@@ -424,6 +424,7 @@ data:
             if (sql_query("conference", "select provider_host from kamailio_external_trunk_route_view where provider_host = '$si' and direction = 'outbound' and desired_state = 'active' limit 1", "provider_dialog_source")) {
                 if ($dbr(provider_dialog_source=>rows) > 0) {
                     if (dlg_set_ruri()) {
+                        dlg_manage();
                         route(MEDIA_DELETE);
                         if (!t_relay()) {
                             sl_reply_error();

@@ -212,7 +212,7 @@ def validate(state: dict[str, Any]) -> None:
     require('loadmodule "dialog.so"' in kamailio, "dialog module required for authenticated provider CSeq tracking")
     require('modparam("dialog", "track_cseq_updates", 1)' in kamailio, "dialog CSeq tracking must remain enabled")
     require("dlg_manage();" in runtime_external_trunk_block, "provider INVITE must be dialog-managed before relay")
-    require(kamailio.count("dlg_manage();") == 1, "dialog management must remain scoped to the provider INVITE corridor")
+    require(kamailio.count("dlg_manage();") == 2, "dialog management must remain scoped to the provider INVITE and trusted fallback-BYE corridors")
     require('force_send_socket("udp:0.0.0.0:5060")' not in kamailio, "legacy quoted force_send_socket provider selection is forbidden")
     require('modparam("uac", "default_socket", "udp:0.0.0.0:5060")' in kamailio, "UAC registration must pin the external send socket")
     for forbidden in (

@@ -27,11 +27,13 @@ def assert_contract(body: str) -> None:
     known_dialog = body.index("is_known_dlg()", fallback)
     source_query = body.index("kamailio_external_trunk_route_view", fallback)
     set_ruri = body.index("dlg_set_ruri()", known_dialog)
+    manage = body.index("dlg_manage();", set_ruri)
     media_delete = body.index("route(MEDIA_DELETE);", set_ruri)
     relay = body.index("t_relay()", media_delete)
     ack = body.index('if ($rm == "ACK")')
 
-    assert loose < fallback < known_dialog < source_query < set_ruri < media_delete < relay < ack
+    assert loose < fallback < known_dialog < source_query < set_ruri < manage < media_delete < relay < ack
+    assert body.count("dlg_manage();") == 1
     assert "provider_host = '$si'" in body
     assert "direction = 'outbound'" in body
     assert "desired_state = 'active'" in body
@@ -69,6 +71,16 @@ def main() -> None:
     ))
     mutation_must_fail(body, body.replace("if (dlg_set_ruri())", "if (dlg_set_ruri_removed())", 1))
     mutation_must_fail(body, body.replace("if (loose_route())", "if (loose_route_removed())", 1))
+    mutation_must_fail(body, body.replace(
+        'if (sql_query("conference", "select provider_host',
+        'dlg_manage();\n            if (sql_query("conference", "select provider_host',
+        1,
+    ))
+    mutation_must_fail(body, body.replace(
+        'if (loose_route()) {',
+        'if (loose_route()) {\n            dlg_manage();',
+        1,
+    ))
 
     print("registration-dialog-return-test: PASS")
 
