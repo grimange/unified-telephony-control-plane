@@ -22,8 +22,22 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** resolve V1 Gap E's SIP/Q.850 failure taxonomy and
-`failure_class`/`failure_code` contract. Gap A is **closed**: the first
+**Exactly one next action:** restore ADR-030 §9 Asterisk runtime-fact
+preservation — `AsteriskAriClient::sanitizeAriEvent()` rebuilds every ARI event
+from an allow-list that omits `cause`, `cause_txt`, and `tech_cause`, making the
+listener's ADR-030 §9 preservation block unreachable dead code. Live data
+confirms it: 0 of 58 stored `channel.destroyed` receipts and 0 of 61
+`call.leg.terminated` observations carry any cause fact, and
+`failure_class`/`failure_code` are NULL on every `calls` and `call_legs` row.
+Gap E's taxonomy **cannot** be defined until provider failure facts can be
+observed at all; the 2026-08-30 Gap E audit resolved schema sufficiency,
+canonical-versus-raw separation, ADR-030 interaction, the `Completed`/`Failed`
+rule, unknown handling, and the absence of any conflicting legacy failure
+authority, and isolated one missing fact — which Asterisk channel and ARI field
+carry the provider's final SIP status and Q.850 cause, and how that channel
+correlates to the CallLeg. See the
+[`Gap E failure taxonomy audit`](../evidence/v1/v1-gap-e-sip-q850-failure-taxonomy-audit.md).
+Gap A is **closed**: the first
 canonical terminal fact applied under a row lock wins, so an origination timeout
 is never reopened or rewritten by a later runtime observation regardless of its
 `observed_at`, while that observation is still preserved in
@@ -104,7 +118,7 @@ documentation task. Current T4 implementation evidence:
 | C7A | Complete | Tenant-scoped ExternalTrunk, endpoint/credential-reference lifecycle, TelephonyAddress, CallerIdentity, policy, and provider-neutral Admin API; see `docs/evidence/c7a/` |
 | C7B | Complete | Inbound/outbound routes, derived RouteDecision, and runtime-neutral DestinationRef; see `docs/evidence/c7b/` |
 | T6 | Complete | Provider projection and Kamailio/Asterisk synthetic consumption verified; V1 owns natural external SIP acceptance |
-| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, the Gap B registration/NAT dialog-return corridor, and Gap A timeout precedence are repository-proven; Gap B and Gap A are closed. Gap E remains open and Gap F is a proof gap only. |
+| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, the Gap B registration/NAT dialog-return corridor, and Gap A timeout precedence are repository-proven; Gap B and Gap A are closed. Gap E remains open: its contract questions are resolved, but it is blocked on restoring ADR-030 §9 Asterisk fact preservation before any provider failure fact can be observed. Gap F is a proof gap only. |
 | A0 | Planned | Follows V1; minimal outbound, inbound, and IVR-style reference consumers |
 | R0 | Planned | Finite release boundary after the mainline evidence is complete |
 
@@ -135,8 +149,15 @@ rule. **Gap B is closed** — the registration/NAT
 return path, managed-runtime BYE receipt, canonical
 `completed / remote / remote` termination, and BYE-caused Kamailio dialog
 termination without `dlg_ontimeout()` are all live-proven. Gap E remains open
-for SIP/Q.850 failure taxonomy and `failure_class`/`failure_code`; and Gap F
-remains a `PROOF_GAP_ONLY` provider-wire trust-boundary proof gap.
+for SIP/Q.850 failure taxonomy and `failure_class`/`failure_code`, and is
+**authority-unresolved**: its contract questions are settled, but no provider
+failure fact can currently reach UTCP because the Asterisk ARI event allow-list
+strips `cause`/`cause_txt`/`tech_cause`, so ADR-030 §9 is unsatisfied in the live
+system. Gap E is sequenced as a bounded fact-preservation repair, then one small
+controlled provider-failure proof, then the taxonomy itself. Gap F
+remains a `PROOF_GAP_ONLY` provider-wire trust-boundary proof gap and is **not** a
+Gap E prerequisite — the provider outcome is read inside the runtime, never from
+the wire.
 ADR-031 implementation is
 complete, while stable-public-edge live acceptance is
 `DEFERRED_BY_ENVIRONMENT`, not abandoned, and does not block the registration/
