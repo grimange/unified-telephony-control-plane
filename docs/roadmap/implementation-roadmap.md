@@ -24,6 +24,16 @@ behind those contracts; Kamailio, rtpengine, Asterisk, FreeSWITCH, Kubernetes,
 PostgreSQL, Redis, and Traefik retain their own execution or infrastructure
 authority.
 
+The normal human management authority is Web Admin through the authenticated
+application/domain API. Authorized mutations persist canonical PostgreSQL
+desired state and converge automatically through reconciliation and
+projection; a routine Artisan command is not required after a successful
+mutation. Artisan remains limited to diagnostics, deterministic recovery,
+exceptional maintenance, and explicit break-glass operations under
+[`ADR-032`](../decisions/ADR-032-canonical-management-authority-and-break-glass-boundary.md).
+External systems remain authoritative for facts they own, including
+Kubernetes Node/Pod placement and runtime observations.
+
 UTCP is not a campaign dialer, CRM, predictive-dialing engine, contact-center
 suite, PBX administration product, visual IVR editor, billing platform, or
 carrier inventory system. Applications own campaigns, lead lists, pacing,

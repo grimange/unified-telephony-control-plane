@@ -29,7 +29,15 @@ Completing a UI foundation does not complete a domain phase. Completing one doma
 
 Backend authorization remains authoritative. The frontend consumes server-provided capabilities and catalogs; it does not compute business authorization or define checked-in runtime capability catalogs. The frontend renders server catalogs and submits canonical intent through authorized APIs.
 
-The frontend does not manage PBX, Kamailio, Redis, Kubernetes, reconciliation, or runtime state directly. WebSocket and Reverb messages are notifications only; canonical state must always be re-read from backend APIs.
+Web Admin is the primary human management surface: it submits authorized
+intent to the application/domain API, which persists canonical desired state
+and relies on automatic reconciliation/projection for convergence. The
+frontend does not manage PBX, Kamailio, Redis, Kubernetes, reconciliation, or
+runtime state directly. WebSocket and Reverb messages are notifications only;
+canonical state must always be re-read from backend APIs. Infrastructure views
+may present Kubernetes-owned facts as read-only observations. The broader
+management and Artisan boundary is defined by
+[`ADR-032`](../decisions/ADR-032-canonical-management-authority-and-break-glass-boundary.md).
 
 ## Sequencing
 
