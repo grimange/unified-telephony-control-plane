@@ -22,23 +22,33 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** close V1 Gap F — the remaining `PROOF_GAP_ONLY`
-provider-wire trust-boundary proof gap, which is the last open V1 gap now that
-Gap A through Gap E are closed. **Gap E is closed.** The 2026-08-30 natural live
-proof deployed the exact taxonomy commit (`sha-8964e936b6…`) through the
-canonical lifecycle and placed one canonical Call to the deterministic absent
-extension `97002`. The provider returned the pre-established `SIP 404 Not
-Found`; the provider-facing PJSIP channel carried `cause 1`,
-`cause_txt "Unallocated (unassigned) number"`, and `tech_cause 404`, correlated
-to the fresh CallLeg; and **both CallLeg and Call converged to
+**Exactly one next action:** obtain non-interactive privileged packet-capture
+capability on `utcp-dev01` (a sudoers entry limited to `/usr/bin/tcpdump`, or
+`setcap cap_net_raw,cap_net_admin+eip /usr/bin/tcpdump`), then run the Gap F
+provider-wire trust-boundary live proof in one packet. Gap F is the last open V1
+gap and remains `PROOF_GAP_ONLY`. The 2026-08-30 attempt **placed no Call**: the
+proof requires actual packet evidence on both sides, and neither capture point is
+reachable with authorized tooling — host `sudo` demands interactive
+authentication, the Kamailio Pod ships `tcpdump`/`ngrep` but runs with
+`capabilities.drop: ["ALL"]` and fails with `Operation not permitted`, a
+cluster-wide scan found **zero** Pods with `hostNetwork`, `privileged`, or
+`NET_RAW`, creating privileged diagnostics is forbidden, and the external-PBX
+telecom-MCP allowlist exposes no SIP-trace capability. The live Kamailio
+configuration **was** verified and matches repository authority:
+`route[RUNTIME_EXTERNAL_TRUNK]` requires all three correlation headers for
+provider selection and executes `remove_hf()` for
+`X-UTCP-Call-Leg-ID`, `X-UTCP-Route-Decision-ID`, and
+`X-UTCP-Trunk-Endpoint-ID` before `t_relay()` — so there is no present indication
+of a header leak, only an inability to demonstrate wire behavior. See the
+[`Gap F provider-wire blocked proof`](../evidence/v1/v1-gap-f-provider-wire-trust-boundary-live-proof.md).
+**Gap E is closed.** The 2026-08-30 natural live proof deployed the exact
+taxonomy commit (`sha-8964e936b6…`) and placed one canonical Call to the
+deterministic absent extension `97002`: the provider returned the pre-established
+`SIP 404 Not Found`, the provider-facing PJSIP channel carried `cause 1`,
+`cause_txt "Unallocated (unassigned) number"`, and `tech_cause 404` correlated to
+the fresh CallLeg, and **both CallLeg and Call converged to
 `failed / remote / remote / unreachable / destination_not_found`** with
-`answered_at` NULL. Exactly one terminal audit record per aggregate already
-carried `state: failed`, so canonical write-once authority was preserved and no
-`completed` row was rewritten. `CallLeg.runtime_channel_id` remained Local `;1`,
-raw provider facts were preserved, and no origination-timeout or `runtime_lost`
-misclassification occurred. Gap E closure rests on the adopted minimum
-deterministic contract; other SIP codes remain unadopted and continue to preserve
-raw evidence. See the
+`answered_at` NULL and write-once terminal authority preserved. See the
 [`Gap E taxonomy live proof`](../evidence/v1/v1-gap-e-provider-failure-taxonomy-live-reproof.md),
 [`Gap E correlation live re-proof`](../evidence/v1/v1-gap-e-provider-channel-call-leg-correlation-live-reproof.md),
 [`Gap E fact-binding live proof`](../evidence/v1/v1-gap-e-provider-failure-fact-binding-live-proof.md),
@@ -168,9 +178,13 @@ rewriting write-once terminal metadata. Closure rests on that adopted minimum
 deterministic contract, not a full provider failure matrix: unmapped provider
 outcomes continue to preserve raw evidence and may remain canonical `Failed`
 with NULL taxonomy until explicitly adopted. Gap F
-remains a `PROOF_GAP_ONLY` provider-wire trust-boundary proof gap and is **not** a
-Gap E prerequisite — the provider outcome is read inside the runtime, never from
-the wire.
+remains a `PROOF_GAP_ONLY` provider-wire trust-boundary proof gap and is the last
+open V1 gap. Its live Kamailio stripping configuration is verified against
+repository authority, but the proof is blocked on evidence access: non-interactive
+privileged packet capture is unavailable on `utcp-dev01`, in-cluster capture is
+refused by the intact K3 security boundary, and the external-PBX allowlist
+exposes no SIP trace. No header leak is indicated — only the wire behavior is
+undemonstrated.
 ADR-031 implementation is
 complete, while stable-public-edge live acceptance is
 `DEFERRED_BY_ENVIRONMENT`, not abandoned, and does not block the registration/
