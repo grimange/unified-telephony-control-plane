@@ -48,6 +48,26 @@ if ! UTCP_SECURITY_ENVIRONMENT=native-k3s \
   exit 1
 fi
 
+if grep -Fq '__KUBERNETES_API_ENDPOINT_' "$ROOT/infrastructure/kubernetes/security/platform/allow-api.yaml"; then
+  printf 'API NetworkPolicy must not carry an unresolved Kubernetes API endpoint marker\n' >&2
+  exit 1
+fi
+if ! kubectl kustomize "$ROOT/infrastructure/kubernetes/base/platform" | grep -Fq 'utcp.io/kubernetes-api-client: "true"'; then
+  printf 'API workload must use the rendered Kubernetes API-client policy\n' >&2
+  exit 1
+fi
+sed \
+  -e 's#__KUBERNETES_API_ENDPOINT_CIDR__#172.24.0.2/32#g' \
+  -e 's#__KUBERNETES_API_ENDPOINT_PORT__#6443#g' \
+  "$ROOT/infrastructure/kubernetes/security/kubernetes-api/allow-runtime-fencer-kubernetes-api.template.yaml" \
+  > "$TMP_DIR/fencer-api.yaml"
+if grep -Fq '__KUBERNETES_API_ENDPOINT_' "$TMP_DIR/fencer-api.yaml"; then
+  printf 'rendered Kubernetes API egress policy contains an unresolved endpoint marker\n' >&2
+  exit 1
+fi
+grep -Fq 'cidr: 172.24.0.2/32' "$TMP_DIR/fencer-api.yaml"
+grep -Fq 'port: 6443' "$TMP_DIR/fencer-api.yaml"
+
 render_policy() {
   local target="$1"
 

@@ -18,7 +18,7 @@ final class RuntimeFencingManifestTest extends TestCase
         $this->assertSame('runtime-fence-worker', $labels['app.kubernetes.io/component']);
     }
 
-    public function test_ordinary_workers_do_not_carry_kubernetes_api_client_label(): void
+    public function test_only_observer_workloads_carry_kubernetes_api_client_label(): void
     {
         $objects = $this->kustomizeObjects('infrastructure/kubernetes/base');
         $ordinaryApiClients = [];
@@ -34,7 +34,7 @@ final class RuntimeFencingManifestTest extends TestCase
             }
         }
 
-        $this->assertSame([], $ordinaryApiClients);
+        $this->assertSame(['Deployment/utcp-platform/api'], $ordinaryApiClients);
     }
 
     public function test_canonical_local_overlay_activates_only_the_dedicated_infrastructure_identity(): void
@@ -318,7 +318,7 @@ final class RuntimeFencingManifestTest extends TestCase
         $baseObjects = $this->kustomizeObjects('infrastructure/kubernetes/base');
         $api = $baseObjects['Deployment/utcp-platform/api'];
         $this->assertNotSame('utcp-runtime-fencer', $api['spec']['template']['spec']['serviceAccountName'] ?? null);
-        $this->assertNotSame('true', $api['spec']['template']['metadata']['labels']['utcp.io/kubernetes-api-client'] ?? null);
+        $this->assertSame('true', $api['spec']['template']['metadata']['labels']['utcp.io/kubernetes-api-client'] ?? null);
     }
 
     /**

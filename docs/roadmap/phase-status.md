@@ -22,25 +22,17 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** repair the two live defects that block **K5A —
-Host / Kubernetes Node Visibility** acceptance, then rerun its natural live
-proof. K5A deployed cleanly through the canonical native-k3s lifecycle and its
-read-only RBAC is exactly right — `get`/`list` on `nodes` and `pods`, every
-mutation denied, no cluster-admin — but the 2026-08-30 proof was blocked before
-browser acceptance by two independent defects that automated tests cannot see.
-First, the API Pod has **no Kubernetes API egress**: the K5A egress rule was
-added to `security/platform/allow-api.yaml`, which is not a `.template.yaml`, so
-its `__KUBERNETES_API_ENDPOINT_*__` placeholders are never substituted and the
-rule does not render; the observer fails with "Kubernetes infrastructure
-observation is unavailable" while the runtime fencer, which uses a rendered
-template policy and the `utcp.io/kubernetes-api-client` label, connects
-normally. Second, `platform.infrastructure.view` was added to
-`config/identity.php` **without a catalog sync migration**, so it is absent from
-the persisted `capabilities` and `role_capabilities` tables on any pre-existing
-database and the platform administrator receives `403`; the repository's own
-`2026_08_24_131000_sync_c7b_identity_catalog.php` is the precedent. Both are
-bounded and independent. See the
-[`K5A blocked live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md). **V1 is complete.** The 2026-08-30
+**Exactly one next action:** deploy the exact repaired commit to canonical
+native k3s and rerun the natural **K5A — Host / Kubernetes Node Visibility**
+proof, including natural admin login and host visibility. The two independent
+live blockers are now repaired and covered by automated regressions: the API
+workload uses the existing rendered `utcp.io/kubernetes-api-client` policy for
+narrow Kubernetes API egress, and the forward identity-catalog migration
+converges `platform.infrastructure.view` and its platform-admin mapping on
+existing databases. K5A remains pending live acceptance; no live claim is made
+by this implementation packet. See the [`K5A blocked live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
+and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
+**V1 is complete.** The 2026-08-30
 controlled live re-proof deployed the committed
 `X-UTCP-Caller-Identity-ID` provider-boundary correction through the canonical
 native-k3s lifecycle — the live Kamailio provider path now executes all four
@@ -151,8 +143,9 @@ documentation task. Current T4 implementation evidence:
 | Queue/ACD | Future extension; no R0 phase |
 | Campaigns, CRM, predictive dialing, agent workflow, advanced IVR, billing/settlement, number purchasing/porting, SMS/MMS | Application, provider, or future domains; outside R0 core |
 
-K5 is the distributed telephony infrastructure track. **K5A is implemented and
-tested; natural native-k3s/Admin live proof is pending.** K5A host visibility,
+K5 is the distributed telephony infrastructure track. **K5A implementation and
+its two live blockers are repaired and tested; natural native-k3s/Admin live
+proof is pending.** K5A host visibility,
 K5B telephony placement awareness, K5C capacity/failure-domain policy, K5D
 telephony-aware host maintenance, and K5E a bounded live proof across distinct
 Kubernetes host/failure domains. It builds on existing RuntimeNode and RNP

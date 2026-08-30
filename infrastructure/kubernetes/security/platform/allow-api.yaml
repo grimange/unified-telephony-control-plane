@@ -23,12 +23,6 @@ spec:
           port: 9000
   egress:
     - to:
-        - ipBlock:
-            cidr: __KUBERNETES_API_ENDPOINT_CIDR__
-      ports:
-        - protocol: TCP
-          port: __KUBERNETES_API_ENDPOINT_PORT__
-    - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: kube-system

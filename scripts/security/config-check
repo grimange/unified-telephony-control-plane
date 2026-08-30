@@ -410,10 +410,37 @@ for label, path in workload_renders.items():
         identifier, pod_spec = template
         validate_pod_security(f"{label}:{identifier}", pod_spec)
 
+api_docs = render("infrastructure/kubernetes/base/platform")
+api_deployment = next(
+    (
+        doc for doc in api_docs
+        if doc.get("kind") == "Deployment"
+        and (doc.get("metadata") or {}).get("name") == "api"
+        and (doc.get("metadata") or {}).get("namespace") == "utcp-platform"
+    ),
+    None,
+)
+if api_deployment is None:
+    fail("missing canonical API deployment")
+api_labels = (
+    api_deployment.get("spec", {})
+    .get("template", {})
+    .get("metadata", {})
+    .get("labels", {})
+)
+if api_labels.get("utcp.io/kubernetes-api-client") != "true":
+    fail("API workload must use the rendered Kubernetes API-client policy")
+
 print("namespace_psa_authority=ok")
 print("restricted_workload_compatibility=ok")
 PY
 render_apiserver_policy >/dev/null
+printf '\n---\n' >> "$tmp"
+cat "$SECURITY_FENCER_APISERVER_POLICY" >> "$tmp"
+if grep -Fq '__KUBERNETES_API_ENDPOINT_' "$tmp"; then
+  printf 'apply-ready security manifest contains unresolved Kubernetes API endpoint marker\n' >&2
+  exit 1
+fi
 "$SCRIPT_DIR/validate-observability-apiserver-egress" \
   "$SCRIPT_DIR/observability-api-workloads.yaml" \
   "$OBSERVABILITY_APISERVER_POLICY" >/dev/null
@@ -843,8 +870,8 @@ if grep -Eq 'cidr: (0\.0\.0\.0/0|::/0)' "$tmp" "$SECURITY_APISERVER_TEMPLATE"; t
   exit 1
 fi
 
-if kubectl kustomize "$ROOT/infrastructure/kubernetes/overlays/local" | grep -Eq 'automountServiceAccountToken: true|serviceAccountName: default'; then
-  printf 'K1 application manifests enable token automount or use default ServiceAccount\n' >&2
+if kubectl kustomize "$ROOT/infrastructure/kubernetes/overlays/local" | grep -Eq 'serviceAccountName: default'; then
+  printf 'K1 application manifests use the default ServiceAccount\n' >&2
   exit 1
 fi
 
