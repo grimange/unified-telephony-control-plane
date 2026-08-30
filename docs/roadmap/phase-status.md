@@ -22,21 +22,23 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** deploy the exact committed provider-channel correlation repair through the canonical native-k3s lifecycle and repeat the deterministic SIP 404 proof once, proving the provider-facing PJSIP observation now resolves to the canonical CallLeg while preserving provider raw facts. The 2026-08-30 controlled proof
-**succeeded**: one canonical outbound Call to the operator-confirmed absent
-extension `97002` produced the pre-established `SIP 404 Not Found`, and the
-repaired sanitizer delivered the provider-facing PJSIP channel's raw facts for
-the first time — `cause 1`, `cause_txt "Unallocated (unassigned) number"`, and
-**`tech_cause 404`** — persisted through to `runtime_observations`. The Q.850
-`cause` propagated to all three channels but `tech_cause` appeared **only** on
-the provider-facing leg, confirming ADR-030 §11 concretely: the Local control
-channel is not the provider failure-detail authority. Correlation is
-`EXISTING_CORRELATION_INSUFFICIENT`: the provider observation's `subject_id`
-stays `runtime:<uniqueid>`, and `linkedid` does not exist in the ARI `Channel`
-model at all, so no sanitizer change can recover one. The exact missing binding
-is the already-inherited `__UTCP_CALL_LEG_ID`, which reaches the provider channel
-but is exposed by ARI only through the unpopulated, sanitizer-dropped
-`channelvars` object. No dialplan and no Kamailio path is required. See the
+**Exactly one next action:** implement the minimal canonical Gap E
+provider-failure taxonomy and `failure_class`/`failure_code` projection using the
+live-proven provider PJSIP termination authority and the live-proven CallLeg
+correlation. Both Gap E prerequisites are now settled by live proof. The
+2026-08-30 fact-binding proof established the provider fact authority: a
+canonical Call to the operator-confirmed absent extension `97002` produced the
+pre-established `SIP 404 Not Found`, and the provider-facing PJSIP channel
+carried `cause 1`, `cause_txt "Unallocated (unassigned) number"`, and
+**`tech_cause 404`**, with `tech_cause` appearing **only** on the provider leg —
+ADR-030 §11 confirmed concretely. The 2026-08-30 correlation re-proof then
+deployed the exact repair (`sha-acca1935fd…`) and repeated the same deterministic
+404: the provider observation now normalizes with `subject_id` equal to the
+canonical CallLeg ID, `payload.runtime_channel_id` still the provider PJSIP
+uniqueid, `CallLeg.runtime_channel_id` still Local `;1`, and **zero** uses of the
+`runtime:<uniqueid>` fallback. Effective `ari.conf` carries exactly
+`channelvars = UTCP_CALL_LEG_ID` with no broad exposure. See the
+[`Gap E correlation live re-proof`](../evidence/v1/v1-gap-e-provider-channel-call-leg-correlation-live-reproof.md),
 [`Gap E fact-binding live proof`](../evidence/v1/v1-gap-e-provider-failure-fact-binding-live-proof.md),
 [`Gap E fact-preservation implementation`](../evidence/v1/v1-gap-e-asterisk-ari-termination-fact-preservation.md)
 and [`Gap E failure taxonomy audit`](../evidence/v1/v1-gap-e-sip-q850-failure-taxonomy-audit.md).
@@ -121,7 +123,7 @@ documentation task. Current T4 implementation evidence:
 | C7A | Complete | Tenant-scoped ExternalTrunk, endpoint/credential-reference lifecycle, TelephonyAddress, CallerIdentity, policy, and provider-neutral Admin API; see `docs/evidence/c7a/` |
 | C7B | Complete | Inbound/outbound routes, derived RouteDecision, and runtime-neutral DestinationRef; see `docs/evidence/c7b/` |
 | T6 | Complete | Provider projection and Kamailio/Asterisk synthetic consumption verified; V1 owns natural external SIP acceptance |
-| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, the Gap B registration/NAT dialog-return corridor, and Gap A timeout precedence are repository-proven; Gap B and Gap A are closed. Gap E remains open: provider-failure authority is live-proven, and the provider-channel-to-CallLeg correlation repair is implemented and tested; controlled natural re-proof precedes the canonical failure taxonomy. Gap F is a proof gap only. |
+| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, the Gap B registration/NAT dialog-return corridor, and Gap A timeout precedence are repository-proven; Gap B and Gap A are closed. Gap E remains open: the provider-failure raw fact authority and the provider-channel-to-CallLeg correlation are both live-proven; only the canonical failure taxonomy remains. Gap F is a proof gap only. |
 | A0 | Planned | Follows V1; minimal outbound, inbound, and IVR-style reference consumers |
 | R0 | Planned | Finite release boundary after the mainline evidence is complete |
 
@@ -154,13 +156,12 @@ return path, managed-runtime BYE receipt, canonical
 termination without `dlg_ontimeout()` are all live-proven. Gap E remains open:
 the provider-failure raw fact authority is **live-proven** — `tech_cause` carries
 the provider SIP final response and appears only on the provider-facing PJSIP
-channel, persisted through to `runtime_observations`. The exact
-provider-channel-to-CallLeg correlation repair is implemented and tested:
-generated ARI `channelvars` exposes only the already-inherited
-`UTCP_CALL_LEG_ID`, and validated identity crosses the sanitizer/listener path
-with tenant/runtime-node fences before explicit normalizer correlation. Gap E
-remains sequenced as the controlled natural re-proof, then the canonical failure
-taxonomy. Gap F
+channel, persisted through to `runtime_observations`. The
+provider-channel-to-CallLeg correlation is now **live-proven** as well: the
+provider observation resolves to the canonical CallLeg through
+`channelvars = UTCP_CALL_LEG_ID`, while the provider uniqueid remains raw
+evidence and `CallLeg.runtime_channel_id` remains Local `;1`. The only remaining
+Gap E problem is the canonical failure taxonomy. Gap F
 remains a `PROOF_GAP_ONLY` provider-wire trust-boundary proof gap and is **not** a
 Gap E prerequisite — the provider outcome is read inside the runtime, never from
 the wire.
