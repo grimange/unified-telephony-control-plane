@@ -1027,7 +1027,7 @@ class AsteriskAriClient
     {
         $type = is_string($event['type'] ?? null) ? mb_substr($event['type'], 0, 120) : 'unknown';
 
-        return [
+        $sanitized = [
             'type' => $type,
             'asterisk_id' => is_string($event['asterisk_id'] ?? null) ? mb_substr($event['asterisk_id'], 0, 120) : null,
             'timestamp' => is_string($event['timestamp'] ?? null) ? $event['timestamp'] : now()->toISOString(),
@@ -1039,6 +1039,20 @@ class AsteriskAriClient
             'playback' => is_array($event['playback'] ?? null) ? $this->sanitizeAriObject($event['playback']) : null,
             'recording' => is_array($event['recording'] ?? null) ? $this->sanitizeAriObject($event['recording']) : null,
         ];
+
+        if ($type === 'ChannelDestroyed') {
+            if (is_int($event['cause'] ?? null)) {
+                $sanitized['cause'] = $event['cause'];
+            }
+            if (is_string($event['cause_txt'] ?? null)) {
+                $sanitized['cause_txt'] = mb_substr($event['cause_txt'], 0, 120);
+            }
+            if (is_int($event['tech_cause'] ?? null)) {
+                $sanitized['tech_cause'] = $event['tech_cause'];
+            }
+        }
+
+        return $sanitized;
     }
 
     /**

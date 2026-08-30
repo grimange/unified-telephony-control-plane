@@ -974,7 +974,7 @@ final class AsteriskAriAdapterTest extends TestCase
             'ari_event_type' => 'ChannelDestroyed',
             'cause' => 16,
             'cause_txt' => 'Normal Clearing',
-            'tech_cause' => 'SIP 200',
+            'tech_cause' => 486,
             'occurred_at' => now()->toISOString(),
         ]);
 
@@ -983,8 +983,92 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertSame('ChannelDestroyed', $payload['ari_event_type']);
         $this->assertSame(16, $payload['cause']);
         $this->assertSame('Normal Clearing', $payload['cause_txt']);
-        $this->assertSame('SIP 200', $payload['tech_cause']);
+        $this->assertSame(486, $payload['tech_cause']);
         $this->assertArrayNotHasKey('termination_reason', $payload);
+    }
+
+    public function test_raw_channel_destroyed_websocket_event_preserves_typed_termination_facts(): void
+    {
+        $client = new AsteriskAriClient(new AsteriskCatalog, app(AsteriskAriProfileService::class));
+        [$local, $remote] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        $event = [
+            'type' => 'ChannelDestroyed',
+            'timestamp' => '2026-08-30T00:00:00Z',
+            'cause' => 17,
+            'cause_txt' => 'User busy',
+            'tech_cause' => 486,
+            'channel' => ['id' => 'provider-channel-1', 'name' => 'PJSIP/provider-1', 'state' => 'Up'],
+        ];
+
+        fwrite($remote, $this->serverFrame(0x1, json_encode($event, JSON_THROW_ON_ERROR)));
+
+        $sanitized = $client->readEvent($local);
+        $this->assertIsArray($sanitized);
+        $this->assertSame('ChannelDestroyed', $sanitized['type']);
+        $this->assertSame(17, $sanitized['cause']);
+        $this->assertSame('User busy', $sanitized['cause_txt']);
+        $this->assertSame(486, $sanitized['tech_cause']);
+        $this->assertSame('provider-channel-1', $sanitized['channel']['id']);
+    }
+
+    public function test_raw_channel_destroyed_websocket_event_does_not_fabricate_or_accept_invalid_failure_facts(): void
+    {
+        $client = new AsteriskAriClient(new AsteriskCatalog, app(AsteriskAriProfileService::class));
+        [$local, $remote] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        $event = [
+            'type' => 'ChannelDestroyed',
+            'channel' => ['id' => 'provider-channel-2'],
+            'cause' => '17',
+            'cause_txt' => str_repeat('x', 180),
+            'tech_cause' => ['value' => 486],
+        ];
+
+        fwrite($remote, $this->serverFrame(0x1, json_encode($event, JSON_THROW_ON_ERROR)));
+
+        $sanitized = $client->readEvent($local);
+        $this->assertIsArray($sanitized);
+        $this->assertArrayNotHasKey('cause', $sanitized);
+        $this->assertSame(str_repeat('x', 120), $sanitized['cause_txt']);
+        $this->assertArrayNotHasKey('tech_cause', $sanitized);
+    }
+
+    public function test_raw_channel_destroyed_websocket_event_preserves_required_facts_without_optional_tech_cause(): void
+    {
+        $client = new AsteriskAriClient(new AsteriskCatalog, app(AsteriskAriProfileService::class));
+        [$local, $remote] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+
+        fwrite($remote, $this->serverFrame(0x1, json_encode([
+            'type' => 'ChannelDestroyed',
+            'cause' => 16,
+            'cause_txt' => 'Normal Clearing',
+            'channel' => ['id' => 'provider-channel-3'],
+        ], JSON_THROW_ON_ERROR)));
+
+        $sanitized = $client->readEvent($local);
+        $this->assertIsArray($sanitized);
+        $this->assertSame(16, $sanitized['cause']);
+        $this->assertSame('Normal Clearing', $sanitized['cause_txt']);
+        $this->assertArrayNotHasKey('tech_cause', $sanitized);
+    }
+
+    public function test_raw_non_channel_destroyed_event_does_not_gain_termination_facts(): void
+    {
+        $client = new AsteriskAriClient(new AsteriskCatalog, app(AsteriskAriProfileService::class));
+        [$local, $remote] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+
+        fwrite($remote, $this->serverFrame(0x1, json_encode([
+            'type' => 'ChannelStateChange',
+            'cause' => 17,
+            'cause_txt' => 'User busy',
+            'tech_cause' => 486,
+            'channel' => ['id' => 'channel-state-change-1'],
+        ], JSON_THROW_ON_ERROR)));
+
+        $sanitized = $client->readEvent($local);
+        $this->assertIsArray($sanitized);
+        $this->assertArrayNotHasKey('cause', $sanitized);
+        $this->assertArrayNotHasKey('cause_txt', $sanitized);
+        $this->assertArrayNotHasKey('tech_cause', $sanitized);
     }
 
     public function test_stasis_end_is_not_a_terminal_call_observation(): void
@@ -2918,7 +3002,11 @@ final class AsteriskAriAdapterTest extends TestCase
     private function serverFrame(int $opcode, string $payload): string
     {
         $length = strlen($payload);
-        $this->assertLessThanOrEqual(125, $length);
+        if ($length > 125) {
+            $this->assertLessThanOrEqual(65535, $length);
+
+            return chr(0x80 | $opcode).chr(126).pack('n', $length).$payload;
+        }
 
         return chr(0x80 | $opcode).chr($length).$payload;
     }
