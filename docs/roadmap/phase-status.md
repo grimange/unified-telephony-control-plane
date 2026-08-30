@@ -22,26 +22,26 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** use the repository-owned `server-image-sync` path
-to promote the exact committed native image lock, then rerun the controlled
-provider-failure fact-binding proof. The stale-lock deployment blocker is now
-repository-resolved: the exact repair image was already published, and the
-sync command validates and atomically promotes its commit-specific artifact.
-The 2026-08-30 proof attempt was **blocked before any Call
-was placed**: `make server-apply` deploys the immutable digest pinned in
-`.runtime/native-k3s/image-lock.env` (written 2026-08-29 08:08), which predates
-the repair commit (2026-08-30 03:19), so the ARI worker Pod was not replaced and
-the running image still strips `cause`/`cause_txt`/`tech_cause` — verified
-directly in the Pod. A second, independent blocker also applies: the provider
-expected outcome cannot be established before origination, because
-`dialplan show utcp-v1-in` is outside the telecom-MCP read-only CLI allowlist,
-active probes are refused by the observability-only capability policy, and no
-evidence records a deterministic pre-answer failure destination on the
-independent external PBX. Asterisk ARI termination raw-fact preservation is
-implemented and tested but **not live-deployed**. The image-lock promotion
-repair is implemented and tested; live promotion and deployment remain
-pending. See the
-[`Gap E fact-binding blocked proof`](../evidence/v1/v1-gap-e-provider-failure-fact-binding-live-proof.md). See the
+**Exactly one next action:** obtain one deterministic pre-answer failure
+destination on the independent external PBX, then rerun the controlled
+provider-failure fact-binding proof — no further deployment work is needed. The
+2026-08-30 promotion and deployment **succeeded**: `make server-image-sync`
+promoted the exact HEAD artifact (`sha-39698ec3f1…`,
+`utcp-api@sha256:2a8d495a…`), the canonical lifecycle rolled the API and ARI
+worker Pods onto that digest (desired == running), and read-only in-Pod
+inspection proved the repaired `sanitizeAriEvent()` is live with
+ChannelDestroyed-gated `cause`, `cause_txt`, and `tech_cause` preservation.
+Asterisk ARI termination raw-fact preservation is therefore **live-deployed**,
+satisfying ADR-030 §9 in the running system for the first time. **No Call was
+placed**: the provider expected outcome still cannot be established before
+origination, because `dialplan show utcp-v1-in` is outside the telecom-MCP
+read-only CLI allowlist, active probes are refused by the observability-only
+capability policy, and no evidence records a deterministic pre-answer failure
+destination. A bounded follow-up was also isolated:
+`scripts/native-k3s/image-sync:23` does not strip a `.git` suffix from the origin
+URL, so `server-image-sync` 404s on a default clone unless `GH_REPO` is supplied.
+See the
+[`Gap E fact-binding live proof`](../evidence/v1/v1-gap-e-provider-failure-fact-binding-live-proof.md),
 [`Gap E fact-preservation implementation`](../evidence/v1/v1-gap-e-asterisk-ari-termination-fact-preservation.md)
 and [`Gap E failure taxonomy audit`](../evidence/v1/v1-gap-e-sip-q850-failure-taxonomy-audit.md).
 Gap A is **closed**: the first
@@ -125,7 +125,7 @@ documentation task. Current T4 implementation evidence:
 | C7A | Complete | Tenant-scoped ExternalTrunk, endpoint/credential-reference lifecycle, TelephonyAddress, CallerIdentity, policy, and provider-neutral Admin API; see `docs/evidence/c7a/` |
 | C7B | Complete | Inbound/outbound routes, derived RouteDecision, and runtime-neutral DestinationRef; see `docs/evidence/c7b/` |
 | T6 | Complete | Provider projection and Kamailio/Asterisk synthetic consumption verified; V1 owns natural external SIP acceptance |
-| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, the Gap B registration/NAT dialog-return corridor, and Gap A timeout precedence are repository-proven; Gap B and Gap A are closed. Gap E remains open: Asterisk ARI termination raw-fact preservation and exact immutable image-lock promotion are implemented and tested but not live-deployed; controlled provider-failure fact-binding proof remains pending. Gap F is a proof gap only. |
+| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, the Gap B registration/NAT dialog-return corridor, and Gap A timeout precedence are repository-proven; Gap B and Gap A are closed. Gap E remains open: Asterisk ARI termination raw-fact preservation and exact immutable image-lock promotion are live-deployed and verified in the running ARI worker; the controlled provider-failure fact-binding proof is blocked only on a deterministic external-PBX pre-answer failure fixture. Gap F is a proof gap only. |
 | A0 | Planned | Follows V1; minimal outbound, inbound, and IVR-style reference consumers |
 | R0 | Planned | Finite release boundary after the mainline evidence is complete |
 
@@ -157,11 +157,12 @@ return path, managed-runtime BYE receipt, canonical
 `completed / remote / remote` termination, and BYE-caused Kamailio dialog
 termination without `dlg_ontimeout()` are all live-proven. Gap E remains open:
 Asterisk ARI termination raw-fact preservation and exact immutable image-lock
-promotion are implemented and tested but **not live-deployed**. The native
-image lock now has a repository-owned promotion seam; live promotion/deployment
-is pending. Gap E is sequenced as the controlled provider-failure fact-binding
-proof, then the taxonomy itself. The provider-failure fixture also needs a deterministic
-pre-answer destination established in advance. Gap F
+promotion are **implemented, tested, and now live-deployed** — the repaired
+`sanitizeAriEvent()` was verified inside the running ARI worker. The remaining
+blocker is solely the external-PBX fixture: a deterministic pre-answer failure
+destination must be established before origination. Gap E is sequenced as that
+fixture prerequisite, then the controlled provider-failure fact-binding proof,
+then the taxonomy itself. Gap F
 remains a `PROOF_GAP_ONLY` provider-wire trust-boundary proof gap and is **not** a
 Gap E prerequisite — the provider outcome is read inside the runtime, never from
 the wire.
