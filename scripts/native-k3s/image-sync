@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+. "$ROOT/versions.env"
+
+SERVER_STATE_DIR="${UTCP_SERVER_STATE_DIR:-$ROOT/.runtime/native-k3s}"
+SERVER_IMAGE_LOCK="${UTCP_SERVER_IMAGE_LOCK:-$SERVER_STATE_DIR/image-lock.env}"
+requested_commit="${UTCP_SERVER_SOURCE_COMMIT:-$(git -C "$ROOT" rev-parse HEAD)}"
+
+fail() { printf 'native-k3s: %s\n' "$1" >&2; exit 1; }
+
+printf '%s' "$requested_commit" | grep -Eq '^[0-9a-f]{40}$' \
+  || fail 'UTCP_SERVER_SOURCE_COMMIT must be a full lowercase source commit'
+command -v gh >/dev/null 2>&1 \
+  || fail 'GitHub CLI is required to retrieve native image-lock artifacts'
+gh auth status >/dev/null 2>&1 \
+  || fail 'GitHub authentication is required to retrieve native image-lock artifact'
+
+repository="${GH_REPO:-}"
+if [ -z "$repository" ]; then
+  remote_url="$(git -C "$ROOT" config --get remote.origin.url || true)"
+  repository="$(printf '%s' "$remote_url" | sed -En 's#^(https://github\.com/|git@github\.com:)([^/]+/[^/]+)(\.git)?$#\2#p')"
+fi
+[ -n "$repository" ] || fail 'cannot determine the GitHub repository from origin; set GH_REPO'
+printf '%s' "$repository" | grep -Eq '^[^/]+/[^/]+$' \
+  || fail 'GH_REPO must be in OWNER/REPOSITORY form'
+
+artifact_name="native-k3s-image-lock-$requested_commit"
+artifact_rows="$(gh api --paginate "repos/$repository/actions/artifacts?name=$artifact_name&per_page=100" \
+  --jq '.artifacts[] | select(.name == "'$artifact_name'") | [.id, .expired, .archive_download_url] | @tsv' 2>/dev/null)" \
+  || fail "could not retrieve exact image-lock artifact metadata for $requested_commit"
+row_count="$(printf '%s\n' "$artifact_rows" | awk 'NF { count++ } END { print count + 0 }')"
+[ "$row_count" -eq 1 ] || {
+  [ "$row_count" -eq 0 ] && fail "no exact native image-lock artifact exists for source commit $requested_commit"
+  fail "multiple exact native image-lock artifacts exist for source commit $requested_commit"
+}
+IFS=$'\t' read -r artifact_id artifact_expired archive_url <<<"$artifact_rows"
+[ "$artifact_expired" = false ] || fail "native image-lock artifact is expired for source commit $requested_commit"
+[ -n "$artifact_id" ] && [ -n "$archive_url" ] || fail 'native image-lock artifact metadata is incomplete'
+
+temporary_root="$(mktemp -d "${TMPDIR:-/tmp}/utcp-native-image-sync.XXXXXX")"
+temporary_archive="$temporary_root/artifact.zip"
+temporary_lock="$temporary_root/image-lock.env"
+cleanup() { rm -rf "$temporary_root"; }
+trap cleanup EXIT
+gh api "$archive_url" > "$temporary_archive" 2>/dev/null \
+  || fail "could not download native image-lock artifact for source commit $requested_commit"
+
+mapfile -t lock_entries < <(unzip -Z1 "$temporary_archive" 2>/dev/null | awk -F/ '$NF == "native-k3s-image-lock.env"')
+[ "${#lock_entries[@]}" -eq 1 ] || {
+  [ "${#lock_entries[@]}" -eq 0 ] && fail 'native image-lock artifact contains no native-k3s-image-lock.env file'
+  fail 'native image-lock artifact contains more than one candidate lock file'
+}
+unzip -p "$temporary_archive" "${lock_entries[0]}" > "$temporary_lock" \
+  || fail 'could not extract native image-lock file from artifact'
+
+python3 - "$temporary_lock" "$requested_commit" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+lock_path = Path(sys.argv[1])
+requested = sys.argv[2]
+expected_images = {
+    "UTCP_SERVER_POSTGRES_IMAGE", "UTCP_SERVER_REDIS_IMAGE",
+    "UTCP_SERVER_API_IMAGE", "UTCP_SERVER_WEB_IMAGE",
+    "UTCP_SERVER_GATEWAY_IMAGE", "UTCP_SERVER_ASTERISK_IMAGE",
+    "UTCP_SERVER_FREESWITCH_IMAGE", "UTCP_SERVER_RTPENGINE_IMAGE",
+    "UTCP_SERVER_KAMAILIO_IMAGE",
+}
+expected = expected_images | {"UTCP_SERVER_IMAGE_REGISTRY", "UTCP_SERVER_IMAGE_TAG", "UTCP_SERVER_SOURCE_COMMIT"}
+values = {}
+for line in lock_path.read_text(encoding="utf-8").splitlines():
+    if not line or "=" not in line:
+        raise SystemExit("native-k3s: image lock contains a malformed line")
+    key, value = line.split("=", 1)
+    if not re.fullmatch(r"[A-Z0-9_]+", key) or key not in expected:
+        raise SystemExit(f"native-k3s: image lock contains an unexpected key: {key}")
+    if key in values:
+        raise SystemExit(f"native-k3s: image lock contains duplicate key: {key}")
+    values[key] = value
+if set(values) != expected:
+    raise SystemExit(f"native-k3s: image lock is missing required keys: {', '.join(sorted(expected - set(values)))}")
+if values["UTCP_SERVER_SOURCE_COMMIT"] != requested:
+    raise SystemExit("native-k3s: image lock source commit does not match requested commit")
+if values["UTCP_SERVER_IMAGE_TAG"] != f"sha-{requested}":
+    raise SystemExit("native-k3s: image lock tag does not match requested source commit")
+registry = values["UTCP_SERVER_IMAGE_REGISTRY"]
+if not re.fullmatch(r"[A-Za-z0-9.-]+(?::[0-9]+)?(?:/[A-Za-z0-9._-]+)+", registry):
+    raise SystemExit("native-k3s: image lock registry is not a registry authority")
+if registry in {"utcp-local-registry", "127.0.0.1:5001", "localhost:5001"} or "utcp-local-registry" in registry:
+    raise SystemExit("native-k3s: the native registry must not be the k3d local registry")
+for key in sorted(expected_images):
+    if not re.fullmatch(r"[A-Za-z0-9.-]+(?:/[A-Za-z0-9._-]+)+@sha256:[0-9a-f]{64}", values[key]):
+        raise SystemExit(f"native-k3s: {key} must be an immutable image reference")
+PY
+
+mkdir -p "$(dirname "$SERVER_IMAGE_LOCK")"
+if [ -f "$SERVER_IMAGE_LOCK" ] && cmp -s "$temporary_lock" "$SERVER_IMAGE_LOCK"; then
+  printf 'native-k3s: image lock already current for %s\n' "$requested_commit"
+  exit 0
+fi
+installed_lock="$(mktemp "${SERVER_IMAGE_LOCK}.XXXXXX")"
+trap 'rm -rf "$temporary_root"; rm -f "$installed_lock"' EXIT
+chmod 600 "$installed_lock"
+cp "$temporary_lock" "$installed_lock"
+mv -f "$installed_lock" "$SERVER_IMAGE_LOCK"
+printf 'native-k3s: promoted immutable image lock for %s\n' "$requested_commit"

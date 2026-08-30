@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+commit=0123456789abcdef0123456789abcdef01234567
+different=abcdef0123456789abcdef0123456789abcdef01
+state="$TMP/state"
+archive="$TMP/artifact.zip"
+fake_bin="$TMP/bin"
+mkdir -p "$fake_bin" "$state"
+
+cat > "$fake_bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = auth ] && [ "${2:-}" = status ]; then
+  [ "${FAKE_GH_AUTH:-yes}" = yes ]
+  exit
+fi
+[ "${1:-}" = api ] || exit 1
+case " $* " in
+  *" --jq "*)
+    case "${FAKE_GH_MODE:-success}" in
+      missing) exit 0 ;;
+      ambiguous) printf '41\tfalse\thttps://example.test/41\n42\tfalse\thttps://example.test/42\n' ;;
+      *) printf '42\tfalse\thttps://example.test/42\n' ;;
+    esac
+    ;;
+  *) cat "$FAKE_GH_ARCHIVE" ;;
+esac
+EOF
+chmod +x "$fake_bin/gh"
+
+make_archive() {
+  local mode="$1"
+  python3 - "$archive" "$commit" "$different" "$mode" <<'PY'
+from pathlib import Path
+import sys
+import zipfile
+
+archive, commit, different, mode = sys.argv[1:]
+source = different if mode == "wrong-source" else commit
+tag = f"sha-{different if mode == 'wrong-tag' else commit}"
+registry = "utcp-local-registry" if mode == "local-registry" else "ghcr.io/grimange"
+digest = "a" * 64
+lines = [f"UTCP_SERVER_IMAGE_REGISTRY={registry}", f"UTCP_SERVER_IMAGE_TAG={tag}", f"UTCP_SERVER_SOURCE_COMMIT={source}"]
+for name in ("POSTGRES", "REDIS", "API", "WEB", "GATEWAY", "ASTERISK", "FREESWITCH", "RTPENGINE", "KAMAILIO"):
+    value = f"ghcr.io/grimange/utcp-{name.lower()}@sha256:{digest}"
+    if mode == "mutable" and name == "API":
+        value = "ghcr.io/grimange/utcp-api:latest"
+    lines.append(f"UTCP_SERVER_{name}_IMAGE={value}")
+payload = "\n".join(lines) + "\n"
+with zipfile.ZipFile(archive, "w") as output:
+    if mode == "ambiguous-archive":
+        output.writestr("first/native-k3s-image-lock.env", payload)
+        output.writestr("second/native-k3s-image-lock.env", payload)
+    else:
+        output.writestr("native-k3s-image-lock.env", payload)
+PY
+}
+
+sync() {
+  PATH="$fake_bin:$PATH" GH_REPO=grimange/unified-telephony-control-plane \
+    FAKE_GH_ARCHIVE="$archive" FAKE_GH_MODE="${FAKE_GH_MODE:-success}" \
+    UTCP_SERVER_STATE_DIR="$state" UTCP_SERVER_SOURCE_COMMIT="$commit" \
+    "$ROOT/scripts/native-k3s/image-sync"
+}
+
+make_archive success
+sync > "$TMP/success.out"
+first_checksum="$(sha256sum "$state/image-lock.env")"
+sync > "$TMP/idempotent.out"
+grep -Fq 'already current' "$TMP/idempotent.out"
+[ "$first_checksum" = "$(sha256sum "$state/image-lock.env")" ]
+
+expect_failure() {
+  local mode="$1"
+  make_archive "$mode"
+  if FAKE_GH_MODE="$mode" sync > "$TMP/failure.out" 2>&1; then
+    printf 'image-sync unexpectedly passed mode %s\n' "$mode" >&2
+    exit 1
+  fi
+  [ "$first_checksum" = "$(sha256sum "$state/image-lock.env")" ]
+}
+
+expect_failure wrong-source
+expect_failure wrong-tag
+expect_failure mutable
+expect_failure local-registry
+expect_failure ambiguous-archive
+FAKE_GH_MODE=missing expect_failure missing
+
+if FAKE_GH_AUTH=no sync > "$TMP/auth.out" 2>&1; then
+  printf 'image-sync unexpectedly passed without GitHub authentication\n' >&2
+  exit 1
+fi
+grep -Fq 'GitHub authentication is required' "$TMP/auth.out"
+printf 'native k3s immutable image-lock promotion tests passed\n'

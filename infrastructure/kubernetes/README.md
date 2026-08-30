@@ -53,19 +53,31 @@ machine-readable image lock containing the resulting immutable digests and
 source commit. The package visibility decision remains account-owned; public
 packages allow anonymous pulls from every native k3s node.
 
-Download that workflow artifact as `image-lock.env` under the native state
-directory (or set `UTCP_SERVER_IMAGE_LOCK` to its path):
+The native image lock is promoted from the exact commit-named GitHub Actions
+artifact; it must not be rebuilt or edited manually. With GitHub CLI
+authentication available, promote the repository HEAD (or set
+`UTCP_SERVER_SOURCE_COMMIT` to an exact full commit):
 
 ```sh
 export UTCP_SERVER_KUBECONFIG=/path/to/native-k3s.kubeconfig
 export UTCP_SERVER_CONTEXT=default
 export UTCP_SERVER_NODE_NAME=utcp-dev01
+make server-image-sync
 make server-config-check
 make server-image-preflight
 make server-apply
 make server-status
 make server-proof
 ```
+
+`Native k3s Images` publishes immutable `sha-<commit>` images and the
+commit-specific lock artifact on every `main` push. `server-image-sync`
+authenticates to GitHub, retrieves only the requested artifact, validates its
+source commit, matching tag, registry, and complete digest-pinned image set,
+then atomically promotes it into the native runtime state directory.
+`server-image-preflight` and `server-apply` consume that declared lock;
+`server-apply` does not imply that the active lock is for the current checkout.
+Manual workstation image builds and pushes are not the normal native-k3s path.
 
 The registry account and image-pull credentials are operator-owned and are
 not committed. The server overlay uses the existing `local-path` storage
