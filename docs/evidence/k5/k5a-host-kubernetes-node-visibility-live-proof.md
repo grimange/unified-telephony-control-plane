@@ -1,70 +1,125 @@
-# K5A — Host / Kubernetes Node Visibility Natural Live Proof (Blocked)
+# K5A — Host / Kubernetes Node Visibility Natural Live Proof
 
 Current-State-Impact: yes
 
 Date: 2026-08-30
 
-Starting HEAD: `2bae1211584442e3f90a3c3c351f7255d2544595`
-(`feat(k5): add kubernetes host visibility`)
+Starting HEAD: `8c32f8ade311e299b615e45179240ad414b40687`
+(`fix(k5): repair host visibility live blockers`)
 
 ## Verdict
 
-`K5A_KUBERNETES_OBSERVER_LIVE_ACCESS_DEFECT`
+`K5A_HOST_KUBERNETES_NODE_VISIBILITY_NATURAL_LIVE_PROVEN`
 
-and, independently:
+Both previously isolated live defects converged **automatically** through the
+normal deployment lifecycle — no manual NetworkPolicy patch, capability insert,
+role grant, host sync, or session manipulation. The complete corridor is proven
+end to end, and **K5A is complete**.
 
+## Attempt chronology
+
+The first live proof (2026-08-30, HEAD `2bae121…`) deployed K5A successfully but
+was blocked before browser acceptance by two independent defects:
+`K5A_KUBERNETES_OBSERVER_LIVE_ACCESS_DEFECT` (the API Pod had no rendered
+Kubernetes API egress, because the rule used `__KUBERNETES_API_ENDPOINT_*__`
+placeholders in a non-`.template.yaml` file) and
 `K5A_ADMIN_INFRASTRUCTURE_AUTHORIZATION_LIVE_DEFECT`
+(`platform.infrastructure.view` was added to config with no identity-catalog sync
+migration, so it was absent from any pre-existing database).
 
-K5A was deployed through the canonical native-k3s lifecycle. Two distinct live
-defects block acceptance. Both pass automated tests and fail only against a real
-cluster and a pre-existing database, so neither is a proof-harness artifact.
-Neither was repaired here.
-
-The natural Web Admin proof was **not attempted**: the backing Admin API returns
-`403`, and the observer beneath it cannot reach Kubernetes at all, so a browser
-run would have produced no acceptance evidence.
+Commit `8c32f8a…` repaired both: the API Deployment now carries
+`utcp.io/kubernetes-api-client: "true"` so the existing rendered template policy
+covers it, the invalid placeholder rule was removed from
+`security/platform/allow-api.yaml`, and
+`2026_08_30_100000_sync_k5a_identity_catalog.php` follows the established
+`2026_08_24_131000_sync_c7b_identity_catalog.php` precedent. This record proves
+their natural convergence.
 
 ## Deployment
 
 ```text
-promoted source commit   2bae1211584442e3f90a3c3c351f7255d2544595
-UTCP_SERVER_API_IMAGE    ghcr.io/grimange/utcp-api@sha256:d3b540ca…b1c4
+promoted source commit   8c32f8ade311e299b615e45179240ad414b40687
+UTCP_SERVER_API_IMAGE    ghcr.io/grimange/utcp-api@sha256:09f4f232…47ed
 lifecycle                server-image-sync -> server-config-check
                          -> server-image-preflight -> server-apply
 ```
 
 Promotion used the established explicit `GH_REPO` workaround for the recorded
-`scripts/native-k3s/image-sync` `.git` origin-parsing defect, which was not
-repaired here. No manual `kubectl patch`, `set image`, `edit`, or Pod
+`scripts/native-k3s/image-sync` `.git` origin-parsing debt, which was not
+repaired here. No `kubectl patch`, `set image`, `edit`, or manual Pod
 replacement.
 
-Pre-deployment the environment was genuinely without K5A: the API Pod ran
-ServiceAccount `utcp-platform-app` and `clusterroles utcp-infrastructure-reader`
-did not exist.
+Pre-deployment both defects were still present and verified: the API Pod carried
+no `utcp.io/kubernetes-api-client` label, and the persisted capability catalog
+had **0** rows matching `%infrastructure%`.
 
-## Deployment acceptance — K5A resources are live
+## Migration convergence — Defect B resolved
 
-```text
-API Pod            api-64c65ddf7f-6m4tv   (image sha256:d3b540ca…b1c4)
-ServiceAccount     utcp-api               automountServiceAccountToken: true
-ClusterRole        utcp-infrastructure-reader
-ClusterRoleBinding utcp-infrastructure-reader -> ServiceAccount/utcp-platform/utcp-api
-web Pod            web-5f746fbb98-7mzvl   Running
-```
-
-Effective RBAC, verified with real authorization checks against
-`system:serviceaccount:utcp-platform:utcp-api`:
+The normal deployment migration lifecycle applied the sync migration; no ad hoc
+identity command was run.
 
 ```text
-allowed    get nodes | list nodes | get pods | list pods
-denied     create/update/patch/delete nodes, create/delete pods,
-           get secrets, create pods/exec, impersonate users, '*' '*'
-bindings   only utcp-infrastructure-reader (no cluster-admin)
+2026_08_30_100000_sync_k5a_identity_catalog ....... [5] Ran
 ```
 
-RBAC is exactly the intended read-only surface. **RBAC is not the defect.**
+Persisted live state after deployment:
 
-## Kubernetes baseline (authoritative facts)
+```text
+capabilities        key=platform.infrastructure.view  scope=platform
+                    description="View observed Kubernetes infrastructure"
+role_capabilities   role_key=platform-admin  capability_key=platform.infrastructure.view
+capabilities total  31 -> 32
+```
+
+## Live API Pod, ServiceAccount and label — Defect A resolved
+
+```text
+API Pod          api-6cb796fbb8-q98tx
+image            ghcr.io/grimange/utcp-api@sha256:09f4f232…47ed
+ServiceAccount   utcp-api
+automount        true
+label            utcp.io/kubernetes-api-client = true
+```
+
+## Live NetworkPolicy rendering
+
+The API Pod is now covered by the rendered Kubernetes API-client policy:
+
+```text
+allow-runtime-fencer-kubernetes-api
+  selector  utcp.io/kubernetes-api-client: "true"
+  egress    TCP:6443 -> ipBlock 192.168.254.124/32
+
+allow-api-required-traffic
+  selector  utcp.io/network-role: api
+  egress    UDP/TCP 53 | TCP 5432 | TCP 6379 | TCP 8080
+```
+
+Endpoint CIDR and port are fully rendered. Cluster-wide count of unresolved
+`__KUBERNETES_API_ENDPOINT_` markers in live NetworkPolicies: **0**. Existing
+restricted egress is unchanged and no allow-all rule appeared.
+
+## Effective Kubernetes RBAC — regression guard
+
+```text
+allowed  get nodes | list nodes | get pods | list pods
+denied   create nodes, patch nodes, delete pods, get secrets,
+         create pods/exec, impersonate users, '*' '*'
+```
+
+Unchanged and still exactly read-only.
+
+## Observer access
+
+```text
+api pod -> 192.168.254.124:6443        CONNECT_OK
+HttpKubernetesInfrastructureClient     OBSERVER_OK  nodes=1  pods=36
+observed node                          utcp-dev01  uid faa05d1c-35fd-48fa-a2f7-6060d845c9ee
+```
+
+Proven through the application client, not host `kubectl`.
+
+## Kubernetes baseline (factual authority)
 
 ```text
 uid            faa05d1c-35fd-48fa-a2f7-6060d845c9ee
@@ -73,173 +128,163 @@ Ready          True
 addresses      Hostname utcp-dev01 | InternalIP 192.168.254.124   (no ExternalIP)
 capacity       cpu 8, memory 15800704Ki, pods 110, ephemeral-storage 102626232Ki
 allocatable    cpu 8, memory 15800704Ki, pods 110, ephemeral-storage 99834798412
-taints         []            unschedulable false
-topology       hostname utcp-dev01, os linux, arch amd64 (no region/zone labels)
+taints         []        unschedulable false
+labels         8 (control-plane, k3s instance-type, hostname/os/arch)
 ```
 
-## RuntimeNode correlation baseline
+## RuntimeNode correlation
+
+Discovered from live state, not hardcoded:
 
 ```text
-102d58ba-93ec-4601-a2a3-81f95801440f  "V1A Outbound Reproof Asterisk 1787825256"
-  active/ready   workload identity  utcp-runtime/asterisk-v1a-outbound-reproof-asterisk-1787-5fced085
+RuntimeNode        102d58ba-93ec-4601-a2a3-81f95801440f
+                   "V1A Outbound Reproof Asterisk 1787825256"  asterisk  active/ready
+workload identity  utcp-runtime | asterisk-v1a-outbound-reproof-asterisk-1787-5fced085
 
-7322e6e1-8417-42ce-ad4f-4e7d25b23a3a  draft/unobserved
-  workload identity UNRESOLVED (RuntimeNodeWorkloadIdentityException) — correctly has no Pod
+Pod                asterisk-v1a-outbound-reproof-asterisk-1787-5fced085-655bbjhwdh
+namespace          utcp-runtime
+labels             app.kubernetes.io/instance=asterisk-v1a-outbound-reproof-asterisk-1787-5fced085
+                   app.kubernetes.io/part-of=utcp
+spec.nodeName      utcp-dev01
 ```
 
-The matching Pod exists and is placed on the target Node:
+The second RuntimeNode (`7322e6e1-…`, draft/unobserved) has no resolvable
+workload identity and correctly contributes no association.
+
+The K5A API exposes the same association on the host, with the correlated
+workload carrying its `runtime_node_id` and `runtime_node_name`. Correlation used
+the canonical namespace + instance-label + `part-of=utcp` mechanism — no
+name-substring, IP, or hostname guessing.
+
+## Admin API acceptance
 
 ```text
-namespace  utcp-runtime
-pod        asterisk-v1a-outbound-reproof-asterisk-1787-5fced085-66b54spr4g
-label      app.kubernetes.io/instance=asterisk-v1a-outbound-reproof-asterisk-1787-5fced085
-           app.kubernetes.io/part-of=utcp
-nodeName   utcp-dev01
+GET /api/v1/admin/infrastructure/hosts   ->   HTTP 200
 ```
 
-So the data required for correlation is present and correct on both sides. The
-correlation could not be exercised because the observer never reaches Kubernetes.
+| Fact | Kubernetes | UTCP Admin API |
+| --- | --- | --- |
+| UID | `faa05d1c-35fd-48fa-a2f7-6060d845c9ee` | `faa05d1c-35fd-48fa-a2f7-6060d845c9ee` |
+| Name | `utcp-dev01` | `utcp-dev01` |
+| Ready | `True` | `true` |
+| Hostname | `utcp-dev01` | `utcp-dev01` |
+| InternalIP | `192.168.254.124` | `192.168.254.124` |
+| ExternalIP | N/A | N/A (absent) |
+| capacity | 6 keys | identical |
+| allocatable | 6 keys | identical |
+| labels | 8 keys | identical |
+| taints | `[]` | `[]` |
+| unschedulable | `false` | `false` |
+| utcp workloads on node | `23` | `23` |
+| RuntimeNode associations | `102d58ba-…` | `102d58ba-…` |
 
-## Defect 1 — observer cannot reach the Kubernetes API
+Capacity, allocatable and labels were compared as sorted canonical JSON and are
+an **exact match**. No transformation or summarisation was needed.
+
+## Deterministic ordering
+
+Three consecutive calls with no cluster change produced an identical structural
+digest over nodes, addresses, conditions, workloads, and runtime_nodes ordering:
 
 ```text
-KubernetesHostVisibilityService::hosts()
--> KubernetesWorkloadClientException: Kubernetes infrastructure observation is unavailable.
+call 1  fe366809c5fdaa7f0f61231dda595e8fffbc5768887ba30d0e3a6eaa8e1ec7d3
+call 2  fe366809c5fdaa7f0f61231dda595e8fffbc5768887ba30d0e3a6eaa8e1ec7d3
+call 3  fe366809c5fdaa7f0f61231dda595e8fffbc5768887ba30d0e3a6eaa8e1ec7d3
 ```
 
-Connection material inside the API Pod is complete and correct:
+## Natural Web Admin proof
+
+Playwright MCP, beginning at the real login page. No preset session, injected
+cookie, localStorage token, database/Redis-created session, or authentication
+bypass was used.
 
 ```text
-/var/run/secrets/kubernetes.io/serviceaccount/token   readable
-/var/run/secrets/kubernetes.io/serviceaccount/ca.crt  readable
-service_host 10.43.0.1   service_port 443
+https://app.utcp.local.test/login    real login form (Email, Password, Sign in)
+normal form submission               -> https://app.utcp.local.test/dashboard
+sidebar navigation                   "Telephony Infrastructure" -> "Hosts"
+natural click                        -> https://app.utcp.local.test/admin/hosts
 ```
 
-Connectivity, measured from the Pods themselves:
+The authenticated browser session itself was queried through the application and
+holds the capability:
 
 ```text
-api pod    -> 10.43.0.1:443          FAIL  errno 111 Connection refused
-api pod    -> 192.168.254.124:6443   FAIL  errno 111 Connection refused
-fencer pod -> 192.168.254.124:6443   CONNECT_OK
+session_user             admin@utcp.local.test
+platform.infrastructure.view present
+in-browser GET /api/v1/admin/infrastructure/hosts   HTTP 200
 ```
 
-### Exact cause
-
-The runtime-fence worker reaches the Kubernetes API through
-`allow-runtime-fencer-kubernetes-api`, whose `podSelector` is
-`utcp.io/kubernetes-api-client: "true"` and which permits `TCP:6443` to the node
-ipBlock. That policy is rendered from
-`infrastructure/kubernetes/security/kubernetes-api/allow-runtime-fencer-kubernetes-api.template.yaml`,
-where the security apply path substitutes `__KUBERNETES_API_ENDPOINT_CIDR__` and
-`__KUBERNETES_API_ENDPOINT_PORT__`.
-
-The K5A commit added an equivalent egress rule using those same placeholders to
-`infrastructure/kubernetes/security/platform/allow-api.yaml` — which is **not**
-a `.template.yaml` and is applied verbatim by the platform kustomization, so the
-placeholders are never substituted. The live policy confirms the rule is absent
-entirely:
+Rendered Hosts page content:
 
 ```text
-allow-api-required-traffic  podSelector utcp.io/network-role: api
-  egress: UDP/TCP 53 (kube-dns) | TCP 5432 (postgres) | TCP 6379 (redis) | TCP 8080 (reverb)
+Hosts — "Status and placement are observed from Kubernetes."
+utcp-dev01
+Ready
+Addresses: Hostname: utcp-dev01, InternalIP: 192.168.254.124
+Runtime Nodes: V1A Outbound Reproof Asterisk 1787825256
+Workloads: 23
 ```
 
-No Kubernetes API egress. The API Pod also does not carry the
-`utcp.io/kubernetes-api-client: "true"` label that would bring it under the
-existing working policy. With `default-deny` in force, every path to the API
-server is closed.
+Every visible value matches the live Admin API and Kubernetes. No placeholder or
+sample data.
 
-The placeholder convention is used only by `*.template.yaml` files
-(`security/kubernetes-api/`, `security/traefik/`, `observability/network-policies/`),
-which is why this shape works everywhere else and not here.
+## Read-only UI contract
 
-## Defect 2 — `platform.infrastructure.view` is never granted
+The rendered DOM was enumerated rather than inspected only by eye. Complete
+control inventory on `/admin/hosts`:
 
 ```text
-GET /api/v1/admin/infrastructure/hosts   (authenticated platform administrator)
--> HTTP 403 Forbidden
+SELECT  Active tenant        (global chrome)
+SELECT  Appearance           (global chrome)
+BUTTON  Menu                 (global chrome)
+BUTTON  Log out              (global chrome)
+A       Dashboard, Hosts, Tenants, Users, System status   (navigation)
+BUTTON  Refresh              (read action)
 ```
-
-`AuthorizationService::platformCapabilities()` resolves capabilities purely from
-the database:
 
 ```text
-platform_role_assignments -> roles -> role_capabilities
+forbidden control matches (Add/Create/Edit/Delete Host, Mark Ready, Cordon,
+Drain, Uncordon, SSH, Terminal, Join Cluster, remove/update/modify):  0
+forms on page:                                                        0
 ```
 
-Live persisted state:
+K5A remains observation-only.
+
+## Manual reconciliation
 
 ```text
-capabilities table                 31 rows, none matching %infrastructure%
-role_capabilities (platform-admin) platform.tenants.view, platform.tenants.manage,
-                                   platform.users.view, platform.users.manage
-config identity.roles.platform-admin  ... + platform.infrastructure.view
-config catalog_version             c5.2026-07-15   (unchanged)
+Manual host discovery       NOT REQUIRED
+Manual host sync            NOT REQUIRED
+Manual projection           NOT REQUIRED
+Manual host reconciliation  NOT REQUIRED
 ```
 
-The identity catalog is seeded into the database by migrations that read
-`config('identity.*')` **at migration run time**
-(`2026_07_14_110000_create_identity_tenancy_authorization_tables.php::syncCatalog`).
-The live database was migrated on 2026-08-26, long before this capability
-existed, and that migration will not run again.
+No host-related Artisan command exists in the deployed application, and none was
+invoked. The Hosts surface populated purely through the normal application
+lifecycle.
 
-The repository already has the correct pattern for this situation — a dedicated
-sync migration, e.g. `2026_08_24_131000_sync_c7b_identity_catalog.php`, which
-inserted the C7B capabilities and bound them to a role. **The K5A commit shipped
-no such migration.**
+## Authority boundary
 
-Automated tests pass because `RefreshDatabase` runs migrations against a fresh
-database, so `syncCatalog()` reads the *current* config and does create the row.
-The defect is therefore invisible to the suite and appears only on any
-pre-existing database — which is every real environment.
+Kubernetes remains the sole authority for Node existence, UID, readiness,
+conditions, addresses, capacity, allocatable, labels, taints, unschedulable
+state, Pods, and workload placement. No durable UTCP Host table exists, none was
+added, and no Kubernetes mutation capability was introduced. UTCP observes,
+normalizes, correlates, and presents.
 
-## Not performed
-
-No natural Web Admin login, navigation, `/admin/hosts` rendering, read-only
-control inspection, Admin API node-fact comparison, workload-placement proof,
-RuntimeNode correlation proof, or determinism proof could be captured. All of
-them depend on the observer and the authorization grant.
-
-No repair was made to production source, manifests, RBAC, NetworkPolicy, the
-database, or the identity catalog. No permanent diagnostic infrastructure was
-added. No K5B–K5F behavior was introduced.
-
-## Smallest deterministic corrections
-
-Both are bounded and independent.
-
-**Defect 1** — give the API Pod a rendered Kubernetes API egress path. Either
-convert `infrastructure/kubernetes/security/platform/allow-api.yaml` to a
-`.template.yaml` rendered by the same security apply path that already
-substitutes the endpoint placeholders, or add the existing
-`utcp.io/kubernetes-api-client: "true"` label to the API Pod template so the
-already-working `allow-runtime-fencer-kubernetes-api` policy covers it. Choosing
-between them is an implementation decision; both avoid inventing a new
-substitution mechanism.
-
-**Defect 2** — add a dedicated identity-catalog sync migration for
-`platform.infrastructure.view` following the
-`2026_08_24_131000_sync_c7b_identity_catalog.php` precedent, inserting the
-capability and binding it to `platform-admin`.
-
-A focused regression that exercises authorization against a database migrated
-*before* the capability existed would have caught defect 2; a manifest test
-asserting the API egress policy renders a concrete CIDR/port rather than a
-placeholder would have caught defect 1.
-
-## K5A status
+## K5A classification
 
 ```text
-K5A: IMPLEMENTED_AND_TESTED — natural live proof BLOCKED by two live defects
+K5A: COMPLETE
 ```
 
-K5A is not complete. Kubernetes remains the sole host-fact authority, no durable
-UTCP Host table exists, and no Kubernetes mutation capability was introduced.
+Closure rests on the single canonical Kubernetes Node; multi-host acceptance
+belongs to K5E, and neither K5D maintenance nor K5F enrollment is required.
 
 ## Boundary
 
-V1 remains complete and untouched. A0 remains eligible/parallel. K5B–K5F were not
-implemented, K5A–K5E ordering and the K5F post-K5E classification are unchanged,
-and `K5E -> RMA` is unchanged. The `scripts/native-k3s/image-sync` `.git` defect,
-the broad `Quality` CI debt, and the runtime deployment-convergence debt remain
-unchanged separate items.
+No production source was changed by this proof. V1 remains complete, A0 remains
+eligible/parallel, K5B–K5F were not implemented, K5A–K5E ordering and the K5F
+post-K5E classification are unchanged, and `K5E -> RMA` is unchanged. The
+`scripts/native-k3s/image-sync` `.git` debt, the broad `Quality` CI debt, and the
+runtime deployment-convergence debt remain unchanged separate items. No permanent
+diagnostic infrastructure was added and transient browser artifacts were removed.

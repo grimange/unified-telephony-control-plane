@@ -22,15 +22,28 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** deploy the exact repaired commit to canonical
-native k3s and rerun the natural **K5A — Host / Kubernetes Node Visibility**
-proof, including natural admin login and host visibility. The two independent
-live blockers are now repaired and covered by automated regressions: the API
-workload uses the existing rendered `utcp.io/kubernetes-api-client` policy for
-narrow Kubernetes API egress, and the forward identity-catalog migration
-converges `platform.infrastructure.view` and its platform-admin mapping on
-existing databases. K5A remains pending live acceptance; no live claim is made
-by this implementation packet. See the [`K5A blocked live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
+**Exactly one next action:** begin **K5B — Telephony Placement Awareness**, the
+next slice in the `K5A -> K5B -> K5C -> K5D -> K5E` distributed-infrastructure
+track. **K5A is complete.** The 2026-08-30 natural live proof deployed the
+repaired commit through the canonical native-k3s lifecycle and both previously
+isolated blockers converged **automatically**: the sync migration
+`2026_08_30_100000_sync_k5a_identity_catalog` ran normally and persisted
+`platform.infrastructure.view` with its `platform-admin` mapping, and the API Pod
+now carries `utcp.io/kubernetes-api-client` so the rendered
+`192.168.254.124/32:6443` policy covers it — zero unresolved
+`__KUBERNETES_API_ENDPOINT_` markers remain live. The application observer read
+1 Node and 36 Pods, RuntimeNode `102d58ba-…` correlated through
+namespace + `app.kubernetes.io/instance` to its Pod on `utcp-dev01`,
+`GET /api/v1/admin/infrastructure/hosts` returned **HTTP 200** with Node UID,
+readiness, addresses, capacity, allocatable, labels, taints and a 23-workload
+count all exactly matching Kubernetes, and three consecutive calls produced an
+identical structural ordering digest. A natural Playwright login from the real
+login page reached **Admin → Hosts** at `/admin/hosts`, the session itself held
+`platform.infrastructure.view`, the page rendered the real `utcp-dev01` facts,
+and a full DOM control enumeration found **zero** mutation controls and zero
+forms. No manual host discovery, sync, projection, or reconciliation was
+required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
+See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
 **V1 is complete.** The 2026-08-30
 controlled live re-proof deployed the committed
