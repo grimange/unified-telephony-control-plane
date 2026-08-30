@@ -365,6 +365,7 @@ data:
         remove_hf("X-UTCP-Call-Leg-ID");
         remove_hf("X-UTCP-Route-Decision-ID");
         remove_hf("X-UTCP-Trunk-Endpoint-ID");
+        remove_hf("X-UTCP-Caller-Identity-ID");
         dlg_manage();
         # UTCP_PROVIDER_RECORD_ROUTE_BEGIN
         record_route();

@@ -337,6 +337,17 @@ def validate(state: dict[str, Any]) -> None:
     require_in_order(
         runtime_external_trunk_block,
         [
+            'remove_hf("X-UTCP-Call-Leg-ID")',
+            'remove_hf("X-UTCP-Route-Decision-ID")',
+            'remove_hf("X-UTCP-Trunk-Endpoint-ID")',
+            'remove_hf("X-UTCP-Caller-Identity-ID")',
+            't_relay()',
+        ],
+        "route[RUNTIME_EXTERNAL_TRUNK] provider trust-boundary stripping",
+    )
+    require_in_order(
+        runtime_external_trunk_block,
+        [
             '$var(utcp_destination_user) = $rU;',
             '$var(utcp_provider_host) = $dbr(runtime_external_route=>[0,1]);',
             '$ru = "sip:" + $var(utcp_destination_user) + "@" + $var(utcp_provider_host);',
