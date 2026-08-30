@@ -134,6 +134,7 @@ if rg -n "SimulatorRuntimeAdapter|simulator-deterministic" apps/api/app/RuntimeA
 fi
 
 grep -Fq "utcp-outbound" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "Asterisk adapter must use the canonical outbound dialplan"
+grep -Fq 'channelvars = UTCP_CALL_LEG_ID' infrastructure/docker/asterisk/entrypoint || fail "managed Asterisk ARI must expose only the canonical CallLeg channel variable"
 grep -Fqi "kamailio" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "Asterisk adapter must document the internal Kamailio execution seam"
 grep -Fq "'app' => (string) \$profile['application_name']" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "Asterisk originate must use the canonical ARI application landing"
 grep -Fq "UTCP_TRUNK_ENDPOINT_ID" apps/api/app/RuntimeAdapters/Asterisk/AsteriskAriClient.php || fail "Asterisk adapter must carry the selected trunk endpoint correlation"

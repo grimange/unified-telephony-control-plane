@@ -6,6 +6,7 @@ use App\RuntimeEngine\Events\EventNormalizer;
 use App\TelephonyDomain\MediaReference;
 use App\TelephonyDomain\RuntimeChannelIdentity;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 
 final class AsteriskAriEventNormalizer implements EventNormalizer
@@ -173,6 +174,14 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
         }
 
         $leg = DB::table('call_legs')->where('tenant_id', (string) $receipt->tenant_id)->where('runtime_node_id', (string) $receipt->runtime_node_id)->where('runtime_channel_id', $channelId)->first();
+        $callLegId = is_string($payload['call_leg_id'] ?? null) ? trim($payload['call_leg_id']) : null;
+        if ($leg === null && $callLegId !== null && Str::isUuid($callLegId)) {
+            $leg = DB::table('call_legs')
+                ->where('tenant_id', (string) $receipt->tenant_id)
+                ->where('runtime_node_id', (string) $receipt->runtime_node_id)
+                ->where('id', strtolower($callLegId))
+                ->first();
+        }
         if ($leg === null && $type === 'call.leg.offered') {
             $correlatedLegId = RuntimeChannelIdentity::callLegId($channelId);
             if ($correlatedLegId !== null) {

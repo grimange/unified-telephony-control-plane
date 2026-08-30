@@ -22,8 +22,7 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** implement only the isolated provider-facing
-PJSIP-channel to CallLeg correlation repair. The 2026-08-30 controlled proof
+**Exactly one next action:** deploy the exact committed provider-channel correlation repair through the canonical native-k3s lifecycle and repeat the deterministic SIP 404 proof once, proving the provider-facing PJSIP observation now resolves to the canonical CallLeg while preserving provider raw facts. The 2026-08-30 controlled proof
 **succeeded**: one canonical outbound Call to the operator-confirmed absent
 extension `97002` produced the pre-established `SIP 404 Not Found`, and the
 repaired sanitizer delivered the provider-facing PJSIP channel's raw facts for
@@ -122,7 +121,7 @@ documentation task. Current T4 implementation evidence:
 | C7A | Complete | Tenant-scoped ExternalTrunk, endpoint/credential-reference lifecycle, TelephonyAddress, CallerIdentity, policy, and provider-neutral Admin API; see `docs/evidence/c7a/` |
 | C7B | Complete | Inbound/outbound routes, derived RouteDecision, and runtime-neutral DestinationRef; see `docs/evidence/c7b/` |
 | T6 | Complete | Provider projection and Kamailio/Asterisk synthetic consumption verified; V1 owns natural external SIP acceptance |
-| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, the Gap B registration/NAT dialog-return corridor, and Gap A timeout precedence are repository-proven; Gap B and Gap A are closed. Gap E remains open: the provider-failure raw fact authority is live-proven (tech_cause carries the SIP final response on the provider-facing PJSIP channel only) and the exact provider-channel-to-CallLeg correlation seam is isolated; a bounded correlation repair precedes the canonical failure taxonomy. Gap F is a proof gap only. |
+| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, the Gap B registration/NAT dialog-return corridor, and Gap A timeout precedence are repository-proven; Gap B and Gap A are closed. Gap E remains open: provider-failure authority is live-proven, and the provider-channel-to-CallLeg correlation repair is implemented and tested; controlled natural re-proof precedes the canonical failure taxonomy. Gap F is a proof gap only. |
 | A0 | Planned | Follows V1; minimal outbound, inbound, and IVR-style reference consumers |
 | R0 | Planned | Finite release boundary after the mainline evidence is complete |
 
@@ -156,10 +155,12 @@ termination without `dlg_ontimeout()` are all live-proven. Gap E remains open:
 the provider-failure raw fact authority is **live-proven** — `tech_cause` carries
 the provider SIP final response and appears only on the provider-facing PJSIP
 channel, persisted through to `runtime_observations`. The exact
-provider-channel-to-CallLeg correlation seam is isolated: expose the
-already-inherited `UTCP_CALL_LEG_ID` through ARI `channelvars` and retain it in
-the sanitizer allow-list. Gap E is sequenced as that bounded correlation repair,
-then the canonical failure taxonomy. Gap F
+provider-channel-to-CallLeg correlation repair is implemented and tested:
+generated ARI `channelvars` exposes only the already-inherited
+`UTCP_CALL_LEG_ID`, and validated identity crosses the sanitizer/listener path
+with tenant/runtime-node fences before explicit normalizer correlation. Gap E
+remains sequenced as the controlled natural re-proof, then the canonical failure
+taxonomy. Gap F
 remains a `PROOF_GAP_ONLY` provider-wire trust-boundary proof gap and is **not** a
 Gap E prerequisite — the provider outcome is read inside the runtime, never from
 the wire.

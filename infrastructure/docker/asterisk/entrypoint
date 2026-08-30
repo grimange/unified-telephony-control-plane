@@ -22,6 +22,7 @@ cat >"$CONFIG_DIR/ari.conf" <<EOF
 enabled = yes
 pretty = no
 allowed_origins =
+channelvars = UTCP_CALL_LEG_ID
 
 [$ARI_USERNAME]
 type = user

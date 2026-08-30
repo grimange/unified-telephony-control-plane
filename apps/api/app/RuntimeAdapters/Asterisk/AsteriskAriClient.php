@@ -7,6 +7,7 @@ use App\TelephonyDomain\MediaReference;
 use App\TelephonyDomain\RuntimeChannelIdentity;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use InvalidArgumentException;
 use JsonException;
 
@@ -1082,11 +1083,29 @@ class AsteriskAriClient
             'state' => is_string($value['state'] ?? null) ? mb_substr($value['state'], 0, 64) : null,
             'caller' => is_array($value['caller'] ?? null) ? ['number' => is_string($value['caller']['number'] ?? null) ? mb_substr($value['caller']['number'], 0, 120) : null] : null,
             'connected' => is_array($value['connected'] ?? null) ? ['number' => is_string($value['connected']['number'] ?? null) ? mb_substr($value['connected']['number'], 0, 120) : null] : null,
+            'channelvars' => $this->sanitizeAriChannelvars($value['channelvars'] ?? null),
             'media_uri' => is_string($value['media_uri'] ?? null) ? mb_substr($value['media_uri'], 0, 240) : null,
             'channels' => is_array($value['channels'] ?? null) ? array_values(array_filter(array_map(
                 static fn (mixed $channel): ?string => is_string($channel) ? mb_substr($channel, 0, 120) : (is_array($channel) && is_string($channel['id'] ?? null) ? mb_substr($channel['id'], 0, 120) : null),
                 $value['channels'],
             ))) : null,
         ];
+    }
+
+    /**
+     * @return array{UTCP_CALL_LEG_ID:string}|null
+     */
+    private function sanitizeAriChannelvars(mixed $channelvars): ?array
+    {
+        if (! is_array($channelvars) || ! is_string($channelvars['UTCP_CALL_LEG_ID'] ?? null)) {
+            return null;
+        }
+
+        $callLegId = trim($channelvars['UTCP_CALL_LEG_ID']);
+        if (! Str::isUuid($callLegId)) {
+            return null;
+        }
+
+        return ['UTCP_CALL_LEG_ID' => strtolower($callLegId)];
     }
 }

@@ -1051,6 +1051,146 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertArrayNotHasKey('tech_cause', $sanitized);
     }
 
+    public function test_raw_channel_event_preserves_only_valid_call_leg_channelvar(): void
+    {
+        $callLegId = IdentityIds::new();
+        $client = new AsteriskAriClient(new AsteriskCatalog, app(AsteriskAriProfileService::class));
+        [$local, $remote] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+
+        fwrite($remote, $this->serverFrame(0x1, json_encode([
+            'type' => 'ChannelDestroyed',
+            'channel' => [
+                'id' => '1788065648.2',
+                'channelvars' => [
+                    'UTCP_CALL_LEG_ID' => strtoupper($callLegId),
+                    'UNRELATED_SECRET' => 'must-not-pass',
+                ],
+            ],
+        ], JSON_THROW_ON_ERROR)));
+
+        $sanitized = $client->readEvent($local);
+        $this->assertSame(['UTCP_CALL_LEG_ID' => $callLegId], $sanitized['channel']['channelvars']);
+
+        fwrite($remote, $this->serverFrame(0x1, json_encode([
+            'type' => 'ChannelDestroyed',
+            'channel' => ['id' => '1788065648.3', 'channelvars' => ['UTCP_CALL_LEG_ID' => ['not-a-uuid']]],
+        ], JSON_THROW_ON_ERROR)));
+        $invalid = $client->readEvent($local);
+        $this->assertNull($invalid['channel']['channelvars']);
+    }
+
+    public function test_managed_ari_config_exposes_only_the_canonical_call_leg_channelvar(): void
+    {
+        $entrypoint = file_get_contents(base_path('../../infrastructure/docker/asterisk/entrypoint'));
+        $this->assertIsString($entrypoint);
+        $this->assertStringContainsString('channelvars = UTCP_CALL_LEG_ID', $entrypoint);
+        $this->assertStringNotContainsString('channelvars = *', $entrypoint);
+        $this->assertStringContainsString('password = $ARI_PASSWORD', $entrypoint);
+    }
+
+    public function test_listener_reduces_valid_call_leg_channelvar_without_leaking_other_variables(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $catalog = new AsteriskCatalog;
+        $receipts = new RuntimeEventReceiptRepository;
+        $epochId = $receipts->openEpoch($tenantId, $nodeId, $catalog->adapterKey(), 'channelvar-listener');
+        $listener = new AsteriskAriEventListener($catalog, new AsteriskAriClient($catalog, app(AsteriskAriProfileService::class)), app(AsteriskAriProfileService::class), new RuntimeListenerLeaseRepository, $receipts, new ReconciliationRepository);
+        $callLegId = IdentityIds::new();
+        $event = [
+            'type' => 'ChannelDestroyed',
+            'timestamp' => '2026-08-30T00:00:00Z',
+            'cause' => 1,
+            'cause_txt' => 'Unallocated (unassigned) number',
+            'tech_cause' => 404,
+            'channel' => ['id' => '1788065648.2', 'channelvars' => ['UTCP_CALL_LEG_ID' => strtoupper($callLegId), 'UNRELATED' => 'drop-me']],
+        ];
+        $ingest = new ReflectionMethod($listener, 'ingestAriEvent');
+        $ingest->setAccessible(true);
+        $ingest->invoke($listener, (object) ['id' => $nodeId, 'tenant_id' => $tenantId, 'configuration_version' => 1], $epochId, $event);
+
+        $externalKey = 'ari:'.hash('sha256', json_encode($event, JSON_THROW_ON_ERROR));
+        $payload = json_decode((string) DB::table('runtime_event_receipts')->where('external_event_key', $externalKey)->value('sanitized_payload'), true, flags: JSON_THROW_ON_ERROR);
+        $this->assertSame($callLegId, $payload['call_leg_id']);
+        $this->assertArrayNotHasKey('channelvars', $payload);
+        $this->assertSame(1, $payload['cause']);
+        $this->assertSame(404, $payload['tech_cause']);
+    }
+
+    public function test_listener_drops_malformed_call_leg_channelvar(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $catalog = new AsteriskCatalog;
+        $receipts = new RuntimeEventReceiptRepository;
+        $epochId = $receipts->openEpoch($tenantId, $nodeId, $catalog->adapterKey(), 'invalid-channelvar-listener');
+        $listener = new AsteriskAriEventListener($catalog, new AsteriskAriClient($catalog, app(AsteriskAriProfileService::class)), app(AsteriskAriProfileService::class), new RuntimeListenerLeaseRepository, $receipts, new ReconciliationRepository);
+        $event = [
+            'type' => 'ChannelDestroyed',
+            'timestamp' => '2026-08-30T00:00:01Z',
+            'channel' => ['id' => '1788065648.invalid', 'channelvars' => ['UTCP_CALL_LEG_ID' => 'not-a-uuid']],
+        ];
+        $ingest = new ReflectionMethod($listener, 'ingestAriEvent');
+        $ingest->setAccessible(true);
+        $ingest->invoke($listener, (object) ['id' => $nodeId, 'tenant_id' => $tenantId, 'configuration_version' => 1], $epochId, $event);
+
+        $externalKey = 'ari:'.hash('sha256', json_encode($event, JSON_THROW_ON_ERROR));
+        $payload = json_decode((string) DB::table('runtime_event_receipts')->where('external_event_key', $externalKey)->value('sanitized_payload'), true, flags: JSON_THROW_ON_ERROR);
+        $this->assertArrayNotHasKey('call_leg_id', $payload);
+        $this->assertArrayNotHasKey('channelvars', $payload);
+    }
+
+    public function test_provider_channel_destroyed_correlates_to_call_leg_without_rebinding_canonical_channel(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $callLegId = IdentityIds::new();
+        $this->insertCallLegFixture($tenantId, $nodeId, $callLegId, 'local;1');
+        $catalog = new AsteriskCatalog;
+        $observations = (new AsteriskAriEventNormalizer($catalog, $catalog->eventType('channel_destroyed')))->normalize((object) [
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $nodeId,
+        ], [
+            'channel_id' => '1788065648.2',
+            'call_leg_id' => strtoupper($callLegId),
+            'ari_event_type' => 'ChannelDestroyed',
+            'cause' => 1,
+            'cause_txt' => 'Unallocated (unassigned) number',
+            'tech_cause' => 404,
+            'occurred_at' => now()->toISOString(),
+        ]);
+
+        $this->assertCount(1, $observations);
+        $this->assertSame('call.leg.terminated', $observations[0]['observation_type']);
+        $this->assertSame($callLegId, $observations[0]['subject_id']);
+        $this->assertSame('1788065648.2', $observations[0]['payload']['runtime_channel_id']);
+        $this->assertSame(1, $observations[0]['payload']['cause']);
+        $this->assertSame('Unallocated (unassigned) number', $observations[0]['payload']['cause_txt']);
+        $this->assertSame(404, $observations[0]['payload']['tech_cause']);
+        $this->assertSame('local;1', DB::table('call_legs')->where('id', $callLegId)->value('runtime_channel_id'));
+        $this->assertArrayNotHasKey('failure_class', $observations[0]['payload']);
+        $this->assertArrayNotHasKey('failure_code', $observations[0]['payload']);
+    }
+
+    public function test_provider_call_leg_channelvar_correlation_respects_tenant_and_runtime_node_fences(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        [$foreignTenantId, $foreignNodeId] = $this->runtimeNode();
+        $foreignLegId = IdentityIds::new();
+        $this->insertCallLegFixture($foreignTenantId, $foreignNodeId, $foreignLegId, 'local;1');
+        $catalog = new AsteriskCatalog;
+
+        $observations = (new AsteriskAriEventNormalizer($catalog, $catalog->eventType('channel_destroyed')))->normalize((object) [
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $nodeId,
+        ], [
+            'channel_id' => 'provider-foreign-leg',
+            'call_leg_id' => $foreignLegId,
+            'ari_event_type' => 'ChannelDestroyed',
+            'cause' => 1,
+            'cause_txt' => 'Unallocated (unassigned) number',
+        ]);
+
+        $this->assertSame('runtime:provider-foreign-leg', $observations[0]['subject_id']);
+    }
+
     public function test_raw_non_channel_destroyed_event_does_not_gain_termination_facts(): void
     {
         $client = new AsteriskAriClient(new AsteriskCatalog, app(AsteriskAriProfileService::class));
@@ -2725,6 +2865,35 @@ final class AsteriskAriAdapterTest extends TestCase
         }
 
         return $operationId;
+    }
+
+    /**
+     * @return array{0:string,1:string}
+     */
+    private function insertCallLegFixture(string $tenantId, string $nodeId, string $callLegId, string $runtimeChannelId): void
+    {
+        $callId = IdentityIds::new();
+        DB::table('calls')->insert([
+            'id' => $callId,
+            'tenant_id' => $tenantId,
+            'direction' => 'outbound',
+            'observed_state' => 'ringing',
+            'runtime_node_id' => $nodeId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('call_legs')->insert([
+            'id' => $callLegId,
+            'tenant_id' => $tenantId,
+            'call_id' => $callId,
+            'runtime_node_id' => $nodeId,
+            'runtime_channel_id' => $runtimeChannelId,
+            'direction' => 'outbound',
+            'role' => 'source',
+            'observed_state' => 'ringing',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 
     /**

@@ -13,6 +13,7 @@ use App\RuntimeEngine\Projection\ProjectionService;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use RuntimeException;
 use Throwable;
 
@@ -229,6 +230,12 @@ final class AsteriskAriEventListener
             $payload['channel_state'] = is_string($channel['state'] ?? null) ? $channel['state'] : null;
             $payload['remote_identity'] = is_string($channel['caller']['number'] ?? null) ? $channel['caller']['number'] : null;
             $payload['connected_identity'] = is_string($channel['connected']['number'] ?? null) ? $channel['connected']['number'] : null;
+            $callLegId = is_string($channel['channelvars']['UTCP_CALL_LEG_ID'] ?? null)
+                ? trim($channel['channelvars']['UTCP_CALL_LEG_ID'])
+                : null;
+            if ($callLegId !== null && Str::isUuid($callLegId)) {
+                $payload['call_leg_id'] = strtolower($callLegId);
+            }
         }
         if ($type === 'ChannelDestroyed') {
             foreach (['cause', 'cause_txt', 'tech_cause'] as $fact) {

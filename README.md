@@ -387,12 +387,23 @@ https://app.utcp.local.test/
 Use the top-level local lifecycle:
 
 ```sh
+make server-image-sync
 make server-config-check
 make server-image-preflight
 make server-apply
 make server-status
 make server-proof
 ```
+
+`Native k3s Images` publishes immutable `sha-<commit>` images and a
+commit-specific image-lock artifact on pushes to `main`. Promote the exact
+published commit with `make server-image-sync` (or set
+`UTCP_SERVER_SOURCE_COMMIT` to a full commit SHA) before preflight and apply.
+Promotion is authenticated, validates source/tag/digest provenance, and
+atomically installs `.runtime/native-k3s/image-lock.env`. `server-apply` uses
+the active lock; it does not imply that the current repository HEAD is desired
+unless that lock was promoted. Manual image rebuilding or pushing is not the
+normal native-k3s path.
 
 The `local-*` lifecycle is retained only for explicitly optional, non-canonical k3d integration work. It must not be used as current V1 live or acceptance authority. If a historical k3d environment is running, native checks fail closed before canonical proof can proceed.
 
