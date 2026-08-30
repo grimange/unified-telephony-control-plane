@@ -22,10 +22,13 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** implement the minimal canonical Gap E
-provider-failure taxonomy and `failure_class`/`failure_code` projection using the
-live-proven provider PJSIP termination authority and the live-proven CallLeg
-correlation. Both Gap E prerequisites are now settled by live proof. The
+**Exactly one next action:** deploy the exact committed minimal Gap E taxonomy
+implementation through the canonical native-k3s lifecycle and repeat the
+deterministic `97002` / SIP 404 proof once. Require CallLeg and Call to
+converge to `failed / remote / remote / unreachable / destination_not_found`
+while raw provider facts remain preserved. The minimal 404 mapping is now
+implemented and repository-tested; Gap E remains open pending this natural
+live taxonomy re-proof. Both Gap E prerequisites are settled by live proof. The
 2026-08-30 fact-binding proof established the provider fact authority: a
 canonical Call to the operator-confirmed absent extension `97002` produced the
 pre-established `SIP 404 Not Found`, and the provider-facing PJSIP channel

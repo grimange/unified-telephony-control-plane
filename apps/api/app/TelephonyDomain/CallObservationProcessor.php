@@ -74,15 +74,25 @@ final class CallObservationProcessor
         }
 
         $channelId = $this->channel($payload);
-        $legId = $this->resolveLegId($tenantId, (string) ($observation['subject_id'] ?? ''), $nodeId, $channelId);
+        $providerTerminalFailure = ($payload['provider_terminal_failure'] ?? false) === true;
+        $deferPreAnswerTerminalization = ($payload['defer_pre_answer_terminalization'] ?? false) === true;
+        $legId = $this->resolveLegId($tenantId, (string) ($observation['subject_id'] ?? ''), $nodeId, $channelId, $providerTerminalFailure || $deferPreAnswerTerminalization);
         if ($legId === null || $channelId === null) {
             return;
         }
 
         if ($type === 'call.leg.terminated' || $type === 'call.leg.failed') {
+            if ($providerTerminalFailure && is_int($payload['tech_cause'] ?? null)) {
+                [$failureClass, $failureCode] = ($payload['tech_cause'] === 404)
+                    ? ['unreachable', 'destination_not_found']
+                    : [null, null];
+                $this->calls->terminalizeObservedProviderFailure($tenantId, $legId, $nodeId, $channelId, $failureClass, $failureCode, is_string($observation['observed_at'] ?? null) ? $observation['observed_at'] : null);
+
+                return;
+            }
             $state = $type === 'call.leg.failed' ? CallState::Failed : CallState::Completed;
             $observedAt = is_string($observation['observed_at'] ?? null) ? $observation['observed_at'] : null;
-            $this->calls->terminalizeObservedLeg($tenantId, $legId, $nodeId, $channelId, $state, $observedAt);
+            $this->calls->terminalizeObservedLeg($tenantId, $legId, $nodeId, $channelId, $state, $observedAt, $deferPreAnswerTerminalization);
 
             return;
         }
@@ -181,21 +191,19 @@ final class CallObservationProcessor
         return array_values(array_filter($value, static fn (mixed $item): bool => is_string($item) && trim($item) !== ''));
     }
 
-    private function resolveLegId(string $tenantId, string $subjectId, string $nodeId, ?string $channelId): ?string
+    private function resolveLegId(string $tenantId, string $subjectId, string $nodeId, ?string $channelId, bool $allowExplicitChannelMismatch = false): ?string
     {
         $leg = null;
         if ($subjectId !== '' && ! str_starts_with($subjectId, 'runtime:')) {
-            $leg = DB::table('call_legs')
-                ->where('tenant_id', $tenantId)
-                ->where('id', $subjectId)
-                ->where(function ($query) use ($nodeId, $channelId): void {
-                    $query->where(function ($nested) use ($nodeId, $channelId): void {
-                        $nested->where('runtime_node_id', $nodeId)->where('runtime_channel_id', $channelId);
-                    })->orWhere(function ($nested) use ($nodeId): void {
-                        $nested->where('runtime_node_id', $nodeId)->whereNull('runtime_channel_id');
-                    });
-                })
-                ->first();
+            $query = DB::table('call_legs')->where('tenant_id', $tenantId)->where('id', $subjectId)->where('runtime_node_id', $nodeId);
+            if (! $allowExplicitChannelMismatch) {
+                $query->where(function ($nested) use ($channelId, $nodeId): void {
+                    $nested->where(function ($query) use ($channelId, $nodeId): void {
+                        $query->where('runtime_node_id', $nodeId)->where('runtime_channel_id', $channelId);
+                    })->orWhereNull('runtime_channel_id');
+                });
+            }
+            $leg = $query->first();
         }
         if ($leg === null && $channelId !== null) {
             $leg = DB::table('call_legs')

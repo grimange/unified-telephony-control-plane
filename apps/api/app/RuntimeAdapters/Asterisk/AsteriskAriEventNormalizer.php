@@ -243,6 +243,10 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
             }
         }
         if ($type === 'call.leg.terminated') {
+            if (is_int($payload['tech_cause'] ?? null)) {
+                $safe['provider_terminal_failure'] = true;
+            }
+            $safe['defer_pre_answer_terminalization'] = true;
             foreach (['cause', 'cause_txt', 'tech_cause'] as $fact) {
                 if (array_key_exists($fact, $payload) && $payload[$fact] !== null) {
                     $safe[$fact] = $payload[$fact];

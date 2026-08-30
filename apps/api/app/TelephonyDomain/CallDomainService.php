@@ -563,9 +563,9 @@ final class CallDomainService
         });
     }
 
-    public function terminalizeObservedLeg(string $tenantId, string $legId, string $runtimeNodeId, string $runtimeChannelId, CallState $terminalState, ?string $observedAt = null): bool
+    public function terminalizeObservedLeg(string $tenantId, string $legId, string $runtimeNodeId, string $runtimeChannelId, CallState $terminalState, ?string $observedAt = null, bool $deferPreAnswerAsteriskTermination = false): bool
     {
-        return DB::transaction(function () use ($tenantId, $legId, $runtimeNodeId, $runtimeChannelId, $terminalState, $observedAt): bool {
+        return DB::transaction(function () use ($tenantId, $legId, $runtimeNodeId, $runtimeChannelId, $terminalState, $observedAt, $deferPreAnswerAsteriskTermination): bool {
             $leg = DB::table('call_legs')->where('tenant_id', $tenantId)->where('id', $legId)->lockForUpdate()->first();
             if ($leg === null || (string) $leg->runtime_node_id !== $runtimeNodeId || (string) $leg->runtime_channel_id !== $runtimeChannelId) {
                 return false;
@@ -573,11 +573,36 @@ final class CallDomainService
             if (CallState::from($leg->observed_state)->terminal()) {
                 return false;
             }
+            if ($deferPreAnswerAsteriskTermination
+                && $terminalState === CallState::Completed
+                && $leg->direction === CallDirection::Outbound->value
+                && $leg->answered_at === null
+                && ! $this->hasRequestedTerminationIntent($tenantId, (string) $leg->call_id, $legId, $observedAt)) {
+                return false;
+            }
             [$reason, $party] = $terminalState === CallState::Failed
                 ? ['runtime_lost', 'runtime']
                 : ($this->hasRequestedTerminationIntent($tenantId, (string) $leg->call_id, $legId, $observedAt) ? ['requested', 'control_plane'] : ['remote', 'remote']);
 
             return $this->terminalizeObservedLegLocked($tenantId, $leg, $terminalState, $reason, $party, $terminalState === CallState::Failed ? 'call_leg.failed' : 'call_leg.terminated');
+        });
+    }
+
+    public function terminalizeObservedProviderFailure(string $tenantId, string $legId, string $runtimeNodeId, string $runtimeChannelId, ?string $failureClass, ?string $failureCode, ?string $observedAt = null): bool
+    {
+        return DB::transaction(function () use ($tenantId, $legId, $runtimeNodeId, $runtimeChannelId, $failureClass, $failureCode, $observedAt): bool {
+            $leg = DB::table('call_legs')->where('tenant_id', $tenantId)->where('id', $legId)->lockForUpdate()->first();
+            if ($leg === null || (string) $leg->runtime_node_id !== $runtimeNodeId || CallState::from($leg->observed_state)->terminal()) {
+                return false;
+            }
+            $answered = $leg->answered_at !== null;
+            $requested = $this->hasRequestedTerminationIntent($tenantId, (string) $leg->call_id, $legId, $observedAt);
+            $state = $answered || $requested ? CallState::Completed : CallState::Failed;
+            [$reason, $party] = $requested ? ['requested', 'control_plane'] : ['remote', 'remote'];
+            $failureClass = $state === CallState::Failed ? $failureClass : null;
+            $failureCode = $state === CallState::Failed ? $failureCode : null;
+
+            return $this->terminalizeObservedLegLocked($tenantId, $leg, $state, $reason, $party, 'call_leg.terminated', $failureClass, $failureCode);
         });
     }
 
@@ -628,7 +653,7 @@ final class CallDomainService
         return $query->exists();
     }
 
-    private function terminalizeObservedLegLocked(string $tenantId, object $leg, CallState $terminalState, string $reason, string $party, string $eventType): bool
+    private function terminalizeObservedLegLocked(string $tenantId, object $leg, CallState $terminalState, string $reason, string $party, string $eventType, ?string $failureClass = null, ?string $failureCode = null): bool
     {
         if (CallState::from($leg->observed_state)->terminal()) {
             return false;
@@ -638,6 +663,8 @@ final class CallDomainService
             'observed_state' => $terminalState->value,
             'termination_reason' => $reason,
             'termination_party' => $party,
+            'failure_class' => $terminalState === CallState::Failed ? $failureClass : null,
+            'failure_code' => $terminalState === CallState::Failed ? $failureCode : null,
             'terminated_at' => now(),
             'updated_at' => now(),
         ]);
@@ -652,6 +679,8 @@ final class CallDomainService
                     'observed_state' => $callState->value,
                     'termination_reason' => $reason,
                     'termination_party' => $party,
+                    'failure_class' => $callState === CallState::Failed ? $failureClass : null,
+                    'failure_code' => $callState === CallState::Failed ? $failureCode : null,
                     'terminated_at' => now(),
                     'updated_at' => now(),
                 ]);

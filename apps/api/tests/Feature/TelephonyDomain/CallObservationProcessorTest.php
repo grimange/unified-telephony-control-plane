@@ -490,6 +490,194 @@ final class CallObservationProcessorTest extends TestCase
         $this->assertSame('remote', DB::table('call_legs')->where('id', $fixture['leg_id'])->value('termination_reason'));
     }
 
+    public function test_correlated_provider_404_terminalizes_call_and_leg_with_minimal_taxonomy(): void
+    {
+        $fixture = $this->timeoutOutboundFixture(backdate: false);
+        $this->emit('provider-404', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.terminated', $fixture['leg_id'], [
+            'ari_event_type' => 'ChannelDestroyed',
+            'runtime_channel_id' => 'provider-1788070356.2',
+            'cause' => 1,
+            'cause_txt' => 'Unallocated (unassigned) number',
+            'tech_cause' => 404,
+        ]);
+
+        $leg = DB::table('call_legs')->where('id', $fixture['leg_id'])->first();
+        $call = DB::table('calls')->where('id', $fixture['call_id'])->first();
+        foreach ([$leg, $call] as $row) {
+            $this->assertSame('failed', $row->observed_state);
+            $this->assertSame('remote', $row->termination_reason);
+            $this->assertSame('remote', $row->termination_party);
+            $this->assertSame('unreachable', $row->failure_class);
+            $this->assertSame('destination_not_found', $row->failure_code);
+        }
+        $this->assertSame($fixture['channel_id'], $leg->runtime_channel_id);
+        $payload = json_decode((string) DB::table('runtime_observations')->where('source_event_id', DB::table('runtime_event_receipts')->where('external_event_key', 'provider-404')->value('id'))->value('payload'), true);
+        $this->assertSame(1, $payload['cause']);
+        $this->assertSame('Unallocated (unassigned) number', $payload['cause_txt']);
+        $this->assertSame(404, $payload['tech_cause']);
+    }
+
+    public function test_generic_local_pre_answer_termination_waits_for_provider_failure(): void
+    {
+        $fixture = $this->timeoutOutboundFixture(backdate: false);
+        $this->emit('local-first', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.terminated', $fixture['leg_id'], [
+            'ari_event_type' => 'ChannelDestroyed',
+            'runtime_channel_id' => $fixture['channel_id'],
+            'cause' => 1,
+            'cause_txt' => 'Unallocated (unassigned) number',
+        ]);
+        $this->assertSame('originating', DB::table('call_legs')->where('id', $fixture['leg_id'])->value('observed_state'));
+
+        $this->emit('local-second-first', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.terminated', $fixture['leg_id'], [
+            'ari_event_type' => 'ChannelDestroyed',
+            'runtime_channel_id' => 'local-1788070356.2',
+            'cause' => 1,
+            'cause_txt' => 'Unallocated (unassigned) number',
+        ]);
+        $this->assertSame('originating', DB::table('call_legs')->where('id', $fixture['leg_id'])->value('observed_state'));
+
+        $this->emit('provider-after-local', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.terminated', $fixture['leg_id'], [
+            'ari_event_type' => 'ChannelDestroyed',
+            'runtime_channel_id' => 'provider-1788070356.2',
+            'cause' => 1,
+            'cause_txt' => 'Unallocated (unassigned) number',
+            'tech_cause' => 404,
+        ]);
+        $this->assertSame('failed', DB::table('call_legs')->where('id', $fixture['leg_id'])->value('observed_state'));
+        $this->assertSame('destination_not_found', DB::table('calls')->where('id', $fixture['call_id'])->value('failure_code'));
+    }
+
+    public function test_provider_failure_before_generic_local_terminations_has_same_canonical_outcome(): void
+    {
+        $fixture = $this->timeoutOutboundFixture(backdate: false);
+        $this->emit('provider-first', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.terminated', $fixture['leg_id'], [
+            'ari_event_type' => 'ChannelDestroyed',
+            'runtime_channel_id' => 'provider-1788070356.2',
+            'cause' => 1,
+            'cause_txt' => 'Unallocated (unassigned) number',
+            'tech_cause' => 404,
+        ]);
+        foreach (['local-provider-first-2', 'local-provider-first-1'] as $key) {
+            $this->emit($key, $fixture['tenant_id'], $fixture['node_id'], 'call.leg.terminated', $fixture['leg_id'], [
+                'ari_event_type' => 'ChannelDestroyed',
+                'runtime_channel_id' => $key,
+                'cause' => 1,
+                'cause_txt' => 'Unallocated (unassigned) number',
+            ]);
+        }
+
+        $leg = DB::table('call_legs')->where('id', $fixture['leg_id'])->first();
+        $call = DB::table('calls')->where('id', $fixture['call_id'])->first();
+        foreach ([$leg, $call] as $row) {
+            $this->assertSame('failed', $row->observed_state);
+            $this->assertSame('remote', $row->termination_reason);
+            $this->assertSame('remote', $row->termination_party);
+            $this->assertSame('unreachable', $row->failure_class);
+            $this->assertSame('destination_not_found', $row->failure_code);
+        }
+        $this->assertSame($fixture['channel_id'], $leg->runtime_channel_id);
+    }
+
+    public function test_provider_failure_after_answered_call_remains_completed_without_failure_metadata(): void
+    {
+        $fixture = $this->timeoutOutboundFixture(backdate: false);
+        $this->emit('answered-before-provider', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.answered', $fixture['leg_id'], ['runtime_channel_id' => $fixture['channel_id']]);
+        $this->emit('provider-404-after-answer', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.terminated', $fixture['leg_id'], [
+            'ari_event_type' => 'ChannelDestroyed',
+            'runtime_channel_id' => 'provider-1788070356.2',
+            'cause' => 1,
+            'cause_txt' => 'Unallocated (unassigned) number',
+            'tech_cause' => 404,
+        ]);
+
+        $leg = DB::table('call_legs')->where('id', $fixture['leg_id'])->first();
+        $call = DB::table('calls')->where('id', $fixture['call_id'])->first();
+        $this->assertSame('completed', $leg->observed_state);
+        $this->assertSame('completed', $call->observed_state);
+        $this->assertNull($leg->failure_class);
+        $this->assertNull($leg->failure_code);
+        $this->assertNull($call->failure_class);
+        $this->assertNull($call->failure_code);
+    }
+
+    public function test_requested_termination_precedes_correlated_provider_failure(): void
+    {
+        $fixture = $this->timeoutOutboundFixture(backdate: false);
+        app(CallDomainService::class)->requestOperation($fixture['tenant_id'], ExecutionContext::system(tenantId: $fixture['tenant_id']), 'call.leg.hangup', 'call_leg', $fixture['leg_id'], [
+            'call_id' => $fixture['call_id'],
+        ], runtimeNodeId: $fixture['node_id']);
+        $this->emit('provider-404-after-request', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.terminated', $fixture['leg_id'], [
+            'ari_event_type' => 'ChannelDestroyed',
+            'runtime_channel_id' => 'provider-1788070356.2',
+            'tech_cause' => 404,
+        ]);
+
+        $leg = DB::table('call_legs')->where('id', $fixture['leg_id'])->first();
+        $this->assertSame('completed', $leg->observed_state);
+        $this->assertSame('requested', $leg->termination_reason);
+        $this->assertSame('control_plane', $leg->termination_party);
+        $this->assertNull($leg->failure_class);
+        $this->assertNull($leg->failure_code);
+    }
+
+    public function test_unmapped_correlated_provider_failure_is_failed_without_invented_taxonomy(): void
+    {
+        $fixture = $this->timeoutOutboundFixture(backdate: false);
+        $this->emit('provider-unmapped', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.terminated', $fixture['leg_id'], [
+            'ari_event_type' => 'ChannelDestroyed',
+            'runtime_channel_id' => 'provider-unmapped',
+            'cause' => 1,
+            'cause_txt' => 'Unallocated (unassigned) number',
+            'tech_cause' => 486,
+        ]);
+
+        $leg = DB::table('call_legs')->where('id', $fixture['leg_id'])->first();
+        $this->assertSame('failed', $leg->observed_state);
+        $this->assertSame('remote', $leg->termination_reason);
+        $this->assertNull($leg->failure_class);
+        $this->assertNull($leg->failure_code);
+    }
+
+    public function test_provider_404_after_origination_timeout_cannot_rewrite_timeout_or_add_taxonomy(): void
+    {
+        $fixture = $this->timeoutOutboundFixture();
+        $before = DB::table('call_legs')->where('id', $fixture['leg_id'])->first();
+        $this->emit('provider-404-after-timeout', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.terminated', $fixture['leg_id'], [
+            'ari_event_type' => 'ChannelDestroyed',
+            'runtime_channel_id' => 'provider-after-timeout',
+            'cause' => 1,
+            'cause_txt' => 'Unallocated (unassigned) number',
+            'tech_cause' => 404,
+            'occurred_at' => now()->subSeconds(90)->toISOString(),
+        ]);
+        $after = DB::table('call_legs')->where('id', $fixture['leg_id'])->first();
+        $this->assertSame('failed', $after->observed_state);
+        $this->assertSame('origination_timeout', $after->termination_reason);
+        $this->assertSame('system', $after->termination_party);
+        $this->assertSame($before->terminated_at, $after->terminated_at);
+        $this->assertNull($after->failure_class);
+        $this->assertNull($after->failure_code);
+    }
+
+    public function test_duplicate_provider_404_does_not_duplicate_canonical_terminal_audit(): void
+    {
+        $fixture = $this->timeoutOutboundFixture(backdate: false);
+        $payload = [
+            'ari_event_type' => 'ChannelDestroyed',
+            'runtime_channel_id' => 'provider-duplicate',
+            'cause' => 1,
+            'cause_txt' => 'Unallocated (unassigned) number',
+            'tech_cause' => 404,
+        ];
+        $this->emit('provider-duplicate-1', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.terminated', $fixture['leg_id'], $payload);
+        $before = DB::table('call_legs')->where('id', $fixture['leg_id'])->first();
+        $auditCount = DB::table('control_plane_audit_records')->where('action', 'call_leg.terminated')->where('subject_id', $fixture['leg_id'])->count();
+        $this->emit('provider-duplicate-2', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.terminated', $fixture['leg_id'], $payload);
+        $after = DB::table('call_legs')->where('id', $fixture['leg_id'])->first();
+        $this->assertSame((array) $before, (array) $after);
+        $this->assertSame($auditCount, DB::table('control_plane_audit_records')->where('action', 'call_leg.terminated')->where('subject_id', $fixture['leg_id'])->count());
+    }
+
     /** @param array{tenant_id:string,node_id:string,call_id:string,leg_id:string,operation_id:string,channel_id:string} $fixture */
     private function assertLateObservationAfterTimeout(string $type, string $key, string $observedAt): void
     {
@@ -525,6 +713,12 @@ final class CallObservationProcessorTest extends TestCase
     /** @return array{epoch:string,id:string} */
     private function emit(string $key, string $tenantId, string $nodeId, string $observationType, string $subjectId, array $payload, ?string $epoch = null): array
     {
+        if (($payload['ari_event_type'] ?? null) === 'ChannelDestroyed') {
+            $payload['defer_pre_answer_terminalization'] = true;
+            if (is_int($payload['tech_cause'] ?? null)) {
+                $payload['provider_terminal_failure'] = true;
+            }
+        }
         $receipts = app(RuntimeEventReceiptRepository::class);
         $epoch ??= $receipts->openEpoch($tenantId, $nodeId, 'simulator-deterministic', 'c6c-test-'.$key);
         $accepted = $receipts->ingest($tenantId, $nodeId, 'simulator-deterministic', $epoch, $key, 'simulator.call.observation', 1, [
