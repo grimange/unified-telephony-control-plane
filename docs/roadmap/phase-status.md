@@ -22,9 +22,26 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** perform the **K5B — Telephony Placement Awareness**
-natural live proof, the next slice in the `K5A -> K5B -> K5C -> K5D -> K5E`
-distributed-infrastructure track. **K5A is complete.** The 2026-08-30 natural live proof deployed the
+**Exactly one next action:** begin **K5C — Capacity and Failure-Domain Policy**,
+the next slice in the `K5A -> K5B -> K5C -> K5D -> K5E` distributed-infrastructure
+track. **K5B is complete.** The 2026-08-30 natural live proof deployed the exact
+K5B commit through the canonical native-k3s lifecycle and proved the whole
+placement corridor: RuntimeNode `102d58ba-…` resolved its canonical workload
+identity `utcp-runtime | asterisk-v1a-outbound-reproof-asterisk-1787-5fced085`,
+correlated through namespace + `app.kubernetes.io/instance` + `part-of=utcp` to a
+real Pod whose `spec.nodeName` is `utcp-dev01`, and
+`GET /api/v1/admin/runtime-nodes/{id}/placement` returned **HTTP 200** with
+`status: placed` and Node UID, name, readiness, addresses, topology, taints and
+schedulability all matching Kubernetes. K5A and K5B report identical host
+identity. A naturally discovered draft RuntimeNode returned
+`no_managed_kubernetes_identity` as an unforced positive control. Three calls
+produced an identical ordering digest. A fresh natural Playwright login reached
+**Telephony Nodes → Details** and the placement section rendered
+`HOST utcp-dev01`, `HOST STATUS Ready`, `ZONE Not reported`,
+`REGION Not reported`, and the co-resident RuntimeNode — with **zero** controls
+and **zero** forms inside that section. No manual placement sync, refresh, or
+host assignment was required and no Kubernetes mutation occurred. **K5A is
+complete.** The 2026-08-30 natural live proof deployed the
 repaired commit through the canonical native-k3s lifecycle and both previously
 isolated blockers converged **automatically**: the sync migration
 `2026_08_30_100000_sync_k5a_identity_catalog` ran normally and persisted
