@@ -15,6 +15,7 @@ import {
   type RuntimeEndpointEditForm,
   type RuntimeManagementCatalog,
   type RuntimeNode,
+  type RuntimeNodePlacement,
   type RoleCatalog,
   type SignalingMetadata,
 } from '../api/platform'
@@ -42,6 +43,7 @@ export const adapterConfigurationForms = reactive<Record<string, RuntimeAdapterC
 export const adapterConfigurationFieldErrors = reactive<Record<string, Record<string, string>>>({})
 export const runtimeEvidence = reactive<Record<string, RuntimeEvidence>>({})
 export const runtimeHistory = reactive<Record<string, RuntimeHistoryResponse>>({})
+export const runtimeNodePlacements = reactive<Record<string, RuntimeNodePlacement>>({})
 export const runtimeNodeEditForms = reactive<Record<string, RuntimeNodeEditForm>>({})
 export const runtimeEndpointEditForms = reactive<Record<string, RuntimeEndpointEditForm>>({})
 export const runtimeNodeDetailStates = reactive<Record<string, { status: AsyncResourceStatus; error: string }>>({})
@@ -784,6 +786,7 @@ export function clearRuntimeNodeDetails(runtimeNodeId?: string): void {
     delete adapterConfigurationFieldErrors[nextRuntimeNodeId]
     delete runtimeEvidence[nextRuntimeNodeId]
     delete runtimeHistory[nextRuntimeNodeId]
+    delete runtimeNodePlacements[nextRuntimeNodeId]
     delete runtimeNodeEditForms[nextRuntimeNodeId]
     delete runtimeNodeDetailStates[nextRuntimeNodeId]
   }
@@ -843,6 +846,17 @@ export async function loadRuntimeNodeDetails(node: RuntimeNode, force = false): 
   } catch (errorValue) {
     delete runtimeHistory[node.id]
     detailError ??= errorValue
+  }
+
+  try {
+    runtimeNodePlacements[node.id] = (await identityApi.runtimeNodePlacement(node.id)).placement
+  } catch {
+    runtimeNodePlacements[node.id] = {
+      status: 'kubernetes_observation_unavailable',
+      kubernetes_node: null,
+      workload: null,
+      co_resident_runtime_nodes: [],
+    }
   }
 
   if (detailError) {

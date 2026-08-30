@@ -22,9 +22,9 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** begin **K5B — Telephony Placement Awareness**, the
-next slice in the `K5A -> K5B -> K5C -> K5D -> K5E` distributed-infrastructure
-track. **K5A is complete.** The 2026-08-30 natural live proof deployed the
+**Exactly one next action:** perform the **K5B — Telephony Placement Awareness**
+natural live proof, the next slice in the `K5A -> K5B -> K5C -> K5D -> K5E`
+distributed-infrastructure track. **K5A is complete.** The 2026-08-30 natural live proof deployed the
 repaired commit through the canonical native-k3s lifecycle and both previously
 isolated blockers converged **automatically**: the sync migration
 `2026_08_30_100000_sync_k5a_identity_catalog` ran normally and persisted
@@ -156,8 +156,8 @@ documentation task. Current T4 implementation evidence:
 | Queue/ACD | Future extension; no R0 phase |
 | Campaigns, CRM, predictive dialing, agent workflow, advanced IVR, billing/settlement, number purchasing/porting, SMS/MMS | Application, provider, or future domains; outside R0 core |
 
-K5 is the distributed telephony infrastructure track. **K5A implementation and
-its two live blockers are repaired and tested; natural native-k3s/Admin live
+K5 is the distributed telephony infrastructure track. **K5A is complete and
+K5B placement awareness is implemented and tested; K5B natural native-k3s live
 proof is pending.** K5A host visibility,
 K5B telephony placement awareness, K5C capacity/failure-domain policy, K5D
 telephony-aware host maintenance, and K5E a bounded live proof across distinct

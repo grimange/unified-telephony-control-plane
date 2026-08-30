@@ -6,6 +6,8 @@ use App\ControlPlane\Shared\IdempotencyKey;
 use App\Http\Controllers\Controller;
 use App\Identity\Authorization\AuthorizationService;
 use App\Identity\IdentityContext;
+use App\Infrastructure\Kubernetes\KubernetesHostVisibilityService;
+use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClientException;
 use App\RuntimeRegistry\AdapterConfiguration\AdapterConfigurationRegistry;
 use App\RuntimeRegistry\RuntimeEvidenceService;
 use App\RuntimeRegistry\RuntimeNodeHistoryService;
@@ -41,6 +43,21 @@ final class AdminRuntimeNodeController extends Controller
         $authorization->requireTenant($request->user()->id, $tenantId, 'runtime.nodes.view');
 
         return response()->json(['runtime_node' => $registry->node($runtimeNode, $tenantId)]);
+    }
+
+    public function placement(Request $request, string $runtimeNode, AuthorizationService $authorization, KubernetesHostVisibilityService $hosts): JsonResponse
+    {
+        $tenantId = $this->tenantId($request);
+        $authorization->requireTenant($request->user()->id, $tenantId, 'runtime.nodes.view');
+
+        try {
+            return response()->json(['placement' => $hosts->placementForRuntimeNode($runtimeNode, $tenantId)]);
+        } catch (KubernetesWorkloadClientException $exception) {
+            return response()->json([
+                'message' => $exception->getMessage(),
+                'placement' => ['status' => 'kubernetes_observation_unavailable'],
+            ], 503);
+        }
     }
 
     public function store(Request $request, AuthorizationService $authorization, RuntimeRegistryService $registry): JsonResponse

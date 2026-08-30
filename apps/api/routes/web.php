@@ -75,6 +75,7 @@ Route::prefix('api/v1/admin')->middleware(['identity.session'])->group(function 
     Route::get('/runtime-nodes', [AdminRuntimeNodeController::class, 'index']);
     Route::post('/runtime-nodes', [AdminRuntimeNodeController::class, 'store']);
     Route::get('/runtime-nodes/{runtimeNode}', [AdminRuntimeNodeController::class, 'show']);
+    Route::get('/runtime-nodes/{runtimeNode}/placement', [AdminRuntimeNodeController::class, 'placement']);
     Route::patch('/runtime-nodes/{runtimeNode}', [AdminRuntimeNodeController::class, 'update']);
     Route::post('/runtime-nodes/{runtimeNode}/desired-state', [AdminRuntimeNodeController::class, 'desiredState']);
     Route::post('/runtime-nodes/{runtimeNode}/decommission', [AdminRuntimeNodeController::class, 'decommission']);

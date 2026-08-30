@@ -256,6 +256,17 @@ export type RuntimeNode = {
   }
 }
 
+export type RuntimeNodePlacement = {
+  status: 'placed' | 'no_managed_kubernetes_identity' | 'identity_present_but_not_currently_observed' | 'ambiguous_multiple_nodes_observed' | 'kubernetes_observation_unavailable'
+  kubernetes_node: KubernetesHost | null
+  workload: {
+    namespace: string
+    deployment: string
+    pods: Array<{ name: string; namespace: string; node_name: string; phase?: string | null }>
+  } | null
+  co_resident_runtime_nodes: Array<{ id: string; name: string }>
+}
+
 export type ExternalTrunkRegistrationObservation = {
   state: string
   failure_category: string | null
@@ -1120,6 +1131,7 @@ export const identityApi = {
   runtimeNodeCatalog: () => fetchJson<{ catalog: RuntimeManagementCatalog }>('/api/v1/admin/runtime-node-catalog'),
   deploymentTargets: () => fetchJson<{ deployment_targets: DeploymentTarget[] }>('/api/v1/admin/deployment-targets'),
   runtimeNodes: () => fetchJson<{ runtime_nodes: RuntimeNode[] }>('/api/v1/admin/runtime-nodes'),
+  runtimeNodePlacement: (runtimeNodeId: string) => fetchJson<{ placement: RuntimeNodePlacement }>(`/api/v1/admin/runtime-nodes/${runtimeNodeId}/placement`),
   kubernetesHosts: () => fetchJson<{ hosts: KubernetesHost[] }>('/api/v1/admin/infrastructure/hosts'),
   createRuntimeProvisioning: (payload: Record<string, unknown>, idempotencyKey: string) =>
     postJson<{ provisioning_request: RuntimeProvisioningRequest }>(

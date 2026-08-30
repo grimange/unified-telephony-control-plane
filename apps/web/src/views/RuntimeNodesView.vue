@@ -477,7 +477,29 @@
             <section class="detail-section">
               <h3>Placement and infrastructure</h3>
               <p class="meta">
-                Placement and infrastructure ownership remain governed by the canonical Telephony Node lifecycle.
+                Current host placement is observed from Kubernetes and is read-only.
+              </p>
+              <dl
+                v-if="runtimeNodePlacements[node.id]?.status === 'placed'"
+                class="detail-facts"
+              >
+                <div><dt>Host</dt><dd>{{ runtimeNodePlacements[node.id]?.kubernetes_node?.name }}</dd></div>
+                <div><dt>Host status</dt><dd>{{ runtimeNodePlacements[node.id]?.kubernetes_node?.ready ? 'Ready' : 'Not ready' }}</dd></div>
+                <div><dt>Zone</dt><dd>{{ runtimeNodePlacements[node.id]?.kubernetes_node?.labels['topology.kubernetes.io/zone'] ?? 'Not reported' }}</dd></div>
+                <div><dt>Region</dt><dd>{{ runtimeNodePlacements[node.id]?.kubernetes_node?.labels['topology.kubernetes.io/region'] ?? 'Not reported' }}</dd></div>
+                <div><dt>Co-resident RuntimeNodes</dt><dd>{{ runtimeNodePlacements[node.id]?.co_resident_runtime_nodes.map((runtime) => runtime.name).join(', ') || 'None' }}</dd></div>
+              </dl>
+              <p v-else-if="runtimeNodePlacements[node.id]?.status === 'no_managed_kubernetes_identity'">
+                No managed Kubernetes workload identity is configured.
+              </p>
+              <p v-else-if="runtimeNodePlacements[node.id]?.status === 'identity_present_but_not_currently_observed'">
+                The managed workload is not currently observed on a Kubernetes host.
+              </p>
+              <p v-else-if="runtimeNodePlacements[node.id]?.status === 'ambiguous_multiple_nodes_observed'">
+                Multiple Kubernetes hosts are currently observed; placement is not selected arbitrarily.
+              </p>
+              <p v-else>
+                Kubernetes placement is currently unavailable.
               </p>
             </section>
             <form
@@ -1154,6 +1176,7 @@ import {
   runtimeFamilyOptions,
   runtimeHistory,
   runtimeNodeDetailStates,
+  runtimeNodePlacements,
   runtimeNodeForm,
   runtimeNodes,
   runtimeCatalog,

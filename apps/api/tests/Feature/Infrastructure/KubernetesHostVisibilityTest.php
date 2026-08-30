@@ -50,6 +50,75 @@ final class KubernetesHostVisibilityTest extends TestCase
         app(\App\Infrastructure\Kubernetes\KubernetesHostVisibilityService::class)->hosts();
     }
 
+    public function test_runtime_node_placement_is_derived_from_its_managed_workload_and_node(): void
+    {
+        $runtimeId = $this->runtimeNode('runtime-a', 'Runtime A');
+        $tenantId = (string) DB::table('runtime_nodes')->where('id', $runtimeId)->value('tenant_id');
+        $this->app->instance(KubernetesInfrastructureClient::class, new FakeKubernetesInfrastructureClient(
+            nodes: [$this->node('node-a', 'uid-a', 'True')],
+            pods: [$this->pod('pod-a', 'node-a', 'runtime-a', 'Running')],
+        ));
+
+        $placement = app(\App\Infrastructure\Kubernetes\KubernetesHostVisibilityService::class)->placementForRuntimeNode($runtimeId, $tenantId);
+
+        $this->assertSame('placed', $placement['status']);
+        $this->assertSame('node-a', $placement['kubernetes_node']['name']);
+        $this->assertSame('zone-a', $placement['kubernetes_node']['topology']['topology.kubernetes.io/zone']);
+        $this->assertSame([['id' => $runtimeId, 'name' => 'Runtime A']], $placement['co_resident_runtime_nodes']);
+        $this->assertSame('node-a', $placement['workload']['pods'][0]['node_name']);
+    }
+
+    public function test_runtime_node_placement_distinguishes_missing_identity_and_unobserved_workload(): void
+    {
+        $withoutIdentity = IdentityIds::new();
+        $tenantId = IdentityIds::new();
+        DB::table('tenants')->insert(['id' => $tenantId, 'slug' => 'placement', 'display_name' => 'Placement', 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('runtime_nodes')->insert(['id' => $withoutIdentity, 'tenant_id' => $tenantId, 'name' => 'No identity', 'slug' => 'no-identity', 'runtime_family' => 'asterisk', 'adapter_key' => 'asterisk-ari', 'desired_state' => 'draft', 'observed_state' => 'unobserved', 'configuration_version' => 1, 'labels' => json_encode([]), 'created_at' => now(), 'updated_at' => now()]);
+        $unobserved = $this->runtimeNode('unobserved', 'Unobserved');
+        $unobservedTenant = (string) DB::table('runtime_nodes')->where('id', $unobserved)->value('tenant_id');
+        $this->app->instance(KubernetesInfrastructureClient::class, new FakeKubernetesInfrastructureClient(nodes: [$this->node('node-a', 'uid-a', 'True')], pods: []));
+
+        $service = app(\App\Infrastructure\Kubernetes\KubernetesHostVisibilityService::class);
+        $this->assertSame('no_managed_kubernetes_identity', $service->placementForRuntimeNode($withoutIdentity, $tenantId)['status']);
+        $this->assertSame('identity_present_but_not_currently_observed', $service->placementForRuntimeNode($unobserved, $unobservedTenant)['status']);
+    }
+
+    public function test_runtime_node_placement_does_not_select_arbitrarily_when_pods_are_on_multiple_nodes(): void
+    {
+        $runtimeId = $this->runtimeNode('runtime-a', 'Runtime A');
+        $tenantId = (string) DB::table('runtime_nodes')->where('id', $runtimeId)->value('tenant_id');
+        $this->app->instance(KubernetesInfrastructureClient::class, new FakeKubernetesInfrastructureClient(
+            nodes: [$this->node('node-a', 'uid-a', 'True'), $this->node('node-b', 'uid-b', 'True')],
+            pods: [$this->pod('pod-a', 'node-a', 'runtime-a', 'Running'), $this->pod('pod-b', 'node-b', 'runtime-a', 'Running')],
+        ));
+
+        $placement = app(\App\Infrastructure\Kubernetes\KubernetesHostVisibilityService::class)->placementForRuntimeNode($runtimeId, $tenantId);
+
+        $this->assertSame('ambiguous_multiple_nodes_observed', $placement['status']);
+        $this->assertNull($placement['kubernetes_node']);
+        $this->assertSame(['pod-a', 'pod-b'], array_column($placement['workload']['pods'], 'name'));
+    }
+
+    public function test_runtime_node_placement_api_is_tenant_authorized_and_read_only(): void
+    {
+        $runtimeId = $this->runtimeNode('runtime-api', 'Runtime API');
+        $tenantId = (string) DB::table('runtime_nodes')->where('id', $runtimeId)->value('tenant_id');
+        $admin = User::query()->create(['id' => IdentityIds::new(), 'email' => 'placement-admin@utcp.local.test', 'normalized_email' => 'placement-admin@utcp.local.test', 'display_name' => 'Placement Admin', 'password' => Hash::make('password'), 'status' => 'active', 'password_change_required' => false, 'session_version' => 1]);
+        $membershipId = IdentityIds::new();
+        DB::table('tenant_memberships')->insert(['id' => $membershipId, 'user_id' => $admin->id, 'tenant_id' => $tenantId, 'status' => 'active', 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('tenant_role_assignments')->insert(['id' => IdentityIds::new(), 'membership_id' => $membershipId, 'role_key' => 'tenant-admin', 'assigned_by_user_id' => null, 'created_at' => now()]);
+        $this->app->instance(KubernetesInfrastructureClient::class, new FakeKubernetesInfrastructureClient(nodes: [$this->node('node-a', 'uid-a', 'True')], pods: [$this->pod('pod-a', 'node-a', 'runtime-api', 'Running')]));
+
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->getJson("/api/v1/admin/runtime-nodes/{$runtimeId}/placement")
+            ->assertOk()
+            ->assertJsonPath('placement.status', 'placed')
+            ->assertJsonPath('placement.kubernetes_node.name', 'node-a');
+        $this->actingAs($admin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson("/api/v1/admin/runtime-nodes/{$runtimeId}/placement")
+            ->assertMethodNotAllowed();
+    }
+
     public function test_hosts_endpoint_is_platform_authorized_and_read_only(): void
     {
         [$admin] = $this->platformAdmin();

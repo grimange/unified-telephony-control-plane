@@ -263,8 +263,9 @@ host mutation authority. See
 
 **Dependencies / exit criteria:** K5A through K5E progress independently where
 practical, building on existing RNP deployment/workload identity and RuntimeNode
-authorities. R0 requires the bounded K5E proof in addition to the telephony
-track; no K5 implementation or proof is claimed by this roadmap update. K5F is
+authorities. K5A is complete, and K5B placement awareness is implemented and
+tested with its natural native-k3s proof pending. R0 requires the bounded K5E
+proof in addition to the telephony track. K5F is
 sequenced after K5E as an operator-experience enhancement and is not an R0
 requirement. The first K5E multi-host proof does not depend on K5F: the second
 host may be joined with the normal supported Kubernetes/k3s procedure, and only
