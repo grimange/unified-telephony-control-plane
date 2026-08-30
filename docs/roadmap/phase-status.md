@@ -22,9 +22,10 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** begin **K5A — Host / Kubernetes Node Visibility**,
-the read-only discovery and correlation slice that opens the parallel
-R0-critical distributed-infrastructure track. **V1 is complete.** The 2026-08-30
+**Exactly one next action:** deploy and naturally verify **K5A — Host / Kubernetes
+Node Visibility** through the canonical native-k3s lifecycle. K5A is
+implemented and tested as a read-only discovery and correlation slice; live
+Kubernetes/Admin proof remains pending. **V1 is complete.** The 2026-08-30
 controlled live re-proof deployed the committed
 `X-UTCP-Caller-Identity-ID` provider-boundary correction through the canonical
 native-k3s lifecycle — the live Kamailio provider path now executes all four
@@ -135,7 +136,8 @@ documentation task. Current T4 implementation evidence:
 | Queue/ACD | Future extension; no R0 phase |
 | Campaigns, CRM, predictive dialing, agent workflow, advanced IVR, billing/settlement, number purchasing/porting, SMS/MMS | Application, provider, or future domains; outside R0 core |
 
-K5 is the distributed telephony infrastructure track: K5A host visibility,
+K5 is the distributed telephony infrastructure track. **K5A is implemented and
+tested; natural native-k3s/Admin live proof is pending.** K5A host visibility,
 K5B telephony placement awareness, K5C capacity/failure-domain policy, K5D
 telephony-aware host maintenance, and K5E a bounded live proof across distinct
 Kubernetes host/failure domains. It builds on existing RuntimeNode and RNP

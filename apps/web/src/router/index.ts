@@ -21,6 +21,7 @@ import LoginView from '../views/LoginView.vue'
 import MembershipsView from '../views/MembershipsView.vue'
 import NotFoundView from '../views/NotFoundView.vue'
 import RuntimeNodesView from '../views/RuntimeNodesView.vue'
+import HostsView from '../views/HostsView.vue'
 import RuntimeOperationsView from '../views/RuntimeOperationsView.vue'
 import RuntimeReconciliationsView from '../views/RuntimeReconciliationsView.vue'
 import ReferenceDialerView from '../views/ReferenceDialerView.vue'
@@ -65,6 +66,7 @@ export const routes = [
       { path: 'admin/users', name: 'admin-users', component: UsersView, meta: { requiresAuth: true, title: 'Users', capabilityAny: ['platform.users.view', 'tenant.memberships.view'] } },
       { path: 'admin/users/:id', name: 'admin-user-detail', component: UserDetailView, meta: { requiresAuth: true, title: 'User detail', capabilityAny: ['platform.users.view', 'tenant.memberships.view'] } },
       { path: 'admin/runtime-nodes', name: 'admin-runtime-nodes', component: RuntimeNodesView, meta: { requiresAuth: true, title: 'Telephony Nodes', capability: 'runtime.nodes.view' } },
+      { path: 'admin/hosts', name: 'admin-hosts', component: HostsView, meta: { requiresAuth: true, title: 'Hosts', capability: 'platform.infrastructure.view' } },
       { path: 'operations/runtime-operations', name: 'operations-runtime-operations', component: RuntimeOperationsView, meta: { requiresAuth: true, title: 'Runtime operations', capability: 'runtime.nodes.view' } },
       { path: 'operations/runtime-reconciliations', name: 'operations-runtime-reconciliations', component: RuntimeReconciliationsView, meta: { requiresAuth: true, title: 'Reconciliations', capability: 'runtime.nodes.view' } },
       { path: 'system/status', name: 'system-status', component: PlatformStatusPage, meta: { requiresAuth: true, title: 'System status' } },

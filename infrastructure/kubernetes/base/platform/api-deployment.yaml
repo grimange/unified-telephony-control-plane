@@ -19,8 +19,8 @@ spec:
         app.kubernetes.io/component: api
         utcp.io/network-role: api
     spec:
-      serviceAccountName: utcp-platform-app
-      automountServiceAccountToken: false
+      serviceAccountName: utcp-api
+      automountServiceAccountToken: true
       securityContext:
         runAsNonRoot: true
         runAsUser: 33

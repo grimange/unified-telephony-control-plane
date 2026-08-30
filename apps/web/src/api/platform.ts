@@ -57,6 +57,21 @@ export type AdminTenant = {
   status: string
 }
 
+export type KubernetesHost = {
+  uid: string
+  name: string
+  ready: boolean
+  conditions: Array<{ type: string; status: string; reason?: string | null }>
+  addresses: Array<{ type: string; address: string }>
+  capacity: Record<string, string | number>
+  allocatable: Record<string, string | number>
+  labels: Record<string, string>
+  taints: unknown[]
+  unschedulable: boolean
+  workloads: Array<{ name: string; namespace: string; phase?: string; runtime_node_id?: string | null; runtime_node_name?: string | null }>
+  runtime_nodes: Array<{ id: string; name: string }>
+}
+
 export type AdminUser = {
   id: string
   email: string
@@ -1105,6 +1120,7 @@ export const identityApi = {
   runtimeNodeCatalog: () => fetchJson<{ catalog: RuntimeManagementCatalog }>('/api/v1/admin/runtime-node-catalog'),
   deploymentTargets: () => fetchJson<{ deployment_targets: DeploymentTarget[] }>('/api/v1/admin/deployment-targets'),
   runtimeNodes: () => fetchJson<{ runtime_nodes: RuntimeNode[] }>('/api/v1/admin/runtime-nodes'),
+  kubernetesHosts: () => fetchJson<{ hosts: KubernetesHost[] }>('/api/v1/admin/infrastructure/hosts'),
   createRuntimeProvisioning: (payload: Record<string, unknown>, idempotencyKey: string) =>
     postJson<{ provisioning_request: RuntimeProvisioningRequest }>(
       '/api/v1/admin/runtime-provisioning',

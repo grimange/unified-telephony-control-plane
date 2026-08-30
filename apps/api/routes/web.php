@@ -8,6 +8,7 @@ use App\Http\Controllers\Identity\AdminRoleController;
 use App\Http\Controllers\Identity\AdminTenantController;
 use App\Http\Controllers\Identity\AdminUserController;
 use App\Http\Controllers\Identity\AuthController;
+use App\Http\Controllers\Infrastructure\AdminKubernetesHostController;
 use App\Http\Controllers\RuntimeProvisioning\AdminRuntimeProvisioningController;
 use App\Http\Controllers\RuntimeRegistry\AdminRuntimeNodeController;
 use App\Http\Controllers\TelephonyDomain\AdminC7aController;
@@ -59,6 +60,7 @@ Route::prefix('api/v1/admin')->middleware(['identity.session'])->group(function 
     Route::get('/roles', [AdminRoleController::class, 'index']);
 
     Route::get('/runtime-operations', [AdminRuntimeOperationController::class, 'index']);
+    Route::get('/infrastructure/hosts', [AdminKubernetesHostController::class, 'index']);
     Route::get('/runtime-operations/{runtimeOperation}', [AdminRuntimeOperationController::class, 'show']);
     Route::get('/runtime-reconciliations', [AdminRuntimeReconciliationController::class, 'index']);
     Route::get('/runtime-reconciliations/{runtimeReconciliation}', [AdminRuntimeReconciliationController::class, 'show']);

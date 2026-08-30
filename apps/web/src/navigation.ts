@@ -38,6 +38,7 @@ export const navigationEntries: NavigationEntry[] = [
   { route: '/routing/caller-identities', label: 'Caller Identities', group: 'routing', exact: true, requiredCapability: 'telephony.external_connectivity.view', requiresActiveTenant: true },
   { route: '/operations/conferences', label: 'Conferences', group: 'calls', exact: true, requiredCapability: 'telephony.conferences.view' },
   { route: '/admin/runtime-nodes', label: 'Telephony Nodes', group: 'telephony-infrastructure', exact: true, requiredCapability: 'runtime.nodes.view' },
+  { route: '/admin/hosts', label: 'Hosts', group: 'telephony-infrastructure', exact: true, requiredCapability: 'platform.infrastructure.view' },
   { route: '/admin/tenants', label: 'Tenants', group: 'system', exact: true, requiredCapability: 'platform.tenants.view' },
   {
     route: '/admin/users',
