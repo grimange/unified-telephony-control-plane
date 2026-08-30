@@ -108,7 +108,13 @@ authority.
 
 - Generic Kubernetes dashboard functionality.
 - Arbitrary `kubectl` execution from the Admin UI.
-- Cluster provisioning or replacement of Kubernetes scheduling.
+- Cluster provisioning or replacement of Kubernetes scheduling. This forbids
+  UTCP creating or managing Kubernetes clusters, replacing k3s/kubeadm,
+  inventing Kubernetes Nodes, owning Node existence or readiness, or becoming a
+  generic cluster lifecycle manager. It does **not** forbid the later guided
+  enrollment of a new machine into an already-existing, already-authorized
+  cluster described in the 2026-08-30 amendment below; guided existing-cluster
+  host enrollment is not cluster provisioning.
 - Immediate multi-cluster, cloud-federation, or AWS-hybrid implementation.
 - Any C6 closure work, T4 FreeSWITCH parity work, or C7 routing/trunk work.
 
@@ -145,3 +151,123 @@ correlation, telephony-aware draining, maintenance coordination, and automatic
 restoration established by K5, without assuming one host or local filesystem.
 This ADR does not define those RMA contracts; see
 [`ADR-029`](ADR-029-recording-media-artifact-and-archive-authority.md).
+
+## Roadmap alignment amendment — 2026-08-30: guided existing-cluster host enrollment
+
+### Why this amendment exists
+
+The original non-goal list forbids "cluster provisioning" without distinguishing
+two different things that current wording collapses:
+
+```text
+cluster provisioning                              still a non-goal
+guided enrollment into an existing cluster        future allowed direction
+```
+
+This amendment draws that line so a later operator-experience slice cannot be
+mistaken either for a prohibited direction or for permission to become a
+Kubernetes replacement.
+
+### What remains forbidden
+
+UTCP must never create or manage Kubernetes clusters, replace k3s or kubeadm,
+invent Kubernetes Nodes, own Node existence or readiness, become a generic
+cluster lifecycle manager, or become Rancher, OpenLens, or a Kubernetes
+Dashboard. Arbitrary `kubectl` execution and arbitrary host shell access from
+the Admin UI remain forbidden.
+
+### What a future guided enrollment may become
+
+A future slice may offer a guided Admin UI workflow whose whole purpose is to
+make an operator's existing, supported Kubernetes join procedure easier and
+auditable — never to perform cluster lifecycle management:
+
+```text
+Admin UI
+  -> create a short-lived host enrollment intent
+  -> generate a one-time bootstrap credential/package
+  -> operator runs it locally on the new machine
+  -> the machine joins through the supported Kubernetes/k3s mechanism
+  -> Kubernetes creates the authoritative Node
+  -> UTCP observes and discovers that Node
+  -> enrollment correlates to the Kubernetes Node UID
+  -> normal K5 host visibility and telephony interpretation take over
+```
+
+The privileged work happens locally on the machine being enrolled, initiated by
+the operator. UTCP issues an intent and later correlates a fact; it does not
+reach into hosts.
+
+### Enrollment authority boundary
+
+A future enrollment record — conceptually `NodeEnrollment` or
+`InfrastructureEnrollment` — is an **intent and audit** object, not a host
+authority. It may own only:
+
+```text
+enrollment intent
+one-time token hash
+expiration
+claim/consumption state
+operator audit metadata
+requested role/topology hints
+matched Kubernetes Node UID
+failure/cancellation status
+```
+
+It must never become authoritative for Node existence, readiness, addresses,
+capacity, conditions, scheduling, or placement. Those remain Kubernetes facts
+under the Decision above, and no durable duplicate `Host` authority is created.
+No schema is defined by this amendment.
+
+### Enrollment lifecycle and the readiness rule
+
+A bounded conceptual lifecycle, not a schema commitment:
+
+```text
+PENDING -> CLAIMED -> JOINING -> DISCOVERED -> READY
+terminal: EXPIRED | FAILED | CANCELLED
+```
+
+One rule is load-bearing and permanent:
+
+```text
+READY is never operator-authored.
+```
+
+Readiness is derived from observed Kubernetes Node facts plus UTCP telephony
+prerequisites. There must never be a "Mark Ready" control, nor any manual
+authority over Node readiness.
+
+### Security posture
+
+Guided enrollment must use a short-lived, one-time or bounded-use enrollment
+credential with explicit expiration, operator authorization, an audit trail,
+least privilege, explicit failure states, and idempotent correlation. It must
+not require a permanent root agent with unrestricted shell, broad passwordless
+sudo, cluster-admin, or a static long-lived join token displayed in the UI.
+Bootstrap transport, package signing, token exchange, and k3s join mechanics
+remain implementation decisions and are deliberately not frozen here.
+
+### Roadmap placement
+
+This becomes **K5F — Guided Existing-Cluster Host Enrollment**, classified as
+Planned / Post-K5E Operator Experience. It follows K5E, does not reorder
+K5A–K5E, is **not an R0 gate by default**, and does not block RMA. K5A remains
+read-only: it discovers Nodes that already exist in Kubernetes and gains no
+"Create Host", manual Node registration, manual readiness, cluster-join, or host
+mutation authority from this amendment.
+
+The first K5E multi-host proof does **not** depend on K5F. The second host may be
+joined with the normal supported Kubernetes/k3s procedure, after which K5E proves
+discovery, RuntimeNode correlation, placement awareness, telephony eligibility,
+failure-domain interpretation, new-work exclusion, draining, and restoration.
+Only once that architecture is proven should K5F automate the operator path for
+subsequent hosts.
+
+K5D telephony-aware maintenance remains a separate workflow from enrollment and
+is unchanged by this amendment. It must not become a raw drain button, arbitrary
+node mutation surface, remote shell, or manual runtime-state editor.
+
+`K5E -> RMA` is unchanged; RMA depends on the distributed host and
+failure-domain foundation, not on guided enrollment UX.

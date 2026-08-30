@@ -231,10 +231,35 @@ restoration. Full multi-cluster federation is not an R0 requirement; K5 must
 remain compatible with a future direction of multi-machine, multi-host,
 multi-site/hybrid, and potential multi-cluster operation.
 
+**K5F — Guided Existing-Cluster Host Enrollment (Planned / Post-K5E Operator
+Experience):** a future guided Admin UI workflow that creates a short-lived host
+enrollment intent, issues a one-time bootstrap credential/package the operator
+runs locally on the new machine, lets that machine join an already-authorized
+cluster through the supported Kubernetes/k3s mechanism, then observes the
+resulting Kubernetes Node and correlates the enrollment to its Node UID. This is
+**not** cluster provisioning: UTCP never creates or manages clusters, replaces
+k3s/kubeadm, invents Nodes, or owns Node existence or readiness. A future
+enrollment record is an intent and audit object only — one-time token hash,
+expiration, claim state, operator audit metadata, role/topology hints, matched
+Node UID, failure status — and never becomes authoritative for readiness,
+addresses, capacity, conditions, scheduling, or placement. Readiness is derived
+from Kubernetes facts plus UTCP telephony prerequisites and is never
+operator-authored; there is no "Mark Ready" authority. K5F follows K5E, does not
+reorder K5A–K5E, is **not an R0 gate by default**, and does not block RMA. K5A
+remains read-only and gains no Create Host, manual registration, cluster-join, or
+host mutation authority. See
+[`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md)
+2026-08-30 amendment. Not implemented.
+
 **Dependencies / exit criteria:** K5A through K5E progress independently where
 practical, building on existing RNP deployment/workload identity and RuntimeNode
 authorities. R0 requires the bounded K5E proof in addition to the telephony
-track; no K5 implementation or proof is claimed by this roadmap update.
+track; no K5 implementation or proof is claimed by this roadmap update. K5F is
+sequenced after K5E as an operator-experience enhancement and is not an R0
+requirement. The first K5E multi-host proof does not depend on K5F: the second
+host may be joined with the normal supported Kubernetes/k3s procedure, and only
+once that architecture is proven should K5F automate the operator path.
+`K5E -> RMA` is unchanged.
 
 **Evidence links:** [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md)
 and existing RNP/RNM/runtime evidence; K5 implementation evidence is not yet
