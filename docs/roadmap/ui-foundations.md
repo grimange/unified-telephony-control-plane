@@ -39,6 +39,21 @@ may present Kubernetes-owned facts as read-only observations. The broader
 management and Artisan boundary is defined by
 [`ADR-032`](../decisions/ADR-032-canonical-management-authority-and-break-glass-boundary.md).
 
+## Future Insights direction
+
+Operational management screens remain current canonical/observed-state views.
+A future `Insights` area may provide historical, aggregate, trend, and
+forensic views over a reusable reporting/read API, conceptually covering
+Overview, Calls, Connectivity, Runtime Infrastructure, Operations, and Audit.
+This is product direction only: no routes, Vue components, menu entries,
+permissions, charts, or reporting API are implemented here. The reporting
+boundary is defined by [`ADR-033`](../decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md).
+
+Insights must render backend-derived read models. If realtime refresh is later
+used, Reverb remains notification-only and the frontend refetches canonical
+report data; it does not become report authority. Business reporting remains
+in consuming applications.
+
 ## Sequencing
 
 ```text

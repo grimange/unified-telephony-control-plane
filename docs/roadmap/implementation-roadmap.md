@@ -40,6 +40,14 @@ carrier inventory system. Applications own campaigns, lead lists, pacing,
 agent assignment, dispositions, CRM workflow, business interpretation of
 DTMF, IVR menu trees, business hours, and presentation-specific state.
 
+UTCP may eventually provide vendor-neutral operational telephony,
+infrastructure, lifecycle, control-plane, and audit reports derived from
+canonical state and authoritative external observations. Those reports are
+deterministic read models, not canonical authority. Campaigns, leads, agent
+and workforce productivity, dispositions, conversion, revenue, and other
+business reporting remain application-owned. See
+[`ADR-033`](../decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md).
+
 UTCP is Kubernetes-first because its long-term product purpose includes
 operating distributed telephony infrastructure across machines, host failure
 domains, sites, and eventually hybrid/cloud environments. Kubernetes supplies
@@ -442,6 +450,30 @@ These are planned architectural slices only. No RMA schemas, migrations, APIs,
 workers, adapters, MinIO deployment, or runtime support are claimed. RMA
 depends on the established V1 Call/CallLeg corridor and completed K5E; it does
 not technically depend on A0. See [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md).
+
+### Operational Reporting & Insights
+
+**Status:** Future UTCP core capability; not currently implemented, not a
+current phase, and not an R0 gate. It does not block K5, RMA, or A0 and does
+not alter the K5A → K5B → K5C → K5D → K5E order.
+
+**Objective:** provide reusable vendor-neutral operational telephony,
+infrastructure/runtime, lifecycle/control-plane, and audit/forensic read models
+from canonical UTCP state and authoritative external observations. Future
+reports may serve Web Admin Insights and external consuming applications
+through a reporting/read API.
+
+**Boundary:** reports are derived and read-only with respect to canonical
+Calls, CallLegs, RuntimeNodes, routes, trunks, identities, RMA artifacts,
+Kubernetes facts, readiness, placement, policy, and configuration. Business
+reporting—campaigns, leads, agent/workforce performance, dispositions,
+conversion, sales, revenue, and customer outcomes—belongs to applications.
+
+**Explicit non-goals:** no current reporting tables, projections, APIs,
+workers, UI routes/components, exports, report builder, reporting microservice,
+or mandatory analytics warehouse. PostgreSQL-backed projections in the existing
+modular monolith are the default future direction; external analytics systems
+require later evidence. See [`ADR-033`](../decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md).
 
 ### Release boundary — R0
 

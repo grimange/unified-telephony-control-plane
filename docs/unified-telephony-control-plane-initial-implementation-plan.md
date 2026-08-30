@@ -36,6 +36,9 @@ It owns:
 * normalized route, runtime, and trunk selection decisions
 * operational audit history
 * normalized runtime commands and events
+* vendor-neutral operational telephony, infrastructure, lifecycle,
+  control-plane, and audit reporting derived from canonical state and
+  authoritative observations
 
 Applications built on UTCP may own:
 
@@ -54,6 +57,13 @@ Applications built on UTCP may own:
 Applications request telephony outcomes through public UTCP contracts. They must not manage Asterisk, FreeSWITCH, Kamailio, rtpengine, carrier endpoints, trunk credentials, or vendor-specific call-control APIs directly.
 
 UTCP owns the reusable telephony mechanism and infrastructure policy. Applications own the business workflow that decides why, when, and for whom that mechanism is used.
+
+Operational reporting follows the same boundary. UTCP may eventually provide
+derived, vendor-neutral technical reports over call/call-leg lifecycle,
+runtime, infrastructure, reconciliation, selection, and audit facts. Reports
+are read models and never another authority for canonical state. Applications
+own business reporting such as campaign performance, leads, agent
+productivity, dispositions, conversion, revenue, and customer outcomes.
 
 The first implementation must not attempt to become a complete dialer, contact-center suite, carrier billing platform, or customer-specific workflow engine.
 

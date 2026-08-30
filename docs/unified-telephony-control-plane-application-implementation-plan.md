@@ -61,6 +61,21 @@ The application core must remain:
 - observable
 - recoverable
 
+### 5.5 Technical reporting versus business reporting
+
+UTCP may eventually expose vendor-neutral operational reporting derived from
+canonical Call/CallLeg lifecycle, RuntimeNode and infrastructure observations,
+operations, reconciliation, selection decisions, and audit history. Such
+reports are read models, not a second state or event authority, and may later
+serve Web Admin and external consumers through a reusable reporting/read API.
+
+Consuming applications retain business reporting: campaigns, leads, pacing,
+agent and workforce productivity, dispositions, conversion, sales, revenue,
+appointments, customer outcomes, and business funnel interpretation. An
+application may correlate its business records with UTCP technical identifiers;
+UTCP does not interpret those business concepts. The modular-monolith strategy
+remains unchanged, and no reporting implementation is claimed by this plan.
+
 Runtime-specific behavior belongs behind adapters.
 
 Recording & Media Archive is a planned UTCP core capability, deferred until
