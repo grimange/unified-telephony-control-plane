@@ -22,15 +22,20 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** deploy the exact committed dialog-termination
-correction and rerun the registration/NAT Gap B controlled live proof. The
-2026-08-29 controlled live proof deployed the exact committed registration/NAT
-topology on native k3s and proved the full return corridor — no-Route provider
-BYE, trusted known-dialog match, `dlg_set_ruri()` retarget to the managed
-runtime Contact, `MEDIA_DELETE`, relay, managed Asterisk receipt, and canonical
-`completed / remote / remote` with `answered_at` preserved. It failed exactly
-one mandatory closure criterion: the proof dialog was reaped by `dlg_ontimeout`
-81.5 s after the BYE rather than closing as a result of it. See the
+**Exactly one next action:** resolve V1 Gap A — delayed-observation versus
+origination-timeout precedence in canonical CallLeg termination. **Gap B is
+closed.** The 2026-08-30 controlled live re-proof deployed the exact committed
+`dlg_manage()` correction on native k3s through the canonical lifecycle and
+proved the remaining criterion: a no-Route provider BYE drove the tracked
+dialog from `state 3` to `state 5` (`DLG_STATE_DELETED`) at the BYE, the dialog
+left the live dialog store 5.0 s later, and no `dlg_ontimeout` occurred over a
+328 s observation window — against 81.5 s to timeout reap on 2026-08-29. The
+previously proven corridor was unchanged: trusted known-dialog match,
+`dlg_set_ruri()` retarget to the managed runtime Contact, `MEDIA_DELETE`,
+relay, managed Asterisk receipt, and canonical `completed / remote / remote`
+with `answered_at` preserved. See the
+[`registration-dialog BYE termination live re-proof`](../evidence/v1/v1-registration-dialog-bye-termination-live-reproof.md),
+[`dialog-termination correction`](../evidence/v1/v1-registration-dialog-bye-termination-correction.md),
 [`registration-dialog return live proof`](../evidence/v1/v1-registration-dialog-return-path-live-proof.md),
 [`topology-coherent anchoring evidence`](../evidence/v1/v1-provider-dialog-topology-coherent-anchoring.md)
 and [`registration-dialog return evidence`](../evidence/v1/v1-registration-dialog-return-path-implementation.md).
@@ -91,7 +96,7 @@ documentation task. Current T4 implementation evidence:
 | C7A | Complete | Tenant-scoped ExternalTrunk, endpoint/credential-reference lifecycle, TelephonyAddress, CallerIdentity, policy, and provider-neutral Admin API; see `docs/evidence/c7a/` |
 | C7B | Complete | Inbound/outbound routes, derived RouteDecision, and runtime-neutral DestinationRef; see `docs/evidence/c7b/` |
 | T6 | Complete | Provider projection and Kamailio/Asterisk synthetic consumption verified; V1 owns natural external SIP acceptance |
-| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, and the Gap B registration/NAT dialog-return implementation are repository-proven. The bounded Kamailio dialog-termination correction is implemented and tested; controlled live re-proof remains pending. |
+| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, and the Gap B registration/NAT dialog-return corridor are repository-proven and live-proven. Gap B closed on 2026-08-30 after the bounded Kamailio dialog-termination correction was deployed and re-proven live. Gap A and Gap E remain open. |
 | A0 | Planned | Follows V1; minimal outbound, inbound, and IVR-style reference consumers |
 | R0 | Planned | Finite release boundary after the mainline evidence is complete |
 
@@ -114,14 +119,12 @@ workload placement. Full multi-cluster federation remains future-compatible,
 not an R0 requirement.
 
 V1 gap status is explicit: Gap A remains open for delayed-observation versus
-origination-timeout precedence; Gap B has its Kamailio dialog-termination
-correction implemented and repository-tested, while controlled live re-proof
-is pending. The registration/NAT return path, managed-runtime BYE receipt, and
-canonical `completed / remote / remote` termination were already live-proven;
-the next proof must establish that the fallback-handled provider BYE closes its
-own dialog without `dlg_ontimeout()`. Gap E remains open for SIP/Q.850 failure taxonomy and
-`failure_class`/`failure_code`; and Gap F remains a `PROOF_GAP_ONLY`
-provider-wire trust-boundary proof gap.
+origination-timeout precedence; **Gap B is closed** — the registration/NAT
+return path, managed-runtime BYE receipt, canonical
+`completed / remote / remote` termination, and BYE-caused Kamailio dialog
+termination without `dlg_ontimeout()` are all live-proven. Gap E remains open
+for SIP/Q.850 failure taxonomy and `failure_class`/`failure_code`; and Gap F
+remains a `PROOF_GAP_ONLY` provider-wire trust-boundary proof gap.
 ADR-031 implementation is
 complete, while stable-public-edge live acceptance is
 `DEFERRED_BY_ENVIRONMENT`, not abandoned, and does not block the registration/
