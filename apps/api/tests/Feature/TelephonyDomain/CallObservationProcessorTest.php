@@ -421,6 +421,107 @@ final class CallObservationProcessorTest extends TestCase
         $this->assertSame('offered', DB::table('call_legs')->where('id', $legId)->value('observed_state'));
     }
 
+    public function test_late_offered_after_origination_timeout_is_persisted_without_reopening(): void
+    {
+        $this->assertLateObservationAfterTimeout('call.leg.offered', 'late-offered', now()->subSeconds(90)->toISOString());
+    }
+
+    public function test_late_answered_after_origination_timeout_cannot_set_answered_at_or_reopen_call(): void
+    {
+        $fixture = $this->timeoutOutboundFixture();
+        $this->emit('late-answered', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.answered', $fixture['leg_id'], [
+            'runtime_channel_id' => $fixture['channel_id'],
+            'occurred_at' => now()->subSeconds(90)->toISOString(),
+        ]);
+
+        $leg = DB::table('call_legs')->where('id', $fixture['leg_id'])->first();
+        $call = DB::table('calls')->where('id', $fixture['call_id'])->first();
+        $this->assertSame('failed', $leg->observed_state);
+        $this->assertSame('origination_timeout', $leg->termination_reason);
+        $this->assertSame('system', $leg->termination_party);
+        $this->assertNull($leg->answered_at);
+        $this->assertSame('failed', $call->observed_state);
+        $this->assertNull($call->answered_at);
+        $this->assertDatabaseHas('runtime_observations', ['observation_type' => 'call.leg.answered', 'subject_id' => $fixture['leg_id']]);
+    }
+
+    public function test_late_orderly_termination_after_origination_timeout_preserves_timeout_metadata(): void
+    {
+        $this->assertLateObservationAfterTimeout('call.leg.terminated', 'late-terminated', now()->subSeconds(90)->toISOString());
+    }
+
+    public function test_late_failure_after_origination_timeout_preserves_timeout_metadata(): void
+    {
+        $this->assertLateObservationAfterTimeout('call.leg.failed', 'late-failed', now()->subSeconds(90)->toISOString());
+    }
+
+    public function test_duplicate_late_terminal_observation_does_not_add_canonical_terminal_audit(): void
+    {
+        $fixture = $this->timeoutOutboundFixture();
+        $payload = ['runtime_channel_id' => $fixture['channel_id'], 'occurred_at' => now()->subSeconds(90)->toISOString()];
+        $this->emit('duplicate-late', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.terminated', $fixture['leg_id'], $payload);
+        $before = DB::table('call_legs')->where('id', $fixture['leg_id'])->first();
+        $auditCount = DB::table('control_plane_audit_records')->where('action', 'call_leg.terminated')->where('subject_id', $fixture['leg_id'])->count();
+        $this->emit('duplicate-late', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.terminated', $fixture['leg_id'], $payload);
+        $after = DB::table('call_legs')->where('id', $fixture['leg_id'])->first();
+        $this->assertSame((array) $before, (array) $after);
+        $this->assertSame($auditCount, DB::table('control_plane_audit_records')->where('action', 'call_leg.terminated')->where('subject_id', $fixture['leg_id'])->count());
+    }
+
+    public function test_answered_observation_first_suppresses_origination_timeout(): void
+    {
+        $fixture = $this->timeoutOutboundFixture(backdate: false);
+        $this->emit('answered-first', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.answered', $fixture['leg_id'], ['runtime_channel_id' => $fixture['channel_id']]);
+        DB::table('runtime_operations')->where('id', $fixture['operation_id'])->update(['status' => 'succeeded', 'completed_at' => now()->subSeconds(61), 'updated_at' => now()->subSeconds(61)]);
+        $result = app(\App\TelephonyDomain\Reconciliation\CallOriginationReconciler::class)->evaluate((object) ['tenant_id' => $fixture['tenant_id'], 'target_id' => $fixture['leg_id']]);
+        $this->assertSame('converged', $result->status);
+        $this->assertSame('answered', DB::table('call_legs')->where('id', $fixture['leg_id'])->value('observed_state'));
+        $this->assertNull(DB::table('call_legs')->where('id', $fixture['leg_id'])->value('termination_reason'));
+    }
+
+    public function test_terminal_observation_first_suppresses_origination_timeout(): void
+    {
+        $fixture = $this->timeoutOutboundFixture(backdate: false);
+        $this->emit('terminated-first', $fixture['tenant_id'], $fixture['node_id'], 'call.leg.terminated', $fixture['leg_id'], ['runtime_channel_id' => $fixture['channel_id']]);
+        DB::table('runtime_operations')->where('id', $fixture['operation_id'])->update(['status' => 'succeeded', 'completed_at' => now()->subSeconds(61), 'updated_at' => now()->subSeconds(61)]);
+        $result = app(\App\TelephonyDomain\Reconciliation\CallOriginationReconciler::class)->evaluate((object) ['tenant_id' => $fixture['tenant_id'], 'target_id' => $fixture['leg_id']]);
+        $this->assertSame('converged', $result->status);
+        $this->assertSame('completed', DB::table('call_legs')->where('id', $fixture['leg_id'])->value('observed_state'));
+        $this->assertSame('remote', DB::table('call_legs')->where('id', $fixture['leg_id'])->value('termination_reason'));
+    }
+
+    /** @param array{tenant_id:string,node_id:string,call_id:string,leg_id:string,operation_id:string,channel_id:string} $fixture */
+    private function assertLateObservationAfterTimeout(string $type, string $key, string $observedAt): void
+    {
+        $fixture = $this->timeoutOutboundFixture();
+        $before = DB::table('call_legs')->where('id', $fixture['leg_id'])->first();
+        $operationBefore = DB::table('runtime_operations')->where('id', $fixture['operation_id'])->first();
+        $this->emit($key, $fixture['tenant_id'], $fixture['node_id'], $type, $fixture['leg_id'], ['runtime_channel_id' => $fixture['channel_id'], 'occurred_at' => $observedAt]);
+        $after = DB::table('call_legs')->where('id', $fixture['leg_id'])->first();
+        $call = DB::table('calls')->where('id', $fixture['call_id'])->first();
+        $operationAfter = DB::table('runtime_operations')->where('id', $fixture['operation_id'])->first();
+        $this->assertSame('failed', $after->observed_state);
+        $this->assertSame('origination_timeout', $after->termination_reason);
+        $this->assertSame('system', $after->termination_party);
+        $this->assertSame($before->terminated_at, $after->terminated_at);
+        $this->assertSame('failed', $call->observed_state);
+        $this->assertSame('origination_timeout', $call->termination_reason);
+        $this->assertSame((array) $operationBefore, (array) $operationAfter);
+        $this->assertDatabaseHas('runtime_observations', ['observation_type' => $type, 'subject_id' => $fixture['leg_id'], 'observed_at' => $observedAt]);
+    }
+
+    /** @return array{tenant_id:string,node_id:string,call_id:string,leg_id:string,operation_id:string,channel_id:string} */
+    private function timeoutOutboundFixture(bool $backdate = true): array
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $result = app(CallDomainService::class)->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId), null, $nodeId);
+        if ($backdate) {
+            DB::table('runtime_operations')->where('id', $result['operation_id'])->update(['status' => 'succeeded', 'completed_at' => now()->subSeconds(61), 'updated_at' => now()->subSeconds(61)]);
+            app(\App\TelephonyDomain\Reconciliation\CallOriginationReconciler::class)->evaluate((object) ['tenant_id' => $tenantId, 'target_id' => $result['leg_id']]);
+        }
+        return [...$result, 'tenant_id' => $tenantId, 'node_id' => $nodeId, 'channel_id' => (string) DB::table('call_legs')->where('id', $result['leg_id'])->value('runtime_channel_id')];
+    }
+
     /** @return array{epoch:string,id:string} */
     private function emit(string $key, string $tenantId, string $nodeId, string $observationType, string $subjectId, array $payload, ?string $epoch = null): array
     {
@@ -433,6 +534,7 @@ final class CallObservationProcessorTest extends TestCase
             'runtime_channel_id' => $payload['runtime_channel_id'] ?? null,
             'observation_payload' => $payload,
             'observed_state' => 'observed',
+            ...(isset($payload['occurred_at']) ? ['occurred_at' => $payload['occurred_at']] : []),
         ]);
         $receipt = DB::table('runtime_event_receipts')->where('id', $accepted['id'])->first();
         $normalizer = new SimulatorEventNormalizer(new SimulatorCatalog, 'simulator.call.observation');

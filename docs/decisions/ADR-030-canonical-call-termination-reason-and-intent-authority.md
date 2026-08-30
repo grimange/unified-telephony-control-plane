@@ -374,9 +374,17 @@ Precedence for concurrent or duplicated terminal events:
 3. Control-plane intent that existed before the winning terminal fact makes
    that fact `requested`, per §5.
 
-This ADR does **not** address the general problem of an observation whose
-`observed_at` precedes a terminalization but whose processing follows it. That
-is Gap A and is untouched here.
+4. The first canonical terminal fact applied to a CallLeg under the canonical
+   row-lock boundary wins and fixes `observed_state`, `termination_reason`,
+   `termination_party`, and `terminated_at`. Once origination reconciliation
+   terminalizes a CallLeg as `failed` / `origination_timeout` / `system`, every
+   subsequently processed runtime observation for that leg — including one
+   whose `observed_at` precedes terminalization — remains persisted evidence
+   and cannot reopen or rewrite the CallLeg or its owning Call. Conversely, an
+   observation applied first that advances the leg out of the pending
+   origination states causes the timeout reconciler to converge without
+   terminalizing. Application order under the row lock is canonical authority;
+   runtime occurrence time is evidence, not canonical reordering authority.
 
 ## Consequences
 
@@ -460,8 +468,6 @@ Cross-runtime consistency
 
 This ADR explicitly does not address:
 
-* **Gap A** — delayed-observation versus origination-timeout precedence, and
-  the general observation-time convergence model.
 * **Gap B** — provider in-dialog BYE routing, Record-Route, Contact, advertised
   SIP address, NodePort, or NAT handling. Only the canonical semantic outcome
   of a provider-originated hangup is defined.

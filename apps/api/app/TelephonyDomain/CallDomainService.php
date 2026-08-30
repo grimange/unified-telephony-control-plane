@@ -512,6 +512,9 @@ final class CallDomainService
             if ($leg === null) {
                 return false;
             }
+            if (CallState::from($leg->observed_state)->terminal()) {
+                return false;
+            }
             if ($leg->runtime_channel_id !== null) {
                 if ((string) $leg->runtime_node_id === $runtimeNodeId && (string) $leg->runtime_channel_id === $runtimeChannelId) {
                     return false;

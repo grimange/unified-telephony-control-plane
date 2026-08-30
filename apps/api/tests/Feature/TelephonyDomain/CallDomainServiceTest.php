@@ -245,6 +245,48 @@ final class CallDomainServiceTest extends TestCase
         $this->assertSame('ringing', DB::table('call_legs')->where('id', $second['leg_id'])->value('observed_state'));
     }
 
+    public function test_terminal_call_leg_rejects_observed_runtime_channel_binding_without_mutation(): void
+    {
+        $tenantId = $this->tenant();
+        $service = app(CallDomainService::class);
+        $result = $service->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId));
+        $before = DB::table('call_legs')->where('id', $result['leg_id'])->first();
+        $service->terminalize($tenantId, 'call_leg', $result['leg_id'], CallState::Failed, 'origination_timeout', 'system');
+        $terminal = DB::table('call_legs')->where('id', $result['leg_id'])->first();
+
+        $this->assertFalse($service->bindObservedRuntimeChannel($tenantId, $result['leg_id'], Str::uuid()->toString(), 'late-channel'));
+        $after = DB::table('call_legs')->where('id', $result['leg_id'])->first();
+        $this->assertSame($terminal->observed_state, $after->observed_state);
+        $this->assertSame($terminal->termination_reason, $after->termination_reason);
+        $this->assertSame($terminal->termination_party, $after->termination_party);
+        $this->assertSame($terminal->terminated_at, $after->terminated_at);
+        $this->assertSame($before->runtime_channel_id, $after->runtime_channel_id);
+    }
+
+    public function test_repeated_origination_timeout_evaluation_is_idempotent(): void
+    {
+        $tenantId = $this->tenant();
+        $result = app(CallDomainService::class)->createOutboundCall($tenantId, ExecutionContext::system(tenantId: $tenantId));
+        DB::table('runtime_operations')->where('id', $result['operation_id'])->update([
+            'status' => 'succeeded',
+            'completed_at' => now()->subSeconds(61),
+            'updated_at' => now()->subSeconds(61),
+        ]);
+        $reconciler = app(\App\TelephonyDomain\Reconciliation\CallOriginationReconciler::class);
+        $target = (object) ['tenant_id' => $tenantId, 'target_id' => $result['leg_id']];
+        $reconciler->evaluate($target);
+        $before = DB::table('call_legs')->where('id', $result['leg_id'])->first();
+        $auditCount = DB::table('control_plane_audit_records')->where('action', 'call_leg.terminated')->where('subject_id', $result['leg_id'])->count();
+
+        $reconciler->evaluate($target);
+        $reconciler->evaluate($target);
+
+        $after = DB::table('call_legs')->where('id', $result['leg_id'])->first();
+        $this->assertSame((array) $before, (array) $after);
+        $this->assertSame(1, $auditCount);
+        $this->assertSame($auditCount, DB::table('control_plane_audit_records')->where('action', 'call_leg.terminated')->where('subject_id', $result['leg_id'])->count());
+    }
+
     public function test_runtime_channel_fence_allows_nulls_rejects_same_node_duplicates_and_allows_other_nodes(): void
     {
         $tenantId = $this->tenant();
