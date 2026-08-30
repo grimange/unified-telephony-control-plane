@@ -10,7 +10,7 @@ not a competing current-roadmap status or a claim that T4 is incomplete.
 
 ## Current state
 
-**Current phase:** V1 — Bidirectional external call routing and control.
+**Current phase:** V1 — Bidirectional external call routing and control — **COMPLETE**. A0 and the parallel K5 distributed-infrastructure track are the post-V1 work.
 
 **Current status:** T4A/T4B are implemented and tested. T4C1/T4C2 are
 implemented, tested, live-proven, and frozen. The timer-backed `media.playback`
@@ -22,22 +22,23 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** deploy the exact committed
-`X-UTCP-Caller-Identity-ID` provider-boundary stripping correction to canonical
-native k3s and perform one controlled natural provider-wire re-proof. **Gap F is
-closed**, and with it every currently recorded V1 gap. The 2026-08-30 live proof used an
-operator-installed temporary capture wrapper (fixed filter, 180 s cutoff, no
-Kubernetes privilege change) and one canonical Call to `97001`. All three adopted
-correlation headers were present and exact on the trusted runtime → Kamailio
-INVITE and **absent from every provider-facing INVITE**, including the
-authenticated retry after `401`; each appears exactly once in the whole capture.
-The provider answered `200 OK`, so the stripped INVITE demonstrably reached the
-external PBX. Recorded separately by that proof:
-`X-UTCP-Caller-Identity-ID` **is transmitted to the provider** on every outbound
-INVITE, because the Asterisk pre-dial handler applies four `X-UTCP-*` headers
-while `route[RUNTIME_EXTERNAL_TRUNK]` removed only three. The bounded
-repository correction now removes all four at the provider relay boundary; its
-natural live re-proof remains pending. See the
+**Exactly one next action:** begin **K5A — Host / Kubernetes Node Visibility**,
+the read-only discovery and correlation slice that opens the parallel
+R0-critical distributed-infrastructure track. **V1 is complete.** The 2026-08-30
+controlled live re-proof deployed the committed
+`X-UTCP-Caller-Identity-ID` provider-boundary correction through the canonical
+native-k3s lifecycle — the live Kamailio provider path now executes all four
+`remove_hf()` operations before `t_relay()` — and one natural canonical Call to
+`97001` proved the complete boundary: all four `X-UTCP-*` headers present and
+exact on the trusted runtime → Kamailio INVITE, and **absent from every
+provider-facing INVITE**, including the authenticated retry after `401`. Each of
+the four appears exactly once in the whole capture. Normal provider-visible
+caller identity (`From: "utcp-v1" <sip:utcp-v1@…>`) is preserved and unchanged by
+the fix, the provider authenticated and answered `200 OK`, and the Call closed
+`completed / requested / control_plane`. With Gap A–F closed and this last item
+proven, no V1 acceptance blocker remains. See the
+[`CallerIdentity provider-wire live proof`](../evidence/v1/v1-caller-identity-provider-wire-trust-boundary-live-proof.md)
+and the
 [`Gap F provider-wire live proof`](../evidence/v1/v1-gap-f-provider-wire-trust-boundary-live-proof.md).
 Gap A is **closed**: the first
 canonical terminal fact applied under a row lock wins, so an origination timeout
@@ -120,8 +121,8 @@ documentation task. Current T4 implementation evidence:
 | C7A | Complete | Tenant-scoped ExternalTrunk, endpoint/credential-reference lifecycle, TelephonyAddress, CallerIdentity, policy, and provider-neutral Admin API; see `docs/evidence/c7a/` |
 | C7B | Complete | Inbound/outbound routes, derived RouteDecision, and runtime-neutral DestinationRef; see `docs/evidence/c7b/` |
 | T6 | Complete | Provider projection and Kamailio/Asterisk synthetic consumption verified; V1 owns natural external SIP acceptance |
-| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, the Gap B registration/NAT dialog-return corridor, and Gap A timeout precedence are repository-proven. Gap A through Gap F are all closed, including the live-proven provider-wire trust boundary. The bounded `X-UTCP-Caller-Identity-ID` provider-boundary stripping correction is implemented and tested; controlled native-k3s live re-proof remains pending. |
-| A0 | Planned | Follows V1; minimal outbound, inbound, and IVR-style reference consumers |
+| V1 | Complete | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, the Gap B registration/NAT dialog-return corridor, and Gap A timeout precedence are repository-proven. Gap A through Gap F are all closed, including the live-proven provider-wire trust boundary. The `X-UTCP-Caller-Identity-ID` provider-boundary correction is deployed and live-proven, so all four internal correlation headers are stripped before provider relay while normal caller identity is preserved. No V1 acceptance blocker remains. |
+| A0 | Eligible | V1 is complete, so A0 may begin in parallel with the K5 track; minimal outbound, inbound, and IVR-style reference consumers |
 | R0 | Planned | Finite release boundary after the mainline evidence is complete |
 
 ## Parallel and deferred tracks
@@ -167,10 +168,12 @@ provider-wire trust boundary is **live-proven**. `X-UTCP-Call-Leg-ID`,
 `X-UTCP-Route-Decision-ID`, and `X-UTCP-Trunk-Endpoint-ID` are present and exact
 on the trusted runtime → Kamailio INVITE and absent from every provider-facing
 INVITE, including the authenticated retry, with the provider answering `200 OK`.
-All six recorded V1 gaps are therefore closed. One new item was isolated by that
-proof and is **not** part of Gap F's adopted scope: the bounded repository
-correction now strips `X-UTCP-Caller-Identity-ID` at the provider relay
-boundary. Controlled native-k3s live re-proof remains pending.
+All six recorded V1 gaps are therefore closed. The one further item that proof
+isolated is now closed as well: the correction that strips
+`X-UTCP-Caller-Identity-ID` at the provider relay boundary is deployed and
+**live-proven**, so all four internal correlation headers are absent from every
+provider-facing INVITE while normal provider-visible caller identity is
+preserved. No V1 acceptance blocker remains.
 ADR-031 implementation is
 complete, while stable-public-edge live acceptance is
 `DEFERRED_BY_ENVIRONMENT`, not abandoned, and does not block the registration/
