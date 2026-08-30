@@ -109,6 +109,7 @@ final class KubernetesHostVisibilityService
             return [
                 'status' => 'ambiguous_multiple_nodes_observed',
                 'kubernetes_node' => null,
+                'observed_nodes' => array_map(fn (string $name): array => $this->hostFacts($nodeByName[$name]), $observedNodeNames),
                 'workload' => $workload,
                 'co_resident_runtime_nodes' => [],
             ];

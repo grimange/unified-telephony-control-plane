@@ -5,6 +5,7 @@ use App\ControlPlane\Shared\ExecutionContext;
 use App\Identity\IdentityIds;
 use App\Identity\UserAccess\ResetUserPasswordService;
 use App\Infrastructure\RuntimeFencing\InfrastructureConnectivityProbe;
+use App\Infrastructure\Kubernetes\K5CPlacementObservationService;
 use App\RuntimeAdapters\Asterisk\AsteriskAriEventListener;
 use App\RuntimeAdapters\Asterisk\AsteriskCatalog;
 use App\RuntimeAdapters\FreeSwitch\FreeSwitchCatalog;
@@ -449,6 +450,13 @@ Artisan::command('runtime-engine:derive-stale-observations', function (Projectio
 
     return 0;
 })->purpose('Derive stale runtime-node observations without manual state authority.');
+
+Artisan::command('runtime-engine:k5c-placement-observer', function (K5CPlacementObservationService $observer): int {
+    $result = $observer->refresh();
+    $this->line('k5c_placement_observations='.$result['observed']);
+    $this->line('k5c_placement_observations_unavailable='.$result['unavailable']);
+    return 0;
+})->purpose('Automatically project current Kubernetes placement facts for K5C selection.');
 
 Artisan::command('runtime-engine:prune-conference-recovery-metric-events {--once : Run one bounded pruning pass and exit}', function (ConferenceRecoveryMetricEventPruner $pruner): int {
     if (! $this->option('once')) {
@@ -991,6 +999,7 @@ Schedule::command('runtime-engine:command-worker --once')->everyMinute()->withou
 Schedule::command('runtime-engine:event-normalizer --once')->everyMinute()->withoutOverlapping();
 Schedule::command('runtime-engine:reconciler --once')->everyMinute()->withoutOverlapping();
 Schedule::command('runtime-engine:derive-stale-observations')->everyFiveMinutes()->withoutOverlapping();
+Schedule::command('runtime-engine:k5c-placement-observer')->everyMinute()->withoutOverlapping();
 Schedule::command('runtime-engine:prune-conference-recovery-metric-events --once')->hourly()->withoutOverlapping();
 Schedule::command('simulator:ensure-targets')->everyMinute()->withoutOverlapping();
 Schedule::command('simulator:event-source --once')->everyMinute()->withoutOverlapping();

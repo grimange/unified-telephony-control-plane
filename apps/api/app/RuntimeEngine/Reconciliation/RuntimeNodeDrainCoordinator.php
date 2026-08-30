@@ -5,6 +5,7 @@ namespace App\RuntimeEngine\Reconciliation;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\RuntimeRegistry\RuntimeNodeDrainRepository;
 use App\RuntimeRegistry\RuntimeRegistryService;
+use App\RuntimeRegistry\RuntimeNodeWorkloadService;
 use Illuminate\Support\Facades\DB;
 
 final class RuntimeNodeDrainCoordinator implements Reconciler
@@ -12,6 +13,7 @@ final class RuntimeNodeDrainCoordinator implements Reconciler
     public function __construct(
         private readonly RuntimeRegistryService $registry,
         private readonly RuntimeNodeDrainRepository $drains,
+        private readonly RuntimeNodeWorkloadService $workload,
     ) {}
 
     public function targetType(): string
@@ -34,11 +36,7 @@ final class RuntimeNodeDrainCoordinator implements Reconciler
             return ReconciliationResult::converged();
         }
 
-        $remaining = (int) DB::table('conference_runtime_bindings')
-            ->where('tenant_id', (string) $target->tenant_id)
-            ->where('runtime_node_id', (string) $target->target_id)
-            ->where('status', 'active')
-            ->count();
+        $remaining = $this->workload->activeTelephonyWorkCount((string) $target->tenant_id, (string) $target->target_id);
         $drain = $this->drains->progress((string) $target->tenant_id, (string) $target->target_id);
         if ($drain === null) {
             $this->drains->start((string) $target->tenant_id, (string) $target->target_id, $remaining);

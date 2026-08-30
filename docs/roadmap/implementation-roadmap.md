@@ -102,7 +102,8 @@ reactivate it as the current proof environment. See
 
 ## Current state and executable order
 
-**Current phase:** V1 — Bidirectional external call routing and control.
+**Current phase:** V1 — Bidirectional external call routing and control; K5C is
+implemented and tested with natural live proof pending.
 
 **Current status:** T4A/T4B are implemented and tested; T4C1/T4C2 are
 implemented, tested, live-proven, and frozen. The timer-backed media playback
@@ -120,11 +121,9 @@ corridor. The focused ADR-027 regression proof passed, and the canonical API
 suite passed with 595 tests, 8 skips, and 5007 assertions. The implementation
 is committed at `e334209ccc016053d2f63f8e39e99f2126aa5535`.
 
-**Exactly one next action:** continue V1 preparation and close/prove the
-accumulated Kubernetes/Kamailio repairs against canonical native k3s on
-`utcp-dev01`, then run natural external SIP acceptance there. V1 state must be
-re-provisioned through the authoritative API/UI before testing the independent
-PBX path. The external PBX prerequisites remain separate.
+**Exactly one next action:** deploy the exact K5C commit to canonical native-k3s
+and run controlled natural K5C acceptance. V1 remains complete and unchanged;
+the external PBX prerequisites remain separate.
 C7B closed on 2026-08-24 after its focused route-authority tests and
 provider-neutrality checks passed.
 
@@ -222,7 +221,8 @@ workload relationship in telephony terms, including RuntimeNode location and
 failure-domain association, without copying Kubernetes into a competing
 database authority.
 
-**K5C — Capacity and Failure-Domain Policy:** combine Kubernetes facts with
+**K5C — Capacity and Failure-Domain Policy:** **implemented and tested; natural
+live proof pending.** Combine Kubernetes facts with
 RuntimeNode readiness, declared capability, telephony load, capacity, and
 failure-domain constraints to determine telephony eligibility and selection.
 UTCP must not reimplement the Kubernetes scheduler.

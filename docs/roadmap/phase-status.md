@@ -22,9 +22,8 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** begin **K5C — Capacity and Failure-Domain Policy**,
-the next slice in the `K5A -> K5B -> K5C -> K5D -> K5E` distributed-infrastructure
-track. **K5B is complete.** The 2026-08-30 natural live proof deployed the exact
+**K5C — Capacity and Failure-Domain Policy:** implemented and tested; natural
+live proof is pending. **K5B is complete.** The 2026-08-30 natural live proof deployed the exact
 K5B commit through the canonical native-k3s lifecycle and proved the whole
 placement corridor: RuntimeNode `102d58ba-…` resolved its canonical workload
 identity `utcp-runtime | asterisk-v1a-outbound-reproof-asterisk-1787-5fced085`,
@@ -62,7 +61,8 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**V1 is complete.** The 2026-08-30
+**Exactly one next action:** deploy the exact K5C commit to canonical native-k3s
+and run controlled natural K5C acceptance. **V1 is complete.** The 2026-08-30
 controlled live re-proof deployed the committed
 `X-UTCP-Caller-Identity-ID` provider-boundary correction through the canonical
 native-k3s lifecycle — the live Kamailio provider path now executes all four

@@ -53,6 +53,33 @@ final class RuntimeNodeDrainCoordinatorTest extends TestCase
         $this->assertSame('drained', DB::table('runtime_nodes')->where('id', $node['id'])->value('desired_state'));
     }
 
+    public function test_active_call_leg_counts_as_remaining_work_without_a_conference_binding(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin('call-leg-work@utcp.local.test', 'call-leg-work');
+        $node = $this->createActiveNode($admin, $tenantId, 'call-leg-work');
+        $callId = IdentityIds::new();
+        $legId = IdentityIds::new();
+        DB::table('calls')->insert([
+            'id' => $callId, 'tenant_id' => $tenantId, 'direction' => 'outbound',
+            'desired_state' => 'active', 'observed_state' => 'originating',
+            'runtime_node_id' => $node['id'], 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('call_legs')->insert([
+            'id' => $legId, 'tenant_id' => $tenantId, 'call_id' => $callId,
+            'runtime_node_id' => $node['id'], 'direction' => 'outbound', 'role' => 'originator',
+            'desired_state' => 'active', 'observed_state' => 'originating',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $this->asAdmin($admin, $tenantId)->postJson("/api/v1/admin/runtime-nodes/{$node['id']}/desired-state", ['desired_state' => 'draining'])->assertOk();
+        $target = $this->drainTarget($node['id']);
+        $this->assertSame('waiting', app(RuntimeNodeDrainCoordinator::class)->evaluate($target)->status);
+        $this->assertSame(1, DB::table('runtime_node_drains')->where('runtime_node_id', $node['id'])->value('remaining_work'));
+
+        DB::table('call_legs')->where('id', $legId)->update(['observed_state' => 'completed', 'terminated_at' => now(), 'updated_at' => now()]);
+        $this->assertSame('converged', app(RuntimeNodeDrainCoordinator::class)->evaluate($target)->status);
+    }
+
     public function test_cancelled_drain_cannot_be_completed_by_stale_coordinator_and_drained_reactivates(): void
     {
         [$admin, $tenantId] = $this->createTenantAdmin('cancel@utcp.local.test', 'cancel');

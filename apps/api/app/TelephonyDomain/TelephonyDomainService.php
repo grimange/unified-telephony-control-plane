@@ -13,6 +13,9 @@ use App\ControlPlane\Shared\IdempotencyKey;
 use App\Identity\IdentityContext;
 use App\RuntimeEngine\Commands\RuntimeConferenceInspectionService;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
+use App\RuntimeRegistry\RuntimeNodeCapacityEvaluator;
+use App\RuntimeRegistry\RuntimeNodeFailureDomainEvaluator;
+use App\RuntimeRegistry\RuntimeNodeWorkloadService;
 use App\TelephonyDomain\Signaling\SignalingCredentialService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -35,6 +38,9 @@ final class TelephonyDomainService
         private readonly IdempotencyStore $idempotency,
         private readonly ReconciliationRepository $reconciliation,
         private readonly SignalingCredentialService $signaling,
+        private readonly RuntimeNodeWorkloadService $workload,
+        private readonly RuntimeNodeCapacityEvaluator $capacity,
+        private readonly RuntimeNodeFailureDomainEvaluator $failureDomains,
     ) {}
 
     /**
@@ -1571,6 +1577,8 @@ final class TelephonyDomainService
                 'runtime_nodes.desired_state',
                 'runtime_nodes.observed_state',
                 'runtime_nodes.placement_priority',
+                'runtime_nodes.placement_region',
+                'runtime_nodes.placement_zone',
                 'runtime_nodes.capacity_weight',
                 DB::raw('coalesce(active_bindings.active_binding_count, 0) as active_binding_count'),
             ])
@@ -1586,20 +1594,26 @@ final class TelephonyDomainService
         }
 
         $candidates = $query->get()
-            ->filter(fn (object $node): bool => $this->runtimeNodeHasConferenceCapacity($node, (int) $node->active_binding_count))
+            ->map(function (object $node) use ($tenantId, $conferenceId): object {
+                $node->active_telephony_work = $this->workload->activeTelephonyWorkCount($tenantId, (string) $node->id, $conferenceId);
+                $node->k5c_observation = DB::table('runtime_node_k5c_placement_observations')->where('runtime_node_id', (string) $node->id)->where('tenant_id', $tenantId)->first();
+                return $node;
+            })
+            ->filter(fn (object $node): bool => $this->capacity->eligible($node, (int) $node->active_telephony_work)
+                && $this->failureDomains->eligible($node, $node->k5c_observation))
             ->values()
             ->all();
 
         usort($candidates, function (object $left, object $right): int {
             return [
                 (int) $left->placement_priority,
-                -$this->conferenceAvailableSlotRank($left, (int) $left->active_binding_count),
-                (int) $left->active_binding_count,
+                -$this->capacity->availableSlotRank($left, (int) $left->active_telephony_work),
+                (int) $left->active_telephony_work,
                 (string) $left->id,
             ] <=> [
                 (int) $right->placement_priority,
-                -$this->conferenceAvailableSlotRank($right, (int) $right->active_binding_count),
-                (int) $right->active_binding_count,
+                -$this->capacity->availableSlotRank($right, (int) $right->active_telephony_work),
+                (int) $right->active_telephony_work,
                 (string) $right->id,
             ];
         });
@@ -1621,8 +1635,9 @@ final class TelephonyDomainService
                 continue;
             }
 
-            $activeBindingCount = $this->activeConferenceBindingCountForRuntimeNode((string) $node->id, $conferenceId);
-            if (! $this->runtimeNodeHasConferenceCapacity($node, $activeBindingCount)) {
+            $activeTelephonyWork = $this->workload->activeTelephonyWorkCount($tenantId, (string) $node->id, $conferenceId);
+            $observation = DB::table('runtime_node_k5c_placement_observations')->where('runtime_node_id', (string) $node->id)->where('tenant_id', $tenantId)->first();
+            if (! $this->capacity->eligible($node, $activeTelephonyWork) || ! $this->failureDomains->eligible($node, $observation)) {
                 continue;
             }
 
@@ -1654,29 +1669,6 @@ final class TelephonyDomainService
         }
 
         return true;
-    }
-
-    private function activeConferenceBindingCountForRuntimeNode(string $runtimeNodeId, ?string $excludeConferenceId = null): int
-    {
-        return (int) DB::table('conference_runtime_bindings')
-            ->where('runtime_node_id', $runtimeNodeId)
-            ->where('status', 'active')
-            ->when($excludeConferenceId !== null, fn ($query) => $query->where('conference_id', '<>', $excludeConferenceId))
-            ->count();
-    }
-
-    private function runtimeNodeHasConferenceCapacity(object $node, int $activeBindingCount): bool
-    {
-        $capacity = (int) ($node->capacity_weight ?? 0);
-
-        return $capacity === 0 || $activeBindingCount < $capacity;
-    }
-
-    private function conferenceAvailableSlotRank(object $node, int $activeBindingCount): int
-    {
-        $capacity = (int) ($node->capacity_weight ?? 0);
-
-        return $capacity === 0 ? PHP_INT_MAX : max(0, $capacity - $activeBindingCount);
     }
 
     /**

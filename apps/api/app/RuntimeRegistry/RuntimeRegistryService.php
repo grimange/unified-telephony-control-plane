@@ -16,6 +16,7 @@ use App\ControlPlane\Shared\StableJson;
 use App\Identity\IdentityContext;
 use App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentityValidator;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
+use App\RuntimeRegistry\RuntimeNodeWorkloadService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
@@ -33,6 +34,7 @@ final class RuntimeRegistryService
         private readonly RuntimeOperationRepository $operations,
         private readonly ReconciliationRepository $reconciliation,
         private readonly RuntimeNodeDrainRepository $drains,
+        private readonly RuntimeNodeWorkloadService $workload,
     ) {}
 
     /**
@@ -184,7 +186,7 @@ final class RuntimeRegistryService
                 throw new InvalidArgumentException('A drained runtime node must be decommissioned through the canonical decommission action.');
             }
             $this->catalog->assertDesiredTransition($node->desired_state, $desiredState);
-            if ($desiredState === 'retired' && $this->activeBindingCount($tenantId, $nodeId) > 0) {
+            if ($desiredState === 'retired' && $this->activeTelephonyWorkCount($tenantId, $nodeId) > 0) {
                 throw new InvalidArgumentException('Runtime node cannot be retired while active runtime bindings exist.');
             }
             $context = null;
@@ -210,7 +212,7 @@ final class RuntimeRegistryService
                 'updated_at' => now(),
             ]);
             if ($desiredState === 'draining') {
-                $this->drains->start($tenantId, $nodeId, $this->activeBindingCount($tenantId, $nodeId));
+                $this->drains->start($tenantId, $nodeId, $this->activeTelephonyWorkCount($tenantId, $nodeId));
                 $this->reconciliation->ensureTarget($tenantId, 'runtime_node_drain', $nodeId, (int) $node->configuration_version + 1, 0);
             } elseif ($node->desired_state === 'draining' && $desiredState !== 'draining') {
                 $this->drains->cancel($tenantId, $nodeId);
@@ -249,7 +251,7 @@ final class RuntimeRegistryService
             if ($node->desired_state === 'drained') {
                 return true;
             }
-            if ($node->desired_state !== 'draining' || $this->activeBindingCount($tenantId, $nodeId) !== 0) {
+            if ($node->desired_state !== 'draining' || $this->activeTelephonyWorkCount($tenantId, $nodeId) !== 0) {
                 return false;
             }
             $this->catalog->assertDesiredTransition('draining', 'drained');
@@ -416,7 +418,7 @@ final class RuntimeRegistryService
             if ($node->desired_state !== 'drained') {
                 throw new InvalidArgumentException('Only a drained runtime node can be decommissioned.');
             }
-            if ($this->activeBindingCount($tenantId, $nodeId) > 0) {
+            if ($this->activeTelephonyWorkCount($tenantId, $nodeId) > 0) {
                 throw new InvalidArgumentException('Runtime node cannot be decommissioned while active runtime bindings exist.');
             }
 
@@ -481,7 +483,7 @@ final class RuntimeRegistryService
             if ($node->desired_state !== 'drained') {
                 throw new InvalidArgumentException('Runtime node decommission authority is stale because the node is no longer drained.');
             }
-            if ($this->activeBindingCount($tenantId, $nodeId) > 0) {
+            if ($this->activeTelephonyWorkCount($tenantId, $nodeId) > 0) {
                 throw new InvalidArgumentException('Runtime node cannot be retired while active runtime bindings exist.');
             }
 
@@ -850,18 +852,14 @@ final class RuntimeRegistryService
         return $node;
     }
 
-    private function activeBindingCount(string $tenantId, string $nodeId): int
+    private function activeTelephonyWorkCount(string $tenantId, string $nodeId): int
     {
-        return (int) DB::table('conference_runtime_bindings')
-            ->where('tenant_id', $tenantId)
-            ->where('runtime_node_id', $nodeId)
-            ->where('status', 'active')
-            ->count();
+        return $this->workload->activeTelephonyWorkCount($tenantId, $nodeId);
     }
 
     private function assertIdentityChangeAllowed(object $node, string $tenantId): void
     {
-        if (! in_array((string) $node->desired_state, ['draft', 'disabled'], true) || $this->activeBindingCount($tenantId, (string) $node->id) > 0) {
+        if (! in_array((string) $node->desired_state, ['draft', 'disabled'], true) || $this->activeTelephonyWorkCount($tenantId, (string) $node->id) > 0) {
             throw new InvalidArgumentException('Runtime family and adapter identity can only change on a draft or disabled node with no active runtime bindings.');
         }
     }
