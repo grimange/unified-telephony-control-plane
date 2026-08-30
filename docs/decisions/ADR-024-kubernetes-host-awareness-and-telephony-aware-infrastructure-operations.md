@@ -271,3 +271,168 @@ node mutation surface, remote shell, or manual runtime-state editor.
 
 `K5E -> RMA` is unchanged; RMA depends on the distributed host and
 failure-domain foundation, not on guided enrollment UX.
+
+## K5C capacity and failure-domain policy amendment — 2026-08-30
+
+This amendment defines the K5C policy contract. K5C remains a planned,
+bounded implementation slice; this amendment does not implement production
+code, change RuntimeNode state, or advance the roadmap status.
+
+### Canonical active telephony work
+
+For capacity, retirement safety, drain convergence, and maintenance readiness,
+a RuntimeNode carries canonical telephony work when it has:
+
+```text
+active conference runtime bindings
++ non-terminal CallLegs assigned to the RuntimeNode
+```
+
+A CallLeg is active for this predicate when its canonical observed state is
+not in `CallState::terminal()`. This is a semantic definition only; it does
+not redefine `CallState` or add a workload state table. K5D's eventual
+`ACTIVE -> DRAINING -> DRAINED` convergence must use this same predicate, so
+zero conference bindings alone does not prove that a RuntimeNode is drained.
+
+K5C governs admission and selection of new telephony work. A candidate that
+becomes capacity- or failure-domain-ineligible must not thereby terminate
+Calls or CallLegs, remove conference bindings, force RuntimeNode draining, or
+evict Pods. Existing-work convergence remains with established lifecycle and
+recovery behavior and later K5D maintenance authority.
+
+### Shared RuntimeNode capacity
+
+`runtime_nodes.capacity_weight` is the single canonical RuntimeNode capacity
+configuration. Despite its historical name, it is a count limit. A value of
+zero means unlimited; otherwise a RuntimeNode is capacity-eligible exactly
+when:
+
+```text
+active telephony work < capacity_weight
+```
+
+The budget is one shared RuntimeNode-wide budget across conference bindings
+and non-terminal assigned CallLegs. It is not separate conference, outbound,
+inbound, or workload-class budgets. K5C introduces no additional capacity
+fields, coefficients, percentages, CPU thresholds, or weighted scores.
+
+The proven deterministic ordering remains lexicographic, using the existing
+repository-authoritative tuple and its unlimited available-slot treatment:
+
+```text
+placement_priority
+down available capacity
+down absolute active telephony load
+down stable RuntimeNode identity
+```
+
+Implementations must preserve the existing authoritative serialization seam:
+mutable-count eligibility is recounted after the applicable lock and before a
+reservation is committed. Explicit RuntimeNode requests do not bypass
+capacity or any other canonical eligibility rule. See ADR-027 §§11–12 for the
+existing eligibility and selection/reservation contract; K5C extends the same
+corridors rather than creating a new selector.
+
+### Desired failure-domain constraints and observed topology
+
+`placement_region` and `placement_zone` remain UTCP desired failure-domain
+constraints, operator-writable only through:
+
+```text
+Web Admin -> authenticated application/domain API
+           -> canonical PostgreSQL desired state
+           -> automatic selection/reconciliation behavior
+```
+
+They are not factual claims about current residency and must not overwrite or
+masquerade as Kubernetes observations. Kubernetes remains factual authority
+for `topology.kubernetes.io/region`, `topology.kubernetes.io/zone`,
+`kubernetes.io/hostname`, Node UID/name, and Pod placement. Hostname remains
+observed placement context and never substitutes for region or zone.
+
+When configured, region and zone are exact hard eligibility constraints:
+
+* neither configured means no K5C failure-domain restriction;
+* a configured region must exactly match the currently observed Kubernetes
+  region;
+* a configured zone must exactly match the currently observed Kubernetes
+  zone; and
+* when both are configured, both must match.
+
+Comparison uses the existing validation/storage semantics. No hierarchy is
+inferred beyond what Kubernetes reports. Missing, unknown, unavailable, or
+ambiguous required topology cannot prove a configured constraint and makes a
+RuntimeNode ineligible for new automatic telephony work. There is no silent
+fallback or arbitrary observation-age/Pod-age heuristic. If no constraint is
+configured, missing region/zone does not create a K5C penalty and an
+infrastructure-observation outage does not become a new RuntimeNode readiness
+failure.
+
+The K5B placement states retain these semantics:
+
+| K5B placement state | No configured region/zone | Configured region/zone |
+| --- | --- | --- |
+| `placed` | evaluate observed topology normally | exact configured match required |
+| `no_managed_kubernetes_identity` | preserve existing selection semantics | ineligible; Kubernetes placement cannot be proven |
+| `identity_present_but_not_currently_observed` | preserve existing non-K5C eligibility | ineligible until observed |
+| `ambiguous_multiple_nodes_observed` | preserve existing non-K5C eligibility; do not pick a Node by order/age | ineligible unless the required value is unambiguous across relevant placement |
+| `kubernetes_observation_unavailable` | preserve existing RuntimeNode readiness/eligibility authority | ineligible because the constraint cannot be validated |
+
+Kubernetes Node readiness must not become a second writer of
+`RuntimeNode.observed_state`. K5C may consume Kubernetes facts as ephemeral
+selection inputs, but runtime-adapter observation remains authoritative for
+RuntimeNode observed readiness.
+
+There is no K5C region/zone preference, spread, anti-affinity, co-residence,
+or other failure-domain scoring policy. K5B co-residence remains observable
+information only. More sophisticated diversity policy requires separate
+future authority.
+
+### Selection corridors and SQL observation projection
+
+K5C extends the three existing selection authorities and adds no fourth:
+
+1. conference selection in `TelephonyDomainService`;
+2. outbound selection in `RuntimeNodeSelector::selectForOutboundCall()`; and
+3. inbound selection in `kamailio_inbound_runtime_target_view`.
+
+Shared K5C eligibility semantics converge across these corridors. Capability-
+specific requirements may differ, but accidental pre-K5C divergence must not
+become a new policy. ADR-027 configuration/image-convergence requirements
+remain applicable where that ADR requires them.
+
+Because inbound selection is SQL-side, Kubernetes topology needed for inbound
+eligibility may be made SQL-consumable through this bounded projection:
+
+```text
+Kubernetes factual observation
+        -> automatic UTCP observer/projection
+        -> derived PostgreSQL observation projection
+        -> SQL selection view
+```
+
+The projection is derived, non-canonical, read-only to operators, automatically
+refreshed, and subordinate to Kubernetes facts. A later implementation may
+persist only the minimal observed RuntimeNode identity, Node UID/name,
+region/zone, placement observation status, and freshness metadata needed for
+deterministic SQL eligibility. Operators must not create Hosts, mark runtime
+readiness, set observed region/zone, or invoke manual placement sync/projection
+authority. No durable duplicate Host authority is created.
+
+Observation failure must have explicit current/unknown/unavailable semantics.
+No arbitrary freshness threshold is established by this amendment. With a
+configured constraint, a value that cannot be proven from current authoritative
+observation is ineligible; without one, observation outage does not replace
+RuntimeNode readiness authority.
+
+Applying this shared capacity budget to inbound selection may therefore
+produce the existing canonical unavailable response when no eligible candidate
+has capacity. That is an intentional K5C admission-policy consequence; V1's
+deferred unlimited inbound behavior is not preserved as a K5C exception.
+
+No platform, tenant, route, inbound, outbound, conference, strategy-enum, or
+spread-policy configuration scope is added. Artisan remains outside the
+management path: no routine capacity reconciliation, placement sync, or
+runtime topology-editing command is authorized. The management authority
+remains the ADR-032 Web Admin/API/PostgreSQL/automatic selection and
+reconciliation path.

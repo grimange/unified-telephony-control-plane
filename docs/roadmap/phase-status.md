@@ -174,8 +174,7 @@ documentation task. Current T4 implementation evidence:
 | Campaigns, CRM, predictive dialing, agent workflow, advanced IVR, billing/settlement, number purchasing/porting, SMS/MMS | Application, provider, or future domains; outside R0 core |
 
 K5 is the distributed telephony infrastructure track. **K5A is complete and
-K5B placement awareness is implemented and tested; K5B natural native-k3s live
-proof is pending.** K5A host visibility,
+K5B placement awareness is complete / natural-live-proven.** K5A host visibility,
 K5B telephony placement awareness, K5C capacity/failure-domain policy, K5D
 telephony-aware host maintenance, and K5E a bounded live proof across distinct
 Kubernetes host/failure domains. It builds on existing RuntimeNode and RNP
