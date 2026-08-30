@@ -22,9 +22,19 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** resolve V1 Gap A — delayed-observation versus
-origination-timeout precedence in canonical CallLeg termination. **Gap B is
-closed.** The 2026-08-30 controlled live re-proof deployed the exact committed
+**Exactly one next action:** implement the resolved V1 Gap A precedence
+closure — add the timeout-first delayed-observation regressions, apply the
+terminal guard to `CallDomainService::bindObservedRuntimeChannel()`, and amend
+ADR-030 §14 to state the rule. The 2026-08-30 Gap A audit resolved the
+precedence authority: the first canonical terminal fact applied under a row lock
+wins, so an origination timeout is never reopened or rewritten by a later
+runtime observation regardless of its `observed_at`, while that observation is
+still preserved in `runtime_observations`. Both interleavings were confirmed
+against exact HEAD, `CallDomainService` is the sole canonical writer, and no
+conflicting legacy authority exists. Gap A is **not** closed: the entire
+timeout-first half of the race has no regression coverage. See the
+[`Gap A precedence audit`](../evidence/v1/v1-gap-a-delayed-observation-origination-timeout-precedence-audit.md).
+**Gap B is closed.** The 2026-08-30 controlled live re-proof deployed the exact committed
 `dlg_manage()` correction on native k3s through the canonical lifecycle and
 proved the remaining criterion: a no-Route provider BYE drove the tracked
 dialog from `state 3` to `state 5` (`DLG_STATE_DELETED`) at the BYE, the dialog
@@ -96,7 +106,7 @@ documentation task. Current T4 implementation evidence:
 | C7A | Complete | Tenant-scoped ExternalTrunk, endpoint/credential-reference lifecycle, TelephonyAddress, CallerIdentity, policy, and provider-neutral Admin API; see `docs/evidence/c7a/` |
 | C7B | Complete | Inbound/outbound routes, derived RouteDecision, and runtime-neutral DestinationRef; see `docs/evidence/c7b/` |
 | T6 | Complete | Provider projection and Kamailio/Asterisk synthetic consumption verified; V1 owns natural external SIP acceptance |
-| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, and the Gap B registration/NAT dialog-return corridor are repository-proven and live-proven. Gap B closed on 2026-08-30 after the bounded Kamailio dialog-termination correction was deployed and re-proven live. Gap A and Gap E remain open. |
+| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, and the Gap B registration/NAT dialog-return corridor are repository-proven and live-proven. Gap B closed on 2026-08-30. Gap A's precedence authority is resolved and implementation-ready; Gap A and Gap E remain open. |
 | A0 | Planned | Follows V1; minimal outbound, inbound, and IVR-style reference consumers |
 | R0 | Planned | Finite release boundary after the mainline evidence is complete |
 
@@ -118,8 +128,14 @@ authorities; Kubernetes remains authoritative for Nodes, Pods, scheduling, and
 workload placement. Full multi-cluster federation remains future-compatible,
 not an R0 requirement.
 
-V1 gap status is explicit: Gap A remains open for delayed-observation versus
-origination-timeout precedence; **Gap B is closed** — the registration/NAT
+V1 gap status is explicit: Gap A remains open, but its precedence authority is
+now **resolved and bounded-implementation-ready** — application order under a row
+lock is authoritative, an origination timeout is never reopened by a later runtime
+observation, and the late observation is still preserved; what remains is
+regression coverage for the timeout-first half, one defensive terminal guard, and
+an ADR-030 §14 amendment. Orphaned-runtime-channel reclamation after an
+origination timeout is a separate deferred decision, not part of the precedence
+rule. **Gap B is closed** — the registration/NAT
 return path, managed-runtime BYE receipt, canonical
 `completed / remote / remote` termination, and BYE-caused Kamailio dialog
 termination without `dlg_ontimeout()` are all live-proven. Gap E remains open
