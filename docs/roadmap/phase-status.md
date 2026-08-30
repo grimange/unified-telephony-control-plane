@@ -22,38 +22,22 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**Exactly one next action:** obtain non-interactive privileged packet-capture
-capability on `utcp-dev01` (a sudoers entry limited to `/usr/bin/tcpdump`, or
-`setcap cap_net_raw,cap_net_admin+eip /usr/bin/tcpdump`), then run the Gap F
-provider-wire trust-boundary live proof in one packet. Gap F is the last open V1
-gap and remains `PROOF_GAP_ONLY`. The 2026-08-30 attempt **placed no Call**: the
-proof requires actual packet evidence on both sides, and neither capture point is
-reachable with authorized tooling — host `sudo` demands interactive
-authentication, the Kamailio Pod ships `tcpdump`/`ngrep` but runs with
-`capabilities.drop: ["ALL"]` and fails with `Operation not permitted`, a
-cluster-wide scan found **zero** Pods with `hostNetwork`, `privileged`, or
-`NET_RAW`, creating privileged diagnostics is forbidden, and the external-PBX
-telecom-MCP allowlist exposes no SIP-trace capability. The live Kamailio
-configuration **was** verified and matches repository authority:
-`route[RUNTIME_EXTERNAL_TRUNK]` requires all three correlation headers for
-provider selection and executes `remove_hf()` for
-`X-UTCP-Call-Leg-ID`, `X-UTCP-Route-Decision-ID`, and
-`X-UTCP-Trunk-Endpoint-ID` before `t_relay()` — so there is no present indication
-of a header leak, only an inability to demonstrate wire behavior. See the
-[`Gap F provider-wire blocked proof`](../evidence/v1/v1-gap-f-provider-wire-trust-boundary-live-proof.md).
-**Gap E is closed.** The 2026-08-30 natural live proof deployed the exact
-taxonomy commit (`sha-8964e936b6…`) and placed one canonical Call to the
-deterministic absent extension `97002`: the provider returned the pre-established
-`SIP 404 Not Found`, the provider-facing PJSIP channel carried `cause 1`,
-`cause_txt "Unallocated (unassigned) number"`, and `tech_cause 404` correlated to
-the fresh CallLeg, and **both CallLeg and Call converged to
-`failed / remote / remote / unreachable / destination_not_found`** with
-`answered_at` NULL and write-once terminal authority preserved. See the
-[`Gap E taxonomy live proof`](../evidence/v1/v1-gap-e-provider-failure-taxonomy-live-reproof.md),
-[`Gap E correlation live re-proof`](../evidence/v1/v1-gap-e-provider-channel-call-leg-correlation-live-reproof.md),
-[`Gap E fact-binding live proof`](../evidence/v1/v1-gap-e-provider-failure-fact-binding-live-proof.md),
-[`Gap E fact-preservation implementation`](../evidence/v1/v1-gap-e-asterisk-ari-termination-fact-preservation.md)
-and [`Gap E failure taxonomy audit`](../evidence/v1/v1-gap-e-sip-q850-failure-taxonomy-audit.md).
+**Exactly one next action:** decide and, if adopted, implement the bounded
+treatment of `X-UTCP-Caller-Identity-ID` on the provider wire — the one new item
+this proof isolated — then reconcile V1 phase closure. **Gap F is closed**, and
+with it every currently recorded V1 gap. The 2026-08-30 live proof used an
+operator-installed temporary capture wrapper (fixed filter, 180 s cutoff, no
+Kubernetes privilege change) and one canonical Call to `97001`. All three adopted
+correlation headers were present and exact on the trusted runtime → Kamailio
+INVITE and **absent from every provider-facing INVITE**, including the
+authenticated retry after `401`; each appears exactly once in the whole capture.
+The provider answered `200 OK`, so the stripped INVITE demonstrably reached the
+external PBX. Recorded separately and deliberately not repaired:
+`X-UTCP-Caller-Identity-ID` **is transmitted to the provider** on every outbound
+INVITE, because the Asterisk pre-dial handler applies four `X-UTCP-*` headers
+while `route[RUNTIME_EXTERNAL_TRUNK]` removes only three. That is outside Gap F's
+adopted scope but is a real trust-boundary observation. See the
+[`Gap F provider-wire live proof`](../evidence/v1/v1-gap-f-provider-wire-trust-boundary-live-proof.md).
 Gap A is **closed**: the first
 canonical terminal fact applied under a row lock wins, so an origination timeout
 is never reopened or rewritten by a later runtime observation regardless of its
@@ -135,7 +119,7 @@ documentation task. Current T4 implementation evidence:
 | C7A | Complete | Tenant-scoped ExternalTrunk, endpoint/credential-reference lifecycle, TelephonyAddress, CallerIdentity, policy, and provider-neutral Admin API; see `docs/evidence/c7a/` |
 | C7B | Complete | Inbound/outbound routes, derived RouteDecision, and runtime-neutral DestinationRef; see `docs/evidence/c7b/` |
 | T6 | Complete | Provider projection and Kamailio/Asterisk synthetic consumption verified; V1 owns natural external SIP acceptance |
-| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, the Gap B registration/NAT dialog-return corridor, and Gap A timeout precedence are repository-proven. Gap A through Gap E are all closed, including the live-proven minimal provider-failure taxonomy. Gap F is a proof gap only. |
+| V1 | Active | Native-k3s is canonical. C7A/C7B, deterministic RuntimeNode selection, ADR-030 termination authority, the Gap B registration/NAT dialog-return corridor, and Gap A timeout precedence are repository-proven. Gap A through Gap F are all closed, including the live-proven provider-wire trust boundary. A separate item — provider-wire transmission of `X-UTCP-Caller-Identity-ID` — was isolated by the Gap F proof and awaits a bounded decision. |
 | A0 | Planned | Follows V1; minimal outbound, inbound, and IVR-style reference consumers |
 | R0 | Planned | Finite release boundary after the mainline evidence is complete |
 
@@ -177,14 +161,16 @@ Call to `failed / remote / remote / unreachable / destination_not_found` without
 rewriting write-once terminal metadata. Closure rests on that adopted minimum
 deterministic contract, not a full provider failure matrix: unmapped provider
 outcomes continue to preserve raw evidence and may remain canonical `Failed`
-with NULL taxonomy until explicitly adopted. Gap F
-remains a `PROOF_GAP_ONLY` provider-wire trust-boundary proof gap and is the last
-open V1 gap. Its live Kamailio stripping configuration is verified against
-repository authority, but the proof is blocked on evidence access: non-interactive
-privileged packet capture is unavailable on `utcp-dev01`, in-cluster capture is
-refused by the intact K3 security boundary, and the external-PBX allowlist
-exposes no SIP trace. No header leak is indicated — only the wire behavior is
-undemonstrated.
+with NULL taxonomy until explicitly adopted. **Gap F is closed** — the
+provider-wire trust boundary is **live-proven**. `X-UTCP-Call-Leg-ID`,
+`X-UTCP-Route-Decision-ID`, and `X-UTCP-Trunk-Endpoint-ID` are present and exact
+on the trusted runtime → Kamailio INVITE and absent from every provider-facing
+INVITE, including the authenticated retry, with the provider answering `200 OK`.
+All six recorded V1 gaps are therefore closed. One new item was isolated by that
+proof and is **not** part of Gap F's adopted scope:
+`X-UTCP-Caller-Identity-ID` is transmitted to the provider on every outbound
+INVITE, because four `X-UTCP-*` headers are applied and only three are removed.
+It awaits a bounded decision.
 ADR-031 implementation is
 complete, while stable-public-edge live acceptance is
 `DEFERRED_BY_ENVIRONMENT`, not abandoned, and does not block the registration/

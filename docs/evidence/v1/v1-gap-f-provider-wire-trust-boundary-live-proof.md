@@ -1,25 +1,69 @@
-# V1 Gap F — Provider-Wire Correlation-Header Trust-Boundary Live Proof (Blocked)
+# V1 Gap F — Provider-Wire Correlation-Header Trust-Boundary Live Proof
 
 Current-State-Impact: yes
 
 Date: 2026-08-30
 
-Exact HEAD: `863a9773242beec72f9574a1395d9893ff3cbd0a`
-(`docs(v1): close provider failure taxonomy gap`)
+Exact HEAD: `f60fd746a91531ed6eeba9ad66030f538262d3da`
+(`docs(v1): record provider wire evidence access blocker`)
 
 ## Verdict
 
-`V1_GAP_F_PROVIDER_WIRE_EVIDENCE_ACCESS_BLOCKED`
+`V1_GAP_F_PROVIDER_WIRE_TRUST_BOUNDARY_LIVE_PROVEN`
 
-No Call was placed. Neither an external-PBX ingress trace nor an actual UTCP
-provider-egress packet capture is obtainable with currently authorized tooling,
-and Gap F cannot be closed from configuration evidence alone. Per the proof
-contract, originating a Call would only have produced unusable evidence, so the
-packet stopped at the evidence-access gate.
+One canonical outbound Call to `97001` proved the trust boundary on the wire:
 
-The live Kamailio stripping configuration **was** verified and matches
-repository authority. That establishes expected behavior; it does not close
-Gap F.
+```text
+X-UTCP-Call-Leg-ID        internal PRESENT (exact)  ->  provider ABSENT
+X-UTCP-Route-Decision-ID  internal PRESENT (exact)  ->  provider ABSENT
+X-UTCP-Trunk-Endpoint-ID  internal PRESENT (exact)  ->  provider ABSENT
+```
+
+All three appear exactly once each in the entire capture — only on the trusted
+runtime → Kamailio INVITE. They are absent from **every** provider-facing INVITE,
+including the authenticated retry. The provider answered (`200 OK`), so the
+stripped INVITE demonstrably reached and was accepted by the external PBX.
+
+**Gap F is CLOSED.**
+
+Recorded separately and **not** part of Gap F's adopted scope: a fourth header,
+`X-UTCP-Caller-Identity-ID`, **is transmitted to the provider** on every
+provider-facing INVITE. See "Out-of-scope UTCP-prefixed leakage observed" below.
+
+## Attempt chronology
+
+### Attempt 1 — blocked on evidence access
+
+The first attempt placed no Call: neither an external-PBX ingress trace nor an
+actual provider-egress packet capture was reachable. Host `sudo` demanded
+interactive authentication, the Kamailio Pod runs with
+`capabilities.drop: ["ALL"]` and failed with `Operation not permitted`, a
+cluster-wide scan found zero Pods with `hostNetwork`, `privileged`, or
+`NET_RAW`, creating privileged diagnostics was forbidden, and the external-PBX
+telecom-MCP allowlist exposed no SIP trace. That record is preserved below.
+
+### Attempt 2 — successful, this record
+
+The operator installed a temporary, fixed-purpose, root-owned capture wrapper at
+`/usr/local/sbin/utcp-gap-f-capture` with a hard 180 s cutoff, a fixed narrow
+filter, no arbitrary `tcpdump` arguments, and no Kubernetes privilege change. It
+ran unattended.
+
+## Capture method
+
+```text
+wrapper   /usr/local/sbin/utcp-gap-f-capture   (start | stop, sudo -n)
+pid       1681024
+output    /run/user/1000/utcp-gap-f-capture.txt
+filter    udp and (port 5062 or (host 38.146.161.46 and port 5060))
+process   /usr/bin/tcpdump -i any -p -nn -s 0 -A -l -U -Z grimange <filter>
+size      86 839 bytes
+```
+
+Privilege model: root-owned wrapper dropping to the unprivileged user via
+`-Z grimange`; ephemeral, watchdog-terminated, no Pod, sidecar, DaemonSet, or
+persistent service. A stale operator test capture was stopped idempotently
+(`UTCP_GAP_F_CAPTURE_STOPPED`) and its output cleared before the proof.
 
 ## Canonical environment
 
@@ -74,6 +118,145 @@ Recorded before the evidence gate, not consumed: all `utcp-platform` Pods Ready
 (not-ready `0`); ExternalTrunk `3a9bf028-…` `active`/`ready`; registration
 `registered`; RuntimeNode `102d58ba-…` `active`/`ready`; non-terminal Calls `0`,
 CallLegs `0`. The environment was ready; only evidence access was missing.
+
+## Live Kamailio configuration — re-verified, unchanged
+
+Pod `kamailio-6f984fbf7b-xxpbf` (1/1 Running), `route[RUNTIME_EXTERNAL_TRUNK]`:
+line 2 requires `X-UTCP-Call-Leg-ID` and `X-UTCP-Route-Decision-ID`; line 8 keys
+provider selection on `X-UTCP-Trunk-Endpoint-ID`; lines 28–30 `remove_hf()` all
+three; `t_relay()` follows at line 33. No deployment was performed — HEAD is
+documentation-only and the running runtime already contained the behavior.
+
+## Health baseline
+
+All `utcp-platform` Pods Ready; trunk `3a9bf028-…` `active`/`ready`;
+registration `registered`; RuntimeNode `102d58ba-…` `active`/`ready`;
+non-terminal Calls `0`, CallLegs `0`. Existing canonical `97001` objects reused:
+TelephonyAddress `c537a4a7-…`, outbound route `v1a-reproof-97001`.
+
+## The proof Call
+
+Exactly one canonical outbound Call, `runtime_node_id` omitted.
+
+| Fact | Value |
+| --- | --- |
+| Call | `3cda9899-6a87-4c0c-9094-b5be98475074` |
+| CallLeg | `977a89c6-2ab9-4371-b966-61f5e9719a5b` |
+| RouteDecision | `ba2f9327-1d0f-46c0-8da1-360d30272f44` |
+| Originate RuntimeOperation | `ccaaddefff800472e5325c1c72e990c6` (succeeded) |
+| RuntimeNode (auto-selected) | `102d58ba-93ec-4601-a2a3-81f95801440f` |
+| TrunkEndpoint | `ad7a95f4-388c-445e-9259-edd30b5137a2` |
+| CallLeg.runtime_channel_id | `utcp-call-leg-977a89c6-2ab9-4371-b966-61f5e9719a5b` |
+| SIP Call-ID | `ab83b472-4c46-46f8-8b92-8cdd47a48b03` |
+
+## Internal trusted INVITE
+
+```text
+07:40:03.816471  10.42.0.4:5060 -> 10.42.0.195:5062   (managed Asterisk -> Kamailio runtime ingress)
+INVITE sip:97001@kamailio-sip-internal.utcp-platform.svc.cluster.local:5060
+Call-ID: ab83b472-4c46-46f8-8b92-8cdd47a48b03
+CSeq: 20859 INVITE
+X-UTCP-Call-Leg-ID: 977a89c6-2ab9-4371-b966-61f5e9719a5b
+X-UTCP-Route-Decision-ID: ba2f9327-1d0f-46c0-8da1-360d30272f44
+X-UTCP-Trunk-Endpoint-ID: ad7a95f4-388c-445e-9259-edd30b5137a2
+```
+
+Each value equals canonical application state exactly.
+
+## Provider-facing INVITEs
+
+Two logical provider INVITEs were transmitted for this one Call (initial, then
+the authenticated retry after `401`). Each was observed at three capture points
+(`veth`, `cni0`, and the real egress `wlp4s0`).
+
+```text
+07:40:03.877642  192.168.254.124:29880 -> 38.146.161.46:5060  (wlp4s0 Out, initial)
+INVITE sip:97001@38.146.161.46:5060
+Call-ID: ab83b472-4c46-46f8-8b92-8cdd47a48b03
+CSeq: 20859 INVITE
+  X-UTCP-Call-Leg-ID        ABSENT
+  X-UTCP-Route-Decision-ID  ABSENT
+  X-UTCP-Trunk-Endpoint-ID  ABSENT
+
+07:40:04.104023  192.168.254.124:29880 -> 38.146.161.46:5060  (wlp4s0 Out, authenticated retry)
+INVITE sip:97001@38.146.161.46:5060
+Call-ID: ab83b472-4c46-46f8-8b92-8cdd47a48b03
+CSeq: 20860 INVITE
+Authorization: Digest username="utcp-v1", realm="asterisk", ... algorithm=MD5
+  X-UTCP-Call-Leg-ID        ABSENT
+  X-UTCP-Route-Decision-ID  ABSENT
+  X-UTCP-Trunk-Endpoint-ID  ABSENT
+```
+
+Whole-capture occurrence counts are conclusive — each of the three appears
+exactly once, in the internal INVITE only:
+
+```text
+X-UTCP-Call-Leg-ID         1
+X-UTCP-Route-Decision-ID   1
+X-UTCP-Trunk-Endpoint-ID   1
+```
+
+## Mandatory comparison
+
+```text
+Header                          Internal runtime→Kamailio                 Provider-facing wire
+--------------------------------------------------------------------------------------------
+X-UTCP-Call-Leg-ID              977a89c6-2ab9-4371-b966-61f5e9719a5b      ABSENT
+X-UTCP-Route-Decision-ID        ba2f9327-1d0f-46c0-8da1-360d30272f44      ABSENT
+X-UTCP-Trunk-Endpoint-ID        ad7a95f4-388c-445e-9259-edd30b5137a2      ABSENT
+
+SIP Call-ID          ab83b472-4c46-46f8-8b92-8cdd47a48b03  (identical both sides)
+provider destination 38.146.161.46:5060
+destination user     97001
+```
+
+Same-transaction proof rests on the shared `Call-ID`, the shared `From` tag
+`7313dedc-…`, and CSeq continuity `20859` → `20860`, not on timing.
+
+## Provider delivery positive control
+
+```text
+07:40:04.103785  38.146.161.46 -> UTCP   SIP/2.0 401 Unauthorized
+07:40:04.327038  38.146.161.46 -> UTCP   SIP/2.0 100 Trying
+07:40:04.337771  38.146.161.46 -> UTCP   SIP/2.0 200 OK      <- provider answered
+```
+
+Authentication challenge: **401**, followed by a normal authenticated retry. The
+external PBX answered the stripped INVITE, so this is not an internal-only
+packet.
+
+## Out-of-scope UTCP-prefixed leakage observed
+
+Gap F's adopted scope is exactly the three headers above, and they pass. Noted
+separately as required rather than folded into the verdict:
+
+```text
+X-UTCP-Caller-Identity-ID: f11a46e5-fbdc-4eb0-b28d-9c002491a80a
+  internal INVITE   PRESENT
+  provider INVITE   PRESENT  (initial and authenticated retry)
+  capture-wide occurrences: 7  (1 internal + 6 provider-side copies)
+```
+
+The managed-Asterisk pre-dial handler applies four `X-UTCP-*` headers, and
+`route[RUNTIME_EXTERNAL_TRUNK]` removes only three; the CallerIdentity header has
+no `remove_hf()`. An internal UUID therefore reaches the external provider on
+every outbound INVITE. This is a real trust-boundary observation, not a Gap F
+acceptance failure, and it is recorded here for a separate bounded decision. It
+was **not** repaired in this packet.
+
+## Cleanup
+
+The Call was terminated through the canonical `call.hangup` API — no AMI, ARI,
+or CLI hangup. Final state `completed / remote / remote`, `answered_at`
+`2026-08-30 07:40:18+00`, `failure_class` and `failure_code` NULL. Non-terminal
+Calls `0`, CallLegs `0`. `termination_reason` resolved to `remote` because the
+runtime terminal fact's `observed_at` preceded the hangup operation's creation
+under ADR-030 §5; final call state is not a Gap F acceptance criterion.
+
+The temporary capture output was removed after analysis. No production source,
+Kamailio configuration, Asterisk configuration, or external PBX state was
+changed, and no permanent diagnostic infrastructure was created.
 
 ## Evidence-access assessment
 
@@ -196,20 +379,20 @@ header blocks.
 ## Gap F status
 
 ```text
-Gap F: PROOF_GAP_ONLY  (unchanged)
+Gap F: CLOSED
 ```
 
-Gap F remains open and unproven. The blocker is evidence access, not a suspected
-defect: the live Kamailio configuration performs all three removals before
-`t_relay()`, so there is no present indication of a header leak — only an
-inability to demonstrate the wire behavior, which is precisely what a
-`PROOF_GAP_ONLY` item requires.
+The provider-wire trust boundary is live-proven for the three adopted
+correlation headers. The `X-UTCP-Caller-Identity-ID` transmission recorded above
+is a separate, newly isolated item outside Gap F's adopted scope.
 
 ## Boundary
 
-Gap A through Gap E remain closed. No Call was placed, no production source was
-changed, no Kamailio configuration was modified, no deployment was performed, and
-no diagnostic infrastructure was created. ADR-031 stable-public-edge acceptance
+Gap A through Gap F are now closed. No production source was changed, no
+Kamailio or Asterisk configuration was modified, no deployment was performed, and
+no permanent diagnostic infrastructure was created. The temporary host capture
+wrapper and its sudoers rule remain installed and were deliberately not removed
+by this packet — host authorization changes are outside repository state. ADR-031 stable-public-edge acceptance
 remains `DEFERRED_BY_ENVIRONMENT`, not abandoned. No K5, RMA, or A0 work was
 started. The `scripts/native-k3s/image-sync` `.git` defect and the broad
 `Quality` CI failures remain unchanged separate debt; neither blocked this proof.
