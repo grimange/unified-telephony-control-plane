@@ -16,7 +16,7 @@ final class CallObservationProcessor
         'call.leg.bridged' => CallState::Bridged,
     ];
 
-    public function __construct(private readonly CallDomainService $calls) {}
+    public function __construct(private readonly CallDomainService $calls, private readonly RecordingSessionService $recordings) {}
 
     /** @param array<string, mixed> $observation */
     public function process(object $receipt, array $observation): void
@@ -78,6 +78,12 @@ final class CallObservationProcessor
         $deferPreAnswerTerminalization = ($payload['defer_pre_answer_terminalization'] ?? false) === true;
         $legId = $this->resolveLegId($tenantId, (string) ($observation['subject_id'] ?? ''), $nodeId, $channelId, $providerTerminalFailure || $deferPreAnswerTerminalization);
         if ($legId === null || $channelId === null) {
+            return;
+        }
+
+        if ($type === 'call.leg.recording_started' || $type === 'call.leg.recording_stopped') {
+            $this->recordings->applyObservation($tenantId, $legId, $type === 'call.leg.recording_started' ? 'recording' : 'stopped', is_string($observation['observed_at'] ?? null) ? $observation['observed_at'] : null);
+
             return;
         }
 

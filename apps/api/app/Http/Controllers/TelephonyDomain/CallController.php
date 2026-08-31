@@ -75,6 +75,9 @@ final class CallController extends Controller
         $this->requireCall($tenant, $call);
         $data = $request->validate(['operation_type' => ['required', 'string', Rule::in(array_keys(CallOperationCatalog::all()))], 'target_leg_id' => ['nullable', 'uuid'], 'leg_ids' => ['nullable', 'array', 'size:2'], 'leg_ids.*' => ['uuid'], 'payload' => ['sometimes', 'array']]);
         $type = $data['operation_type'];
+        if (str_contains($type, 'recording')) {
+            return response()->json(['message' => 'recording operations must use the canonical recording session API'], 422);
+        }
         $this->authorization->requireTenant($request->user()->id, $tenant, $this->permissionFor($type));
         $definition = CallOperationCatalog::all()[$type];
         $payload = $data['payload'] ?? [];

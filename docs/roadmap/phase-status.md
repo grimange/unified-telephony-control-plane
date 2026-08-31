@@ -105,8 +105,9 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** `RMA — Recording & Media Archive`, the next
-R0-critical track now that **K5E is COMPLETE / NATURAL-LIVE-PROVEN**. The
+**Exactly one next action:** deploy current main and perform the controlled
+RMA-A recording-authority and lifecycle live proof. RMA is the next R0-critical
+track now that **K5E is COMPLETE / NATURAL-LIVE-PROVEN**. The
 2026-08-31 two-stage controlled live proof deployed `3202451` and closed both
 stages. **Stage A** proved the scheduler overlap-mutex repair live: every
 minute-cadence overlap event reports `expires=5` in the running application with
@@ -206,7 +207,7 @@ documentation task. Current T4 implementation evidence:
 | Track | Status / release placement |
 | --- | --- |
 | K5 | Planned / Parallel / R0-Critical under [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md); does not serially gate T4 or C7A, but K5E is required before R0 |
-| RMA | Planned / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); begins after the V1 Call/CallLeg corridor and K5E; no implementation or live proof claimed |
+| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); RMA-A recording authority and lifecycle is implemented/tested and awaits live proof; RMA-B through RMA-H remain not started |
 | Operational Reporting & Insights | Future UTCP Core / Post-current-R0 roadmap; not a current phase or R0 gate; no implementation claimed under [`ADR-033`](../decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md) |
 | C8 | Planned UTCP core transfer/handoff track under [`ADR-025`](../decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md); advanced consultative and inter-runtime/provider handoff defaults to post-R0/R1 unless V1 proves a basic dependency |
 | Queue/ACD | Future extension; no R0 phase |
@@ -258,10 +259,11 @@ complete, while stable-public-edge live acceptance is
 NAT acceptance corridor. Gap C and Gap D are closed; see their linked evidence
 and ADRs for detail.
 
-RMA is the planned Recording & Media Archive track. It follows completed K5E
-and the established V1 Call/CallLeg corridor; it is not the current phase and
-does not technically gate A0. K5 and RMA remain deferred according to the
-current V1/R0 sequencing.
+RMA is the Recording & Media Archive track. It follows completed K5E and the
+established V1 Call/CallLeg corridor; RMA-A is implemented/tested and its
+natural live proof is pending. RMA-B through RMA-H remain not started. RMA
+does not technically gate A0, and no artifact, archive, retention, playback,
+or download implementation is claimed by RMA-A.
 
 ## Historical status rule
 

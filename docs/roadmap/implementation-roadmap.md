@@ -522,8 +522,8 @@ owns business meaning; UTCP owns reusable telephony control and lifecycle.
 
 ### RMA — Recording & Media Archive
 
-**Status:** Planned / UTCP Core / R0-Critical. RMA is not implemented or
-live-proven by this roadmap update.
+**Status:** In progress / UTCP Core / R0-Critical. RMA-A is implemented and
+tested but not live-proven; RMA-B through RMA-H remain not started.
 
 **Objective:** provide reusable, provider-neutral technical recording and media
 artifact/archive lifecycle for multiple telephony applications. The consuming
@@ -541,10 +541,14 @@ Deterministic MinIO Proof; RMA-F BYO Storage Credentials and Rotation; RMA-G
 Retention and Deletion Lifecycle; RMA-H Distributed Recording and Archive
 Natural Live Proof.
 
-These are planned architectural slices only. No RMA schemas, migrations, APIs,
-workers, adapters, MinIO deployment, or runtime support are claimed. RMA
-depends on the established V1 Call/CallLeg corridor and completed K5E; it does
-not technically depend on A0. See [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md).
+RMA-A establishes only the tenant-scoped RecordingSession authority,
+authenticated intent API, lifecycle state, correlation, authorization,
+idempotency, audit, and subordinate RuntimeOperation relationship. It is not
+live-proven. RMA-B through RMA-H remain planned architectural slices only; no
+artifact, archive, credential, retention, playback/download, MinIO, or
+additional runtime support is claimed. RMA depends on the established
+V1 Call/CallLeg corridor and completed K5E; it does not technically depend on
+A0. See [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md).
 
 ### Operational Reporting & Insights
 

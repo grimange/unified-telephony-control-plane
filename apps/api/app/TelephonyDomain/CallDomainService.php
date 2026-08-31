@@ -788,6 +788,26 @@ final class CallDomainService
     /** @param array<string, mixed> $payload */
     public function requestOperation(string $tenantId, ExecutionContext $context, string $type, string $aggregateType, string $aggregateId, array $payload, ?IdempotencyKey $idempotencyKey = null, ?string $runtimeNodeId = null): string
     {
+        if (str_contains($type, 'recording')) {
+            throw new LogicException('recording operations require RecordingSession authority');
+        }
+
+        return $this->requestOperationInternal($tenantId, $context, $type, $aggregateType, $aggregateId, $payload, $idempotencyKey, $runtimeNodeId);
+    }
+
+    /** @param array<string, mixed> $payload */
+    public function requestSubordinateRecordingOperation(string $tenantId, ExecutionContext $context, string $type, string $legId, array $payload, ?string $runtimeNodeId = null): string
+    {
+        if (! in_array($type, ['call.leg.start_recording', 'call.leg.stop_recording'], true)) {
+            throw new InvalidArgumentException('invalid subordinate recording operation');
+        }
+
+        return $this->requestOperationInternal($tenantId, $context, $type, 'call_leg', $legId, $payload, null, $runtimeNodeId);
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function requestOperationInternal(string $tenantId, ExecutionContext $context, string $type, string $aggregateType, string $aggregateId, array $payload, ?IdempotencyKey $idempotencyKey = null, ?string $runtimeNodeId = null): string
+    {
         $definition = CallOperationCatalog::all()[$type] ?? null;
         if ($definition === null || $definition['target'] !== $aggregateType) {
             throw new InvalidArgumentException('operation target does not match the normalized C6 operation vocabulary');

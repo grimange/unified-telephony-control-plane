@@ -18,6 +18,7 @@ use App\Http\Controllers\TelephonyDomain\AdminConferenceController;
 use App\Http\Controllers\TelephonyDomain\CallController;
 use App\Http\Controllers\TelephonyDomain\ConferenceController;
 use App\Http\Controllers\TelephonyDomain\ReferenceDialerController;
+use App\Http\Controllers\TelephonyDomain\RecordingSessionController;
 use App\Http\Controllers\TelephonyDomain\TelephonySessionController;
 use Illuminate\Support\Facades\Route;
 
@@ -134,6 +135,10 @@ Route::prefix('api/v1')->middleware(['identity.session'])->group(function (): vo
     Route::post('/calls/{call}/operations', [CallController::class, 'storeOperation']);
     Route::get('/calls/{call}/operations', [CallController::class, 'operations']);
     Route::get('/calls/{call}/timeline', [CallController::class, 'timeline']);
+    Route::get('/calls/{call}/recordings', [RecordingSessionController::class, 'index']);
+    Route::post('/calls/{call}/recordings', [RecordingSessionController::class, 'store']);
+    Route::get('/calls/{call}/recordings/{recordingSession}', [RecordingSessionController::class, 'show']);
+    Route::post('/calls/{call}/recordings/{recordingSession}/stop', [RecordingSessionController::class, 'stop']);
     Route::get('/reference-dialer/bootstrap', [ReferenceDialerController::class, 'bootstrap']);
     Route::post('/telephony/sessions', [TelephonySessionController::class, 'store']);
     Route::get('/telephony/sessions/current', [TelephonySessionController::class, 'current']);

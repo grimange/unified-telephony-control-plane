@@ -5,12 +5,14 @@ namespace App\RuntimeEngine\Commands;
 use App\ControlPlane\Messaging\EventEnvelope;
 use App\ControlPlane\Messaging\OutboxRepository;
 use App\ControlPlane\RuntimeOperations\FailureClass;
+use App\ControlPlane\RuntimeOperations\OperationStatus;
 use App\ControlPlane\RuntimeOperations\RuntimeOperationRepository;
 use App\ControlPlane\Shared\CausationId;
 use App\ControlPlane\Shared\CorrelationId;
 use App\ControlPlane\Shared\ExecutionContext;
 use App\ControlPlane\Shared\RequestId;
 use App\TelephonyDomain\CallDomainService;
+use App\TelephonyDomain\RecordingSessionService;
 use App\RuntimeRegistry\RuntimeExecutionContract;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Facades\DB;
@@ -24,6 +26,7 @@ final class CommandWorker
         private readonly RuntimeOperationHandlerRegistry $handlers,
         private readonly RuntimeAdapterRegistry $adapters,
         private readonly CallDomainService $calls,
+        private readonly ?RecordingSessionService $recordings = null,
     ) {}
 
     /**
@@ -56,14 +59,17 @@ final class CommandWorker
                 $this->operations->markRunning($claim->id, $claim->leaseToken);
                 $handler = $this->handlers->get((string) $row->operation_type, (int) $row->payload_version);
                 if ($handler === null) {
-                    $this->operations->fail($claim->id, $claim->leaseToken, FailureClass::UnsupportedCapability, 'handler_not_registered', 'no registered runtime operation handler');
+                    $failureClass = FailureClass::UnsupportedCapability;
+                    $status = $this->operations->fail($claim->id, $claim->leaseToken, $failureClass, 'handler_not_registered', 'no registered runtime operation handler');
+                    $this->recordings?->markOperationFailed($claim->id, $failureClass, 'handler_not_registered', 'no registered runtime operation handler', $status);
 
                     continue;
                 }
 
                 $adapter = $this->resolveAdapter($row, $handler);
                 if ($adapter instanceof FailureClass) {
-                    $this->operations->fail($claim->id, $claim->leaseToken, $adapter, 'adapter_not_available', 'runtime adapter was not available');
+                    $status = $this->operations->fail($claim->id, $claim->leaseToken, $adapter, 'adapter_not_available', 'runtime adapter was not available');
+                    $this->recordings?->markOperationFailed($claim->id, $adapter, 'adapter_not_available', 'runtime adapter was not available', $status);
 
                     continue;
                 }
@@ -86,6 +92,7 @@ final class CommandWorker
                         (string) $row->aggregate_type,
                         (string) $row->aggregate_id,
                     );
+                    $this->recordings?->markOperationCompleted($claim->id);
                     $processed++;
                     Log::info('runtime operation completed', [
                         'component' => 'telephony-command-worker',
@@ -99,15 +106,17 @@ final class CommandWorker
                 }
 
                 $failureClass = FailureClass::tryFrom((string) ($result['failure_class'] ?? 'internal_error')) ?? FailureClass::InternalError;
-                $this->operations->fail(
+                $status = $this->operations->fail(
                     $claim->id,
                     $claim->leaseToken,
                     $failureClass,
                     (string) ($result['failure_code'] ?? 'handler_failed'),
                     (string) ($result['failure_message'] ?? 'runtime operation handler failed'),
                 );
+                $this->recordings?->markOperationFailed($claim->id, $failureClass, (string) ($result['failure_code'] ?? 'handler_failed'), (string) ($result['failure_message'] ?? 'runtime operation handler failed'), $status);
             } catch (\Throwable $exception) {
-                $this->operations->fail($claim->id, $claim->leaseToken, FailureClass::InternalError, 'worker_exception', $exception->getMessage());
+                $status = $this->operations->fail($claim->id, $claim->leaseToken, FailureClass::InternalError, 'worker_exception', $exception->getMessage());
+                $this->recordings?->markOperationFailed($claim->id, FailureClass::InternalError, 'worker_exception', $exception->getMessage(), $status);
             }
         }
 
