@@ -18,8 +18,11 @@ spec:
         app.kubernetes.io/part-of: utcp
         app.kubernetes.io/component: telephony-reconciler
         utcp.io/network-role: worker
+        utcp.io/kubernetes-api-client: "true"
+        utcp.io/k5d-maintenance-client: "true"
     spec:
-      automountServiceAccountToken: false
+      serviceAccountName: utcp-kubernetes-maintenance
+      automountServiceAccountToken: true
       securityContext:
         runAsNonRoot: true
         runAsUser: 33

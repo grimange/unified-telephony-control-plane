@@ -69,7 +69,20 @@ export type KubernetesHost = {
   taints: unknown[]
   unschedulable: boolean
   workloads: Array<{ name: string; namespace: string; phase?: string; runtime_node_id?: string | null; runtime_node_name?: string | null }>
-  runtime_nodes: Array<{ id: string; name: string }>
+  runtime_nodes: Array<{ id: string; name: string; active_telephony_work: number }>
+}
+
+export type HostMaintenance = {
+  id: string
+  node_uid: string
+  node_name: string
+  status: string
+  phase: string
+  runtime_node_ids: string[]
+  failure_code?: string | null
+  failure_details?: string | null
+  requested_at: string
+  completed_at?: string | null
 }
 
 export type AdminUser = {
@@ -1133,6 +1146,9 @@ export const identityApi = {
   runtimeNodes: () => fetchJson<{ runtime_nodes: RuntimeNode[] }>('/api/v1/admin/runtime-nodes'),
   runtimeNodePlacement: (runtimeNodeId: string) => fetchJson<{ placement: RuntimeNodePlacement }>(`/api/v1/admin/runtime-nodes/${runtimeNodeId}/placement`),
   kubernetesHosts: () => fetchJson<{ hosts: KubernetesHost[] }>('/api/v1/admin/infrastructure/hosts'),
+  hostMaintenances: () => fetchJson<{ maintenances: HostMaintenance[] }>('/api/v1/admin/infrastructure/maintenances'),
+  requestHostMaintenance: (nodeUid: string, reason?: string) =>
+    postJson<{ maintenance: HostMaintenance }>(`/api/v1/admin/infrastructure/hosts/${nodeUid}/maintenance`, { reason: reason ?? null }, [202]),
   createRuntimeProvisioning: (payload: Record<string, unknown>, idempotencyKey: string) =>
     postJson<{ provisioning_request: RuntimeProvisioningRequest }>(
       '/api/v1/admin/runtime-provisioning',

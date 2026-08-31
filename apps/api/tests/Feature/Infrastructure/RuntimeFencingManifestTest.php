@@ -37,6 +37,7 @@ final class RuntimeFencingManifestTest extends TestCase
         $this->assertSame([
             'Deployment/utcp-platform/api',
             'Deployment/utcp-platform/scheduler',
+            'Deployment/utcp-platform/telephony-reconciler',
         ], $ordinaryApiClients);
     }
 
@@ -63,10 +64,29 @@ final class RuntimeFencingManifestTest extends TestCase
         }
 
         $reconciler = $objects['Deployment/utcp-platform/telephony-reconciler'];
-        $this->assertFalse($reconciler['spec']['template']['spec']['automountServiceAccountToken']);
-        $this->assertArrayNotHasKey('serviceAccountName', $reconciler['spec']['template']['spec']);
+        $this->assertTrue($reconciler['spec']['template']['spec']['automountServiceAccountToken']);
+        $this->assertSame('utcp-kubernetes-maintenance', $reconciler['spec']['template']['spec']['serviceAccountName']);
         $this->assertArrayNotHasKey('volumeMounts', $reconciler['spec']['template']['spec']['containers'][0]);
         $this->assertArrayNotHasKey('volumes', $reconciler['spec']['template']['spec']);
+    }
+
+    public function test_k5d_maintenance_identity_is_separate_and_least_privileged(): void
+    {
+        $objects = $this->kustomizeObjects('infrastructure/kubernetes/base/platform');
+        $role = $objects['ClusterRole/None/utcp-kubernetes-maintenance'];
+        $binding = $objects['ClusterRoleBinding/None/utcp-kubernetes-maintenance'];
+
+        $this->assertSame([
+            ['apiGroups' => [''], 'resources' => ['nodes'], 'verbs' => ['get', 'patch']],
+            ['apiGroups' => [''], 'resources' => ['pods'], 'verbs' => ['get', 'list']],
+            ['apiGroups' => ['policy'], 'resources' => ['pods/eviction'], 'verbs' => ['create']],
+        ], $role['rules']);
+        $this->assertSame('utcp-kubernetes-maintenance', $binding['subjects'][0]['name']);
+        $this->assertSame('utcp-kubernetes-maintenance', $binding['roleRef']['name']);
+
+        $observer = $objects['ClusterRoleBinding/None/utcp-kubernetes-observer-infrastructure-reader'];
+        $this->assertSame('utcp-kubernetes-observer', $observer['subjects'][0]['name']);
+        $this->assertNotContains('secrets', array_merge(...array_map(static fn (array $rule): array => $rule['resources'] ?? [], $role['rules'])));
     }
 
     public function test_common_worker_egress_is_reused_without_duplicate_data_service_policy(): void

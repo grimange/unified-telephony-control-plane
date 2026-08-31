@@ -105,8 +105,11 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** bounded implementation of **K5D — Telephony-Aware
-Host Maintenance**, whose authority is already sufficiently specific in ADR-024:
+**Exactly one next action:** deploy current main to canonical native k3s and
+perform controlled K5D telephony-aware host-maintenance natural acceptance.
+K5D is implemented and tested; its natural live proof remains pending. See the
+[`K5D implementation evidence`](../evidence/k5/k5d-telephony-aware-host-maintenance-implementation.md).
+ADR-024 remains the authority:
 maintenance begins as a canonical UTCP API operation, K5C new-work exclusion
 applies first, eligible RuntimeNodes move through the existing
 `ACTIVE -> DRAINING -> DRAINED` lifecycle using the same active-work predicate

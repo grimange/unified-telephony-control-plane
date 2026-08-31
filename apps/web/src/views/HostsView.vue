@@ -1,17 +1,34 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { identityApi, type KubernetesHost } from '../api/platform'
+import { identityApi, type HostMaintenance, type KubernetesHost } from '../api/platform'
+import { apiErrorMessage, can } from '../state/appState'
 
 const hosts = ref<KubernetesHost[]>([])
 const loading = ref(true)
 const error = ref('')
+const maintenances = ref<HostMaintenance[]>([])
+const canMaintain = can('platform.infrastructure.maintain')
 
 async function load(): Promise<void> {
   loading.value = true
   error.value = ''
-  try { hosts.value = (await identityApi.kubernetesHosts()).hosts }
-  catch { error.value = 'Kubernetes host observations are unavailable.' }
+  try {
+    hosts.value = (await identityApi.kubernetesHosts()).hosts
+    maintenances.value = (await identityApi.hostMaintenances()).maintenances
+  }
+  catch (exception) { error.value = apiErrorMessage(exception) }
   finally { loading.value = false }
+}
+
+async function requestMaintenance(host: KubernetesHost): Promise<void> {
+  try {
+    await identityApi.requestHostMaintenance(host.uid)
+    await load()
+  } catch (exception) { error.value = apiErrorMessage(exception) }
+}
+
+function maintenanceFor(host: KubernetesHost): HostMaintenance | undefined {
+  return maintenances.value.find((maintenance) => maintenance.node_uid === host.uid)
 }
 
 onMounted(load)
@@ -70,6 +87,23 @@ onMounted(load)
         <p>
           Workloads: {{ host.workloads.length }}
         </p>
+        <p v-if="host.runtime_nodes.length > 0">
+          Active telephony work: {{ host.runtime_nodes.reduce((total, node) => total + node.active_telephony_work, 0) }}
+        </p>
+        <p
+          v-if="maintenanceFor(host)"
+          class="meta"
+        >
+          Maintenance: {{ maintenanceFor(host)?.phase }}
+          <span v-if="maintenanceFor(host)?.failure_code">({{ maintenanceFor(host)?.failure_code }})</span>
+        </p>
+        <button
+          v-if="canMaintain && !maintenanceFor(host)"
+          type="button"
+          @click="requestMaintenance(host)"
+        >
+          Prepare for maintenance
+        </button>
       </article>
     </div>
   </section>

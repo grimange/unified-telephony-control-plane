@@ -8,6 +8,7 @@ use App\ControlPlane\Shared\IdempotencyKey;
 use App\ControlPlane\Shared\PayloadSafety;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Infrastructure\Kubernetes\HostMaintenanceService;
 
 final class ReconciliationWorker
 {
@@ -19,6 +20,7 @@ final class ReconciliationWorker
 
     public function workOnce(string $workerId, int $batchSize = 10): int
     {
+        app(HostMaintenanceService::class)->reconcileDue();
         $processed = 0;
 
         foreach ($this->repository->claimDue($workerId, $batchSize) as $claim) {

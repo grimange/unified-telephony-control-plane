@@ -244,6 +244,26 @@ final class RuntimeRegistryService
         });
     }
 
+    /** Begin the existing drain lifecycle from an automatic platform workflow. */
+    public function beginDrain(ExecutionContext $context, string $tenantId, string $nodeId): void
+    {
+        DB::transaction(function () use ($context, $tenantId, $nodeId): void {
+            $node = $this->nodeForUpdate($nodeId, $tenantId);
+            if ($node->desired_state === 'drained' || $node->desired_state === 'draining') return;
+            if ($node->desired_state !== 'active') {
+                throw new InvalidArgumentException('Runtime node is not eligible for maintenance draining.');
+            }
+            $this->catalog->assertDesiredTransition($node->desired_state, 'draining');
+            DB::table('runtime_nodes')->where('id', $nodeId)->update([
+                'desired_state' => 'draining', 'configuration_version' => ((int) $node->configuration_version) + 1,
+                'updated_by' => null, 'updated_at' => now(),
+            ]);
+            $this->drains->start($tenantId, $nodeId, $this->workload->activeTelephonyWorkCount($tenantId, $nodeId));
+            $this->reconciliation->ensureTarget($tenantId, 'runtime_node_drain', $nodeId, (int) $node->configuration_version + 1, 0);
+            $this->emitContext($context, $tenantId, $nodeId, 'runtime_node.desired_state_changed', ['from' => $node->desired_state, 'to' => 'draining', 'reason' => 'host_maintenance']);
+        });
+    }
+
     public function completeDrain(ExecutionContext $context, string $tenantId, string $nodeId): bool
     {
         return DB::transaction(function () use ($context, $tenantId, $nodeId): bool {

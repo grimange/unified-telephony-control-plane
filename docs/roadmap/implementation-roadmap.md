@@ -129,9 +129,12 @@ corridor. The focused ADR-027 regression proof passed, and the canonical API
 suite passed with 595 tests, 8 skips, and 5007 assertions. The implementation
 is committed at `e334209ccc016053d2f63f8e39e99f2126aa5535`.
 
-**Exactly one next action:** bounded implementation of **K5D — Telephony-Aware
-Host Maintenance**. ADR-024's telephony-aware maintenance boundary already
-settles the authority: maintenance begins as a canonical UTCP API operation, K5C
+**Exactly one next action:** deploy current main to canonical native k3s and
+perform controlled K5D telephony-aware host-maintenance natural acceptance.
+K5D is implemented and tested; its natural live proof remains pending. See the
+[`K5D implementation evidence`](../evidence/k5/k5d-telephony-aware-host-maintenance-implementation.md).
+ADR-024's telephony-aware maintenance boundary already settles the authority:
+maintenance begins as a canonical UTCP API operation, K5C
 new-work exclusion applies first, eligible RuntimeNodes move through the existing
 `ACTIVE -> DRAINING -> DRAINED` lifecycle using the same active-work predicate,
 and only after drain does the canonical reconciliation authority coordinate the
@@ -259,11 +262,12 @@ RuntimeNode readiness, declared capability, telephony load, capacity, and
 failure-domain constraints to determine telephony eligibility and selection.
 UTCP must not reimplement the Kubernetes scheduler.
 
-**K5D — Telephony-Aware Host Maintenance:** identify affected RuntimeNodes,
-exclude them from new telephony work, move them through the existing
-`ACTIVE -> DRAINING -> DRAINED` lifecycle as canonical work converges, and
-coordinate Kubernetes-owned maintenance through normal authorized,
-reconciled boundaries. This is planned, not implemented here.
+**K5D — Telephony-Aware Host Maintenance:** **IMPLEMENTED_AND_TESTED / NATURAL
+LIVE PROOF PENDING.** Identify affected RuntimeNodes, exclude them from new
+telephony work, reuse `ACTIVE -> DRAINING -> DRAINED`, and coordinate
+Kubernetes-owned cordon/eviction only after telephony drain completion through
+normal authorized reconciliation. K5E remains the later distributed,
+multi-host proof.
 
 **K5E — Distributed Infrastructure Live Proof:** prove that UTCP can operate
 telephony RuntimeNodes across at least two distinct Kubernetes host or failure

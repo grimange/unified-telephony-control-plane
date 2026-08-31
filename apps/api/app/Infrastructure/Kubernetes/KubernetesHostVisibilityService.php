@@ -4,11 +4,15 @@ namespace App\Infrastructure\Kubernetes;
 
 use App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentityResolver;
 use App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentityException;
+use App\RuntimeRegistry\RuntimeNodeWorkloadService;
 use Illuminate\Support\Facades\DB;
 
 final class KubernetesHostVisibilityService
 {
-    public function __construct(private readonly KubernetesInfrastructureClient $client) {}
+    public function __construct(
+        private readonly KubernetesInfrastructureClient $client,
+        private readonly RuntimeNodeWorkloadService $workload,
+    ) {}
 
     /** @return list<array<string, mixed>> */
     public function hosts(): array
@@ -40,7 +44,15 @@ final class KubernetesHostVisibilityService
                 $workloads[] = ['name' => (string) data_get($pod, 'metadata.name', ''), 'namespace' => (string) data_get($pod, 'metadata.namespace', ''), 'phase' => data_get($pod, 'status.phase'), 'runtime_node_id' => $runtime?->id, 'runtime_node_name' => $runtime?->name];
             }
             usort($workloads, fn ($a, $b) => [$a['namespace'], $a['name']] <=> [$b['namespace'], $b['name']]);
-            $runtimeAssociations = collect($workloads)->filter(fn ($item) => $item['runtime_node_id'] !== null)->unique('runtime_node_id')->sortBy('runtime_node_name')->values()->map(fn ($item) => ['id' => $item['runtime_node_id'], 'name' => $item['runtime_node_name']])->all();
+            $runtimeAssociations = collect($workloads)->filter(fn ($item) => $item['runtime_node_id'] !== null)->unique('runtime_node_id')->sortBy('runtime_node_name')->values()->map(function ($item) use ($runtimeNodes): array {
+                $runtime = $runtimeNodes->firstWhere('id', $item['runtime_node_id']);
+
+                return [
+                    'id' => $item['runtime_node_id'],
+                    'name' => $item['runtime_node_name'],
+                    'active_telephony_work' => $runtime === null ? 0 : $this->workload->activeTelephonyWorkCount((string) $runtime->tenant_id, (string) $runtime->id),
+                ];
+            })->all();
             $addresses = collect(data_get($node, 'status.addresses', []))->filter(fn (mixed $address): bool => is_array($address))->map(fn (array $address): array => ['type' => (string) ($address['type'] ?? ''), 'address' => (string) ($address['address'] ?? '')])->filter(fn (array $a): bool => $a['type'] !== '' && $a['address'] !== '')->sortBy(fn (array $a): string => $a['type'].'|'.$a['address'])->values()->all();
             $conditions = collect(data_get($node, 'status.conditions', []))->filter(fn (mixed $condition): bool => is_array($condition))->map(fn (array $condition): array => ['type' => (string) ($condition['type'] ?? ''), 'status' => (string) ($condition['status'] ?? ''), 'reason' => $condition['reason'] ?? null])->filter(fn (array $c): bool => $c['type'] !== '')->sortBy('type')->values()->all();
             $ready = collect($conditions)->firstWhere('type', 'Ready');
