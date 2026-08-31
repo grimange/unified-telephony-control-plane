@@ -105,9 +105,14 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** deploy current main and perform the controlled
-RMA-A recording-authority and lifecycle live proof. RMA is the next R0-critical
-track now that **K5E is COMPLETE / NATURAL-LIVE-PROVEN**. The
+**Exactly one next action:** implement the bounded Asterisk endpoint-plus-URI
+SIP DestinationRef normalization repair. RMA-A is implemented/tested, but its
+natural live proof is blocked before canonical recording intent because the
+repository-defined Asterisk Echo fixture terminal-fails canonical Call
+origination as `ari_destination_invalid`; see [RMA-A live-proof blocker
+evidence](../evidence/rma/rma-a-recording-authority-and-lifecycle-natural-live-proof-blocker.md).
+RMA is the next R0-critical track now that **K5E is COMPLETE /
+NATURAL-LIVE-PROVEN**. The
 2026-08-31 two-stage controlled live proof deployed `3202451` and closed both
 stages. **Stage A** proved the scheduler overlap-mutex repair live: every
 minute-cadence overlap event reports `expires=5` in the running application with
@@ -260,10 +265,13 @@ NAT acceptance corridor. Gap C and Gap D are closed; see their linked evidence
 and ADRs for detail.
 
 RMA is the Recording & Media Archive track. It follows completed K5E and the
-established V1 Call/CallLeg corridor; RMA-A is implemented/tested and its
-natural live proof is pending. RMA-B through RMA-H remain not started. RMA
-does not technically gate A0, and no artifact, archive, retention, playback,
-or download implementation is claimed by RMA-A.
+established V1 Call/CallLeg corridor; RMA-A is implemented/tested, but its
+natural live proof is blocked before recording intent by the exact Asterisk
+endpoint-plus-URI SIP DestinationRef normalization defect documented in the
+[RMA-A live-proof blocker evidence](../evidence/rma/rma-a-recording-authority-and-lifecycle-natural-live-proof-blocker.md).
+RMA-B through RMA-H remain not started. RMA does not technically gate A0, and
+no artifact, archive, retention, playback, or download implementation is
+claimed by RMA-A.
 
 ## Historical status rule
 

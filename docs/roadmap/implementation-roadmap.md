@@ -114,8 +114,11 @@ reactivate it as the current proof environment. See
 **K5D are complete and natural-live-proven**, with no remaining K5C or K5D proof
 gap. K5E is next.
 
-**Exactly one next action:** `RMA — Recording & Media Archive`, the next
-R0-critical track now that **K5E is COMPLETE / NATURAL-LIVE-PROVEN**. The
+**Exactly one next action:** bounded implementation of the Asterisk
+endpoint-plus-URI SIP DestinationRef normalization repair, which currently
+blocks RMA-A natural live proof before canonical recording intent. RMA remains
+the next R0-critical track now that **K5E is COMPLETE /
+NATURAL-LIVE-PROVEN**. The
 2026-08-31 two-stage controlled live proof deployed `3202451` and closed both
 stages. **Stage A** proved the scheduler overlap-mutex repair live: every
 minute-cadence overlap event reports `expires=5` in the running application with
@@ -523,7 +526,9 @@ owns business meaning; UTCP owns reusable telephony control and lifecycle.
 ### RMA — Recording & Media Archive
 
 **Status:** In progress / UTCP Core / R0-Critical. RMA-A is implemented and
-tested but not live-proven; RMA-B through RMA-H remain not started.
+tested, but its natural live proof is blocked before recording intent by the
+exact Asterisk endpoint-plus-URI SIP DestinationRef normalization defect;
+RMA-B through RMA-H remain not started.
 
 **Objective:** provide reusable, provider-neutral technical recording and media
 artifact/archive lifecycle for multiple telephony applications. The consuming
@@ -543,8 +548,10 @@ Natural Live Proof.
 
 RMA-A establishes only the tenant-scoped RecordingSession authority,
 authenticated intent API, lifecycle state, correlation, authorization,
-idempotency, audit, and subordinate RuntimeOperation relationship. It is not
-live-proven. RMA-B through RMA-H remain planned architectural slices only; no
+idempotency, audit, and subordinate RuntimeOperation relationship. Its natural
+live proof is blocked before the RMA API can be exercised because canonical
+Asterisk Call origination rejects the repository-defined endpoint-plus-URI SIP
+DestinationRef as `ari_destination_invalid`. RMA-B through RMA-H remain planned architectural slices only; no
 artifact, archive, credential, retention, playback/download, MinIO, or
 additional runtime support is claimed. RMA depends on the established
 V1 Call/CallLeg corridor and completed K5E; it does not technically depend on
