@@ -105,8 +105,8 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** bounded implementation correcting the K5D
-maintenance eviction ClusterRole API group. The 2026-08-31 controlled live proof
+**Exactly one next action:** deploy repaired current main to canonical native
+k3s and resume the K5D controlled natural live proof. The 2026-08-31 controlled live proof
 deployed repaired `main` (`7da5de5`) to the two-node canonical topology and
 **verified the eviction-scope repair live**: reproducing the deployed predicate
 read-only against the target host `utcp-dev01` yields exactly **one** subject
@@ -126,9 +126,12 @@ create resource "pods/eviction" in API group ""` where cluster-admin returned
 the target Node and only then fail at eviction, leaving it cordoned with no
 product uncordon path — so the proof stopped at the pre-mutation gate. No
 maintenance was requested, nothing was cordoned or evicted, and no production
-source was changed. The fix is to grant `pods/eviction` under `apiGroups: [""]`
-in `infrastructure/kubernetes/base/platform/kubernetes-maintenance-rbac.yaml`;
-after that this acceptance corridor re-runs unchanged. See the
+source was changed. The bounded repair grants `pods/eviction` under
+`apiGroups: [""]` in
+`infrastructure/kubernetes/base/platform/kubernetes-maintenance-rbac.yaml`;
+after deployment this acceptance corridor re-runs unchanged. K5D remains
+implemented and tested with the eviction-scope repair verified live and the
+eviction RBAC defect repaired; natural live proof is pending. See the
 [`K5D natural live proof`](../evidence/k5/k5d-telephony-aware-host-maintenance-natural-live-proof.md)
 and the
 [`K5D eviction-scope repair`](../evidence/k5/k5d-kubernetes-eviction-scope-live-proof-blocker-repair.md).

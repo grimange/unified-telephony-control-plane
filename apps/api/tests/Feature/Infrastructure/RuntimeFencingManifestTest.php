@@ -79,8 +79,12 @@ final class RuntimeFencingManifestTest extends TestCase
         $this->assertSame([
             ['apiGroups' => [''], 'resources' => ['nodes'], 'verbs' => ['get', 'patch']],
             ['apiGroups' => [''], 'resources' => ['pods'], 'verbs' => ['get', 'list']],
-            ['apiGroups' => ['policy'], 'resources' => ['pods/eviction'], 'verbs' => ['create']],
+            ['apiGroups' => [''], 'resources' => ['pods/eviction'], 'verbs' => ['create']],
         ], $role['rules']);
+        $this->assertNotContains(
+            ['apiGroups' => ['policy'], 'resources' => ['pods/eviction'], 'verbs' => ['create']],
+            $role['rules'],
+        );
         $this->assertSame('utcp-kubernetes-maintenance', $binding['subjects'][0]['name']);
         $this->assertSame('utcp-kubernetes-maintenance', $binding['roleRef']['name']);
 
