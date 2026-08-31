@@ -4,6 +4,7 @@ import { managedDeprovisioningLabel, managedProvisioningLabel, runtimeNodePrimar
 import { catalogOptions } from './runtimeCatalogPresentation'
 import { managedRuntimeOptions } from './runtimeManagedOptions'
 import platformSource from '../api/platform.ts?raw'
+import appStateSource from '../state/appState.ts?raw'
 import type { RuntimeManagementCatalog, RuntimeOperationStatus } from '../api/platform'
 
 const operation = (status: RuntimeOperationStatus, id: string) => ({
@@ -155,6 +156,13 @@ describe('RNP-5 managed RuntimeNode Admin UI contract', () => {
     expect(runtimeNodesViewSource).toContain('Integration identity remains protected for UTCP-managed RuntimeNodes.')
     expect(runtimeNodesViewSource).toContain("v-if=\"runtimeManagement(node).mode !== 'managed'\"\n                :id=\"runtimeFieldId(node.id, 'name')\"")
     expect(runtimeNodesViewSource).toContain("v-if=\"can('runtime.nodes.manage') && node.desired_state !== 'retired'\"")
+  })
+
+  it('reseeds RuntimeNode policy form state from the canonical update response', () => {
+    expect(appStateSource).toContain('const response = await identityApi.updateRuntimeNode(node.id')
+    expect(appStateSource).toContain('seedRuntimeNodeEditForm(response.runtime_node)')
+    expect(appStateSource).toContain("placement_region: node.placement.region ?? ''")
+    expect(appStateSource).toContain('capacity_weight: node.placement.capacity_weight')
   })
 
   it('maps canonical provisioning statuses while preserving readiness as a separate authority', () => {

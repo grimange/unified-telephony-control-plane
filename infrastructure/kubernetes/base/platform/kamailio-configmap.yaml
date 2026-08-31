@@ -306,7 +306,7 @@ data:
             exit;
         }
 
-        if (!sql_query("conference", "select runtime_node_id, sip_target from kamailio_inbound_runtime_target_view where tenant_id = '$dbr(external_trunk_route=>[0,0])' order by placement_priority, runtime_node_id", "inbound_runtime_target")) {
+        if (!sql_query("conference", "select runtime_node_id, sip_target, available_capacity, active_telephony_work from kamailio_inbound_runtime_target_view where tenant_id = '$dbr(external_trunk_route=>[0,0])' order by placement_priority asc, available_capacity desc, active_telephony_work asc, runtime_node_id asc", "inbound_runtime_target")) {
             xlog("L_WARN", "kamailio_external_trunk_route result=execution_target_projection_failed method=$rm call_id=$ci\n");
             sl_send_reply("503", "Inbound Runtime Unavailable");
             exit;

@@ -669,15 +669,19 @@ export async function createRuntimeNode(): Promise<void> {
   await refreshRuntimeNodes()
 }
 
+function seedRuntimeNodeEditForm(node: RuntimeNode): void {
+  runtimeNodeEditForms[node.id] = {
+    name: node.name,
+    placement_region: node.placement.region ?? '',
+    placement_zone: node.placement.zone ?? '',
+    placement_priority: node.placement.priority,
+    capacity_weight: node.placement.capacity_weight,
+  }
+}
+
 export function runtimeNodeEditForm(node: RuntimeNode): RuntimeNodeEditForm {
   if (!runtimeNodeEditForms[node.id]) {
-    runtimeNodeEditForms[node.id] = {
-      name: node.name,
-      placement_region: node.placement.region ?? '',
-      placement_zone: node.placement.zone ?? '',
-      placement_priority: node.placement.priority,
-      capacity_weight: node.placement.capacity_weight,
-    }
+    seedRuntimeNodeEditForm(node)
   }
 
   return runtimeNodeEditForms[node.id]
@@ -702,7 +706,7 @@ export function runtimeEndpointEditForm(endpoint: RuntimeNode['endpoints'][numbe
 
 export async function saveRuntimeNodeEdit(node: RuntimeNode): Promise<void> {
   const form = runtimeNodeEditForm(node)
-  await identityApi.updateRuntimeNode(node.id, {
+  const response = await identityApi.updateRuntimeNode(node.id, {
     name: form.name,
     placement_region: form.placement_region || null,
     placement_zone: form.placement_zone || null,
@@ -710,6 +714,7 @@ export async function saveRuntimeNodeEdit(node: RuntimeNode): Promise<void> {
     capacity_weight: form.capacity_weight,
   })
   clearRuntimeNodeDetails(node.id)
+  seedRuntimeNodeEditForm(response.runtime_node)
   await refreshRuntimeNodes()
   await reloadRuntimeNodeDetails(node.id)
 }

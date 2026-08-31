@@ -338,6 +338,34 @@ final class RuntimeRegistryTest extends TestCase
             ->assertJsonPath('runtime_node.placement.capacity_weight', 0);
     }
 
+    public function test_runtime_node_nullable_placement_updates_distinguish_clear_from_absent(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdmin('placement-clear-admin@utcp.local.test', 'placement-clear');
+        $session = ['user_session_version' => 1, 'active_tenant_id' => $tenantId];
+        $node = $this->actingAs($admin)->withSession($session)
+            ->postJson('/api/v1/admin/runtime-nodes', $this->nodePayload('placement-clear-proof'))
+            ->assertCreated()
+            ->json('runtime_node');
+
+        $this->actingAs($admin)->withSession($session)
+            ->patchJson("/api/v1/admin/runtime-nodes/{$node['id']}", ['capacity_weight' => 9])
+            ->assertOk()
+            ->assertJsonPath('runtime_node.placement.region', 'local')
+            ->assertJsonPath('runtime_node.placement.zone', 'dev');
+
+        $this->actingAs($admin)->withSession($session)
+            ->patchJson("/api/v1/admin/runtime-nodes/{$node['id']}", ['placement_region' => null])
+            ->assertOk()
+            ->assertJsonPath('runtime_node.placement.region', null)
+            ->assertJsonPath('runtime_node.placement.zone', 'dev');
+
+        $this->actingAs($admin)->withSession($session)
+            ->patchJson("/api/v1/admin/runtime-nodes/{$node['id']}", ['placement_zone' => null])
+            ->assertOk()
+            ->assertJsonPath('runtime_node.placement.region', null)
+            ->assertJsonPath('runtime_node.placement.zone', null);
+    }
+
     public function test_tenant_member_cross_tenant_access_and_invalid_inputs_fail_closed(): void
     {
         [$admin, $tenantId] = $this->createTenantAdmin('admin-two@utcp.local.test');

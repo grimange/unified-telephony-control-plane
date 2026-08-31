@@ -25,8 +25,8 @@ complete.** Recording remains separate. T4D does not exist. See the
 **K5C — Capacity and Failure-Domain Policy:** implemented and tested; the
 2026-08-31 controlled natural live reproof deployed repaired `main`
 (`685eb91`) through the canonical native-k3s lifecycle. **Both previously
-isolated blockers are repaired and live-proven, and two further live defects
-were isolated, so K5C is still not closed.** Defect A is closed: the scheduler
+isolated blockers are repaired and live-proven, and the follow-up live defects
+are repaired and tested, so K5C remains open only for natural reproof.** Defect A is closed: the scheduler
 Pod now runs as `utcp-kubernetes-observer` with native projected credentials and
 the `utcp.io/kubernetes-api-client` classification, holds exactly `get`/`list`
 on `nodes` and `pods` (writes, secrets and deployments denied, `watch` denied),
@@ -75,10 +75,12 @@ the RuntimeNode ended at its original `capacity_weight 100`,
 `active`/`ready` and eligible, with no Kubernetes topology label added and every
 `utcp-platform` Pod Ready. Conference capacity behaviour and multi-candidate
 ordering remain regression-proven, not natural-live-proven — no natural
-conference binding and only one eligible RuntimeNode exist here — and neither
-blocks closure; Defects C and D do. No product source was repaired, no K5D
-behaviour was exercised, no RBAC, NetworkPolicy, Kubernetes scheduler or Node
-label was changed, and no reporting work was done. See the
+conference binding and only one eligible RuntimeNode exist here — and remain
+proof gaps rather than policy defects. The follow-up repair covers Defects C and D
+and Defect E,
+where successful policy saves now reseed the local edit form from the canonical
+RuntimeNode response so later saves cannot replay stale values. No K5D
+behaviour was exercised, and no reporting work was done. See the
 [`K5C natural live proof`](../evidence/k5/k5c-capacity-failure-domain-policy-natural-live-proof.md)
 and [`K5C live-defect repair`](../evidence/k5/k5c-placement-observation-and-managed-policy-ui-live-defect-repair.md).
 **K5B is complete.** The 2026-08-30 natural live proof deployed the exact
@@ -119,10 +121,8 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** bounded implementation correcting the inbound
-capacity exclusion (Defect C) and the canonical placement-constraint clear path
-(Defect D), after which the controlled natural K5C acceptance corridor can be
-re-run unchanged. **V1 is
+**Exactly one next action:** deploy repaired current `main` to canonical native
+k3s and rerun the existing K5C controlled natural acceptance. **V1 is
 complete.** The 2026-08-30
 controlled live re-proof deployed the committed
 `X-UTCP-Caller-Identity-ID` provider-boundary correction through the canonical
