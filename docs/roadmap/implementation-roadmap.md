@@ -111,9 +111,7 @@ reactivate it as the current proof environment. See
 ## Current state and executable order
 
 **Current phase:** V1 — Bidirectional external call routing and control; K5C is
-implemented and tested, its first two live defects are repaired and
-live-proven, and the follow-up live defects are repaired and tested; natural
-live reproof remains pending.
+**complete and natural-live-proven**, with no remaining K5C proof gap.
 
 **Current status:** T4A/T4B are implemented and tested; T4C1/T4C2 are
 implemented, tested, live-proven, and frozen. The timer-backed media playback
@@ -131,11 +129,15 @@ corridor. The focused ADR-027 regression proof passed, and the canonical API
 suite passed with 595 tests, 8 skips, and 5007 assertions. The implementation
 is committed at `e334209ccc016053d2f63f8e39e99f2126aa5535`.
 
-**Exactly one next action:** deploy repaired current `main` to canonical native
-k3s and rerun the existing K5C controlled natural acceptance. V1 remains complete and unchanged; the
-external PBX prerequisites remain separate.
-C7B closed on 2026-08-24 after its focused route-authority tests and
-provider-neutrality checks passed.
+**Exactly one next action:** bounded implementation of **K5D — Telephony-Aware
+Host Maintenance**. ADR-024's telephony-aware maintenance boundary already
+settles the authority: maintenance begins as a canonical UTCP API operation, K5C
+new-work exclusion applies first, eligible RuntimeNodes move through the existing
+`ACTIVE -> DRAINING -> DRAINED` lifecycle using the same active-work predicate,
+and only after drain does the canonical reconciliation authority coordinate the
+Kubernetes-owned cordon/drain and observe replacement workloads — never a raw
+`kubectl drain` button, Artisan drain command, or manual reconciliation. V1
+remains complete and unchanged; the external PBX prerequisites remain separate.
 
 ```text
 T4 closure
@@ -231,11 +233,18 @@ workload relationship in telephony terms, including RuntimeNode location and
 failure-domain association, without copying Kubernetes into a competing
 database authority.
 
-**K5C — Capacity and Failure-Domain Policy:** **implemented and tested; the
-placement-observation and managed-policy-UI defects are repaired and
-live-proven; the follow-up inbound-capacity, ordering, nullable-clear and form
-state defects are repaired and tested, so K5C remains open for natural
-reproof.** The scheduler now uses a dedicated read-only
+**K5C — Capacity and Failure-Domain Policy:** **COMPLETE /
+NATURAL-LIVE-PROVEN.** The 2026-08-31 controlled natural live reproof closed the
+phase on canonical native k3s with no remaining proof gap: the forward repair
+migration applied normally, the live view excludes full finite-capacity
+candidates, the deployed Kamailio consumer carries the complete K5C ordering
+tuple, a natural bounded Call proved outbound and inbound exclusion at full
+capacity without terminating existing work, desired region and zone each
+excluded independently while observed topology stayed absent and readiness stayed
+`ready`, both constraints cleared through the Web Admin as real `NULL` with
+automatic eligibility recovery, and sequential saves replayed no stale values.
+Conference parity and multi-candidate ordering remain regression-proven in this
+single-candidate environment. The scheduler uses a dedicated read-only
 Kubernetes observer identity for the existing automatic placement projection,
 and managed RuntimeNodes expose K5C desired policy controls while retaining
 protected integration controls; both were proven live. The production inbound

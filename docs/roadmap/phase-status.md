@@ -22,67 +22,51 @@ canonical observation authority from FreeSWITCH runtime events. **T4 is
 complete.** Recording remains separate. T4D does not exist. See the
 [`T4 timer-backed media.playback live proof`](../evidence/t4/t4-timer-backed-media-playback-natural-live-proof.md).
 
-**K5C — Capacity and Failure-Domain Policy:** implemented and tested; the
-2026-08-31 controlled natural live reproof deployed repaired `main`
-(`685eb91`) through the canonical native-k3s lifecycle. **Both previously
-isolated blockers are repaired and live-proven, and the follow-up live defects
-are repaired and tested, so K5C remains open only for natural reproof.** Defect A is closed: the scheduler
-Pod now runs as `utcp-kubernetes-observer` with native projected credentials and
-the `utcp.io/kubernetes-api-client` classification, holds exactly `get`/`list`
-on `nodes` and `pods` (writes, secrets and deployments denied, `watch` denied),
-`utcp-platform-app` remains unprivileged, the existing Kubernetes API egress
-NetworkPolicy corridor is used unchanged, and the automatic every-minute
-observer now projects real facts — `placed`, uid `faa05d1c-…`, `utcp-dev01`,
-region and zone genuinely absent — agreeing exactly with Kubernetes and stable
-across four observation cycles. Defect B is closed: the managed RuntimeNode's
-Web Admin detail panel renders a `Telephony policy` section with capacity,
-placement priority, desired region and desired zone all visible and editable
-plus a save control, while integration identity, endpoint, credential and
-capability controls remain absent and the K5B placement section remains
-read-only with zero controls and zero forms. Natural Web Admin mutation reaches
-canonical PostgreSQL. The capacity corridor is proven end to end: one natural
-bounded Call to `97001` raised shared active telephony work from 0 to 1 against
-`capacity_weight 1`, the full RuntimeNode was excluded from automatic outbound
-selection with the canonical `HTTP 422` unavailable response, the existing Call
-continued and terminated naturally on its own (`remote`, ~40 s) rather than
-being terminated by admission policy, and terminal release restored eligibility
-automatically with no Artisan, SQL, projection command or restart. The
-failure-domain corridor is proven for exclusion: a desired region and zone set
-naturally through Web Admin excluded the node from both the production
-`kamailio_inbound_runtime_target_view` (0 rows) and the outbound corridor
-(`HTTP 422`) with active work `0`, while `observed_region`/`observed_zone`
-stayed `ABSENT`, no Kubernetes label was added, and `observed_state` stayed
-`ready` — desired and observed authorities remain separate. **Defect C —
-`K5C_INBOUND_CAPACITY_PROJECTION_LIVE_DEFECT`:** in the same full-capacity
-window in which outbound correctly excluded the node, the production inbound
-view still returned it with `available_capacity 0, active_telephony_work 1`; the
-live view's `WHERE` clause carries no capacity predicate, and the live Kamailio
-consumer selects no capacity column, applies no capacity predicate, and
-re-orders by `placement_priority, runtime_node_id`, discarding the K5C
-tiebreakers. Three-corridor capacity parity fails. **Defect D —
-`K5C_FAILURE_DOMAIN_RECOVERY_LIVE_DEFECT`:** a K5C placement constraint cannot
-be cleared through any canonical path — a single natural Web Admin save of empty
-region and zone advanced `configuration_version` 15 → 16 yet left both values
-set, because `RuntimeRegistryService::updateNode()` uses
-`$input['placement_region'] ?? $node->placement_region`, which cannot
-distinguish an explicit null from an absent key. The evaluator, projection and
-recovery machinery are correct: once the desired state was actually cleared,
-eligibility returned immediately with no reconcile. Restoring the proof-only
-constraints therefore required one disclosed, guarded, non-canonical SQL update
-of exactly those two columns after all acceptance results had been obtained;
-the RuntimeNode ended at its original `capacity_weight 100`,
-`placement_priority 100`, `placement_region NULL`, `placement_zone NULL`,
-`active`/`ready` and eligible, with no Kubernetes topology label added and every
-`utcp-platform` Pod Ready. Conference capacity behaviour and multi-candidate
-ordering remain regression-proven, not natural-live-proven — no natural
-conference binding and only one eligible RuntimeNode exist here — and remain
-proof gaps rather than policy defects. The follow-up repair covers Defects C and D
-and Defect E,
-where successful policy saves now reseed the local edit form from the canonical
-RuntimeNode response so later saves cannot replay stale values. No K5D
-behaviour was exercised, and no reporting work was done. See the
-[`K5C natural live proof`](../evidence/k5/k5c-capacity-failure-domain-policy-natural-live-proof.md)
-and [`K5C live-defect repair`](../evidence/k5/k5c-placement-observation-and-managed-policy-ui-live-defect-repair.md).
+**K5C — Capacity and Failure-Domain Policy is COMPLETE / NATURAL-LIVE-PROVEN.**
+The 2026-08-31 controlled natural live reproof deployed repaired `main`
+(`9dd173a`) through the canonical native-k3s lifecycle and closed the phase; the
+remaining K5C proof gap is **NONE**. The forward migration
+`2026_08_31_100000_repair_k5c_inbound_capacity_and_ordering` applied normally in
+batch 7 with no manual SQL, and the live view now carries
+`capacity_weight = 0 or active_telephony_work < capacity_weight` plus the full
+ordering tuple, while the **deployed** Kamailio ConfigMap selects
+`available_capacity, active_telephony_work` and orders by
+`placement_priority asc, available_capacity desc, active_telephony_work asc,
+runtime_node_id asc`. The scheduler still runs as `utcp-kubernetes-observer`
+with exactly `get`/`list` on `nodes` and `pods` (writes, secrets and deployments
+denied), `utcp-platform-app` remains unprivileged, and the automatic
+every-minute observer projects facts agreeing exactly with Kubernetes —
+`placed`, uid `faa05d1c-…`, `utcp-dev01`, region and zone genuinely absent. The
+managed RuntimeNode's `Telephony policy` section keeps capacity, placement
+priority, desired region and desired zone editable while integration identity
+stays protected and the K5B placement section stays read-only. Baseline missing
+topology with no constraint carries no K5C penalty. One natural bounded Call to
+`97001` against `capacity_weight 1` raised shared active telephony work 0 → 1
+and, with `cv == ocv` so exclusion was attributable to policy alone, the full
+RuntimeNode was **absent from the production inbound view** and rejected for
+outbound with the canonical `HTTP 422`; the existing Call continued and ended on
+its own (`remote`, ~42 s), and terminal release restored eligibility
+automatically. Desired region and desired zone each excluded the node
+independently from both corridors while `observed_region`/`observed_zone` stayed
+`ABSENT`, no Kubernetes label was added, and `observed_state` stayed `ready`.
+Both constraints were then **cleared through the Web Admin** and persisted as
+real `NULL`, with eligibility recovering automatically on both corridors and no
+SQL recovery anywhere in the packet. Sequential saves are sound in both
+directions: capacity→region preserved the new capacity and region→capacity
+preserved the cleared topology, with the form reseeding from the canonical
+response. The post-deploy zero-row window was correctly classified as the known
+separate runtime deployment-convergence debt and awaited rather than bypassed.
+Conference capacity parity and multi-candidate ordering behaviour remain
+regression-proven, not natural-live-proven — no natural conference fixture and a
+single-candidate environment — and neither blocks closure. All temporary policy
+values were restored through the Web Admin to `capacity_weight 100`,
+`placement_priority 100`, `placement_region NULL`, `placement_zone NULL`, with
+the node `active`/`ready` and eligible and every `utcp-platform` Pod Ready. No
+production source changed, no K5D behaviour was exercised, and no reporting work
+was done. See the
+[`K5C natural live proof`](../evidence/k5/k5c-capacity-failure-domain-policy-natural-live-proof.md),
+the [`K5C inbound capacity and policy clear repair`](../evidence/k5/k5c-inbound-capacity-and-policy-clear-live-defect-repair.md),
+and the [`K5C placement observation and managed policy UI repair`](../evidence/k5/k5c-placement-observation-and-managed-policy-ui-live-defect-repair.md).
 **K5B is complete.** The 2026-08-30 natural live proof deployed the exact
 K5B commit through the canonical native-k3s lifecycle and proved the whole
 placement corridor: RuntimeNode `102d58ba-…` resolved its canonical workload
@@ -121,8 +105,16 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** deploy repaired current `main` to canonical native
-k3s and rerun the existing K5C controlled natural acceptance. **V1 is
+**Exactly one next action:** bounded implementation of **K5D — Telephony-Aware
+Host Maintenance**, whose authority is already sufficiently specific in ADR-024:
+maintenance begins as a canonical UTCP API operation, K5C new-work exclusion
+applies first, eligible RuntimeNodes move through the existing
+`ACTIVE -> DRAINING -> DRAINED` lifecycle using the same active-work predicate
+(active conference bindings plus non-terminal CallLegs) already implemented in
+`RuntimeNodeWorkloadService` and consumed by `RuntimeNodeDrainCoordinator`, and
+only after drain does the canonical reconciliation authority coordinate the
+Kubernetes-owned cordon/drain and observe replacement workloads — never a raw
+`kubectl drain` button, Artisan drain command, or manual reconciliation. **V1 is
 complete.** The 2026-08-30
 controlled live re-proof deployed the committed
 `X-UTCP-Caller-Identity-ID` provider-boundary correction through the canonical
