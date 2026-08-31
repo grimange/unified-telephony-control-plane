@@ -44,6 +44,23 @@ final class AsteriskAriAdapterTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_originate_preserves_endpoint_plus_explicit_sip_uri_for_asterisk_pjsip(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([['status' => 201]]);
+
+        $client->executeCallOperation($tenantId, $nodeId, 'call.leg.originate', [
+            'leg_id' => 'leg-1',
+            'destination_uri' => 'sip:anonymous/sip:9900@asterisk-sip.utcp-runtime.svc.cluster.local:5060',
+        ], [['id' => 'leg-1', 'call_id' => 'call-1', 'runtime_channel_id' => 'channel-1']]);
+
+        $this->assertSame(
+            'PJSIP/anonymous/sip:9900@asterisk-sip.utcp-runtime.svc.cluster.local:5060',
+            $client->requests[0]['query']['endpoint'],
+        );
+    }
+
     public function test_originate_uses_inherited_variables_for_the_outbound_predial_header_handler(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode();

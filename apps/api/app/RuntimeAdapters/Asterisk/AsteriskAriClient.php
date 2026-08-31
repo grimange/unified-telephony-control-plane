@@ -485,6 +485,19 @@ class AsteriskAriClient
 
     private function asteriskEndpoint(string $destination): string
     {
+        if (str_starts_with($destination, 'sip:')) {
+            $endpointAndUri = substr($destination, 4);
+            $separator = strpos($endpointAndUri, '/');
+            if ($separator !== false) {
+                $endpoint = substr($endpointAndUri, 0, $separator);
+                $explicitUri = substr($endpointAndUri, $separator + 1);
+                if (preg_match('/^[A-Za-z0-9+_.-]+$/', $endpoint) === 1
+                    && preg_match('/^sip:[^@\s]+@[^\s]+$/', $explicitUri) === 1) {
+                    return 'PJSIP/'.$endpoint.'/'.$explicitUri;
+                }
+            }
+        }
+
         $destination = preg_replace('/^sip:([^@]+)@.*$/', '$1', $destination) ?: $destination;
         $destination = preg_replace('/^tel:/', '', $destination) ?: $destination;
         if (preg_match('/^[A-Za-z0-9+_.-]+$/', $destination)) {
