@@ -77,7 +77,7 @@ final class RuntimeFencingManifestTest extends TestCase
         $binding = $objects['ClusterRoleBinding/None/utcp-kubernetes-maintenance'];
 
         $this->assertSame([
-            ['apiGroups' => [''], 'resources' => ['nodes'], 'verbs' => ['get', 'patch']],
+            ['apiGroups' => [''], 'resources' => ['nodes'], 'verbs' => ['get', 'list', 'patch']],
             ['apiGroups' => [''], 'resources' => ['pods'], 'verbs' => ['get', 'list']],
             ['apiGroups' => [''], 'resources' => ['pods/eviction'], 'verbs' => ['create']],
         ], $role['rules']);

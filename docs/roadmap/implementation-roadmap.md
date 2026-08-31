@@ -129,7 +129,8 @@ corridor. The focused ADR-027 regression proof passed, and the canonical API
 suite passed with 595 tests, 8 skips, and 5007 assertions. The implementation
 is committed at `e334209ccc016053d2f63f8e39e99f2126aa5535`.
 
-**Exactly one next action:** bounded implementation granting `list` on `nodes` to
+**Historical K5D blocker context:** the earlier bounded implementation required
+granting `list` on `nodes` to
 the maintenance ClusterRole. The 2026-08-31 controlled live proof deployed
 repaired `main` (`3f0be8b`) to the two-node topology and **confirmed both prior
 repairs live**: the core-group eviction grant is in place (a probe against a
@@ -282,19 +283,18 @@ failure-domain constraints to determine telephony eligibility and selection.
 UTCP must not reimplement the Kubernetes scheduler.
 
 **K5D — Telephony-Aware Host Maintenance:** **IMPLEMENTED_AND_TESTED /
-EVICTION SCOPE AND EVICTION RBAC REPAIRS VERIFIED LIVE / NATURAL LIVE PROOF
-BLOCKED** by `K5D_MAINTENANCE_OBSERVATION_RBAC_LIVE_DEFECT` — the maintenance
-ClusterRole grants `nodes: ["get","patch"]` with no `list`, but
-`HostMaintenanceService::reconcile()` calls `listNodes()` on every pass, so every
-coordinator pass fails with `permission_denied` before cordon or eviction is
-reached. `reconcileDue()` also runs in the `scheduler` Pod under the read-only
-observer identity, which can list but cannot `patch nodes`, so the telephony
-drain advances there and then stalls at cordon. The eviction scope and the
-core-group eviction grant are both correct and were verified live. Identify
-affected RuntimeNodes, exclude them from new telephony work, reuse
-`ACTIVE -> DRAINING -> DRAINED`, and coordinate Kubernetes-owned cordon/eviction
-only after telephony drain completion through normal authorized reconciliation.
-K5E remains the later distributed, multi-host proof.
+EVICTION SCOPE REPAIR VERIFIED LIVE / EVICTION RBAC REPAIR VERIFIED LIVE /
+NODE OBSERVATION RBAC REPAIRED / RECONCILIATION AUTHORITY REPAIRED / NATURAL
+LIVE PROOF PENDING.** The maintenance identity has the required core
+`nodes: ["get", "list", "patch"]`, `pods: ["get", "list"]`, and
+`pods/eviction: ["create"]` permissions. The telephony-reconciler is the sole
+runtime that invokes K5D maintenance reconciliation; the scheduled scheduler
+pass retains generic reconciliation but does not invoke
+`HostMaintenanceService::reconcileDue()`. The eviction scope, core-group
+eviction grant, and telephony drain ordering remain unchanged. Known follow-up
+debt is recorded separately for a canonical blocked-maintenance cancellation
+surface and blocked-state audit emission damping. K5E remains the later
+distributed, multi-host proof.
 
 **K5E — Distributed Infrastructure Live Proof:** prove that UTCP can operate
 telephony RuntimeNodes across at least two distinct Kubernetes host or failure

@@ -41,4 +41,20 @@ final class K5DHostMaintenanceContractTest extends TestCase
         $this->assertStringContainsString('$workloadIdentities', $client);
         $this->assertStringContainsString("app.kubernetes.io/instance", $client);
     }
+
+    public function test_k5d_reconciliation_has_one_mutating_runtime_authority(): void
+    {
+        $worker = file_get_contents(dirname(__DIR__, 3).'/app/RuntimeEngine/Reconciliation/ReconciliationWorker.php');
+        $console = file_get_contents(dirname(__DIR__, 3).'/routes/console.php');
+        $this->assertIsString($worker);
+        $this->assertIsString($console);
+
+        $this->assertStringContainsString('bool $includeHostMaintenance = false', $worker);
+        $this->assertStringContainsString('if ($includeHostMaintenance)', $worker);
+        $this->assertStringContainsString('includeHostMaintenance: true', $console);
+        $this->assertStringContainsString("Schedule::call(function (): void", $console);
+        $this->assertStringContainsString("name('runtime-engine:reconciler-scheduled')", $console);
+        $this->assertStringNotContainsString("Schedule::command('runtime-engine:reconciler --once')", $console);
+        $this->assertStringContainsString("':scheduler-reconciler:'", $console);
+    }
 }

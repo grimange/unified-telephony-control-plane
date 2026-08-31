@@ -401,7 +401,7 @@ Artisan::command('runtime-engine:event-normalizer {--once : Process one batch an
 Artisan::command('runtime-engine:reconciler {--once : Process one batch and exit}', function (ReconciliationWorker $worker): int {
     $workerId = gethostname().':reconciler:'.getmypid();
     do {
-        $worker->workOnce($workerId, (int) config('runtime_engine.batch_size', 10));
+        $worker->workOnce($workerId, (int) config('runtime_engine.batch_size', 10), includeHostMaintenance: true);
         if (! $this->option('once')) {
             sleep((int) config('runtime_engine.poll_seconds', 10));
         }
@@ -997,7 +997,12 @@ Artisan::command('telephony-domain:status', function (): int {
 Schedule::command('runtime-engine:outbox-dispatcher --once')->everyMinute()->withoutOverlapping();
 Schedule::command('runtime-engine:command-worker --once')->everyMinute()->withoutOverlapping();
 Schedule::command('runtime-engine:event-normalizer --once')->everyMinute()->withoutOverlapping();
-Schedule::command('runtime-engine:reconciler --once')->everyMinute()->withoutOverlapping();
+Schedule::call(function (): void {
+    app(ReconciliationWorker::class)->workOnce(
+        gethostname().':scheduler-reconciler:'.getmypid(),
+        (int) config('runtime_engine.batch_size', 10),
+    );
+})->name('runtime-engine:reconciler-scheduled')->everyMinute()->withoutOverlapping();
 Schedule::command('runtime-engine:derive-stale-observations')->everyFiveMinutes()->withoutOverlapping();
 Schedule::command('runtime-engine:k5c-placement-observer')->everyMinute()->withoutOverlapping();
 Schedule::command('runtime-engine:prune-conference-recovery-metric-events --once')->hourly()->withoutOverlapping();

@@ -105,8 +105,8 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** bounded implementation granting `list` on `nodes` to
-the maintenance ClusterRole. The 2026-08-31 controlled live proof deployed
+**Exactly one next action:** deploy repaired current `main` to canonical native
+k3s and resume the K5D controlled natural live proof. The 2026-08-31 controlled live proof deployed
 repaired `main` (`3f0be8b`) to the two-node topology and **confirmed both prior
 repairs live**: the core-group eviction grant is in place (a probe against a
 nonexistent Pod as the maintenance ServiceAccount now returns `NotFound` where it
@@ -115,15 +115,12 @@ previously returned `Forbidden`, and a SubjectAccessReview for group `""` return
 resolves exactly **one** subject on the target host `utcp-dev02` — the affected
 RuntimeNode workload — while `kamailio-registration-observer` and `worker`, both
 `part-of: utcp` on that same host, are correctly not subjects. The corridor is
-nonetheless **blocked**
-(`K5D_MAINTENANCE_OBSERVATION_RBAC_LIVE_DEFECT`): `HostMaintenanceService::reconcile()`
-calls `listNodes()` (`GET /api/v1/nodes`) on every pass, but the maintenance
-ClusterRole grants `nodes: ["get","patch"]` with no `list`, so a
-SubjectAccessReview returns `allowed:false` and every coordinator pass fails with
-`permission_denied` / "Kubernetes infrastructure observation was denied." Because
-`reconcileDue()` also runs in the `scheduler` Pod under the read-only observer
-identity, which *can* list but cannot `patch nodes`, the drain advanced there and
-then failed at cordon — so neither Pod can finish the corridor. Real behaviour was
+nonetheless **blocked** in that proof because the maintenance ClusterRole lacked
+`nodes/list`, and because `reconcileDue()` also ran in the `scheduler` Pod under
+the read-only observer identity. This repair adds the required list permission
+and makes the telephony-reconciler the sole K5D reconciliation runtime; the
+scheduled scheduler pass retains generic reconciliation without invoking host
+maintenance. Real behaviour was
 still proven: a natural Web Admin login reached **Hosts**, which rendered the
 affected RuntimeNode and `Active telephony work: 1`; `Prepare for maintenance` on
 `utcp-dev02` persisted exactly one intent for the correct Node UID; RuntimeNode

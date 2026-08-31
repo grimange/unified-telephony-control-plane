@@ -18,9 +18,11 @@ final class ReconciliationWorker
         private readonly RuntimeOperationRepository $operations,
     ) {}
 
-    public function workOnce(string $workerId, int $batchSize = 10): int
+    public function workOnce(string $workerId, int $batchSize = 10, bool $includeHostMaintenance = false): int
     {
-        app(HostMaintenanceService::class)->reconcileDue();
+        if ($includeHostMaintenance) {
+            app(HostMaintenanceService::class)->reconcileDue();
+        }
         $processed = 0;
 
         foreach ($this->repository->claimDue($workerId, $batchSize) as $claim) {
