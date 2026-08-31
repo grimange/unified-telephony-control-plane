@@ -105,36 +105,37 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** deploy repaired current main to canonical native
-k3s and resume the K5D controlled natural live proof. The 2026-08-31 controlled live proof
-deployed repaired `main` (`7da5de5`) to the two-node canonical topology and
-**verified the eviction-scope repair live**: reproducing the deployed predicate
-read-only against the target host `utcp-dev01` yields exactly **one** subject
-Pod — the affected RuntimeNode workload
-`utcp-runtime/asterisk-v1a-outbound-reproof-…` — while `postgres-0`, `redis-0`,
-`kamailio`, and the registration observer on that host are correctly excluded,
-and the coordinator, `scheduler`, `api` and `web` sit outside the subject set
-entirely. The corridor is nonetheless **blocked**
-(`K5D_MAINTENANCE_EVICTION_RBAC_LIVE_DEFECT`): the deployed ClusterRole grants
-`create pods/eviction` in the `policy` API group, but the client POSTs to
-`/api/v1/namespaces/{ns}/pods/{name}/eviction`, which Kubernetes authorizes in
-the **core** group. A SubjectAccessReview returns `allowed:false` for group `""`
-and `allowed:true` for `policy`, Kubernetes has no `pods` resource in `policy`
-at all, and a probe against a nonexistent Pod returned `Forbidden: … cannot
-create resource "pods/eviction" in API group ""` where cluster-admin returned
-`NotFound`. Because `patch nodes` is permitted, a maintenance run would cordon
-the target Node and only then fail at eviction, leaving it cordoned with no
-product uncordon path — so the proof stopped at the pre-mutation gate. No
-maintenance was requested, nothing was cordoned or evicted, and no production
-source was changed. The bounded repair grants `pods/eviction` under
-`apiGroups: [""]` in
-`infrastructure/kubernetes/base/platform/kubernetes-maintenance-rbac.yaml`;
-after deployment this acceptance corridor re-runs unchanged. K5D remains
-implemented and tested with the eviction-scope repair verified live and the
-eviction RBAC defect repaired; natural live proof is pending. See the
-[`K5D natural live proof`](../evidence/k5/k5d-telephony-aware-host-maintenance-natural-live-proof.md)
-and the
-[`K5D eviction-scope repair`](../evidence/k5/k5d-kubernetes-eviction-scope-live-proof-blocker-repair.md).
+**Exactly one next action:** bounded implementation granting `list` on `nodes` to
+the maintenance ClusterRole. The 2026-08-31 controlled live proof deployed
+repaired `main` (`3f0be8b`) to the two-node topology and **confirmed both prior
+repairs live**: the core-group eviction grant is in place (a probe against a
+nonexistent Pod as the maintenance ServiceAccount now returns `NotFound` where it
+previously returned `Forbidden`, and a SubjectAccessReview for group `""` returns
+`allowed:true`), no stale `policy`-group rule remains, and the eviction selector
+resolves exactly **one** subject on the target host `utcp-dev02` — the affected
+RuntimeNode workload — while `kamailio-registration-observer` and `worker`, both
+`part-of: utcp` on that same host, are correctly not subjects. The corridor is
+nonetheless **blocked**
+(`K5D_MAINTENANCE_OBSERVATION_RBAC_LIVE_DEFECT`): `HostMaintenanceService::reconcile()`
+calls `listNodes()` (`GET /api/v1/nodes`) on every pass, but the maintenance
+ClusterRole grants `nodes: ["get","patch"]` with no `list`, so a
+SubjectAccessReview returns `allowed:false` and every coordinator pass fails with
+`permission_denied` / "Kubernetes infrastructure observation was denied." Because
+`reconcileDue()` also runs in the `scheduler` Pod under the read-only observer
+identity, which *can* list but cannot `patch nodes`, the drain advanced there and
+then failed at cordon — so neither Pod can finish the corridor. Real behaviour was
+still proven: a natural Web Admin login reached **Hosts**, which rendered the
+affected RuntimeNode and `Active telephony work: 1`; `Prepare for maintenance` on
+`utcp-dev02` persisted exactly one intent for the correct Node UID; RuntimeNode
+correlation was correct; the active Call was **not** terminated and ended on its
+own (`remote`); the RuntimeNode reached `DRAINED` naturally; and cordon was
+attempted only afterwards — **no Kubernetes mutation occurred while active work
+was greater than zero, and nothing was cordoned or evicted**. A secondary
+observation: no cancel endpoint exists, so a blocked maintenance pins its
+RuntimeNode at `drained` and rewrites `blocked` audit every ~3s; post-proof the
+record was terminated with one disclosed guarded statement and the RuntimeNode was
+returned to service through the canonical Web Admin **Reactivate** control. See the
+[`K5D natural live proof`](../evidence/k5/k5d-telephony-aware-host-maintenance-natural-live-proof.md).
 
 The synthetic fixture remains deterministic regression only. C7A supports the
 bounded V1-A `outbound_registration` signaling mode; C7B closed on 2026-08-24
