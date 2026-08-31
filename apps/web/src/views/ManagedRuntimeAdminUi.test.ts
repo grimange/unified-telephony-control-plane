@@ -140,8 +140,21 @@ describe('RNP-5 managed RuntimeNode Admin UI contract', () => {
 
   it('keeps generated managed configuration read-only while preserving the external form', () => {
     expect(runtimeNodesViewSource).toContain("runtimeManagement(node).mode !== 'managed'")
+    expect(runtimeNodesViewSource).toContain('<h3>Telephony policy</h3>')
+    expect(runtimeNodesViewSource).toContain('Capacity weight')
+    expect(runtimeNodesViewSource).toContain('Placement region')
+    expect(runtimeNodesViewSource).toContain('Placement zone')
+    expect(runtimeNodesViewSource).toContain('Placement priority')
+    expect(runtimeNodesViewSource).toContain('Capacity and desired placement policy can be managed independently')
     expect(runtimeNodesViewSource).toContain('Register a runtime whose infrastructure is managed outside UTCP.')
     expect(runtimeNodesViewSource).toContain('Advanced diagnostics')
+  })
+
+  it('keeps managed policy controls separate from protected integration identity', () => {
+    expect(runtimeNodesViewSource).toContain('<h3>Runtime integration</h3>')
+    expect(runtimeNodesViewSource).toContain('Integration identity remains protected for UTCP-managed RuntimeNodes.')
+    expect(runtimeNodesViewSource).toContain("v-if=\"runtimeManagement(node).mode !== 'managed'\"\n                :id=\"runtimeFieldId(node.id, 'name')\"")
+    expect(runtimeNodesViewSource).toContain("v-if=\"can('runtime.nodes.manage') && node.desired_state !== 'retired'\"")
   })
 
   it('maps canonical provisioning statuses while preserving readiness as a separate authority', () => {

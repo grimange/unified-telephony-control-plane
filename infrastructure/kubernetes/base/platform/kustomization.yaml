@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - service-account.yaml
   - api-service-account.yaml
+  - kubernetes-observer-service-account.yaml
   - infrastructure-reader-rbac.yaml
   - api-deployment.yaml
   - api-service.yaml

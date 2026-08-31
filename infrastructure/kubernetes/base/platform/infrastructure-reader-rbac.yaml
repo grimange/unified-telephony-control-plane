@@ -19,3 +19,16 @@ subjects:
   - kind: ServiceAccount
     name: utcp-api
     namespace: utcp-platform
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: utcp-kubernetes-observer-infrastructure-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: utcp-infrastructure-reader
+subjects:
+  - kind: ServiceAccount
+    name: utcp-kubernetes-observer
+    namespace: utcp-platform

@@ -18,9 +18,10 @@ spec:
         app.kubernetes.io/part-of: utcp
         app.kubernetes.io/component: scheduler
         utcp.io/network-role: scheduler
+        utcp.io/kubernetes-api-client: "true"
     spec:
-      serviceAccountName: utcp-platform-app
-      automountServiceAccountToken: false
+      serviceAccountName: utcp-kubernetes-observer
+      automountServiceAccountToken: true
       securityContext:
         runAsNonRoot: true
         runAsUser: 33

@@ -96,10 +96,9 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** bounded implementation correcting the K5C
-placement-observation credential authority (Defect A) and the Web Admin K5C
-policy-configuration gap (Defect B), after which the controlled natural K5C
-acceptance corridor can be re-run unchanged. **V1 is complete.** The 2026-08-30
+**Exactly one next action:** deploy the repaired current `main` to canonical
+native k3s and rerun the controlled natural K5C acceptance corridor. **V1 is
+complete.** The 2026-08-30
 controlled live re-proof deployed the committed
 `X-UTCP-Caller-Identity-ID` provider-boundary correction through the canonical
 native-k3s lifecycle — the live Kamailio provider path now executes all four

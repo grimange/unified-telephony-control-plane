@@ -431,6 +431,74 @@ api_labels = (
 if api_labels.get("utcp.io/kubernetes-api-client") != "true":
     fail("API workload must use the rendered Kubernetes API-client policy")
 
+scheduler_deployment = next(
+    (
+        doc for doc in api_docs
+        if doc.get("kind") == "Deployment"
+        and (doc.get("metadata") or {}).get("name") == "scheduler"
+        and (doc.get("metadata") or {}).get("namespace") == "utcp-platform"
+    ),
+    None,
+)
+if scheduler_deployment is None:
+    fail("missing canonical scheduler deployment")
+scheduler_template = scheduler_deployment.get("spec", {}).get("template", {})
+scheduler_labels = scheduler_template.get("metadata", {}).get("labels", {})
+scheduler_spec = scheduler_template.get("spec", {})
+if scheduler_spec.get("serviceAccountName") != "utcp-kubernetes-observer":
+    fail("scheduler must use the dedicated Kubernetes observer ServiceAccount")
+if scheduler_spec.get("automountServiceAccountToken") is not True:
+    fail("scheduler must mount a native ServiceAccount credential")
+if scheduler_labels.get("utcp.io/kubernetes-api-client") != "true":
+    fail("scheduler must use the rendered Kubernetes API-client policy")
+
+observer_account = next(
+    (
+        doc for doc in api_docs
+        if doc.get("kind") == "ServiceAccount"
+        and (doc.get("metadata") or {}).get("name") == "utcp-kubernetes-observer"
+        and (doc.get("metadata") or {}).get("namespace") == "utcp-platform"
+    ),
+    None,
+)
+if observer_account is None or observer_account.get("automountServiceAccountToken") is not True:
+    fail("missing native-token Kubernetes observer ServiceAccount")
+
+reader_role = next(
+    (
+        doc for doc in api_docs
+        if doc.get("kind") == "ClusterRole"
+        and (doc.get("metadata") or {}).get("name") == "utcp-infrastructure-reader"
+    ),
+    None,
+)
+if reader_role is None or reader_role.get("rules") != [
+    {"apiGroups": [""], "resources": ["nodes", "pods"], "verbs": ["get", "list"]}
+]:
+    fail("infrastructure reader must remain read-only Node/Pod get/list authority")
+
+observer_binding = next(
+    (
+        doc for doc in api_docs
+        if doc.get("kind") == "ClusterRoleBinding"
+        and (doc.get("metadata") or {}).get("name") == "utcp-kubernetes-observer-infrastructure-reader"
+    ),
+    None,
+)
+if observer_binding is None or observer_binding.get("subjects") != [
+    {"kind": "ServiceAccount", "name": "utcp-kubernetes-observer", "namespace": "utcp-platform"}
+]:
+    fail("dedicated observer must be explicitly bound to infrastructure reader")
+
+for binding in api_docs:
+    if binding.get("kind") != "ClusterRoleBinding":
+        continue
+    if (binding.get("roleRef") or {}).get("name") != "utcp-infrastructure-reader":
+        continue
+    for subject in binding.get("subjects") or []:
+        if subject.get("kind") == "ServiceAccount" and subject.get("name") == "utcp-platform-app":
+            fail("utcp-platform-app must not receive infrastructure reader authority")
+
 print("namespace_psa_authority=ok")
 print("restricted_workload_compatibility=ok")
 PY

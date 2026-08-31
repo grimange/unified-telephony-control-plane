@@ -34,7 +34,10 @@ final class RuntimeFencingManifestTest extends TestCase
             }
         }
 
-        $this->assertSame(['Deployment/utcp-platform/api'], $ordinaryApiClients);
+        $this->assertSame([
+            'Deployment/utcp-platform/api',
+            'Deployment/utcp-platform/scheduler',
+        ], $ordinaryApiClients);
     }
 
     public function test_canonical_local_overlay_activates_only_the_dedicated_infrastructure_identity(): void

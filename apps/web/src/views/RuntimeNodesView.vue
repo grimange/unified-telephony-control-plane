@@ -503,11 +503,23 @@
               </p>
             </section>
             <form
-              v-if="can('runtime.nodes.manage') && node.desired_state !== 'retired' && runtimeManagement(node).mode !== 'managed'"
+              v-if="can('runtime.nodes.manage') && node.desired_state !== 'retired'"
               class="inline-form"
               @submit.prevent="runRuntimeAction(runtimeNodeEditActionKey(node), () => saveRuntimeNodeEdit(node), 'Runtime node details saved.')"
             >
+              <div
+                v-if="runtimeManagement(node).mode !== 'managed'"
+                class="detail-section-heading"
+              >
+                <div>
+                  <h3>Runtime integration</h3>
+                  <p class="meta">
+                    Integration identity remains protected for UTCP-managed RuntimeNodes.
+                  </p>
+                </div>
+              </div>
               <UiFormField
+                v-if="runtimeManagement(node).mode !== 'managed'"
                 :id="runtimeFieldId(node.id, 'name')"
                 label="Display name"
                 required
@@ -522,6 +534,14 @@
                   />
                 </template>
               </UiFormField>
+              <div class="detail-section-heading">
+                <div>
+                  <h3>Telephony policy</h3>
+                  <p class="meta">
+                    Capacity and desired placement policy can be managed independently of runtime integration ownership.
+                  </p>
+                </div>
+              </div>
               <UiFormField
                 :id="runtimeFieldId(node.id, 'region')"
                 label="Placement region"
