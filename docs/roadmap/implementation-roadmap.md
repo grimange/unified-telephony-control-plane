@@ -111,8 +111,8 @@ reactivate it as the current proof environment. See
 ## Current state and executable order
 
 **Current phase:** V1 — Bidirectional external call routing and control; K5C is
-implemented and tested, its two isolated live defects are repaired, and its
-natural live proof is pending reproof.
+implemented and tested, its first two live defects are repaired and
+live-proven, and its natural live reproof isolated two further live defects.
 
 **Current status:** T4A/T4B are implemented and tested; T4C1/T4C2 are
 implemented, tested, live-proven, and frozen. The timer-backed media playback
@@ -130,9 +130,11 @@ corridor. The focused ADR-027 regression proof passed, and the canonical API
 suite passed with 595 tests, 8 skips, and 5007 assertions. The implementation
 is committed at `e334209ccc016053d2f63f8e39e99f2126aa5535`.
 
-**Exactly one next action:** deploy the repaired current `main` to canonical
-native k3s and rerun controlled natural K5C acceptance. V1 remains complete and
-unchanged; the external PBX prerequisites remain separate.
+**Exactly one next action:** bounded implementation correcting the inbound
+capacity exclusion and the canonical placement-constraint clear path isolated by
+the 2026-08-31 controlled natural live reproof, after which controlled natural
+K5C acceptance can be re-run unchanged. V1 remains complete and unchanged; the
+external PBX prerequisites remain separate.
 C7B closed on 2026-08-24 after its focused route-authority tests and
 provider-neutrality checks passed.
 
@@ -230,11 +232,19 @@ workload relationship in telephony terms, including RuntimeNode location and
 failure-domain association, without copying Kubernetes into a competing
 database authority.
 
-**K5C — Capacity and Failure-Domain Policy:** **implemented and tested; live
-defects repaired; natural live reproof pending.** The scheduler now uses a
-dedicated read-only Kubernetes observer identity for the existing automatic
-placement projection, and managed RuntimeNodes expose K5C desired policy
-controls while retaining protected integration controls. See the
+**K5C — Capacity and Failure-Domain Policy:** **implemented and tested; the
+placement-observation and managed-policy-UI defects are repaired and
+live-proven; the 2026-08-31 natural live reproof isolated two further live
+defects, so K5C is not closed.** The scheduler now uses a dedicated read-only
+Kubernetes observer identity for the existing automatic placement projection,
+and managed RuntimeNodes expose K5C desired policy controls while retaining
+protected integration controls; both were proven live. Still open: the
+production inbound view and its Kamailio consumer apply no capacity predicate,
+so a full RuntimeNode remains a selectable inbound target
+(`K5C_INBOUND_CAPACITY_PROJECTION_LIVE_DEFECT`); and a placement constraint
+cannot be cleared through any canonical path because `updateNode()` cannot
+distinguish an explicit null from an absent key
+(`K5C_FAILURE_DOMAIN_RECOVERY_LIVE_DEFECT`). See the
 [`K5C live-defect repair`](../evidence/k5/k5c-placement-observation-and-managed-policy-ui-live-defect-repair.md)
 and [`K5C natural live proof`](../evidence/k5/k5c-capacity-failure-domain-policy-natural-live-proof.md).
 Combine Kubernetes facts with
