@@ -85,7 +85,7 @@ grep -q "for update skip locked" apps/api/app/TelephonyDomain/Failover/Conferenc
 grep -q "whereIn('runtime_nodes.observed_state', self::QUALIFYING_BOUND_STATES)" apps/api/app/TelephonyDomain/Failover/ConferenceFailoverCoordinator.php
 grep -q "'replacement_desired_states' => self::AUTOMATIC_REPLACEMENT_DESIRED_STATES" apps/api/app/TelephonyDomain/Failover/RuntimeFencingCoordinator.php
 grep -q "telephony-domain:failover-coordinator {--once" apps/api/routes/console.php
-grep -q "Schedule::command('telephony-domain:failover-coordinator --once')->everyMinute()->withoutOverlapping()" apps/api/routes/console.php
+grep -q "Schedule::command('telephony-domain:failover-coordinator --once')->everyMinute()->withoutOverlapping(5)" apps/api/routes/console.php
 
 session_lifetime_key="UTCP_TELEPHONY_SESSION_LIFETIME_MINUTES"
 session_lifetime_count=0

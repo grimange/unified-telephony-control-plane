@@ -2054,9 +2054,9 @@ final class TelephonyDomainTest extends TestCase
         $console = file_get_contents(base_path('routes/console.php'));
         $this->assertIsString($console);
         $this->assertStringContainsString('telephony-domain:failover-coordinator {--once', $console);
-        $this->assertStringContainsString("Schedule::command('telephony-domain:failover-coordinator --once')->everyMinute()->withoutOverlapping()", $console);
+        $this->assertStringContainsString("Schedule::command('telephony-domain:failover-coordinator --once')->everyMinute()->withoutOverlapping(5)", $console);
         $this->assertStringContainsString('telephony-domain:retire-closed-bindings {--once', $console);
-        $this->assertStringContainsString("Schedule::command('telephony-domain:retire-closed-bindings --once')->everyMinute()->withoutOverlapping()", $console);
+        $this->assertStringContainsString("Schedule::command('telephony-domain:retire-closed-bindings --once')->everyMinute()->withoutOverlapping(5)", $console);
         $this->assertStringNotContainsString('--conference', $console);
         $this->assertStringNotContainsString('--runtime-node', $console);
         $this->assertStringNotContainsString('--replacement', $console);

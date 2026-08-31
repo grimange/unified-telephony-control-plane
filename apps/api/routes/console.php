@@ -994,25 +994,25 @@ Artisan::command('telephony-domain:status', function (): int {
     return 0;
 })->purpose('Report safe aggregate telephony session and conference-domain status.');
 
-Schedule::command('runtime-engine:outbox-dispatcher --once')->everyMinute()->withoutOverlapping();
-Schedule::command('runtime-engine:command-worker --once')->everyMinute()->withoutOverlapping();
-Schedule::command('runtime-engine:event-normalizer --once')->everyMinute()->withoutOverlapping();
+Schedule::command('runtime-engine:outbox-dispatcher --once')->everyMinute()->withoutOverlapping(5);
+Schedule::command('runtime-engine:command-worker --once')->everyMinute()->withoutOverlapping(5);
+Schedule::command('runtime-engine:event-normalizer --once')->everyMinute()->withoutOverlapping(5);
 Schedule::call(function (): void {
     app(ReconciliationWorker::class)->workOnce(
         gethostname().':scheduler-reconciler:'.getmypid(),
         (int) config('runtime_engine.batch_size', 10),
     );
-})->name('runtime-engine:reconciler-scheduled')->everyMinute()->withoutOverlapping();
+})->name('runtime-engine:reconciler-scheduled')->everyMinute()->withoutOverlapping(5);
 Schedule::command('runtime-engine:derive-stale-observations')->everyFiveMinutes()->withoutOverlapping();
-Schedule::command('runtime-engine:k5c-placement-observer')->everyMinute()->withoutOverlapping();
+Schedule::command('runtime-engine:k5c-placement-observer')->everyMinute()->withoutOverlapping(5);
 Schedule::command('runtime-engine:prune-conference-recovery-metric-events --once')->hourly()->withoutOverlapping();
-Schedule::command('simulator:ensure-targets')->everyMinute()->withoutOverlapping();
-Schedule::command('simulator:event-source --once')->everyMinute()->withoutOverlapping();
-Schedule::command('asterisk-ari:ensure-targets')->everyMinute()->withoutOverlapping();
-Schedule::command('freeswitch-esl:ensure-targets')->everyMinute()->withoutOverlapping();
-Schedule::command('telephony-domain:expire-sessions')->everyMinute()->withoutOverlapping();
-Schedule::command('telephony-domain:expire-recoverable-participants')->everyMinute()->withoutOverlapping();
-Schedule::command('telephony-domain:ensure-targets')->everyMinute()->withoutOverlapping();
-Schedule::command('telephony-domain:failover-coordinator --once')->everyMinute()->withoutOverlapping();
-Schedule::command('telephony-domain:retire-closed-bindings --once')->everyMinute()->withoutOverlapping();
-Schedule::command('telephony-domain:reclaim-orphan-participant-channels --once')->everyMinute()->withoutOverlapping();
+Schedule::command('simulator:ensure-targets')->everyMinute()->withoutOverlapping(5);
+Schedule::command('simulator:event-source --once')->everyMinute()->withoutOverlapping(5);
+Schedule::command('asterisk-ari:ensure-targets')->everyMinute()->withoutOverlapping(5);
+Schedule::command('freeswitch-esl:ensure-targets')->everyMinute()->withoutOverlapping(5);
+Schedule::command('telephony-domain:expire-sessions')->everyMinute()->withoutOverlapping(5);
+Schedule::command('telephony-domain:expire-recoverable-participants')->everyMinute()->withoutOverlapping(5);
+Schedule::command('telephony-domain:ensure-targets')->everyMinute()->withoutOverlapping(5);
+Schedule::command('telephony-domain:failover-coordinator --once')->everyMinute()->withoutOverlapping(5);
+Schedule::command('telephony-domain:retire-closed-bindings --once')->everyMinute()->withoutOverlapping(5);
+Schedule::command('telephony-domain:reclaim-orphan-participant-channels --once')->everyMinute()->withoutOverlapping(5);

@@ -105,9 +105,13 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** bounded implementation setting an explicit,
-cadence-proportionate `withoutOverlapping()` expiry for the scheduled tasks in
-`apps/api/routes/console.php`. **K5E is blocked on this prerequisite.** The
+**Exactly one next action:** deploy repaired current `main`, verify bounded
+scheduler mutex behavior and automatic placement-observer recovery naturally,
+then proceed into K5E distributed live proof if the prerequisite passes. **K5E
+remains not started and is blocked on this prerequisite.** The bounded repair
+now gives every minute-cadence overlap-protected task in
+`apps/api/routes/console.php` an explicit five-minute expiry; no live Redis
+locks were cleared. The
 2026-08-31 narrow evidence audit proved, by identity rather than correlation,
 why `runtime-engine:k5c-placement-observer` stopped noticing the RuntimeNode
 workload K5D moved to `utcp-dev02`: a read-only probe run inside the live
@@ -136,6 +140,9 @@ operator Redis clearing. Verdict
 `K5E_PLACEMENT_OBSERVER_OVERLAP_MUTEX_LIFETIME_DEFECT`. No lock was cleared, no
 task manually invoked, no projection written, and no source changed. See the
 [`K5E placement-observer mutex proof-gap isolation`](../evidence/k5/k5e-placement-observer-scheduler-mutex-proof-gap-isolation.md).
+
+**K5E remains NOT STARTED; the placement-observer automatic-recovery
+reproof is pending.**
 
 The synthetic fixture remains deterministic regression only. C7A supports the
 bounded V1-A `outbound_registration` signaling mode; C7B closed on 2026-08-24
