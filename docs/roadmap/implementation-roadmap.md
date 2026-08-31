@@ -526,10 +526,10 @@ owns business meaning; UTCP owns reusable telephony control and lifecycle.
 ### RMA — Recording & Media Archive
 
 **Status:** In progress / UTCP Core / R0-Critical. RMA-A is implemented and
-tested, but its natural live proof is blocked before RecordingSession creation
-by the deployed identity catalog missing the two RMA-A capabilities declared by
-the application. The preceding Asterisk endpoint-plus-URI normalization
-defect is repaired and the real Call origination corridor succeeds. RMA-B
+tested; its identity-catalog repair is deployed and the authenticated recording
+API now creates a RecordingSession, but natural live proof is blocked after
+that point by an Asterisk recording-start runtime conflict. The preceding
+Asterisk endpoint-plus-URI and identity-catalog defects are repaired. RMA-B
 through RMA-H remain not started.
 
 **Objective:** provide reusable, provider-neutral technical recording and media
@@ -551,10 +551,10 @@ Natural Live Proof.
 RMA-A establishes only the tenant-scoped RecordingSession authority,
 authenticated intent API, lifecycle state, correlation, authorization,
 idempotency, audit, and subordinate RuntimeOperation relationship. Its natural
-live proof is blocked before RecordingSession creation because the deployed
-persistent identity catalog lacks the declared `telephony.recordings.view` and
-`telephony.recordings.manage` capabilities, although the repaired canonical
-Asterisk Call origination corridor now succeeds. RMA-B through RMA-H remain planned architectural slices only; no
+live proof reached RecordingSession creation after the forward identity-catalog
+repair, but the subordinate Asterisk recording-start operation returned a
+runtime conflict before recording became active. The earlier endpoint-plus-URI
+and identity-catalog defects are repaired. RMA-B through RMA-H remain planned architectural slices only; no
 artifact, archive, credential, retention, playback/download, MinIO, or
 additional runtime support is claimed. RMA depends on the established
 V1 Call/CallLeg corridor and completed K5E; it does not technically depend on
