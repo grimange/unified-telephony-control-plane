@@ -105,9 +105,10 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** bounded implementation correcting the K5D
-Kubernetes eviction scope. **The K5D natural live proof must not be run as
-currently defined.** The 2026-08-31 read-only drain-scope audit reproduced
+**Exactly one next action:** deploy repaired current main to canonical native
+k3s and perform controlled K5D telephony-aware host-maintenance natural
+acceptance. **The K5D natural live proof must not be run against the prior
+implementation.** The 2026-08-31 read-only drain-scope audit reproduced
 `HttpKubernetesMaintenanceClient::drainablePods()` against live Pod
 observations: it scopes eviction by the `app.kubernetes.io/part-of: utcp` label
 alone, requiring neither RuntimeNode association nor controller ownership, and
@@ -123,12 +124,16 @@ recover it; `postgres-0` is additionally pinned to the host by
 `rancher.io/local-path` storage, so a second host would not make the present
 scope safe. This contradicts ADR-024's requirement that the canonical
 controller/reconciliation authority *coordinates* the cordon/drain and
-*observes replacement workloads*. K5D remains implemented and tested with its
-natural live proof **blocked**
-(`K5D_KUBERNETES_DRAIN_SCOPE_LIVE_PROOF_BLOCKER_FOUND`). See the
+*observes replacement workloads*. The bounded repair now scopes eviction to
+target-host Pods matching affected RuntimeNode workload identity; generic
+`part-of: utcp` platform/state-store Pods are not subjects. K5D remains
+implemented and tested with the live-proof blocker **repaired** and natural
+live proof **pending**
+(`K5D_KUBERNETES_EVICTION_SCOPE_LIVE_PROOF_BLOCKER_REPAIRED_AND_TESTED`). See the
 [`K5D host drain scope and single-node survivability audit`](../evidence/k5/k5d-host-drain-scope-and-single-node-survivability-audit.md)
 and the
-[`K5D implementation evidence`](../evidence/k5/k5d-telephony-aware-host-maintenance-implementation.md).
+[`K5D implementation evidence`](../evidence/k5/k5d-telephony-aware-host-maintenance-implementation.md)
+and [`K5D eviction-scope blocker repair`](../evidence/k5/k5d-kubernetes-eviction-scope-live-proof-blocker-repair.md).
 ADR-024 remains the authority:
 maintenance begins as a canonical UTCP API operation, K5C new-work exclusion
 applies first, eligible RuntimeNodes move through the existing

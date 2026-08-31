@@ -16,6 +16,8 @@ final class K5DHostMaintenanceContractTest extends TestCase
         $this->assertStringContainsString('$this->kubernetes->evict', $service);
         $this->assertStringContainsString("metadata.uid", $service);
         $this->assertStringContainsString('$this->registry->beginDrain', $service);
+        $this->assertStringContainsString('$this->kubernetes->drainablePods($maintenance->node_name, $workloadIdentities)', $service);
+        $this->assertStringContainsString("['namespace' => \$identity->namespace, 'deployment' => \$identity->deployment]", $service);
         $this->assertStringContainsString("\$desiredState !== 'drained'", $service);
         $this->assertStringNotContainsString('$this->registry->completeDrain', $service);
 
@@ -36,5 +38,7 @@ final class K5DHostMaintenanceContractTest extends TestCase
         $this->assertStringContainsString("'/eviction'", $client);
         $this->assertStringNotContainsString('shell_exec', $client);
         $this->assertStringNotContainsString('kubectl', $client);
+        $this->assertStringContainsString('$workloadIdentities', $client);
+        $this->assertStringContainsString("app.kubernetes.io/instance", $client);
     }
 }

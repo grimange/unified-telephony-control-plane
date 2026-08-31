@@ -9,8 +9,11 @@ interface KubernetesMaintenanceClient
 
     public function cordon(string $name): void;
 
-    /** @return list<array{namespace:string,name:string}> */
-    public function drainablePods(string $nodeName): array;
+    /**
+     * @param list<array{namespace:string,deployment:string}> $workloadIdentities
+     * @return list<array{namespace:string,name:string}>
+     */
+    public function drainablePods(string $nodeName, array $workloadIdentities): array;
 
     public function evict(string $namespace, string $name): void;
 }

@@ -31,7 +31,11 @@ final class HttpKubernetesMaintenanceClient implements KubernetesMaintenanceClie
         $this->assertResponse($response, 'cordon');
     }
 
-    public function drainablePods(string $nodeName): array
+    /**
+     * @param list<array{namespace:string,deployment:string}> $workloadIdentities
+     * @return list<array{namespace:string,name:string}>
+     */
+    public function drainablePods(string $nodeName, array $workloadIdentities): array
     {
         $response = $this->request()->get($this->url().'/api/v1/pods', ['fieldSelector' => 'spec.nodeName='.$nodeName]);
         $this->assertResponse($response, 'pod observation');
@@ -39,15 +43,26 @@ final class HttpKubernetesMaintenanceClient implements KubernetesMaintenanceClie
         if (! is_array($items)) {
             throw KubernetesWorkloadClientException::failed('Kubernetes Pod observation was malformed.');
         }
+        $subjects = [];
+        foreach ($workloadIdentities as $identity) {
+            if (! is_array($identity)) continue;
+            $namespace = (string) ($identity['namespace'] ?? '');
+            $deployment = (string) ($identity['deployment'] ?? '');
+            if ($namespace !== '' && $deployment !== '') $subjects[$namespace.'|'.$deployment] = true;
+        }
         $pods = [];
         foreach ($items as $pod) {
-            if (! is_array($pod) || ($pod['metadata']['labels']['app.kubernetes.io/part-of'] ?? null) !== 'utcp') continue;
+            if (! is_array($pod)) continue;
+            if (($pod['spec']['nodeName'] ?? null) !== $nodeName) continue;
+            $labels = $pod['metadata']['labels'] ?? [];
+            $namespace = (string) ($pod['metadata']['namespace'] ?? '');
+            $deployment = (string) ($labels['app.kubernetes.io/instance'] ?? '');
+            if (($labels['app.kubernetes.io/part-of'] ?? null) !== 'utcp' || ! isset($subjects[$namespace.'|'.$deployment])) continue;
             $owners = $pod['metadata']['ownerReferences'] ?? [];
             $annotations = $pod['metadata']['annotations'] ?? [];
             if (is_array($owners) && collect($owners)->contains(fn ($owner) => is_array($owner) && ($owner['kind'] ?? null) === 'DaemonSet')) continue;
             if (is_array($annotations) && isset($annotations['kubernetes.io/config.mirror'])) continue;
             if (($pod['metadata']['deletionTimestamp'] ?? null) !== null || in_array($pod['status']['phase'] ?? null, ['Succeeded', 'Failed'], true)) continue;
-            $namespace = (string) ($pod['metadata']['namespace'] ?? '');
             $name = (string) ($pod['metadata']['name'] ?? '');
             if ($namespace !== '' && $name !== '') $pods[] = ['namespace' => $namespace, 'name' => $name];
         }

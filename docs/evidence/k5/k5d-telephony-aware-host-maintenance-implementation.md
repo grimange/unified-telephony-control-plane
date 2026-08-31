@@ -34,9 +34,11 @@ eligibility rules; existing work is never terminated.
 Kubernetes cordon is attempted only after every currently associated active or
 draining RuntimeNode is drained. Placement is refreshed on each reconciliation,
 so a newly observed association prevents stale progression. Cordon is a
-targeted Kubernetes API patch, followed by bounded Policy/v1 Pod eviction for
-UTCP controller-managed Pods. DaemonSet, mirror, terminating, and terminal Pods
-are skipped. PDB and transient API responses remain observable and retryable.
+targeted Kubernetes API patch, followed by bounded Policy/v1 Pod eviction only
+for target-host Pods matching the canonical affected RuntimeNode workload
+identities. Generic `part-of: utcp` platform and state-store Pods are not
+maintenance subjects. DaemonSet, mirror, terminating, and terminal Pods are
+skipped. PDB and transient API responses remain observable and retryable.
 Already cordoned Nodes, already absent Pods, repeated reconciliation, and
 completed work are idempotent.
 

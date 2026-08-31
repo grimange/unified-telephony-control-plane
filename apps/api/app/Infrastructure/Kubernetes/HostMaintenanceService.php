@@ -70,6 +70,7 @@ final class HostMaintenanceService
             $maintenance->status = $maintenance->cordoned_at === null ? 'draining_telephony' : 'draining_kubernetes';
         }
         $runtimeIds = [];
+        $workloadIdentities = [];
         // The visibility service's workload identity is authoritative; derive associations from observed UTCP Pods.
         $pods = $this->observation->listPods();
         $runtimeRows = DB::table('runtime_nodes')->get();
@@ -77,9 +78,16 @@ final class HostMaintenanceService
         foreach ($pods as $pod) {
             if ((string) data_get($pod, 'spec.nodeName') !== $maintenance->node_name) continue;
             $labels = data_get($pod, 'metadata.labels', []); if (! is_array($labels) || ($labels['app.kubernetes.io/part-of'] ?? null) !== 'utcp') continue;
-            foreach ($runtimeRows as $runtime) { try { $identity = $identities->resolve($runtime); } catch (\Throwable) { continue; } if ($identity->namespace === (string) data_get($pod, 'metadata.namespace') && $identity->deployment === (string) ($labels['app.kubernetes.io/instance'] ?? '')) $runtimeIds[] = (string) $runtime->id; }
+            foreach ($runtimeRows as $runtime) {
+                try { $identity = $identities->resolve($runtime); } catch (\Throwable) { continue; }
+                if ($identity->namespace !== (string) data_get($pod, 'metadata.namespace') || $identity->deployment !== (string) ($labels['app.kubernetes.io/instance'] ?? '')) continue;
+                $runtimeIds[] = (string) $runtime->id;
+                $workloadIdentities[$identity->namespace.'|'.$identity->deployment] = ['namespace' => $identity->namespace, 'deployment' => $identity->deployment];
+            }
         }
         $runtimeIds = array_values(array_unique($runtimeIds)); sort($runtimeIds);
+        $workloadIdentities = array_values($workloadIdentities);
+        usort($workloadIdentities, static fn (array $a, array $b): int => [$a['namespace'], $a['deployment']] <=> [$b['namespace'], $b['deployment']]);
         DB::table('k5d_host_maintenances')->where('id', $maintenance->id)->update(['runtime_node_ids' => json_encode($runtimeIds), 'updated_at' => now()]);
         if ($maintenance->status === 'requested') {
             $this->transition($maintenance, 'draining_telephony', ['runtime_node_ids' => json_encode($runtimeIds)]);
@@ -106,7 +114,7 @@ final class HostMaintenanceService
             $this->transition($maintenance, 'draining_kubernetes', ['cordoned_at' => now()]);
             return;
         }
-        $pods = $this->kubernetes->drainablePods($maintenance->node_name); if ($pods !== []) { foreach ($pods as $pod) $this->kubernetes->evict($pod['namespace'], $pod['name']); return; }
+        $pods = $this->kubernetes->drainablePods($maintenance->node_name, $workloadIdentities); if ($pods !== []) { foreach ($pods as $pod) $this->kubernetes->evict($pod['namespace'], $pod['name']); return; }
         $this->transition($maintenance, 'completed', ['completed_at' => now()]);
     }
 
