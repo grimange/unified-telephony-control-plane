@@ -4,28 +4,24 @@ Current-State-Impact: yes
 
 Date: 2026-08-31
 
-Starting HEAD: `3f0be8b1dc889b3092661a67d506141f80b90d0e`
-(`fix(k5): authorize maintenance pod eviction in core api group`)
+Starting HEAD: `421a1f6d632ed1a23ab91da55e2ef0993ce81ffe`
+(`fix(k5): align host maintenance reconciliation authority`)
 
-Deployed HEAD: `3f0be8b1dc889b3092661a67d506141f80b90d0e`
+Deployed HEAD: `421a1f6d632ed1a23ab91da55e2ef0993ce81ffe`
 
 ## Verdict
 
-`K5D_MAINTENANCE_OBSERVATION_RBAC_LIVE_DEFECT`
+`K5D_TELEPHONY_AWARE_HOST_MAINTENANCE_NATURAL_LIVE_PROVEN`
 
-(§39 classification: *RBAC desired state deployed incorrectly → deployment/RBAC
-defect*)
+**K5D is complete.** The full corridor ran end to end on real two-node
+infrastructure: a natural Web Admin maintenance request excluded new telephony
+work, let existing work finish on its own, drained the RuntimeNode, cordoned the
+target Node only afterwards, evicted **only** the affected RuntimeNode workload,
+kept the coordinator and every platform and state-store workload alive, and
+reached `completed` through a later canonical reconciliation. Remaining K5D
+proof gap: **NONE**.
 
-**K5D is not closed.** The eviction RBAC repair is confirmed live and the
-eviction scope repair is confirmed live, but the maintenance ClusterRole is
-missing `list` on `nodes`, which the coordinator's own reconcile path requires
-before it can do anything else. The corridor telephony-drains correctly and then
-stalls permanently at `blocked`.
-
-The Kubernetes safety invariants all held: **no Node was cordoned, no Pod was
-evicted, and existing telephony work was never terminated.** The telephony drain
-completed *before* any cordon was attempted, so the ordering contract is
-positively demonstrated.
+No production source was changed. No manual SQL was used during acceptance.
 
 ## Deployment
 
@@ -34,15 +30,13 @@ Canonical native-k3s lifecycle only.
 ```text
 lifecycle               server-image-sync -> server-config-check
                         -> server-image-preflight -> server-apply
-UTCP_SERVER_API_IMAGE   ghcr.io/grimange/utcp-api@sha256:6cf5b583…29bb
-UTCP_SERVER_WEB_IMAGE   ghcr.io/grimange/utcp-web@sha256:f0be2c38…689a
-reconciler image        ghcr.io/grimange/utcp-api@sha256:6cf5b583…29bb
+UTCP_SERVER_API_IMAGE   ghcr.io/grimange/utcp-api@sha256:e519e493…6c80
+UTCP_SERVER_WEB_IMAGE   ghcr.io/grimange/utcp-web@sha256:7337ae5e…65e8
+reconciler / scheduler  ghcr.io/grimange/utcp-api@sha256:e519e493…6c80
 ```
 
-The `Native k3s Images` workflow was still in progress at packet start and was
-**awaited** to `completed / success`. Promotion used the established explicit
-`GH_REPO` workaround for the recorded `scripts/native-k3s/image-sync` `.git`
-debt, which was not repaired here.
+Promotion used the established explicit `GH_REPO` workaround for the recorded
+`scripts/native-k3s/image-sync` `.git` debt, which was not repaired here.
 
 ## Topology
 
@@ -55,337 +49,326 @@ utcp-dev02  192.168.254.125  agent          Ready  schedulable
 
 No topology label, taint, affinity, or storage change was made.
 
-## K5D migrations
+## Preflight gates
 
-```text
-2026_08_31_120000_create_k5d_host_maintenances   batch 8   (confirmed)
-2026_08_31_121000_sync_k5d_identity_catalog      batch 8   (confirmed)
-manual SQL to create state                       NONE
-```
-
-## Gate 1 — eviction RBAC repair CONFIRMED LIVE
-
-The previously blocking API-group mismatch is fixed and deployed.
+### Maintenance RBAC — all three prior repairs confirmed live
 
 ```text
 live ClusterRole utcp-kubernetes-maintenance
-  {"apiGroups":[""],"resources":["nodes"],"verbs":["get","patch"]}
+  {"apiGroups":[""],"resources":["nodes"],"verbs":["get","list","patch"]}
   {"apiGroups":[""],"resources":["pods"],"verbs":["get","list"]}
   {"apiGroups":[""],"resources":["pods/eviction"],"verbs":["create"]}
 
-stale policy-group pods/eviction rule remaining   NO
+nodes/get     yes      nodes/delete  no
+nodes/list    yes      nodes/update  no
+nodes/patch   yes      secrets list  no
+pods/get      yes
+pods/list     yes
+core pods/eviction create   yes
 ```
 
-Authorization, verified three ways:
+The harmless nonexistent-Pod probe as the maintenance ServiceAccount returned
+`NotFound`, not `Forbidden` — authorization reaches the real endpoint.
+
+Observer remains read-only (`patch nodes` no, `create eviction` no,
+`delete pods` no, `list nodes` yes).
+
+### Reconciliation authority — verified in the deployed image
+
+Not inferred from source tests; read out of the running container:
 
 ```text
-SubjectAccessReview  group "" / pods / eviction / create   allowed: true
-  reason: RBAC: allowed by ClusterRoleBinding "utcp-kubernetes-maintenance"
+ReconciliationWorker::workOnce($workerId, $batchSize, bool $includeHostMaintenance = false)
+  if ($includeHostMaintenance) { app(HostMaintenanceService::class)->reconcileDue(); }
 
-kubectl auth can-i create pods --subresource=eviction      yes
+routes/console.php:404   runtime-engine:reconciler   -> includeHostMaintenance: true
+routes/console.php:1002  scheduler Schedule::call    -> flag omitted (default false)
 
-live probe against a NONEXISTENT Pod as the maintenance SA:
-  Error from server (NotFound): pods "k5d-audit-nonexistent-pod" not found
+telephony-reconciler-55fd6694c7-rbj7h   sa=utcp-kubernetes-maintenance   K5D enabled
+scheduler-6f957d86cc-vdvzp              sa=utcp-kubernetes-observer      K5D disabled
 ```
 
-That last line is the decisive change: the same probe returned **403 Forbidden**
-before the repair and now returns **404 NotFound**, proving authorization now
-succeeds and only the Pod is absent. Nothing could be evicted by the probe.
+### Eviction scope — verified read-only before mutation
 
-Note: `kubectl auth can-i create pods/eviction` still prints `no`. That slash
-form is a kubectl argument-parsing artifact, not an authorization fact — the
-SubjectAccessReview and the live endpoint both say allowed. `--subresource=eviction`
-is the correct form.
-
-## Gate 2 — eviction scope repair CONFIRMED LIVE
-
-Maintenance target derived from live placement, not assumed: after deployment
-convergence the RuntimeNode workload settled onto **`utcp-dev02`**, so that is
-the target host.
+Target derived from live placement, not assumed: after convergence the
+RuntimeNode workload settled on **`utcp-dev01`**, which also hosts PostgreSQL and
+Redis — making this a strong scope test.
 
 ```text
-RuntimeNode   102d58ba-93ec-4601-a2a3-81f95801440f
-              V1A Outbound Reproof Asterisk 1787825256   active/ready
-              cv 24 == ocv 24, execution image converged
+RuntimeNode   102d58ba-93ec-4601-a2a3-81f95801440f   active/ready   cv 27 == ocv 27
 identity      utcp-runtime | asterisk-v1a-outbound-reproof-asterisk-1787-5fced085
-subject Pod   asterisk-v1a-outbound-reproof-…-58d765fxkc
-              uid 8cd09466-ebd0-4047-8fe5-f28404f8ab63   on utcp-dev02
+subject Pod   asterisk-v1a-outbound-reproof-…-748f5xkx5j  on utcp-dev01
+
+SUBJECT — 1 Pod
+  utcp-runtime/asterisk-v1a-outbound-reproof-…-748f5xkx5j
+
+PROTECTED on the target host
+  utcp-data/postgres-0                    utcp-data/redis-0
+  utcp-platform/kamailio-…                utcp-platform/kamailio-registration-observer-…
+  utcp-platform/utcp-runtime-fence-worker-…  utcp-platform/worker-…
 ```
 
-Reproducing the deployed predicate read-only for target `utcp-dev02`:
+## Natural Web Admin request
+
+Fresh natural login — a session existed, so it was **logged out first** and
+re-authenticated from the real login page. No cookie, localStorage,
+sessionStorage, database or Redis session injection; no bypass. Tenant selected,
+natural sidebar navigation to **Hosts**, which rendered:
 
 ```text
-SUBJECT (expected eviction) — 1 Pod
-  utcp-runtime/asterisk-v1a-outbound-reproof-…-58d765fxkc   [asterisk-ari]
-
-PROTECTED on the target host (part-of=utcp, no RuntimeNode identity match)
-  utcp-platform/kamailio-registration-observer-57885dd54-wxncr
-  utcp-platform/worker-c48869994-s5vvh
+utcp-dev01  Ready  Runtime Nodes: V1A Outbound Reproof Asterisk 1787825256
+                   Workloads: 7    Active telephony work: 1
+utcp-dev02  Ready  Runtime Nodes: None   Workloads: 16
 ```
 
-| Component | Expected | Result |
-| --- | --- | --- |
-| affected RuntimeNode Pod | IN SUBJECT | **IN SUBJECT** |
-| API / Web / scheduler | OUT | **OUT** |
-| telephony-reconciler | OUT | **OUT** |
-| PostgreSQL / Redis | OUT | **OUT** |
-| other `part-of: utcp` Pods on target host | OUT | **OUT** |
-
-The coordinator, API, Web, scheduler, PostgreSQL and Redis all resided on
-`utcp-dev01` at proof time, so their exclusion here is by host as well as by
-identity. The load-bearing on-host evidence is that
-`kamailio-registration-observer` and `worker` — both `part-of: utcp`, both on the
-target host — are correctly **not** subjects.
-
-## The blocking defect — coordinator cannot list Nodes
-
-`HostMaintenanceService::reconcile()` calls
-`$this->observation->listNodes()` on **every** pass to re-verify the target host.
-`HttpKubernetesInfrastructureClient::listNodes()` issues `GET /api/v1/nodes`,
-which requires the `list` verb on `nodes`.
-
-The maintenance ClusterRole grants `nodes: ["get","patch"]` — **no `list`**:
+`Prepare for maintenance` was clicked on the `utcp-dev01` card. Exactly one
+intent was persisted for the correct Node UID:
 
 ```text
-as system:serviceaccount:utcp-platform:utcp-kubernetes-maintenance
-  get   nodes  yes
-  list  nodes  NO
-  watch nodes  no
-  patch nodes  yes
-
-SubjectAccessReview  verb list / group "" / resource nodes  ->  allowed: false
+id        d49a2680bf0d60b2f3f6fff8b676856a
+node_uid  faa05d1c-35fd-48fa-a2f7-6060d845c9ee   (utcp-dev01)
 ```
 
-`KubernetesWorkloadClientException::forbidden()` maps to reason
-`permission_denied`, which is exactly the recorded `failure_code`, and its
-message is the recorded `failure_details`:
+No SQL, no direct API substitution for the human action.
+
+## The corridor, with timestamps
 
 ```text
-failure_code     permission_denied
-failure_details  Kubernetes infrastructure observation was denied.
+07:37:51  Call A CallLeg created            active telephony work = 1
+07:38:13  host_maintenance.requested        (Web Admin)
+07:38:17  host_maintenance.draining.telephony
+07:38:17  runtime_node.desired_state_changed   -> draining
+          [new-work exclusion exercised here, work still 1, Node NOT cordoned]
+07:38:37  Call A terminated naturally       termination_reason remote
+07:38:49  runtime_node.desired_state_changed   -> drained
+07:38:52  host_maintenance.telephony.drained
+07:38:52  host_maintenance.cordoning        Node cordoned
+07:38:52  host_maintenance.draining.kubernetes
+07:39:00  host_maintenance.completed        subject Pod gone
 ```
 
-### Two coordinators, two different denials
+### New-work exclusion — the gap from the previous attempt, now closed
 
-`reconcileDue()` is invoked from `ReconciliationWorker::workOnce()`, which runs
-in **two** Pods with **different** ServiceAccounts. Neither can finish the
-corridor:
+Captured in a live poll at the exact moment the RuntimeNode was `draining` with
+work still outstanding and the Node still schedulable:
 
 ```text
-telephony-reconciler   SA utcp-kubernetes-maintenance
-  can patch nodes and create evictions
-  CANNOT list nodes -> fails immediately at listNodes()
-     -> "Kubernetes infrastructure observation was denied."
-
-scheduler              SA utcp-kubernetes-observer
-  CAN list nodes/pods (infrastructure-reader) -> drives the telephony drain
-  CANNOT patch nodes  -> fails at cordon()
+desired_state=draining   active_legs=1   node_unschedulable=false
 ```
 
-The live audit trail shows exactly this interleaving:
+A second natural outbound Call was then attempted through the identical
+canonical corridor:
 
 ```text
-06:52:13  host_maintenance.requested
-06:52:17  host_maintenance.blocked        (x40, every ~3s — reconciler passes)
-   …
-06:54:03  host_maintenance.telephony.drained   <- a scheduler pass got through
-06:54:04  host_maintenance.cordoning
-06:54:04  host_maintenance.blocked             <- cordon denied to the observer
-   …      blocked repeats indefinitely
+HTTP 422  "No eligible runtime node is available for outbound call execution."
 ```
 
-Maintenance can therefore never reach `cordoning -> draining_kubernetes ->
-completed`, and the repaired eviction path is never reached at all.
+The draining RuntimeNode was **not** selected for new work. **PASS.**
 
-## What the run did positively demonstrate
+### Existing work continued
 
-Despite the block, real corridor behaviour was proven on live infrastructure.
+Call A `3d5e80ad-5337-48cb-9238-8904efb15b34` ran 07:37:51 → 07:38:37 and
+terminated on its own with `termination_reason = remote`. It was not terminated
+by the maintenance request. **PASS.**
 
-### Natural Web Admin request
-
-Fresh natural login from the real login page (no session existed; no cookie,
-storage, database or Redis session injection, no bypass), tenant selected,
-natural sidebar navigation to **Hosts**. The Hosts surface rendered the real
-maintenance context per host:
+### Ordering — no Kubernetes mutation while work remained
 
 ```text
-utcp-dev01   Ready   Runtime Nodes: None                       Workloads: 20
-utcp-dev02   Ready   Runtime Nodes: V1A Outbound Reproof …     Workloads: 3
-                     Active telephony work: 1
-             [Prepare for maintenance]
+last active CallLeg ended   07:38:37
+RuntimeNode DRAINED         07:38:49
+Node cordoned               07:38:52
 ```
 
-`Prepare for maintenance` was clicked on the `utcp-dev02` card. Exactly one
-maintenance intent was persisted for the correct Node UID:
+Cordon occurred **15 seconds after** the last active work ended and **3 seconds
+after** DRAINED. The polling trace independently confirms
+`node_unschedulable=false` while `active_legs=1`. **PASS.**
+
+## RuntimeNode-scoped eviction
+
+The subject Pod `…-748f5xkx5j` was removed; Kubernetes recorded graceful
+container shutdown (`Killing … Stopping container asterisk`). No force delete
+and no `kubectl drain` was used as the product action.
+
+That the removal used the eviction subresource rather than a delete is provable
+from authorization alone — the maintenance ServiceAccount **cannot delete Pods**:
 
 ```text
-id        1bf5e06a4248ece10c0e49f800943039
-node_uid  f56c93f5-52d9-4d18-8dc6-99166a2145f6   (utcp-dev02)
-node_name utcp-dev02
+delete pods           no
+create pods/eviction  yes
 ```
 
-No manual SQL, no direct API substitution for the human action.
-
-### RuntimeNode correlation
+The client posts a `policy/v1` `Eviction` object to the core
+`/api/v1/namespaces/{ns}/pods/{name}/eviction` subresource. With `delete pods`
+denied, eviction is the only path by which the Pod could have been removed.
 
 ```text
-runtime_node_ids  ["102d58ba-93ec-4601-a2a3-81f95801440f"]
+PodDisruptionBudgets   NONE PRESENT (none created for this proof)
 ```
 
-Correct — the single RuntimeNode whose workload is on the target host.
+## Non-subject survival — the decisive scope evidence
 
-### Existing work continued; drain ordering held
-
-One natural bounded Call to the still-authoritative destination
-`c537a4a7-…` (`sip:97001@38.146.161.46`) was active when maintenance was
-requested (`Active telephony work: 1` was rendered in the UI). It was **not**
-terminated by the maintenance request; it ended on its own:
+Every other `part-of: utcp` Pod on the **target host** survived the operation:
 
 ```text
-Call c9f700e1-b040-4504-9ae9-290edce1fc42
-  terminated 06:52:36+00   termination_reason remote
+utcp-data/postgres-0                              Running   (started 2026-08-26, not restarted)
+utcp-data/redis-0                                 Running   (started 2026-08-26, not restarted)
+utcp-platform/kamailio-676b88d969-wzjhl           Running
+utcp-platform/kamailio-registration-observer-…    Running
+utcp-platform/utcp-runtime-fence-worker-…         Running
+utcp-platform/worker-779cc7f968-4fsld             Running
 ```
 
-The RuntimeNode then reached `drained` naturally, and only afterwards was cordon
-attempted:
+PostgreSQL and Redis sat on the drained host and were untouched — the exact
+failure mode the original blast-radius audit identified is closed.
+
+The coordinator and scheduler (both on `utcp-dev02`) remained `1/1 Running`
+throughout and after:
 
 ```text
-06:54:03  telephony.drained
-06:54:04  cordoning attempted
+telephony-reconciler-55fd6694c7-rbj7h   1/1 Running
+scheduler-6f957d86cc-vdvzp              1/1 Running
 ```
 
-**No Kubernetes mutation occurred while active telephony work was greater than
-zero.** The ordering contract is positively demonstrated.
+## Coordinator ownership and scheduler non-participation
 
-### Nothing was cordoned or evicted
+Maintenance advanced on the telephony-reconciler's ~10s loop — note the three
+transitions landing together at 07:38:52 in a single pass, and completion at
+07:39:00, neither aligned to the scheduler's minute cadence.
+
+The scheduler ran throughout the maintenance window and performed **generic
+reconciliation only**:
 
 ```text
-utcp-dev01  unschedulable=false  taints=0  Ready
-utcp-dev02  unschedulable=false  taints=0  Ready
-subject Pod …-58d765fxkc         Running on utcp-dev02, never evicted
-coordinator telephony-reconciler Running on utcp-dev01 throughout
-all utcp-platform Pods           18/18 Running
+07:38:02  Running [runtime-engine:reconciler-scheduled]  DONE
+07:39:01  Running [runtime-engine:reconciler-scheduled]  DONE
+scheduler log lines matching maintenance | cordon | evict :   NONE
 ```
 
-## Secondary finding — a blocked maintenance is unrecoverable
+**The scheduler did not advance K5D. PASS.**
 
-`AdminHostMaintenanceController` exposes only `store` (request) and `index`
-(list). There is **no cancel or abort endpoint**, although `cancelled` exists in
-the schema and in both service queries. Consequently a blocked maintenance:
+## Audit lifecycle
 
-* keeps its RuntimeNode pinned at `drained`, since `request()` returns the
-  existing open record and each reconcile re-asserts the drain;
-* re-blocks every ~3 seconds indefinitely — 53 `host_maintenance.blocked` audit
-  events were written in roughly three minutes;
-* cannot be cleared through any canonical management path.
+Complete and clean — exactly six events, no repetition:
 
-This is recorded as an observation for the repair packet, not as the primary
-verdict.
+```text
+07:38:13  host_maintenance.requested
+07:38:17  host_maintenance.draining.telephony
+07:38:52  host_maintenance.telephony.drained
+07:38:52  host_maintenance.cordoning
+07:38:52  host_maintenance.draining.kubernetes
+07:39:00  host_maintenance.completed
+```
 
-## Bounded implementation target
+Plus `runtime_node.desired_state_changed` at 07:38:17 (→ draining) and 07:38:49
+(→ drained). **Zero `host_maintenance.blocked` events** — the previously
+observed blocked-audit noise did not recur on the happy path.
 
-For a separate packet. Not implemented here.
+## Replacement workload — K5E-supporting evidence only
 
-1. Add `list` to the `nodes` rule in
-   `infrastructure/kubernetes/base/platform/kubernetes-maintenance-rbac.yaml`,
-   since `HostMaintenanceService::reconcile()` requires `listNodes()` on every
-   pass:
+With the target cordoned and the other Node Ready, Kubernetes rescheduled the
+workload naturally. No affinity, nodeSelector, or manual placement was used.
 
-   ```yaml
-   - apiGroups: [""]
-     resources: ["nodes"]
-     verbs: ["get", "list", "patch"]
-   ```
+```text
+replacement Pod   asterisk-v1a-outbound-reproof-…-748f5hssbv
+uid               dcc5a549-3cdb-4297-a804-5ff9d7613b06
+node              utcp-dev02
+phase / ready     Running / true
+```
 
-2. Decide deliberately whether `reconcileDue()` should run in the `scheduler`
-   Pod at all. Today it runs under the read-only observer identity, which can
-   advance the telephony drain but can never cordon — so it drives state changes
-   it cannot finish, and it is the reason the drain progressed while the
-   coordinator was failing. Restricting maintenance reconciliation to the
-   maintenance-capable coordinator would make the corridor single-authority and
-   the failure mode unambiguous.
+Classified `K5E-SUPPORTING NATURAL EVIDENCE`. **K5E is NOT complete.**
 
-3. Consider a canonical way to end a blocked maintenance, and damp the
-   per-tick `host_maintenance.blocked` audit writes.
+## Placement observation did not converge — separate, non-K5D issue
 
-The eviction scope, eviction RBAC, telephony ordering, ServiceAccount
-separation, NetworkPolicy, storage, and K5C/K5E behaviour all remain unchanged.
+The K5C derived placement projection still reports `utcp-dev01`
+(`observed_at 06:49:01`) while the workload actually runs on `utcp-dev02`. It
+did not update across a four-minute watch.
+
+Root cause is **not** K5D and **not** the K5C observer logic. The scheduler is
+simply not executing `runtime-engine:k5c-placement-observer` at all: over a
+three-minute sample every other scheduled task ran three times, while exactly
+three `everyMinute` tasks never ran —
+`runtime-engine:k5c-placement-observer`, `telephony-domain:expire-sessions`, and
+`telephony-domain:reclaim-orphan-participant-channels`. Redis holds exactly
+three stale `framework/schedule-*` overlap mutexes with multi-hour TTLs
+(≈4.8h, ≈23h, ≈23.9h):
+
+```text
+framework/schedule-2f87cf6e…   ttl 17291
+framework/schedule-1e4c4f18…   ttl 85874
+framework/schedule-3dabe830…   ttl 83047
+```
+
+Three stuck `withoutOverlapping()` mutexes against exactly three non-running
+tasks is the classic signature of locks surviving a scheduler Pod restart. The
+correlation is empirical — the lock-to-task mapping was **not** confirmed by
+reproducing Laravel's mutex hash, so the mechanism is stated as strongly
+indicated rather than proven.
+
+This does not affect any K5D acceptance criterion: §28 classifies placement
+observation as supporting evidence, and the K5D corridor is driven entirely by
+the telephony-reconciler, which never depends on the scheduler. It is recorded
+as **newly observed operational debt** for a separate packet, alongside the
+existing blocked-cancellation and blocked-audit-damping debt.
 
 ## Post-proof environment restoration
 
-Performed **only after** all acceptance evidence above was captured. It
-manufactures no acceptance result — the verdict is a defect either way.
+Performed **only after** all acceptance evidence was captured. It manufactures
+no acceptance result.
 
-1. **Non-canonical, disclosed:** the blocked maintenance was set to `cancelled`
-   with a single guarded statement, because no canonical cancel path exists and
-   the record would otherwise have kept the RuntimeNode drained and rewritten
-   `blocked` audit events every ~3 seconds indefinitely. Scoped by id, status
-   and failure code so it could match nothing else:
+```text
+1. canonical    RuntimeNode returned to service via the Web Admin "Reactivate"
+                control on Telephony Nodes.  No SQL, no Artisan.
+                -> desired_state active / observed_state ready
 
-   ```sql
-   update k5d_host_maintenances set status='cancelled', phase='cancelled', updated_at=now()
-   where id='1bf5e06a4248ece10c0e49f800943039'
-     and status='blocked' and failure_code='permission_denied';
-   -- UPDATE 1
-   ```
+2. out-of-scope operator recovery
+                kubectl uncordon utcp-dev01
+                K5D deliberately does not implement automatic uncordon, so this
+                is the documented operator recovery action, not part of K5D.
+```
 
-   `cancelled` is the terminal status the service already excludes from
-   reconciliation; the loop stopped immediately (last `blocked` event 06:55:16,
-   none since).
-
-2. **Canonical:** the RuntimeNode was returned to service through the Web Admin
-   **Reactivate** control on Telephony Nodes — no SQL, no Artisan.
+The completed maintenance record was left untouched as canonical history.
 
 Final verified state:
 
 ```text
-RuntimeNode 102d58ba-…    active / ready
-maintenance record        cancelled (terminal, not reconciled)
 utcp-dev01 / utcp-dev02   Ready, schedulable, no taints
+RuntimeNode               active / ready
 inbound eligibility       available_capacity 100, active work 0
+maintenance records       utcp-dev01: completed   utcp-dev02: cancelled (prior packet)
 utcp-platform Pods        18/18 Running
-Kubernetes mutations by the product   NONE
+postgres-0 / redis-0      Running, never restarted
 ```
 
-Proof Calls, CallLegs and audit history were retained as legitimate canonical
-evidence; nothing was scrubbed.
+Proof Calls, CallLegs and audit history were retained; nothing was scrubbed.
 
-## Natural-live-proven versus not proven
-
-Proven live in this packet:
+## Acceptance summary
 
 ```text
-repaired current main deployed through the canonical lifecycle
-K5D migrations confirmed applied, no manual SQL
-maintenance ServiceAccount is utcp-kubernetes-maintenance
-core-group pods/eviction authorization now granted (403 -> 404 probe)
-no stale policy-group eviction rule remains
-observer still read-only; utcp-platform-app not widened
-eviction scope selects exactly the affected RuntimeNode workload
-same-host part-of=utcp Pods are correctly not subjects
-natural Web Admin login and Hosts navigation
-Hosts surface renders affected RuntimeNode and active telephony work
-maintenance requested through Web Admin; one intent for the correct Node UID
-RuntimeNode correlation correct
-existing Call not terminated by the maintenance request
-RuntimeNode reached DRAINED naturally
-no Kubernetes mutation while active telephony work > 0
+repaired main deployed                                   PASS
+maintenance SA get/list/patch Nodes                      PASS
+maintenance SA get/list Pods                             PASS
+maintenance SA create core pods/eviction                 PASS
+observer remains read-only                               PASS
+scheduler no longer advances K5D                         PASS
+telephony-reconciler is sole K5D coordinator             PASS
+natural browser login                                    PASS
+maintenance requested through Web Admin                  PASS
+correct RuntimeNode identified                           PASS
+new work excluded while draining                         PASS
+existing work remained active and ended naturally        PASS
+no Kubernetes mutation while active work > 0             PASS
+active work reached zero naturally                       PASS
+RuntimeNode reached DRAINED                              PASS
+Node cordoned only after DRAINED                         PASS
+only affected RuntimeNode workload evicted               PASS
+Policy/v1 Eviction used; no force delete                 PASS
+platform and state-store workloads survived              PASS
+telephony-reconciler survived                            PASS
+later canonical reconcile reached completed              PASS
+no manual normal-operation reconcile                     PASS
+no manual SQL used to manufacture acceptance             PASS
+no K5E implementation added                              PASS
 ```
-
-Not proven — blocked by the defect:
-
-```text
-cordon
-subject Pod eviction
-non-subject survival through an actual eviction pass
-post-eviction reconciliation to completed
-replacement Pod creation and scheduling
-automatic placement observation of a replacement
-full audit lifecycle through completed
-```
-
-None of these is claimed. `K5E` remains **NOT STARTED**; no K5E-supporting
-replacement evidence was produced because no eviction occurred.
 
 ## Roadmap impact
 
@@ -393,15 +376,17 @@ replacement evidence was produced because no eviction occurred.
 K5A   COMPLETE / UNCHANGED
 K5B   COMPLETE / NATURAL-LIVE-PROVEN / UNCHANGED
 K5C   COMPLETE / NATURAL-LIVE-PROVEN / UNCHANGED
-K5D   IMPLEMENTED_AND_TESTED
-      EVICTION SCOPE REPAIR VERIFIED LIVE
-      EVICTION RBAC REPAIR VERIFIED LIVE
-      NATURAL LIVE PROOF BLOCKED — K5D_MAINTENANCE_OBSERVATION_RBAC_LIVE_DEFECT
-K5E   NOT STARTED
+K5D   COMPLETE / NATURAL-LIVE-PROVEN     proof gap: NONE
+K5E   NOT STARTED / NEXT
 K5F   POST-K5E / UNCHANGED
 ```
 
-**Exactly one next action:** bounded implementation granting `list` on `nodes`
-to the maintenance ClusterRole and settling whether maintenance reconciliation
-should run in the scheduler Pod, after which this acceptance corridor re-runs
-unchanged.
+Carried debt, all separate and unchanged in scope: canonical
+blocked-maintenance cancellation, blocked-audit damping, the
+`scripts/native-k3s/image-sync` `.git` parsing debt, runtime
+deployment-convergence, and the newly observed stuck scheduler-mutex issue.
+
+**Exactly one next action:** `K5E — Distributed Infrastructure Live Proof`. The
+two-host topology now exists and this run already produced natural
+K5E-supporting evidence — an evicted RuntimeNode workload rescheduling to
+`utcp-dev02` and reaching Ready.

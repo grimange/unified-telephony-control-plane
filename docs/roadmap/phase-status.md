@@ -105,33 +105,32 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** deploy repaired current `main` to canonical native
-k3s and resume the K5D controlled natural live proof. The 2026-08-31 controlled live proof deployed
-repaired `main` (`3f0be8b`) to the two-node topology and **confirmed both prior
-repairs live**: the core-group eviction grant is in place (a probe against a
-nonexistent Pod as the maintenance ServiceAccount now returns `NotFound` where it
-previously returned `Forbidden`, and a SubjectAccessReview for group `""` returns
-`allowed:true`), no stale `policy`-group rule remains, and the eviction selector
-resolves exactly **one** subject on the target host `utcp-dev02` — the affected
-RuntimeNode workload — while `kamailio-registration-observer` and `worker`, both
-`part-of: utcp` on that same host, are correctly not subjects. The corridor is
-nonetheless **blocked** in that proof because the maintenance ClusterRole lacked
-`nodes/list`, and because `reconcileDue()` also ran in the `scheduler` Pod under
-the read-only observer identity. This repair adds the required list permission
-and makes the telephony-reconciler the sole K5D reconciliation runtime; the
-scheduled scheduler pass retains generic reconciliation without invoking host
-maintenance. Real behaviour was
-still proven: a natural Web Admin login reached **Hosts**, which rendered the
-affected RuntimeNode and `Active telephony work: 1`; `Prepare for maintenance` on
-`utcp-dev02` persisted exactly one intent for the correct Node UID; RuntimeNode
-correlation was correct; the active Call was **not** terminated and ended on its
-own (`remote`); the RuntimeNode reached `DRAINED` naturally; and cordon was
-attempted only afterwards — **no Kubernetes mutation occurred while active work
-was greater than zero, and nothing was cordoned or evicted**. A secondary
-observation: no cancel endpoint exists, so a blocked maintenance pins its
-RuntimeNode at `drained` and rewrites `blocked` audit every ~3s; post-proof the
-record was terminated with one disclosed guarded statement and the RuntimeNode was
-returned to service through the canonical Web Admin **Reactivate** control. See the
+**Exactly one next action:** `K5E — Distributed Infrastructure Live Proof`. The
+2026-08-31 controlled live proof deployed `421a1f6` to the two-node topology and
+**closed K5D**: a natural Web Admin `Prepare for maintenance` on `utcp-dev01`
+persisted one intent for the correct Node UID; the RuntimeNode entered
+`draining` and a second natural outbound Call was refused with `HTTP 422` while
+active work was still `1` and the Node was still schedulable — closing the
+new-work-exclusion gap from the previous attempt; the existing Call was not
+terminated and ended on its own (`remote`, 07:38:37); the RuntimeNode reached
+`DRAINED` (07:38:49) and the Node was cordoned only afterwards (07:38:52);
+**only** the affected RuntimeNode Pod was evicted, while `postgres-0`,
+`redis-0`, `kamailio`, the registration observer, the fence worker and `worker`
+— all on the drained host — survived untouched; the coordinator and scheduler
+stayed `1/1 Running`; and a later canonical reconciliation reached `completed`
+(07:39:00). Removal used the eviction subresource by construction, since the
+maintenance ServiceAccount is denied `delete pods`. The scheduler ran generic
+reconciliation only and advanced no K5D state. Audit recorded exactly six clean
+lifecycle events with no `blocked` noise. Kubernetes then rescheduled the
+workload to `utcp-dev02` where it became Ready — **K5E-supporting evidence, not
+K5E closure**. Post-proof the RuntimeNode was reactivated through the canonical
+Web Admin control and `utcp-dev01` was uncordoned as the documented out-of-scope
+operator recovery. One newly observed operational issue, separate from K5D:
+three `everyMinute` scheduled tasks — including
+`runtime-engine:k5c-placement-observer` — are not executing because of stale
+`withoutOverlapping()` mutexes in Redis, so K5C placement observation is
+currently stale; a K5E packet must confirm the observer is running before
+relying on placement correlation. See the
 [`K5D natural live proof`](../evidence/k5/k5d-telephony-aware-host-maintenance-natural-live-proof.md).
 
 The synthetic fixture remains deterministic regression only. C7A supports the

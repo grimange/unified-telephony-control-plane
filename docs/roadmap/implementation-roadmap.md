@@ -110,8 +110,19 @@ reactivate it as the current proof environment. See
 
 ## Current state and executable order
 
-**Current phase:** V1 — Bidirectional external call routing and control; K5C is
-**complete and natural-live-proven**, with no remaining K5C proof gap.
+**Current phase:** V1 — Bidirectional external call routing and control; K5C and
+**K5D are complete and natural-live-proven**, with no remaining K5C or K5D proof
+gap. K5E is next.
+
+**Exactly one next action:** `K5E — Distributed Infrastructure Live Proof` —
+prove RuntimeNode operation across the two existing Kubernetes hosts covering
+placement correlation, runtime readiness, telephony eligibility, new-work
+exclusion during failure or maintenance, drain behaviour, and automatic
+restoration. The 2026-08-31 K5D proof already produced natural K5E-supporting
+evidence: an evicted RuntimeNode workload rescheduled to `utcp-dev02` and became
+Ready. A K5E packet must first confirm `runtime-engine:k5c-placement-observer`
+is executing — stale `withoutOverlapping()` mutexes currently prevent it, so
+placement observation is stale.
 
 **Current status:** T4A/T4B are implemented and tested; T4C1/T4C2 are
 implemented, tested, live-proven, and frozen. The timer-backed media playback
@@ -282,19 +293,17 @@ RuntimeNode readiness, declared capability, telephony load, capacity, and
 failure-domain constraints to determine telephony eligibility and selection.
 UTCP must not reimplement the Kubernetes scheduler.
 
-**K5D — Telephony-Aware Host Maintenance:** **IMPLEMENTED_AND_TESTED /
-EVICTION SCOPE REPAIR VERIFIED LIVE / EVICTION RBAC REPAIR VERIFIED LIVE /
-NODE OBSERVATION RBAC REPAIRED / RECONCILIATION AUTHORITY REPAIRED / NATURAL
-LIVE PROOF PENDING.** The maintenance identity has the required core
-`nodes: ["get", "list", "patch"]`, `pods: ["get", "list"]`, and
-`pods/eviction: ["create"]` permissions. The telephony-reconciler is the sole
-runtime that invokes K5D maintenance reconciliation; the scheduled scheduler
-pass retains generic reconciliation but does not invoke
-`HostMaintenanceService::reconcileDue()`. The eviction scope, core-group
-eviction grant, and telephony drain ordering remain unchanged. Known follow-up
-debt is recorded separately for a canonical blocked-maintenance cancellation
-surface and blocked-state audit emission damping. K5E remains the later
-distributed, multi-host proof.
+**K5D — Telephony-Aware Host Maintenance:** **COMPLETE /
+NATURAL-LIVE-PROVEN.** The 2026-08-31 controlled live proof closed the phase on
+the two-node canonical topology with no remaining proof gap: a natural Web Admin
+maintenance request excluded new telephony work while existing work was still
+running, let that work finish on its own, drained the RuntimeNode, cordoned the
+target Node only afterwards, evicted only the affected RuntimeNode workload
+while PostgreSQL, Redis and every other platform workload on that host survived,
+kept the coordinator alive, and reached `completed` through a later canonical
+reconciliation driven solely by the telephony-reconciler. Kubernetes then
+rescheduled the workload to the other host, which is K5E-supporting evidence
+rather than K5E closure.
 
 **K5E — Distributed Infrastructure Live Proof:** prove that UTCP can operate
 telephony RuntimeNodes across at least two distinct Kubernetes host or failure
