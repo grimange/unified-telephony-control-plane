@@ -105,33 +105,37 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** `K5E — Distributed Infrastructure Live Proof`. The
-2026-08-31 controlled live proof deployed `421a1f6` to the two-node topology and
-**closed K5D**: a natural Web Admin `Prepare for maintenance` on `utcp-dev01`
-persisted one intent for the correct Node UID; the RuntimeNode entered
-`draining` and a second natural outbound Call was refused with `HTTP 422` while
-active work was still `1` and the Node was still schedulable — closing the
-new-work-exclusion gap from the previous attempt; the existing Call was not
-terminated and ended on its own (`remote`, 07:38:37); the RuntimeNode reached
-`DRAINED` (07:38:49) and the Node was cordoned only afterwards (07:38:52);
-**only** the affected RuntimeNode Pod was evicted, while `postgres-0`,
-`redis-0`, `kamailio`, the registration observer, the fence worker and `worker`
-— all on the drained host — survived untouched; the coordinator and scheduler
-stayed `1/1 Running`; and a later canonical reconciliation reached `completed`
-(07:39:00). Removal used the eviction subresource by construction, since the
-maintenance ServiceAccount is denied `delete pods`. The scheduler ran generic
-reconciliation only and advanced no K5D state. Audit recorded exactly six clean
-lifecycle events with no `blocked` noise. Kubernetes then rescheduled the
-workload to `utcp-dev02` where it became Ready — **K5E-supporting evidence, not
-K5E closure**. Post-proof the RuntimeNode was reactivated through the canonical
-Web Admin control and `utcp-dev01` was uncordoned as the documented out-of-scope
-operator recovery. One newly observed operational issue, separate from K5D:
-three `everyMinute` scheduled tasks — including
-`runtime-engine:k5c-placement-observer` — are not executing because of stale
-`withoutOverlapping()` mutexes in Redis, so K5C placement observation is
-currently stale; a K5E packet must confirm the observer is running before
-relying on placement correlation. See the
-[`K5D natural live proof`](../evidence/k5/k5d-telephony-aware-host-maintenance-natural-live-proof.md).
+**Exactly one next action:** bounded implementation setting an explicit,
+cadence-proportionate `withoutOverlapping()` expiry for the scheduled tasks in
+`apps/api/routes/console.php`. **K5E is blocked on this prerequisite.** The
+2026-08-31 narrow evidence audit proved, by identity rather than correlation,
+why `runtime-engine:k5c-placement-observer` stopped noticing the RuntimeNode
+workload K5D moved to `utcp-dev02`: a read-only probe run inside the live
+scheduler Pod enumerated `Schedule::events()` and printed each event's own
+`mutexName()` plus `mutex->exists()`, showing exactly three
+`LOCK-EXISTS` events — `runtime-engine:k5c-placement-observer`,
+`telephony-domain:expire-sessions` and
+`telephony-domain:reclaim-orphan-participant-channels` — matching the only three
+`framework/schedule-*` keys in Redis, with every other event `free`. All 18
+scheduled entries call `withoutOverlapping()` with no argument, taking Laravel
+12.63.0's **1440-minute (24-hour)** default; the mutex is released only via
+`Event::finish()`'s `finally` or `Event::start()`'s `Throwable` path, so a
+scheduler Pod replacement that signal-kills a running task orphans the lock for
+a full day. Both recent locks were acquired within a minute of a scheduler
+rollout (`06:48:04` → observer lock `~06:49`; `07:35:30` → reclaim lock
+`~07:36`), and the projection's frozen `observed_at 06:49:01` is the timestamp
+of the observer's last successful run — the very run whose mutex leaked. Over
+three minutes of natural ticks the scheduler ran 14 other tasks 3–4 times each
+while those three ran **zero** times, so the events are filtered by
+`skip(fn => $this->mutex->exists($this))` before invocation — ruling out crash,
+wiring, and scheduler-tick explanations. UTCP still reports the RuntimeNode on
+`utcp-dev01` while it actually runs on `utcp-dev02`. The framework behaves as
+designed; the defect is the 1440× mismatch between a 60-second cadence and a
+24-hour lock with no automatic recovery, which `AGENTS.md` forbids resolving by
+operator Redis clearing. Verdict
+`K5E_PLACEMENT_OBSERVER_OVERLAP_MUTEX_LIFETIME_DEFECT`. No lock was cleared, no
+task manually invoked, no projection written, and no source changed. See the
+[`K5E placement-observer mutex proof-gap isolation`](../evidence/k5/k5e-placement-observer-scheduler-mutex-proof-gap-isolation.md).
 
 The synthetic fixture remains deterministic regression only. C7A supports the
 bounded V1-A `outbound_registration` signaling mode; C7B closed on 2026-08-24

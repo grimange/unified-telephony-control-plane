@@ -114,15 +114,37 @@ reactivate it as the current proof environment. See
 **K5D are complete and natural-live-proven**, with no remaining K5C or K5D proof
 gap. K5E is next.
 
-**Exactly one next action:** `K5E — Distributed Infrastructure Live Proof` —
-prove RuntimeNode operation across the two existing Kubernetes hosts covering
-placement correlation, runtime readiness, telephony eligibility, new-work
-exclusion during failure or maintenance, drain behaviour, and automatic
-restoration. The 2026-08-31 K5D proof already produced natural K5E-supporting
-evidence: an evicted RuntimeNode workload rescheduled to `utcp-dev02` and became
-Ready. A K5E packet must first confirm `runtime-engine:k5c-placement-observer`
-is executing — stale `withoutOverlapping()` mutexes currently prevent it, so
-placement observation is stale.
+**Exactly one next action:** bounded implementation setting an explicit,
+cadence-proportionate `withoutOverlapping()` expiry for the scheduled tasks in
+`apps/api/routes/console.php`. **K5E is blocked on this prerequisite.** The
+2026-08-31 narrow evidence audit proved, by identity rather than correlation,
+why `runtime-engine:k5c-placement-observer` stopped noticing the RuntimeNode
+workload K5D moved to `utcp-dev02`: a read-only probe run inside the live
+scheduler Pod enumerated `Schedule::events()` and printed each event's own
+`mutexName()` plus `mutex->exists()`, showing exactly three
+`LOCK-EXISTS` events — `runtime-engine:k5c-placement-observer`,
+`telephony-domain:expire-sessions` and
+`telephony-domain:reclaim-orphan-participant-channels` — matching the only three
+`framework/schedule-*` keys in Redis, with every other event `free`. All 18
+scheduled entries call `withoutOverlapping()` with no argument, taking Laravel
+12.63.0's **1440-minute (24-hour)** default; the mutex is released only via
+`Event::finish()`'s `finally` or `Event::start()`'s `Throwable` path, so a
+scheduler Pod replacement that signal-kills a running task orphans the lock for
+a full day. Both recent locks were acquired within a minute of a scheduler
+rollout (`06:48:04` → observer lock `~06:49`; `07:35:30` → reclaim lock
+`~07:36`), and the projection's frozen `observed_at 06:49:01` is the timestamp
+of the observer's last successful run — the very run whose mutex leaked. Over
+three minutes of natural ticks the scheduler ran 14 other tasks 3–4 times each
+while those three ran **zero** times, so the events are filtered by
+`skip(fn => $this->mutex->exists($this))` before invocation — ruling out crash,
+wiring, and scheduler-tick explanations. UTCP still reports the RuntimeNode on
+`utcp-dev01` while it actually runs on `utcp-dev02`. The framework behaves as
+designed; the defect is the 1440× mismatch between a 60-second cadence and a
+24-hour lock with no automatic recovery, which `AGENTS.md` forbids resolving by
+operator Redis clearing. Verdict
+`K5E_PLACEMENT_OBSERVER_OVERLAP_MUTEX_LIFETIME_DEFECT`. No lock was cleared, no
+task manually invoked, no projection written, and no source changed. See the
+[`K5E placement-observer mutex proof-gap isolation`](../evidence/k5/k5e-placement-observer-scheduler-mutex-proof-gap-isolation.md).
 
 **Current status:** T4A/T4B are implemented and tested; T4C1/T4C2 are
 implemented, tested, live-proven, and frozen. The timer-backed media playback
