@@ -129,9 +129,19 @@ corridor. The focused ADR-027 regression proof passed, and the canonical API
 suite passed with 595 tests, 8 skips, and 5007 assertions. The implementation
 is committed at `e334209ccc016053d2f63f8e39e99f2126aa5535`.
 
-**Exactly one next action:** deploy current main to canonical native k3s and
-perform controlled K5D telephony-aware host-maintenance natural acceptance.
-K5D is implemented and tested; its natural live proof remains pending. See the
+**Exactly one next action:** bounded implementation correcting the K5D
+Kubernetes eviction scope. **The K5D natural live proof must not be run as
+currently defined.** A read-only audit on 2026-08-31 showed
+`drainablePods()` scopes eviction by the `part-of: utcp` label alone —
+requiring neither RuntimeNode association nor controller ownership — selecting
+22 Pods on `utcp-dev01` of which only 1 is RuntimeNode-associated; the rest are
+the coordinator itself, the scheduler, API, Web, workers, and the canonical
+PostgreSQL/Redis state stores, so maintenance could never reach `completed` and
+no canonical surface would survive to observe or recover it. K5D remains
+implemented and tested with its natural live proof **blocked**
+(`K5D_KUBERNETES_DRAIN_SCOPE_LIVE_PROOF_BLOCKER_FOUND`). See the
+[`K5D host drain scope and single-node survivability audit`](../evidence/k5/k5d-host-drain-scope-and-single-node-survivability-audit.md)
+and the
 [`K5D implementation evidence`](../evidence/k5/k5d-telephony-aware-host-maintenance-implementation.md).
 ADR-024's telephony-aware maintenance boundary already settles the authority:
 maintenance begins as a canonical UTCP API operation, K5C
@@ -263,7 +273,10 @@ failure-domain constraints to determine telephony eligibility and selection.
 UTCP must not reimplement the Kubernetes scheduler.
 
 **K5D — Telephony-Aware Host Maintenance:** **IMPLEMENTED_AND_TESTED / NATURAL
-LIVE PROOF PENDING.** Identify affected RuntimeNodes, exclude them from new
+LIVE PROOF BLOCKED** by
+`K5D_KUBERNETES_DRAIN_SCOPE_LIVE_PROOF_BLOCKER_FOUND` — the Kubernetes eviction
+selector is not scoped to the maintenance subject and would evict the
+coordinating control plane and its canonical state stores.** Identify affected RuntimeNodes, exclude them from new
 telephony work, reuse `ACTIVE -> DRAINING -> DRAINED`, and coordinate
 Kubernetes-owned cordon/eviction only after telephony drain completion through
 normal authorized reconciliation. K5E remains the later distributed,
