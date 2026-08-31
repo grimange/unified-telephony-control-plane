@@ -111,7 +111,8 @@ reactivate it as the current proof environment. See
 ## Current state and executable order
 
 **Current phase:** V1 — Bidirectional external call routing and control; K5C is
-implemented and tested with natural live proof pending.
+implemented and tested, and its natural live proof is blocked by two isolated
+live defects.
 
 **Current status:** T4A/T4B are implemented and tested; T4C1/T4C2 are
 implemented, tested, live-proven, and frozen. The timer-backed media playback
@@ -129,9 +130,11 @@ corridor. The focused ADR-027 regression proof passed, and the canonical API
 suite passed with 595 tests, 8 skips, and 5007 assertions. The implementation
 is committed at `e334209ccc016053d2f63f8e39e99f2126aa5535`.
 
-**Exactly one next action:** deploy the exact K5C commit to canonical native-k3s
-and run controlled natural K5C acceptance. V1 remains complete and unchanged;
-the external PBX prerequisites remain separate.
+**Exactly one next action:** bounded implementation correcting the K5C
+placement-observation credential authority and the Web Admin K5C
+policy-configuration gap isolated by the 2026-08-31 controlled live proof, after
+which controlled natural K5C acceptance can be re-run unchanged. V1 remains
+complete and unchanged; the external PBX prerequisites remain separate.
 C7B closed on 2026-08-24 after its focused route-authority tests and
 provider-neutrality checks passed.
 
@@ -230,7 +233,14 @@ failure-domain association, without copying Kubernetes into a competing
 database authority.
 
 **K5C — Capacity and Failure-Domain Policy:** **implemented and tested; natural
-live proof pending.** Combine Kubernetes facts with
+live proof blocked by two isolated live defects** — the placement-observation
+projection runs under a ServiceAccount with no Kubernetes credentials and no
+`utcp-infrastructure-reader` binding, so it permanently records
+`kubernetes_observation_unavailable`; and the Web Admin renders no capacity or
+placement fields for UTCP-managed RuntimeNodes, so K5C policy has no natural
+management path. See the
+[`K5C natural live proof`](../evidence/k5/k5c-capacity-failure-domain-policy-natural-live-proof.md).
+Combine Kubernetes facts with
 RuntimeNode readiness, declared capability, telephony load, capacity, and
 failure-domain constraints to determine telephony eligibility and selection.
 UTCP must not reimplement the Kubernetes scheduler.
