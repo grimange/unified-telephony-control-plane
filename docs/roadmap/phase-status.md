@@ -105,84 +105,33 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** deploy repaired current main to canonical native
-k3s and perform controlled K5D telephony-aware host-maintenance natural
-acceptance. **The K5D natural live proof must not be run against the prior
-implementation.** The 2026-08-31 read-only drain-scope audit reproduced
-`HttpKubernetesMaintenanceClient::drainablePods()` against live Pod
-observations: it scopes eviction by the `app.kubernetes.io/part-of: utcp` label
-alone, requiring neither RuntimeNode association nor controller ownership, and
-on `utcp-dev01` it selects **22 Pods of which only 1 is RuntimeNode-associated**.
-The other 21 are the maintenance authority itself — `telephony-reconciler`
-(the coordinator, which would evict itself), `scheduler` (the other
-`reconcileDue()` host), `api`, `web`, `gateway`, the workers, and the canonical
-`postgres-0` and `redis-0` state stores. Because the eviction pass returns and
-only a later reconcile can persist `completed`, and because the sole Kubernetes
-Node is cordoned by then so no replacement Pod can schedule, maintenance could
-never reach `completed` and no canonical surface would survive to observe or
-recover it; `postgres-0` is additionally pinned to the host by
-`rancher.io/local-path` storage, so a second host would not make the present
-scope safe. This contradicts ADR-024's requirement that the canonical
-controller/reconciliation authority *coordinates* the cordon/drain and
-*observes replacement workloads*. The bounded repair now scopes eviction to
-target-host Pods matching affected RuntimeNode workload identity; generic
-`part-of: utcp` platform/state-store Pods are not subjects. K5D remains
-implemented and tested with the live-proof blocker **repaired** and natural
-live proof **pending**
-(`K5D_KUBERNETES_EVICTION_SCOPE_LIVE_PROOF_BLOCKER_REPAIRED_AND_TESTED`). See the
-[`K5D host drain scope and single-node survivability audit`](../evidence/k5/k5d-host-drain-scope-and-single-node-survivability-audit.md)
+**Exactly one next action:** bounded implementation correcting the K5D
+maintenance eviction ClusterRole API group. The 2026-08-31 controlled live proof
+deployed repaired `main` (`7da5de5`) to the two-node canonical topology and
+**verified the eviction-scope repair live**: reproducing the deployed predicate
+read-only against the target host `utcp-dev01` yields exactly **one** subject
+Pod — the affected RuntimeNode workload
+`utcp-runtime/asterisk-v1a-outbound-reproof-…` — while `postgres-0`, `redis-0`,
+`kamailio`, and the registration observer on that host are correctly excluded,
+and the coordinator, `scheduler`, `api` and `web` sit outside the subject set
+entirely. The corridor is nonetheless **blocked**
+(`K5D_MAINTENANCE_EVICTION_RBAC_LIVE_DEFECT`): the deployed ClusterRole grants
+`create pods/eviction` in the `policy` API group, but the client POSTs to
+`/api/v1/namespaces/{ns}/pods/{name}/eviction`, which Kubernetes authorizes in
+the **core** group. A SubjectAccessReview returns `allowed:false` for group `""`
+and `allowed:true` for `policy`, Kubernetes has no `pods` resource in `policy`
+at all, and a probe against a nonexistent Pod returned `Forbidden: … cannot
+create resource "pods/eviction" in API group ""` where cluster-admin returned
+`NotFound`. Because `patch nodes` is permitted, a maintenance run would cordon
+the target Node and only then fail at eviction, leaving it cordoned with no
+product uncordon path — so the proof stopped at the pre-mutation gate. No
+maintenance was requested, nothing was cordoned or evicted, and no production
+source was changed. The fix is to grant `pods/eviction` under `apiGroups: [""]`
+in `infrastructure/kubernetes/base/platform/kubernetes-maintenance-rbac.yaml`;
+after that this acceptance corridor re-runs unchanged. See the
+[`K5D natural live proof`](../evidence/k5/k5d-telephony-aware-host-maintenance-natural-live-proof.md)
 and the
-[`K5D implementation evidence`](../evidence/k5/k5d-telephony-aware-host-maintenance-implementation.md)
-and [`K5D eviction-scope blocker repair`](../evidence/k5/k5d-kubernetes-eviction-scope-live-proof-blocker-repair.md).
-ADR-024 remains the authority:
-maintenance begins as a canonical UTCP API operation, K5C new-work exclusion
-applies first, eligible RuntimeNodes move through the existing
-`ACTIVE -> DRAINING -> DRAINED` lifecycle using the same active-work predicate
-(active conference bindings plus non-terminal CallLegs) already implemented in
-`RuntimeNodeWorkloadService` and consumed by `RuntimeNodeDrainCoordinator`, and
-only after drain does the canonical reconciliation authority coordinate the
-Kubernetes-owned cordon/drain and observe replacement workloads — never a raw
-`kubectl drain` button, Artisan drain command, or manual reconciliation. **V1 is
-complete.** The 2026-08-30
-controlled live re-proof deployed the committed
-`X-UTCP-Caller-Identity-ID` provider-boundary correction through the canonical
-native-k3s lifecycle — the live Kamailio provider path now executes all four
-`remove_hf()` operations before `t_relay()` — and one natural canonical Call to
-`97001` proved the complete boundary: all four `X-UTCP-*` headers present and
-exact on the trusted runtime → Kamailio INVITE, and **absent from every
-provider-facing INVITE**, including the authenticated retry after `401`. Each of
-the four appears exactly once in the whole capture. Normal provider-visible
-caller identity (`From: "utcp-v1" <sip:utcp-v1@…>`) is preserved and unchanged by
-the fix, the provider authenticated and answered `200 OK`, and the Call closed
-`completed / requested / control_plane`. With Gap A–F closed and this last item
-proven, no V1 acceptance blocker remains. See the
-[`CallerIdentity provider-wire live proof`](../evidence/v1/v1-caller-identity-provider-wire-trust-boundary-live-proof.md)
-and the
-[`Gap F provider-wire live proof`](../evidence/v1/v1-gap-f-provider-wire-trust-boundary-live-proof.md).
-Gap A is **closed**: the first
-canonical terminal fact applied under a row lock wins, so an origination timeout
-is never reopened or rewritten by a later runtime observation regardless of its
-`observed_at`, while that observation is still preserved in
-`runtime_observations`. Timeout-first and observation-first interleavings,
-duplicate convergence, aggregate preservation, RuntimeOperation preservation,
-and terminal channel-binding protection are covered by deterministic API
-regressions; ADR-030 §14 now states the rule. See the
-[`Gap A precedence audit`](../evidence/v1/v1-gap-a-delayed-observation-origination-timeout-precedence-audit.md).
-**Gap B is closed.** The 2026-08-30 controlled live re-proof deployed the exact committed
-`dlg_manage()` correction on native k3s through the canonical lifecycle and
-proved the remaining criterion: a no-Route provider BYE drove the tracked
-dialog from `state 3` to `state 5` (`DLG_STATE_DELETED`) at the BYE, the dialog
-left the live dialog store 5.0 s later, and no `dlg_ontimeout` occurred over a
-328 s observation window — against 81.5 s to timeout reap on 2026-08-29. The
-previously proven corridor was unchanged: trusted known-dialog match,
-`dlg_set_ruri()` retarget to the managed runtime Contact, `MEDIA_DELETE`,
-relay, managed Asterisk receipt, and canonical `completed / remote / remote`
-with `answered_at` preserved. See the
-[`registration-dialog BYE termination live re-proof`](../evidence/v1/v1-registration-dialog-bye-termination-live-reproof.md),
-[`dialog-termination correction`](../evidence/v1/v1-registration-dialog-bye-termination-correction.md),
-[`registration-dialog return live proof`](../evidence/v1/v1-registration-dialog-return-path-live-proof.md),
-[`topology-coherent anchoring evidence`](../evidence/v1/v1-provider-dialog-topology-coherent-anchoring.md)
-and [`registration-dialog return evidence`](../evidence/v1/v1-registration-dialog-return-path-implementation.md).
+[`K5D eviction-scope repair`](../evidence/k5/k5d-kubernetes-eviction-scope-live-proof-blocker-repair.md).
 
 The synthetic fixture remains deterministic regression only. C7A supports the
 bounded V1-A `outbound_registration` signaling mode; C7B closed on 2026-08-24

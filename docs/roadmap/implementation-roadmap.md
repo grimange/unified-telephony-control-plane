@@ -129,33 +129,33 @@ corridor. The focused ADR-027 regression proof passed, and the canonical API
 suite passed with 595 tests, 8 skips, and 5007 assertions. The implementation
 is committed at `e334209ccc016053d2f63f8e39e99f2126aa5535`.
 
-**Exactly one next action:** deploy repaired current main to canonical native
-k3s and perform controlled K5D telephony-aware host-maintenance natural
-acceptance. **The K5D natural live proof must not be run against the prior
-implementation.** A read-only audit on 2026-08-31 showed
-`drainablePods()` scopes eviction by the `part-of: utcp` label alone —
-requiring neither RuntimeNode association nor controller ownership — selecting
-22 Pods on `utcp-dev01` of which only 1 is RuntimeNode-associated; the rest are
-the coordinator itself, the scheduler, API, Web, workers, and the canonical
-PostgreSQL/Redis state stores, so maintenance could never reach `completed` and
-no canonical surface would survive to observe or recover it. The bounded repair
-now scopes eviction to target-host Pods matching affected RuntimeNode workload
-identity; generic `part-of: utcp` platform/state-store Pods are not subjects.
-K5D remains implemented and tested with the live-proof blocker **repaired** and
-natural live proof **pending**
-(`K5D_KUBERNETES_EVICTION_SCOPE_LIVE_PROOF_BLOCKER_REPAIRED_AND_TESTED`). See the
-[`K5D host drain scope and single-node survivability audit`](../evidence/k5/k5d-host-drain-scope-and-single-node-survivability-audit.md)
+**Exactly one next action:** bounded implementation correcting the K5D
+maintenance eviction ClusterRole API group. The 2026-08-31 controlled live proof
+deployed repaired `main` (`7da5de5`) to the two-node canonical topology and
+**verified the eviction-scope repair live**: reproducing the deployed predicate
+read-only against the target host `utcp-dev01` yields exactly **one** subject
+Pod — the affected RuntimeNode workload
+`utcp-runtime/asterisk-v1a-outbound-reproof-…` — while `postgres-0`, `redis-0`,
+`kamailio`, and the registration observer on that host are correctly excluded,
+and the coordinator, `scheduler`, `api` and `web` sit outside the subject set
+entirely. The corridor is nonetheless **blocked**
+(`K5D_MAINTENANCE_EVICTION_RBAC_LIVE_DEFECT`): the deployed ClusterRole grants
+`create pods/eviction` in the `policy` API group, but the client POSTs to
+`/api/v1/namespaces/{ns}/pods/{name}/eviction`, which Kubernetes authorizes in
+the **core** group. A SubjectAccessReview returns `allowed:false` for group `""`
+and `allowed:true` for `policy`, Kubernetes has no `pods` resource in `policy`
+at all, and a probe against a nonexistent Pod returned `Forbidden: … cannot
+create resource "pods/eviction" in API group ""` where cluster-admin returned
+`NotFound`. Because `patch nodes` is permitted, a maintenance run would cordon
+the target Node and only then fail at eviction, leaving it cordoned with no
+product uncordon path — so the proof stopped at the pre-mutation gate. No
+maintenance was requested, nothing was cordoned or evicted, and no production
+source was changed. The fix is to grant `pods/eviction` under `apiGroups: [""]`
+in `infrastructure/kubernetes/base/platform/kubernetes-maintenance-rbac.yaml`;
+after that this acceptance corridor re-runs unchanged. See the
+[`K5D natural live proof`](../evidence/k5/k5d-telephony-aware-host-maintenance-natural-live-proof.md)
 and the
-[`K5D implementation evidence`](../evidence/k5/k5d-telephony-aware-host-maintenance-implementation.md)
-and [`K5D eviction-scope blocker repair`](../evidence/k5/k5d-kubernetes-eviction-scope-live-proof-blocker-repair.md).
-ADR-024's telephony-aware maintenance boundary already settles the authority:
-maintenance begins as a canonical UTCP API operation, K5C
-new-work exclusion applies first, eligible RuntimeNodes move through the existing
-`ACTIVE -> DRAINING -> DRAINED` lifecycle using the same active-work predicate,
-and only after drain does the canonical reconciliation authority coordinate the
-Kubernetes-owned cordon/drain and observe replacement workloads — never a raw
-`kubectl drain` button, Artisan drain command, or manual reconciliation. V1
-remains complete and unchanged; the external PBX prerequisites remain separate.
+[`K5D eviction-scope repair`](../evidence/k5/k5d-kubernetes-eviction-scope-live-proof-blocker-repair.md).
 
 ```text
 T4 closure
@@ -277,11 +277,16 @@ RuntimeNode readiness, declared capability, telephony load, capacity, and
 failure-domain constraints to determine telephony eligibility and selection.
 UTCP must not reimplement the Kubernetes scheduler.
 
-**K5D — Telephony-Aware Host Maintenance:** **IMPLEMENTED_AND_TESTED / LIVE-
-PROOF BLOCKER REPAIRED / NATURAL LIVE PROOF PENDING** — Kubernetes eviction is
-now scoped to target-host Pods matching the affected RuntimeNode workload
-identity; generic `part-of: utcp` platform and state-store Pods are not
-maintenance subjects.** Identify affected RuntimeNodes, exclude them from new
+**K5D — Telephony-Aware Host Maintenance:** **IMPLEMENTED_AND_TESTED /
+EVICTION SCOPE REPAIR VERIFIED LIVE / NATURAL LIVE PROOF BLOCKED** by
+`K5D_MAINTENANCE_EVICTION_RBAC_LIVE_DEFECT` — the maintenance ClusterRole grants
+`create pods/eviction` in the `policy` API group while Kubernetes authorizes the
+`/api/v1/.../pods/{name}/eviction` subresource in the **core** group, so the
+subject Pod can never be evicted and maintenance would leave the target Node
+cordoned and `blocked`. Kubernetes eviction scope itself is now correct and was
+verified live: it selects only target-host Pods matching the affected RuntimeNode
+workload identity, and generic `part-of: utcp` platform and state-store Pods are
+not maintenance subjects.** Identify affected RuntimeNodes, exclude them from new
 telephony work, reuse `ACTIVE -> DRAINING -> DRAINED`, and coordinate
 Kubernetes-owned cordon/eviction only after telephony drain completion through
 normal authorized reconciliation. K5E remains the later distributed,
