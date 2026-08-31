@@ -114,41 +114,38 @@ reactivate it as the current proof environment. See
 **K5D are complete and natural-live-proven**, with no remaining K5C or K5D proof
 gap. K5E is next.
 
-**Exactly one next action:** deploy repaired current `main`, verify bounded
-scheduler mutex behavior and automatic placement-observer recovery naturally,
-then proceed into K5E distributed live proof if the prerequisite passes. **K5E
-remains not started and is blocked on this prerequisite.** The bounded repair
-now gives every minute-cadence overlap-protected task in
-`apps/api/routes/console.php` an explicit five-minute expiry; no live Redis
-locks were cleared. The
-2026-08-31 narrow evidence audit proved, by identity rather than correlation,
-why `runtime-engine:k5c-placement-observer` stopped noticing the RuntimeNode
-workload K5D moved to `utcp-dev02`: a read-only probe run inside the live
-scheduler Pod enumerated `Schedule::events()` and printed each event's own
-`mutexName()` plus `mutex->exists()`, showing exactly three
-`LOCK-EXISTS` events — `runtime-engine:k5c-placement-observer`,
-`telephony-domain:expire-sessions` and
-`telephony-domain:reclaim-orphan-participant-channels` — matching the only three
-`framework/schedule-*` keys in Redis, with every other event `free`. All 18
-scheduled entries call `withoutOverlapping()` with no argument, taking Laravel
-12.63.0's **1440-minute (24-hour)** default; the mutex is released only via
-`Event::finish()`'s `finally` or `Event::start()`'s `Throwable` path, so a
-scheduler Pod replacement that signal-kills a running task orphans the lock for
-a full day. Both recent locks were acquired within a minute of a scheduler
-rollout (`06:48:04` → observer lock `~06:49`; `07:35:30` → reclaim lock
-`~07:36`), and the projection's frozen `observed_at 06:49:01` is the timestamp
-of the observer's last successful run — the very run whose mutex leaked. Over
-three minutes of natural ticks the scheduler ran 14 other tasks 3–4 times each
-while those three ran **zero** times, so the events are filtered by
-`skip(fn => $this->mutex->exists($this))` before invocation — ruling out crash,
-wiring, and scheduler-tick explanations. UTCP still reports the RuntimeNode on
-`utcp-dev01` while it actually runs on `utcp-dev02`. The framework behaves as
-designed; the defect is the 1440× mismatch between a 60-second cadence and a
-24-hour lock with no automatic recovery, which `AGENTS.md` forbids resolving by
-operator Redis clearing. Verdict
-`K5E_PLACEMENT_OBSERVER_OVERLAP_MUTEX_LIFETIME_DEFECT`. No lock was cleared, no
-task manually invoked, no projection written, and no source changed. See the
-[`K5E placement-observer mutex proof-gap isolation`](../evidence/k5/k5e-placement-observer-scheduler-mutex-proof-gap-isolation.md).
+**Exactly one next action:** `RMA — Recording & Media Archive`, the next
+R0-critical track now that **K5E is COMPLETE / NATURAL-LIVE-PROVEN**. The
+2026-08-31 two-stage controlled live proof deployed `3202451` and closed both
+stages. **Stage A** proved the scheduler overlap-mutex repair live: every
+minute-cadence overlap event reports `expires=5` in the running application with
+**zero** implicit-1440 minute events remaining; the three surviving 24-hour locks
+were correctly classified as pre-repair residue and normalized once through the
+framework-native `schedule:clear-cache` (disclosed as `PRE-PROOF HISTORICAL
+MUTEX CLEANUP`, never counted as recovery evidence); the observer then resumed on
+its own and converged the stale projection; and a controlled acquisition of the
+**real** event's **real** `CacheEventMutex` produced a Redis `TTL=300`, suppressed
+the observer for the full five minutes while every other minute task kept
+firing, expired naturally, and the observer ran again on the very next tick —
+with no `schedule:clear-cache`, Redis `DEL`, manual invocation, or Pod restart
+during the recovery proof. **Stage B** then proved distributed operation across
+`utcp-dev02` → `utcp-dev01`: baseline placement correlated automatically; a
+natural Web Admin `Prepare for maintenance` on the host actually carrying the
+RuntimeNode excluded new work (`HTTP 422`) while work was still active and the
+Node still schedulable; the existing Call ended on its own; the RuntimeNode
+reached `DRAINED` and only then was the Node cordoned; Kubernetes rescheduled
+the workload to the other host with no affinity or forced placement; **UTCP
+observed the new host automatically within one observer cycle**; the replacement
+became Ready; and telephony eligibility returned and was exercised by a further
+natural Call that completed on the new host. Automatic restoration covers
+workload recreation, readiness, placement observation and eligibility;
+RuntimeNode desired-state reactivation remains a deliberate operator action per
+K5D's accepted scope and was performed through the canonical Web Admin
+**Reactivate** control. Verdicts
+`K5E_PLACEMENT_OBSERVER_AUTOMATIC_MUTEX_RECOVERY_LIVE_PROVEN` and
+`K5E_DISTRIBUTED_INFRASTRUCTURE_NATURAL_LIVE_PROVEN`. No production source
+changed. See the
+[`K5E distributed infrastructure natural live proof`](../evidence/k5/k5e-distributed-infrastructure-natural-live-proof.md).
 
 **K5E remains NOT STARTED; the placement-observer automatic-recovery
 reproof is pending.**
@@ -334,13 +331,18 @@ reconciliation driven solely by the telephony-reconciler. Kubernetes then
 rescheduled the workload to the other host, which is K5E-supporting evidence
 rather than K5E closure.
 
-**K5E — Distributed Infrastructure Live Proof:** prove that UTCP can operate
-telephony RuntimeNodes across at least two distinct Kubernetes host or failure
-domains and correlate placement, runtime readiness, telephony eligibility,
-new-work exclusion during failure or maintenance, drain behavior, and automatic
-restoration. Full multi-cluster federation is not an R0 requirement; K5 must
-remain compatible with a future direction of multi-machine, multi-host,
-multi-site/hybrid, and potential multi-cluster operation.
+**K5E — Distributed Infrastructure Live Proof:** **COMPLETE /
+NATURAL-LIVE-PROVEN.** The 2026-08-31 controlled live proof closed the phase
+across the two existing hosts with no remaining proof gap: placement correlated
+automatically at baseline and again after a natural cross-host move
+(`utcp-dev02` → `utcp-dev01`), new telephony work was excluded while the
+RuntimeNode drained, the existing Call ended naturally, cordon followed
+`DRAINED`, Kubernetes rescheduled the workload without forced placement, UTCP
+observed the new host automatically within one observer cycle, the replacement
+reached Ready, and telephony eligibility returned and was exercised by a Call
+that completed on the new host. Full multi-cluster federation is not an R0
+requirement; K5 remains compatible with a future direction of multi-machine,
+multi-host, multi-site/hybrid, and potential multi-cluster operation.
 
 **K5F — Guided Existing-Cluster Host Enrollment (Planned / Post-K5E Operator
 Experience):** a future guided Admin UI workflow that creates a short-lived host
