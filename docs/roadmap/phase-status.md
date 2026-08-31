@@ -105,12 +105,14 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** implement the bounded Asterisk endpoint-plus-URI
-SIP DestinationRef normalization repair. RMA-A is implemented/tested, but its
-natural live proof is blocked before canonical recording intent because the
-repository-defined Asterisk Echo fixture terminal-fails canonical Call
-origination as `ari_destination_invalid`; see [RMA-A live-proof blocker
-evidence](../evidence/rma/rma-a-recording-authority-and-lifecycle-natural-live-proof-blocker.md).
+**Exactly one next action:** implement a forward identity-catalog migration for
+`telephony.recordings.view` and `telephony.recordings.manage`, including their
+tenant-admin role mappings, then redeploy and rerun the controlled RMA-A
+natural live proof. The Asterisk endpoint-plus-URI normalization repair is
+deployed and the real Call origination corridor now succeeds, but the
+authenticated recording API returns `403` because the persistent deployed
+identity catalog lacks the RMA-A capabilities declared in application config;
+see [the current RMA-A blocker evidence](../evidence/rma/rma-a-asterisk-endpoint-plus-uri-normalization-natural-live-proof-blocker.md).
 RMA is the next R0-critical track now that **K5E is COMPLETE /
 NATURAL-LIVE-PROVEN**. The
 2026-08-31 two-stage controlled live proof deployed `3202451` and closed both
@@ -212,7 +214,7 @@ documentation task. Current T4 implementation evidence:
 | Track | Status / release placement |
 | --- | --- |
 | K5 | Planned / Parallel / R0-Critical under [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md); does not serially gate T4 or C7A, but K5E is required before R0 |
-| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); RMA-A recording authority and lifecycle is implemented/tested and awaits live proof; RMA-B through RMA-H remain not started |
+| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); RMA-A recording authority and lifecycle is implemented/tested, but natural live proof is blocked by the deployed identity catalog missing its declared RMA-A capabilities; RMA-B through RMA-H remain not started |
 | Operational Reporting & Insights | Future UTCP Core / Post-current-R0 roadmap; not a current phase or R0 gate; no implementation claimed under [`ADR-033`](../decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md) |
 | C8 | Planned UTCP core transfer/handoff track under [`ADR-025`](../decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md); advanced consultative and inter-runtime/provider handoff defaults to post-R0/R1 unless V1 proves a basic dependency |
 | Queue/ACD | Future extension; no R0 phase |
@@ -266,9 +268,12 @@ and ADRs for detail.
 
 RMA is the Recording & Media Archive track. It follows completed K5E and the
 established V1 Call/CallLeg corridor; RMA-A is implemented/tested, but its
-natural live proof is blocked before recording intent by the exact Asterisk
-endpoint-plus-URI SIP DestinationRef normalization defect documented in the
-[RMA-A live-proof blocker evidence](../evidence/rma/rma-a-recording-authority-and-lifecycle-natural-live-proof-blocker.md).
+natural live proof remains blocked before RecordingSession creation because the
+deployed persistent identity catalog does not contain the two RMA-A
+capabilities declared by the application (`telephony.recordings.view` and
+`telephony.recordings.manage`). The earlier Asterisk endpoint-plus-URI defect
+was repaired and the Call origination corridor now succeeds; the current
+blocker is recorded in the [current RMA-A blocker evidence](../evidence/rma/rma-a-asterisk-endpoint-plus-uri-normalization-natural-live-proof-blocker.md).
 RMA-B through RMA-H remain not started. RMA does not technically gate A0, and
 no artifact, archive, retention, playback, or download implementation is
 claimed by RMA-A.
