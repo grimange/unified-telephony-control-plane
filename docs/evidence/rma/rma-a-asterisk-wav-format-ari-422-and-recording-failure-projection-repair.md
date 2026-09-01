@@ -14,9 +14,44 @@ The prior natural-live acceptance captured a post-answer channel recording reque
 
 The Asterisk external-trunk configuration check and its mutation suite pass, including explicit WAV-load and conflicting `noload` cases. PHP syntax checks pass for changed PHP files and `git diff --check` passes. The repository image contains the Asterisk configuration, so a new immutable Asterisk image is required before runtime proof. PHP feature tests could not run in this checkout because `apps/api/vendor/bin/phpunit` is not present.
 
-## Runtime/deployment status
+## Publication and native-k3s deployment
 
-No live Asterisk configuration was changed and no runtime deployment was performed in this implementation packet. The required next proof is canonical immutable image publication/deployment followed by a fresh bounded recording smoke confirming `wav` capability and the corrected 422 mapping.
+The exact source commit `0d3a6d538712608985679d2b458d1c39bafd7472` was published by
+Native k3s Images workflow run `33496076760` (success; job `99818474003`). The
+artifact `native-k3s-image-lock-0d3a6d538712608985679d2b458d1c39bafd7472` was
+promoted through the repository image-lock workflow. The deployed immutable
+references are:
+
+- API: `ghcr.io/grimange/utcp-api@sha256:8436c9d497d8707bcf09d0c2b581e70fd52477992b462ffc8140fb82dcd440ea`
+- Asterisk: `ghcr.io/grimange/utcp-asterisk@sha256:a6dbe7b4d6c3afb2860f66e43fba119481009b9876ec0cf149343ea6a414972e`
+
+`make server-image-preflight` passed and `make server-apply` converged the
+native-k3s API, worker, event, migration, and Asterisk workloads. The Asterisk
+runtime Pod is `asterisk-ari-64778bbbf9-2nmnc` on `utcp-dev02` and the migration
+completed successfully. The deployed API source contains both
+`ari_recording_format_unsupported` and the lazy `RecordingSessionService`
+resolver used by the worker projection path.
+
+## Effective runtime capability proof
+
+Using the deployed Asterisk configuration (`/tmp/utcp-asterisk/asterisk.conf`),
+the supported runtime inspection reported:
+
+```
+Module format_wav.so ... Status Running
+1 modules loaded
+slin16 wav16 wav16
+slin wav wav
+6 file formats registered.
+```
+
+This proves the repository configuration survived immutable deployment and that
+the runtime recognizes `wav`. No live database, Redis, ARI, or provider state
+was mutated for this proof.
+
+The complete fresh post-repair recording smoke (new Call, pre-answer intent,
+automatic start, provider recording, and stop convergence) was not repeated in
+this implementation packet; it remains the next Terra natural-live acceptance.
 
 ## Preserved scope
 
