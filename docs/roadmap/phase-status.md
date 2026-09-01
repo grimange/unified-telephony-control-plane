@@ -105,25 +105,20 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** have GPT-5.6 Terra Medium repeat the complete fresh
-RMA-A acceptance now that the bounded WAV capability and failure-projection
-repair is published and deployed. The repair adds explicit `format_wav.so`
-loading under `autoload = no`, maps ARI 422 to unsupported capability while
-preserving provider messages, and wires terminal RuntimeOperation failure
-projection into RecordingSession convergence. Native-k3s deployment and
-runtime `format_wav.so`/`wav` capability proof are complete; the complete
-natural-live recording lifecycle remains pending. The accepted
-same-namespace
-Asterisk UDP/5060 NetworkPolicy repair is now live-proven: a fresh canonical
-Call reached the sole `asterisk-sip` endpoint, received `200 OK`, and naturally
-projected its CallLeg to `answered`. The deferred RecordingSession then created
-exactly one start operation. Asterisk rejected that post-answer channel-record
-request with HTTP 422 because the adapter requests `format=wav` while the
-runtime's explicit module set omits the installed `format_wav.so`; the current
-adapter maps the raw 422 to `conflict/ari_resource_conflict`, and the live
-RecordingSession remained `requested` after the terminal operation. The
-fixture materialization repair remains deployed and `9900` resolves
-`Answer -> Echo`. See
+**Exactly one next action:** have GPT-5.6 Luna Medium add the missing
+repository-owned `/var/spool/asterisk/recording` directory to the Asterisk
+image, publish/deploy it immutably, and then repeat the fresh RMA-A acceptance.
+The WAV capability, HTTP-422 normalization, and terminal RecordingSession
+failure-projection repair remain deployed and live-proven. The fresh
+post-repair acceptance again proved SIP delivery, `9900` answer, canonical
+CallLeg `answered`, durable pre-answer intent, and exactly-one start dispatch.
+The first two live post-answer ARI channel-record attempts now fail inside
+Asterisk with `No such file or directory`; the source RuntimeNode has
+`format_wav.so` Running and `wav` registered, but lacks
+`/var/spool/asterisk/recording`. The later retry after natural Echo-channel
+termination returned the expected 404 and the RecordingSession correctly
+projected its terminal failure to `failed`. The fixture materialization repair
+remains deployed and `9900` resolves `Answer -> Echo`. See
 the [fixture repair evidence](../evidence/rma/rma-a-native-k3s-asterisk-echo-fixture-materialization-repair.md),
 [synchronized SIP trace](../evidence/rma/rma-a-asterisk-canonical-sip-delivery-synchronized-live-trace.md),
 [PJSIP transaction capture reproof](../evidence/rma/rma-a-asterisk-pjsip-transaction-capture-reproof.md),
@@ -131,7 +126,8 @@ the [fixture repair evidence](../evidence/rma/rma-a-native-k3s-asterisk-echo-fix
 [live-proof blocker](../evidence/rma/rma-a-recording-session-lifecycle-natural-live-proof-blocker.md),
 [implementation evidence](../evidence/rma/rma-a-recording-session-lifecycle-aware-start-reconciliation-implementation.md),
 the [exact-cause audit](../evidence/rma/rma-a-asterisk-recording-start-conflict-exact-cause-audit.md),
-and the [current complete-acceptance evidence](../evidence/rma/rma-a-recording-authority-and-lifecycle-complete-natural-live-acceptance.md).
+the [WAV repair evidence](../evidence/rma/rma-a-asterisk-wav-format-ari-422-and-recording-failure-projection-repair.md),
+and the [current final-acceptance evidence](../evidence/rma/rma-a-recording-authority-and-lifecycle-final-natural-live-acceptance.md).
 RMA is the next R0-critical track now that **K5E is COMPLETE /
 NATURAL-LIVE-PROVEN**. The
 2026-08-31 two-stage controlled live proof deployed `3202451` and closed both
@@ -289,17 +285,18 @@ been deployed with both declared RMA-A capabilities authorized through the
 tenant-admin role. Natural-live evidence now proves durable pre-answer intent
 without a start operation, terminal-before-eligibility resolution, the repaired
 Asterisk-to-Asterisk SIP delivery, `9900` answer, canonical CallLeg `answered`,
-and exactly-one automatic start dispatch. The first remaining blocker is the
-post-answer Asterisk channel-record request: `AsteriskAriClient` sends
-`format=wav`, but the active explicit `autoload = no` module configuration
-omits installed `format_wav.so`, and Asterisk returns raw HTTP 422. The
-operation is currently normalized as `conflict/ari_resource_conflict`; the
-terminal failed operation also did not project its RecordingSession out of
-`requested` in the live worker path. The bounded next repair is Asterisk module
-loading plus the directly exposed normalization/projection behavior, not a
-change to RecordingSession eligibility, SIP policy, endpoint, dialplan, or
-channel-vs-bridge recording semantics. See the
-[complete RMA-A acceptance evidence](../evidence/rma/rma-a-recording-authority-and-lifecycle-complete-natural-live-acceptance.md) and
+and exactly-one automatic start dispatch. The WAV capability, ARI-422
+normalization, and terminal failure-projection repair is deployed and live
+proven. The first remaining blocker is Asterisk live-recording filesystem
+provisioning: post-answer ARI channel-record attempts report `No such file or
+directory`, while the active source runtime has `format_wav.so` Running and
+`wav` registered but lacks `/var/spool/asterisk/recording`. The terminal retry
+after natural call termination returns 404 and now correctly projects the
+RecordingSession to `failed`; it is downstream of the ENOENT. The bounded next
+repair is declarative creation of the Asterisk recording spool directory in the
+repository image, not a change to RecordingSession eligibility, SIP policy,
+endpoint, dialplan, channel-vs-bridge recording semantics, or failure taxonomy.
+See the [final RMA-A acceptance evidence](../evidence/rma/rma-a-recording-authority-and-lifecycle-final-natural-live-acceptance.md) and
 [persistent PJSIP filesystem trace](../evidence/rma/rma-a-asterisk-persistent-pjsip-filesystem-trace-reproof.md).
 The earlier Asterisk endpoint-plus-URI,
 identity-catalog, and premature pre-answer dispatch defects are repaired. See
