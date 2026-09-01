@@ -105,15 +105,14 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** have GPT-5.6 Luna Medium make the bounded native-k3s
-Asterisk Echo-fixture materialization/attachment repair, then have GPT-5.6
-Terra Medium repeat the fresh complete RMA-A natural-live proof using the
-canonical Call and RecordingSession APIs. The lifecycle-aware implementation is
-tested and deployed; a fresh live Call proved pre-answer intent remains
-`recording / requested` with no start operation and terminal-before-eligibility
-converges vendor-neutrally. The maintained Echo destination did not naturally
-answer because extension `9900` resolved to the Asterisk reject catch-all while
-the optional fixture ConfigMap was absent. See the [live-proof blocker](../evidence/rma/rma-a-recording-session-lifecycle-natural-live-proof-blocker.md),
+**Exactly one next action:** have GPT-5.6 Terra Medium perform a narrow
+operational diagnosis of the canonical SIP originate path now that the
+repository-owned Echo fixture is loaded and resolves `9900 -> Answer -> Echo`.
+The fixture materialization repair is implemented and deployed, but fresh
+canonical Calls still produce no Asterisk channel and terminate remotely before
+canonical `answered`; complete RMA-A natural-live proof remains blocked. See
+the [fixture repair evidence](../evidence/rma/rma-a-native-k3s-asterisk-echo-fixture-materialization-repair.md),
+[live-proof blocker](../evidence/rma/rma-a-recording-session-lifecycle-natural-live-proof-blocker.md),
 [implementation evidence](../evidence/rma/rma-a-recording-session-lifecycle-aware-start-reconciliation-implementation.md),
 and [exact-cause audit](../evidence/rma/rma-a-asterisk-recording-start-conflict-exact-cause-audit.md).
 RMA is the next R0-critical track now that **K5E is COMPLETE /
@@ -274,9 +273,10 @@ tenant-admin role. A fresh natural-live proof now confirms pre-answer recording
 intent remains durable without a start RuntimeOperation and that termination
 before eligibility resolves the pending session with
 `recording_subject_terminated_before_start`. Complete RMA-A lifecycle proof is
-blocked at the native-k3s Asterisk Echo fixture: the optional fixture ConfigMap
-is absent and extension `9900` resolves to the reject catch-all, so the CallLeg
-does not naturally answer. The earlier Asterisk endpoint-plus-URI,
+blocked after the native-k3s Asterisk Echo fixture repair: the fixture ConfigMap
+is materialized and extension `9900` resolves to `Answer() -> Echo()`, but fresh
+canonical Calls still produce no Asterisk channel and do not naturally answer.
+The earlier Asterisk endpoint-plus-URI,
 identity-catalog, and premature pre-answer dispatch defects are repaired. See
 the [live-proof blocker](../evidence/rma/rma-a-recording-session-lifecycle-natural-live-proof-blocker.md),
 [implementation evidence](../evidence/rma/rma-a-recording-session-lifecycle-aware-start-reconciliation-implementation.md),

@@ -31,6 +31,9 @@ resources:
   - ../../base/migration
   - ../../base/platform
   - ../../base/runtime
+  # The canonical native-k3s acceptance environment owns the bounded local
+  # SIP fixture used by the Asterisk natural-live proof.
+  - ../../components/asterisk-sip-fixtures
   - ../../components/runtime-fencing
 patches:
   - path: postgres-probes.yaml

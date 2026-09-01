@@ -31,6 +31,42 @@ if len(application_configs) != 1:
 if (application_configs[0].get("data") or {}).get("KAMAILIO_REGISTRATION_CONTROL_URL") != "http://kamailio-registration-control.utcp-platform.svc.cluster.local:8090/rpc":
     raise SystemExit("native-k3s: application ConfigMap must define the canonical Kamailio registration-control URL")
 
+fixtures = [
+    doc for doc in config_maps
+    if (doc.get("metadata") or {}).get("namespace") == "utcp-runtime"
+    and (doc.get("metadata") or {}).get("name") == "asterisk-local-sip-fixtures"
+]
+if len(fixtures) != 1:
+    raise SystemExit("native-k3s: canonical Asterisk SIP fixture ConfigMap is required")
+fixture_data = (fixtures[0].get("data") or {}).get("extensions.local.conf", "")
+fixture_lines = fixture_data.splitlines()
+fixture_starts = [index for index, line in enumerate(fixture_lines) if line.startswith("exten => 9900,1")]
+if len(fixture_starts) != 1:
+    raise SystemExit("native-k3s: Asterisk SIP fixture must define exactly one 9900 extension")
+fixture_start = fixture_starts[0]
+fixture_end = next((index for index in range(fixture_start + 1, len(fixture_lines)) if fixture_lines[index].startswith("exten => ")), len(fixture_lines))
+fixture_route = "\n".join(fixture_lines[fixture_start:fixture_end])
+answer_position = fixture_route.find("Answer()")
+echo_position = fixture_route.find("Echo()")
+if answer_position < 0 or echo_position < 0 or answer_position > echo_position:
+    raise SystemExit("native-k3s: Asterisk 9900 fixture must answer before Echo")
+
+asterisk_deployments = [
+    doc for doc in docs
+    if doc.get("kind") == "Deployment"
+    and (doc.get("metadata") or {}).get("namespace") == "utcp-runtime"
+    and (doc.get("metadata") or {}).get("name") == "asterisk-ari"
+]
+if len(asterisk_deployments) != 1:
+    raise SystemExit("native-k3s: canonical Asterisk Deployment is required")
+asterisk_spec = (((asterisk_deployments[0].get("spec") or {}).get("template") or {}).get("spec") or {})
+fixture_volume = next((
+    volume for volume in asterisk_spec.get("volumes") or []
+    if volume.get("name") == "asterisk-local-config"
+), None)
+if not fixture_volume or (fixture_volume.get("configMap") or {}).get("name") != "asterisk-local-sip-fixtures":
+    raise SystemExit("native-k3s: Asterisk Deployment must consume the canonical SIP fixture ConfigMap")
+
 registration_services = [
     doc for doc in services
     if (doc.get("metadata") or {}).get("name") == "kamailio-registration-control"
