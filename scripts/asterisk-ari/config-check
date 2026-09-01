@@ -72,6 +72,11 @@ for module in res_stasis_recording.so res_ari_recordings.so format_wav.so; do
   [ "$(grep -Fc "load = $module" infrastructure/docker/asterisk/config/modules.conf)" -eq 1 ] || fail "required recording module load contract is missing: $module"
 done
 [ -x scripts/asterisk-ari/recording-runtime-test ] || fail "provider-native recording runtime smoke is missing"
+recording_smoke_normalized="$(tr -d '[:space:]' < scripts/asterisk-ari/caller-identity-semantics-test)"
+printf '%s' "$recording_smoke_normalized" | grep -Fq -- 'http://127.0.0.1:${host_port}/ari/recordings/live/${recording_name}/stop' || fail "provider recording smoke must use the store-preserving live-recording stop operation"
+if printf '%s' "$recording_smoke_normalized" | grep -Fq -- '-XDELETE--userutcp-ari:utcp-ari-secret"http://127.0.0.1:${host_port}/ari/recordings/live/${recording_name}"'; then
+  fail "provider recording smoke must not use the discarding live-recording DELETE operation"
+fi
 
 grep -q '^exten => c6-generic-proof,1,' infrastructure/kubernetes/components/asterisk-sip-fixtures/extensions.local.conf || fail "missing C6 generic inbound proof destination"
 grep -q 'Stasis(utcp-t0-observation,c6-generic-proof)' infrastructure/kubernetes/components/asterisk-sip-fixtures/extensions.local.conf || fail "C6 generic proof destination must enter the existing Stasis application"

@@ -255,6 +255,7 @@ if [ "${UTCP_ASTERISK_RECORDING_RUNTIME_SMOKE:-0}" = 1 ]; then
   [ -n "$sender_pid" ] || fail 'synthetic RTP sender did not remain active after launch'
   recording_name="utcp-recording-runtime-${suffix}"
   recording_response="$tmp/recording-start-response"
+  recording_start_requested_at="$(date +%s.%3N)"
   recording_code="$(curl -sS -o "$recording_response" -w '%{http_code}' -X POST \
     --user utcp-ari:utcp-ari-secret \
     "http://127.0.0.1:${host_port}/ari/channels/caller-identity-semantic/record?name=${recording_name}&format=wav&ifExists=overwrite" || true)"
@@ -296,9 +297,10 @@ if [ "${UTCP_ASTERISK_RECORDING_RUNTIME_SMOKE:-0}" = 1 ]; then
   # stream to be consumed and flushed before stopping it.
   sleep "${UTCP_RECORDING_RUNTIME_HOLD_SECONDS:-3}"
 
-  stop_code="$(curl -sS -o "$tmp/recording-stop-response" -w '%{http_code}' -X DELETE \
+  # DELETE /recordings/live/{name} cancels and discards; POST /stop stops and stores it.
+  stop_code="$(curl -sS -o "$tmp/recording-stop-response" -w '%{http_code}' -X POST \
     --user utcp-ari:utcp-ari-secret \
-    "http://127.0.0.1:${host_port}/ari/recordings/live/${recording_name}" || true)"
+    "http://127.0.0.1:${host_port}/ari/recordings/live/${recording_name}/stop" || true)"
   [ "$stop_code" = 204 ] || fail "ARI recording stop failed: http=${stop_code} response=$(tr '\n' ' ' < "$tmp/recording-stop-response")"
 
   stop_204_at="$(date +%s.%3N)"
@@ -350,8 +352,8 @@ if [ "${UTCP_ASTERISK_RECORDING_RUNTIME_SMOKE:-0}" = 1 ]; then
   [ -n "$filesystem_visible_at" ] || fail "stored recording and RecordingFinished were observed but filesystem WAV was not visible before 30s: ${artifact}"
   artifact_size="$(docker exec "$asterisk" sh -c "stat -c '%s' '$artifact'" 2>/dev/null || true)"
   docker exec "$asterisk" sh -c "test -f '$artifact' && test -s '$artifact'" >/dev/null 2>&1 || fail "filesystem WAV was not a non-empty regular file: ${artifact} size=${artifact_size}"
-  printf 'asterisk_recording_runtime=pass recording_name=%s started_event=%s finished_event=%s stop_204_at=%s stored_visible_at=%s filesystem_visible_at=%s artifact=%s artifact_bytes=%s stored_file_http=%s\n' \
-    "$recording_name" "$started_event" "$finished_event" "$stop_204_at" "$stored_visible_at" "$filesystem_visible_at" "$artifact" "$artifact_size" "$stored_file_code"
+  printf 'asterisk_recording_runtime=pass recording_name=%s recording_start_requested_at=%s started_event=%s finished_event=%s stop_204_at=%s stored_visible_at=%s filesystem_visible_at=%s artifact=%s artifact_bytes=%s stored_file_http=%s\n' \
+    "$recording_name" "$recording_start_requested_at" "$started_event" "$finished_event" "$stop_204_at" "$stored_visible_at" "$filesystem_visible_at" "$artifact" "$artifact_size" "$stored_file_code"
   cleanup_recording_code="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
     --user utcp-ari:utcp-ari-secret \
     "http://127.0.0.1:${host_port}/ari/recordings/stored/${recording_name}" || true)"

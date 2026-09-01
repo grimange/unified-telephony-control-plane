@@ -4,10 +4,12 @@ Current-State-Impact: yes
 
 ## Result
 
-The repository now declares and validates the static Asterisk recording
-capability, but the provider-native smoke remains blocked at stored WAV artifact
-finalization. The bounded packet is therefore not closed and has not been
-published or deployed.
+The repository declares and validates the static Asterisk recording capability,
+and the provider-native smoke now passes stored WAV artifact finalization after
+the fixture was corrected to use the store-preserving ARI stop operation. The
+bounded provider-capability packet is closed locally. Immutable image
+publication and native-k3s deployment remain intentionally deferred to the next
+review step.
 
 ## Baseline
 
@@ -43,27 +45,49 @@ channel recording start and live-recording stop operations with `format=wav`.
   resource (`200`/`queued`), exposed it as live (`200`), and stopped it (`204`).
 - RTP packets were observed by Asterisk during the smoke.
 
-## Exact remaining blocker
+## Historical blocker and confirmed cause
 
-The smoke could not observe a stored, non-empty WAV artifact after live-recording
-stop and channel teardown. The stored-resource query returned `404 Recording
-not found`; `/var/spool/asterisk/recording` remained empty. No ENOENT, unknown
-format, module-load, or permission error was emitted. This localizes the
-remaining issue to the isolated provider smoke channel/recording finalization
-path, not to the previously missing static spool directory or WAV capability.
-No safe repository Asterisk image/configuration repair is proven by this
-evidence, so the packet stops without speculative changes.
+The prior smoke used `DELETE /ari/recordings/live/<name>`. In Asterisk 20.20.1
+that is the cancel operation: it stops the live recording and discards the
+recorded file. This caused the stored-resource query to return `404 Recording
+not found` and left the recording directory empty. The provider smoke now uses
+`POST /ari/recordings/live/<name>/stop`, which stops and stores the recording.
+
+`RecordingFinished` remains a required lifecycle synchronization point, but it
+is not treated as sufficient persistence proof in the tested Asterisk version.
+The smoke continues to require StoredRecording visibility, stored-file API
+visibility, a regular non-empty filesystem WAV, and cleanup.
+
+The corrected composite run recorded the following evidence for the generated
+recording `utcp-recording-runtime-7a099abc9517`:
+
+- recording start requested: `1788297978.272520749`
+- `RecordingStarted`: `1788297978.2814476`, format `wav`, state `recording`
+- stop `204`: `1788297981.407533030`
+- `RecordingFinished`: `1788297981.3942773`, format `wav`, state `done`
+- StoredRecording visibility: `1788297981.518980472`, HTTP `200`
+- filesystem visibility: `1788297981.578862240`
+- filesystem artifact: `/var/spool/asterisk/recording/utcp-recording-runtime-7a099abc9517.wav`
+- artifact size: `49324` bytes
+- stored-file endpoint: HTTP `200`
+- cleanup: HTTP `204`
+
+The event observation timestamp precedes the stop response timestamp by about
+13 ms because Asterisk emits the completion event while the HTTP stop request
+is completing. This does not weaken the ordering contract: the smoke requires
+the stop request to succeed and then requires the matching completion event and
+all durable artifact representations.
 
 ## Scope and deployment
 
 No UTCP domain, RecordingSession, SIP, NetworkPolicy, FreeSWITCH, storage, or
-retention behavior was changed. The source changes are not published into an
-immutable image and were not deployed to native-k3s because the required
-provider-native artifact gate is not passing. The known generic
+retention behavior was changed. The source changes are not yet published into
+an immutable image and were not deployed to native-k3s; those actions are
+deferred pending implementation review. The known generic
 `make asterisk-ari-config-check` failure remains unrelated in
 `CallDomainService.php`.
 
-## 2026-09-01 RecordingFinished synchronization repair attempt
+## 2026-09-01 Initial RecordingFinished synchronization attempt (superseded)
 
 This bounded follow-up started from local commit
 `e9151e296be53955fcf1ab1d807aea6daa08ab24` on `main`, with a clean worktree.
@@ -90,6 +114,7 @@ event and endpoint state, timestamps, filesystem listing, channel state, and
 RTP diagnostics for this boundary. No speculative Asterisk configuration,
 RecordingSession, storage, network policy, or architecture change was made.
 
-Because the composite preflight remains red at the provider artifact gate, no
-immutable image was published and native-k3s was not deployed. The current
-provider readiness packet remains open for a narrowly localized cause analysis.
+This initial synchronization-only attempt is retained as historical evidence
+of the observed boundary. It was superseded by the store-preserving ARI stop
+correction documented above; no immutable image was published and native-k3s
+was not deployed in either attempt.
