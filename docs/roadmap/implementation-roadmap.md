@@ -93,6 +93,7 @@ evidence.
 | This document | Executable phase ordering, dependencies, non-goals, exit criteria, and R0 boundary |
 | [`phase-status.md`](phase-status.md) | Shortest authoritative current-state ledger and one next action |
 | [`docs/roadmap/ui-foundations.md`](ui-foundations.md) | Reusable UI foundation detail; it does not reorder C/T/V phases |
+| [`docs/roadmap/workload-aware-capacity-placement.md`](workload-aware-capacity-placement.md) | Future WAC capacity/placement track detail; post-core, not started, and not an R0 gate |
 | `docs/evidence/` and `docs/decisions/` | Historical proof, defect/correction history, and durable architecture decisions |
 
 `CLAUDE.md` records the repository phase dependency used for task scoping. It
@@ -610,13 +611,22 @@ transcription, synthesis, and interactive media participants. No implementation
 phase is scheduled before current R0; this is architecture-only and is not an
 R0 gate.
 
-**Workload-aware runtime admission:** architecture-only future direction under
-the [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md)
-2026-09-01 amendment. `runtime_nodes.capacity_weight` remains the completed K5C
-deterministic admission count budget; no phase owns a workload-aware or
-measurement-driven successor, and none is scheduled. Any future model must stay
-vendor-neutral, rest on reproducible workload-specific evidence, and must not
-infer capacity from `runtime_family`. Not an R0 gate.
+**WAC — Workload-Aware Capacity & Placement:** future, post-core capacity
+intelligence track under the
+[`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md)
+2026-09-01 amendment, detailed in
+[`workload-aware-capacity-placement.md`](workload-aware-capacity-placement.md).
+**FUTURE / POST-CORE / NOT STARTED / NOT R0-GATING.** WAC-0 through WAC-10
+sequence a deterministic evolution from count-based admission toward
+workload-aware admission, ranking, diversity, calibration, and bounded
+autoscaling signals; WAC-5 is the first stage that would alter production
+admission behavior, and no stage is implemented or scheduled.
+`runtime_nodes.capacity_weight` remains the completed K5C deterministic
+admission count budget and stays the baseline and fallback after WAC exists.
+Any future model must stay vendor-neutral, rest on reproducible
+workload-specific evidence, and must not infer capacity from `runtime_family`.
+WAC does not gate R0, does not alter RMA priority, and is not the current next
+action.
 
 **Queue/ACD, campaign behavior, advanced IVR workflow, billing/settlement,
 number purchasing/porting, SMS/MMS, and commercial carrier operations:** future
