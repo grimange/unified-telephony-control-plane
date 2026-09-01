@@ -800,9 +800,25 @@ asterisk_media_ingress = {
     }],
     "ports": [{"protocol": "UDP", "port": 10000, "endPort": 20000}],
 }
-if len((asterisk_policy.get("spec") or {}).get("ingress") or []) != 2 or asterisk_media_ingress not in ((asterisk_policy.get("spec") or {}).get("ingress") or []):
+asterisk_runtime_ingress = {
+    "from": [{
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+        "podSelector": {"matchLabels": {
+            "app.kubernetes.io/component": "asterisk-ari",
+            "utcp.io/network-role": "asterisk-ari",
+        }},
+    }],
+    "ports": [{"protocol": "UDP", "port": 5060}],
+}
+if len((asterisk_policy.get("spec") or {}).get("ingress") or []) != 3 or asterisk_media_ingress not in ((asterisk_policy.get("spec") or {}).get("ingress") or []):
     fail("Asterisk ingress must retain exact Kamailio SIP and rtpengine media rules")
-if len(asterisk_egress) != 3 or asterisk_sip_egress not in asterisk_egress or asterisk_media_egress not in asterisk_egress or asterisk_dns_egress not in asterisk_egress:
+if asterisk_runtime_ingress not in ((asterisk_policy.get("spec") or {}).get("ingress") or []):
+    fail("Asterisk ingress must allow exact same-namespace Asterisk UDP 5060")
+asterisk_runtime_sip_egress = {
+    "to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}}, "podSelector": {"matchLabels": {"app.kubernetes.io/component": "asterisk-ari", "utcp.io/network-role": "asterisk-ari"}}}],
+    "ports": [{"protocol": "UDP", "port": 5060}],
+}
+if len(asterisk_egress) != 4 or asterisk_sip_egress not in asterisk_egress or asterisk_runtime_sip_egress not in asterisk_egress or asterisk_media_egress not in asterisk_egress or asterisk_dns_egress not in asterisk_egress:
     fail("Asterisk egress must allow exact Kamailio SIP, rtpengine media, and cluster-DNS rules")
 if (asterisk_policy.get("spec") or {}).get("podSelector", {}).get("matchLabels") != {
     "app.kubernetes.io/component": "asterisk-ari",

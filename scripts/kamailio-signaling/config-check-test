@@ -666,7 +666,7 @@ def validate(state: dict[str, Any]) -> None:
         }],
         "ports": [{"protocol": "UDP", "port": 10000, "endPort": 20000}],
     }
-    require(len((asterisk_policy.get("spec") or {}).get("ingress") or []) == 2 and asterisk_media_ingress in ((asterisk_policy.get("spec") or {}).get("ingress") or []), "Asterisk ingress must retain exact Kamailio SIP and rtpengine media rules")
+    require(len((asterisk_policy.get("spec") or {}).get("ingress") or []) == 3 and asterisk_media_ingress in ((asterisk_policy.get("spec") or {}).get("ingress") or []), "Asterisk ingress must retain exact Kamailio SIP and rtpengine media rules")
     require({
         "from": [{
             "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
@@ -674,6 +674,10 @@ def validate(state: dict[str, Any]) -> None:
         }],
         "ports": [{"protocol": "UDP", "port": 5060}],
     } in ((asterisk_policy.get("spec") or {}).get("ingress") or []), "Asterisk SIP ingress must remain exact Kamailio UDP 5060")
+    require({
+        "from": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}}, "podSelector": {"matchLabels": {"app.kubernetes.io/component": "asterisk-ari", "utcp.io/network-role": "asterisk-ari"}}}],
+        "ports": [{"protocol": "UDP", "port": 5060}],
+    } in ((asterisk_policy.get("spec") or {}).get("ingress") or []), "Asterisk SIP ingress must allow exact same-namespace Asterisk UDP 5060")
     asterisk_egress = (asterisk_policy.get("spec") or {}).get("egress") or []
     asterisk_sip_egress = {
         "to": [{
@@ -693,9 +697,14 @@ def validate(state: dict[str, Any]) -> None:
         "to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}}, "podSelector": {"matchLabels": {"app.kubernetes.io/component": "rtpengine", "utcp.io/network-role": "rtpengine-media"}}}],
         "ports": [{"protocol": "UDP", "port": 40000, "endPort": 40099}],
     }
+    asterisk_runtime_sip_egress = {
+        "to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}}, "podSelector": {"matchLabels": {"app.kubernetes.io/component": "asterisk-ari", "utcp.io/network-role": "asterisk-ari"}}}],
+        "ports": [{"protocol": "UDP", "port": 5060}],
+    }
     require(
-        len(asterisk_egress) == 3
+        len(asterisk_egress) == 4
         and asterisk_sip_egress in asterisk_egress
+        and asterisk_runtime_sip_egress in asterisk_egress
         and asterisk_media_egress in asterisk_egress
         and asterisk_dns_egress in asterisk_egress,
         "Asterisk egress must be exact Kamailio SIP, rtpengine media, and cluster-DNS rules",

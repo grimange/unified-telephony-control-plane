@@ -105,11 +105,10 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** have GPT-5.6 Luna Medium implement and test the
-bounded native-k3s NetworkPolicy correction that permits the existing
-`asterisk-ari` role to send and receive same-namespace UDP/5060 traffic for the
-canonical `asterisk-sip` path, then deploy it and have GPT-5.6 Terra Medium
-repeat the fresh natural-live proof. A persistent Asterisk-owned PJSIP
+**Exactly one next action:** have GPT-5.6 Terra Medium deploy the bounded
+native-k3s NetworkPolicy correction that permits the existing `asterisk-ari`
+role to send and receive same-namespace UDP/5060 traffic for the canonical
+`asterisk-sip` path, then repeat the fresh natural-live proof. A persistent Asterisk-owned PJSIP
 filesystem trace now proves that ARI created the originating channel and that
 it sent seven INVITEs to `asterisk-sip`'s correct ClusterIP, while its sole ready
 backend received neither the SIP Call-ID nor the runtime channel. The deployed
@@ -288,11 +287,11 @@ synchronized fresh trace now persists the complete originating-side SIP
 transaction: ARI accepted the channel, the originating Asterisk resolved and
 sent seven UDP INVITEs to the correct `asterisk-sip` ClusterIP, and the sole
 ready backend received neither the SIP Call-ID nor the runtime channel. The
-exact blocker is the default-deny plus
+exact blocker was the default-deny plus
 `allow-asterisk-sip-from-kamailio` NetworkPolicy contract: it allows only
 Kamailio ingress to the selected Asterisk role and no corresponding
-same-namespace Asterisk UDP/5060 egress/ingress path. This is a bounded
-native-k3s policy repair; no evidence supports changing RecordingSession,
+same-namespace Asterisk UDP/5060 egress/ingress path. The bounded native-k3s
+policy repair is now implemented and repository-tested; no evidence supports changing RecordingSession,
 adapter, endpoint, or dialplan semantics. See the
 [persistent PJSIP filesystem trace](../evidence/rma/rma-a-asterisk-persistent-pjsip-filesystem-trace-reproof.md).
 The earlier Asterisk endpoint-plus-URI,

@@ -352,7 +352,7 @@ if kamailio_dns[0].get("to") != cluster_dns_peer:
     fail("Kamailio DNS authority must use combined kube-system and CoreDNS selectors")
 
 ingress = asterisk_spec.get("ingress") or []
-if len(ingress) != 2 or {
+if len(ingress) != 3 or {
     "from": [{
         "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
         "podSelector": {"matchLabels": {"utcp.io/network-role": "kamailio-signaling"}},
@@ -367,11 +367,20 @@ if len(ingress) != 2 or {
         }},
     }],
     "ports": [{"protocol": "UDP", "port": 10000, "endPort": 20000}],
+} not in ingress or {
+    "from": [{
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+        "podSelector": {"matchLabels": {
+            "app.kubernetes.io/component": "asterisk-ari",
+            "utcp.io/network-role": "asterisk-ari",
+        }},
+    }],
+    "ports": [{"protocol": "UDP", "port": 5060}],
 } not in ingress:
     fail("Asterisk ingress must retain exact Kamailio SIP and rtpengine media rules")
 
 egress = asterisk_spec.get("egress") or []
-if len(egress) != 3:
+if len(egress) != 4:
     fail("Asterisk egress must contain exactly SIP, media, and DNS")
 for rule in egress:
     if not rule.get("to"):
@@ -399,6 +408,21 @@ if sip_rules != [
     }
 ]:
     fail("Asterisk SIP egress must remain exact Kamailio internal UDP 5062")
+runtime_sip_rules = [
+    rule for rule in egress
+    if rule.get("ports") == [{"protocol": "UDP", "port": 5060}]
+]
+if runtime_sip_rules != [{
+    "to": [{
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+        "podSelector": {"matchLabels": {
+            "app.kubernetes.io/component": "asterisk-ari",
+            "utcp.io/network-role": "asterisk-ari",
+        }},
+    }],
+    "ports": [{"protocol": "UDP", "port": 5060}],
+}]:
+    fail("Asterisk SIP egress must allow only canonical same-namespace UDP 5060")
 
 media_rules = [rule for rule in egress if rule.get("ports") == [{"protocol": "UDP", "port": 40000, "endPort": 40099}]]
 if media_rules != [{

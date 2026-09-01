@@ -25,6 +25,17 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: utcp-runtime
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: asterisk-ari
+              utcp.io/network-role: asterisk-ari
+      ports:
+        - protocol: UDP
+          port: 5060
+    - from:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: utcp-platform
           podSelector:
             matchLabels:
@@ -46,6 +57,17 @@ spec:
       ports:
         - protocol: UDP
           port: 5062
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: utcp-runtime
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/component: asterisk-ari
+              utcp.io/network-role: asterisk-ari
+      ports:
+        - protocol: UDP
+          port: 5060
     - to:
         - namespaceSelector:
             matchLabels:

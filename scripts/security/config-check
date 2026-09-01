@@ -833,16 +833,29 @@ if asterisk_sip_spec.get("policyTypes") != ["Ingress", "Egress"]:
     fail("allow-asterisk-sip-from-kamailio must enforce ingress and egress")
 asterisk_ingress = asterisk_sip_spec.get("ingress") or []
 asterisk_sip_ingress = [rule for rule in asterisk_ingress if rule.get("ports") == [{"protocol": "UDP", "port": 5060}]]
-if asterisk_sip_ingress != [{
+asterisk_kamailio_ingress = [{
     "from": [{
         "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
         "podSelector": {"matchLabels": {"utcp.io/network-role": "kamailio-signaling"}},
     }],
     "ports": [{"protocol": "UDP", "port": 5060}],
-}]:
+}]
+asterisk_runtime_ingress = [{
+    "from": [{
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+        "podSelector": {"matchLabels": {
+            "app.kubernetes.io/component": "asterisk-ari",
+            "utcp.io/network-role": "asterisk-ari",
+        }},
+    }],
+    "ports": [{"protocol": "UDP", "port": 5060}],
+}]
+if asterisk_kamailio_ingress != [rule for rule in asterisk_sip_ingress if rule.get("from") == asterisk_kamailio_ingress[0]["from"]]:
     fail("Asterisk SIP ingress must retain exact Kamailio UDP 5060")
+if asterisk_runtime_ingress != [rule for rule in asterisk_sip_ingress if rule.get("from") == asterisk_runtime_ingress[0]["from"]]:
+    fail("Asterisk SIP ingress must allow only canonical same-namespace Asterisk UDP 5060")
 asterisk_media_ingress = [rule for rule in asterisk_ingress if rule.get("ports") == [{"protocol": "UDP", "port": 10000, "endPort": 20000}]]
-if len(asterisk_ingress) != 2 or asterisk_media_ingress != [{
+if len(asterisk_ingress) != 3 or asterisk_media_ingress != [{
     "from": [{
         "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-platform"}},
         "podSelector": {"matchLabels": {
@@ -854,8 +867,8 @@ if len(asterisk_ingress) != 2 or asterisk_media_ingress != [{
 }]:
     fail("Asterisk media ingress must be exact rtpengine UDP 10000-20000")
 asterisk_egress = asterisk_sip_spec.get("egress") or []
-if len(asterisk_egress) != 3:
-    fail("Asterisk egress must define exactly SIP, media, and cluster-DNS rules")
+if len(asterisk_egress) != 4:
+    fail("Asterisk egress must define exactly Kamailio SIP, same-namespace SIP, media, and cluster-DNS rules")
 for rule in asterisk_egress:
     if not rule.get("to"):
         fail("Asterisk egress must not include unrestricted destinations")
@@ -879,6 +892,21 @@ if asterisk_sip_egress != [
     }
 ]:
     fail("Asterisk SIP egress must retain exact Kamailio runtime UDP 5062")
+asterisk_runtime_sip_egress = [
+    rule for rule in asterisk_egress
+    if rule.get("ports") == [{"protocol": "UDP", "port": 5060}]
+]
+if asterisk_runtime_sip_egress != [{
+    "to": [{
+        "namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "utcp-runtime"}},
+        "podSelector": {"matchLabels": {
+            "app.kubernetes.io/component": "asterisk-ari",
+            "utcp.io/network-role": "asterisk-ari",
+        }},
+    }],
+    "ports": [{"protocol": "UDP", "port": 5060}],
+}]:
+    fail("Asterisk SIP egress must allow only canonical same-namespace UDP 5060")
 asterisk_media_egress = [rule for rule in asterisk_egress if rule.get("ports") == [{"protocol": "UDP", "port": 40000, "endPort": 40099}]]
 if asterisk_media_egress != [{
     "to": [{
