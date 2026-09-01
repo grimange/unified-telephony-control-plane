@@ -110,48 +110,12 @@ reactivate it as the current proof environment. See
 
 ## Current state and executable order
 
-**Current phase:** V1 — Bidirectional external call routing and control; K5C and
-**K5D are complete and natural-live-proven**, with no remaining K5C or K5D proof
-gap. K5E is next.
-
-**Exactly one next action:** bounded implementation of a forward identity-catalog
-migration for the RMA-A recording capabilities, which currently blocks RMA-A
-natural live proof before RecordingSession creation. RMA remains
-the next R0-critical track now that **K5E is COMPLETE /
-NATURAL-LIVE-PROVEN**. The
-2026-08-31 two-stage controlled live proof deployed `3202451` and closed both
-stages. **Stage A** proved the scheduler overlap-mutex repair live: every
-minute-cadence overlap event reports `expires=5` in the running application with
-**zero** implicit-1440 minute events remaining; the three surviving 24-hour locks
-were correctly classified as pre-repair residue and normalized once through the
-framework-native `schedule:clear-cache` (disclosed as `PRE-PROOF HISTORICAL
-MUTEX CLEANUP`, never counted as recovery evidence); the observer then resumed on
-its own and converged the stale projection; and a controlled acquisition of the
-**real** event's **real** `CacheEventMutex` produced a Redis `TTL=300`, suppressed
-the observer for the full five minutes while every other minute task kept
-firing, expired naturally, and the observer ran again on the very next tick —
-with no `schedule:clear-cache`, Redis `DEL`, manual invocation, or Pod restart
-during the recovery proof. **Stage B** then proved distributed operation across
-`utcp-dev02` → `utcp-dev01`: baseline placement correlated automatically; a
-natural Web Admin `Prepare for maintenance` on the host actually carrying the
-RuntimeNode excluded new work (`HTTP 422`) while work was still active and the
-Node still schedulable; the existing Call ended on its own; the RuntimeNode
-reached `DRAINED` and only then was the Node cordoned; Kubernetes rescheduled
-the workload to the other host with no affinity or forced placement; **UTCP
-observed the new host automatically within one observer cycle**; the replacement
-became Ready; and telephony eligibility returned and was exercised by a further
-natural Call that completed on the new host. Automatic restoration covers
-workload recreation, readiness, placement observation and eligibility;
-RuntimeNode desired-state reactivation remains a deliberate operator action per
-K5D's accepted scope and was performed through the canonical Web Admin
-**Reactivate** control. Verdicts
-`K5E_PLACEMENT_OBSERVER_AUTOMATIC_MUTEX_RECOVERY_LIVE_PROVEN` and
-`K5E_DISTRIBUTED_INFRASTRUCTURE_NATURAL_LIVE_PROVEN`. No production source
-changed. See the
-[`K5E distributed infrastructure natural live proof`](../evidence/k5/k5e-distributed-infrastructure-natural-live-proof.md).
-
-**K5E remains NOT STARTED; the placement-observer automatic-recovery
-reproof is pending.**
+**Current phase:** V1 — Bidirectional external call routing and control — **Complete**.
+K5A–K5E are complete / natural-live-proven; K5F remains planned and is not an
+R0 gate. RMA is the current active R0-critical core work. See
+[`phase-status.md`](phase-status.md) for the authoritative current next action;
+this roadmap describes structure, dependencies, and release boundaries rather
+than a second mutable next-action field.
 
 **Current status:** T4A/T4B are implemented and tested; T4C1/T4C2 are
 implemented, tested, live-proven, and frozen. The timer-backed media playback
@@ -216,11 +180,12 @@ T4 closure
 K5A -> K5B -> K5C -> K5D -> K5E -> RMA
 ```
 
-The top line is the serial telephony control track and V1 remains current. K5
-is a planned parallel, R0-critical distributed-infrastructure track; it does
-not serially gate C7A or the established V1 corridor. RMA is a planned UTCP
-core, R0-critical track that begins only after the V1 Call/CallLeg corridor is
-established and K5E is complete. A0 does not technically depend on RMA; the
+The top line is the serial telephony control track; V1 is complete. K5
+is a parallel, R0-critical distributed-infrastructure track; K5A–K5E are
+complete / natural-live-proven, and it does not serially gate C7A or the
+established V1 corridor. RMA is the current active UTCP core, R0-critical
+track: the V1 Call/CallLeg corridor is established and K5E is complete. A0
+does not technically depend on RMA; the
 preferred execution order is documented separately below. R0 cannot close until
 A0, K5E, and RMA satisfy their bounded exit criteria. C8 and other deferred
 domains remain outside this convergence unless later evidence changes the
@@ -481,17 +446,19 @@ standalone telephony products.
 and retained as the existing browser acceptance slice. Its browser/client
 history is evidence, not product scope. See `docs/evidence/v0/`.
 
-**V1 — Bidirectional external call routing and control:** active after T6.
-The outbound corridor — application -> route -> caller identity -> external
+**V1 — Bidirectional external call routing and control:** **Complete**. The
+outbound corridor — application -> route -> caller identity -> external
 trunk -> runtime — is implemented and carries canonical route binding. The
 inbound corridor — external peer -> address -> route -> destination ->
 canonical Call/CallLeg -> application/runtime — is implemented: the production
 observation path performs C6 offered adoption, invokes C7B, persists canonical
 route/trunk/destination binding, and Kamailio relays admitted inbound INVITEs.
-Focused repository regression proof and the canonical PHP suite are green. The
+Focused repository regression proof and the canonical PHP suite are green, and
+natural external SIP acceptance is live-proven with all recorded V1 gaps
+closed; no V1 acceptance blocker remains. See
+[`phase-status.md`](phase-status.md) for the full gap-closure record. The
 External SIP Peer fixture and preparation harness remain available as
-deterministic regression; natural external SIP acceptance is the remaining V1
-proof.
+deterministic regression.
 
 [`ADR-027`](../decisions/ADR-027-canonical-inbound-external-call-admission-and-execution-target.md)
 decides the canonical inbound execution target: a RuntimeNode SIP endpoint
@@ -670,10 +637,8 @@ roadmap.
 
 V1 repository implementation is complete under
 [`ADR-027`](../decisions/ADR-027-canonical-inbound-external-call-admission-and-execution-target.md),
-with focused regression and canonical PHP proof passed and the implementation
-committed at `e334209ccc016053d2f63f8e39e99f2126aa5535`. Next, continue on the
-canonical native k3s topology (`utcp-dev01`, `192.168.254.124`), close and prove
-the uncommitted Kubernetes/Kamailio repairs, re-provision V1 canonical fixture
-state through the authoritative API/UI, and run controlled natural
-inbound/outbound proof against the independent PBX at `38.146.161.46`. The PBX
-prerequisites are not claimed complete here.
+with focused regression and canonical PHP proof passed, natural external SIP
+acceptance live-proven, and no V1 acceptance blocker remaining.
+[`phase-status.md`](phase-status.md) is the sole source for the current exact
+next action; this roadmap does not maintain a second mutable next-action
+field.

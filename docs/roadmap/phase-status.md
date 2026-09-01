@@ -145,9 +145,6 @@ K5D's accepted scope and was performed through the canonical Web Admin
 changed. See the
 [`K5E distributed infrastructure natural live proof`](../evidence/k5/k5e-distributed-infrastructure-natural-live-proof.md).
 
-**K5E remains NOT STARTED; the placement-observer automatic-recovery
-reproof is pending.**
-
 The synthetic fixture remains deterministic regression only. C7A supports the
 bounded V1-A `outbound_registration` signaling mode; C7B closed on 2026-08-24
 after deterministic tenant-scoped route evaluation and focused tests passed.
@@ -181,7 +178,7 @@ documentation task. Current T4 implementation evidence:
 | F0–F4                              | Complete                        | Repository, application, container, Compose, and CI foundation; `docs/evidence/f0/`–`f4/`                                                                                      |
 | K0–K4                              | Complete                        | k3d/Kubernetes, gateway, security, and observability foundation; `docs/evidence/k0/`–`k4/`                                                                                     |
 | C0–C5                              | Complete                        | Control-plane kernel, identity, RuntimeNode registry, reconciliation, simulator, sessions, and conferences; `docs/evidence/c0/`–`c5/`                                          |
-| T1 Kamailio SIP-over-WSS signaling | Complete                        | CI-guarded foundation marker; current active roadmap phase is T4                                                                                                               |
+| T1 Kamailio SIP-over-WSS signaling | Complete                        | `UTCP_PHASE=T1` is the CI-guarded marker for the completed original foundation sequence, not the current program phase; RMA is the current active core work                   |
 | T0–T3                              | Complete                        | Asterisk, Kamailio, conference, and rtpengine execution slices; `docs/evidence/t0/`–`t3/`                                                                                      |
 | V0                                 | Complete                        | Natural login, SIP registration, conference admission, and reference-client acceptance; `docs/evidence/v0/`                                                                    |
 | RT-1 / RT-1A                       | Complete                        | Runtime control-plane notifications and browser proof; `docs/evidence/rt-1/`, `docs/evidence/rt1/`                                                                             |
@@ -212,7 +209,7 @@ documentation task. Current T4 implementation evidence:
 
 | Track | Status / release placement |
 | --- | --- |
-| K5 | Planned / Parallel / R0-Critical under [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md); does not serially gate T4 or C7A, but K5E is required before R0 |
+| K5 | Parallel / R0-Critical infrastructure track under [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md); does not serially gate T4 or C7A. K5A–K5E are Complete / natural-live-proven, satisfying the R0 requirement. K5F is Planned, not implemented, and not an R0 gate |
 | RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); RMA-A recording authority and lifecycle is implemented/tested, the identity-catalog repair is deployed and API authorization is proven, but natural live proof remains blocked because start dispatch reaches Asterisk while the target CallLeg channel is pre-Stasis/not yet recording-eligible; RMA-B through RMA-H remain not started |
 | Operational Reporting & Insights | Future UTCP Core / Post-current-R0 roadmap; not a current phase or R0 gate; no implementation claimed under [`ADR-033`](../decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md) |
 | C8 | Planned UTCP core transfer/handoff track under [`ADR-025`](../decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md); advanced consultative and inter-runtime/provider handoff defaults to post-R0/R1 unless V1 proves a basic dependency |

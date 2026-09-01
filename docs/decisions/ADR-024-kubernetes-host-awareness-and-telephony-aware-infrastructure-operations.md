@@ -594,3 +594,39 @@ This describes intent and existing capability only. UTCP has no automatic
 horizontal autoscaling of telephony runtimes: adding or removing a RuntimeNode
 remains an operator action through the canonical management authority, and
 "automatic PBX horizontal scaling" remains an initial-roadmap non-goal.
+
+## Roadmap status clarification amendment — 2026-09-01
+
+### Why this amendment exists
+
+The Status section above records this ADR's original acceptance: K5 was
+accepted as a future architecture and roadmap direction, and no functionality
+was implemented by that documentation packet. That statement was accurate for
+the packet it described and is not rewritten here. Since then, K5A through
+K5E have been implemented and natural-live-proven. This amendment records the
+current implementation position without altering the original acceptance
+record.
+
+### Current position
+
+Per the authoritative current-state ledger,
+[`docs/roadmap/phase-status.md`](../roadmap/phase-status.md):
+
+```text
+K5A  Host / Kubernetes Node Visibility           Complete / natural-live-proven
+K5B  Telephony Placement Awareness               Complete / natural-live-proven
+K5C  Capacity and Failure-Domain Policy          Complete / natural-live-proven
+K5D  Telephony-Aware Host Maintenance            Complete / natural-live-proven
+K5E  Distributed Infrastructure Live Proof       Complete / natural-live-proven
+K5F  Guided Existing-Cluster Host Enrollment     Planned; not implemented; not an R0 gate
+```
+
+K5 remains the parallel, R0-critical distributed-infrastructure track defined
+above; K5E's closure satisfies the R0 convergence requirement this ADR
+establishes. RMA is the current active R0-critical core work and depends on
+K5E's closure, not on K5F.
+
+The future workload-aware runtime family, capacity, and scaling-direction
+amendment above remains architecture/future work only. It defines no field,
+schema, coefficient, threshold, or admission algorithm, and none is
+implemented or scheduled by this clarification.
