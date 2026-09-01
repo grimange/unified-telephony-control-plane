@@ -19,6 +19,7 @@ final class RecordingSessionService
 {
     private const START_OPERATION = 'call.leg.start_recording';
     private const STOP_OPERATION = 'call.leg.stop_recording';
+    private const PRE_START_TERMINATION_CODE = 'recording_subject_terminated_before_start';
 
     public function __construct(
         private readonly CallDomainService $calls,
@@ -42,7 +43,9 @@ final class RecordingSessionService
             if ($idempotencyKey !== null) {
                 $existing = DB::table('recording_sessions')->where('tenant_id', $tenantId)->where('idempotency_key', $idempotencyKey->value())->lockForUpdate()->first();
                 if ($existing !== null) {
-                    return $existing;
+                    $this->reconcileLocked($tenantId, $context, $existing);
+
+                    return DB::table('recording_sessions')->where('id', $existing->id)->first();
                 }
             }
             $existing = DB::table('recording_sessions')
@@ -53,7 +56,9 @@ final class RecordingSessionService
                 ->lockForUpdate()
                 ->first();
             if ($existing !== null) {
-                return $existing;
+                $this->reconcileLocked($tenantId, $context, $existing);
+
+                return DB::table('recording_sessions')->where('id', $existing->id)->first();
             }
 
             $id = RecordingSessionId::new()->value();
@@ -71,12 +76,9 @@ final class RecordingSessionService
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);
-            $operationId = $this->calls->requestSubordinateRecordingOperation($tenantId, $context, self::START_OPERATION, $legId, [
-                'call_id' => $callId,
-                'leg_id' => $legId,
-                'recording_session_id' => $id,
-            ], $leg->runtime_node_id);
-            DB::table('recording_sessions')->where('id', $id)->update(['start_operation_id' => $operationId, 'updated_at' => now()]);
+            $session = DB::table('recording_sessions')->where('id', $id)->lockForUpdate()->first();
+            $this->reconcileLocked($tenantId, $context, $session);
+            $operationId = DB::table('recording_sessions')->where('id', $id)->value('start_operation_id');
             $this->record($context, 'recording_session.requested', $id, ['operation_id' => $operationId, 'call_id' => $callId, 'call_leg_id' => $legId, 'conference_id' => $conferenceId]);
 
             return DB::table('recording_sessions')->where('id', $id)->first();
@@ -100,12 +102,13 @@ final class RecordingSessionService
             if ($leg === null) {
                 throw new InvalidArgumentException('recording session call leg is missing');
             }
+            DB::table('recording_sessions')->where('id', $session->id)->update(['desired_state' => 'stopped', 'updated_at' => now()]);
             $operationId = $this->calls->requestSubordinateRecordingOperation($tenantId, $context, self::STOP_OPERATION, (string) $leg->id, [
                 'call_id' => $session->call_id,
                 'leg_id' => $leg->id,
                 'recording_session_id' => $session->id,
             ], $leg->runtime_node_id);
-            DB::table('recording_sessions')->where('id', $session->id)->update(['desired_state' => 'stopped', 'stop_operation_id' => $operationId, 'updated_at' => now()]);
+            DB::table('recording_sessions')->where('id', $session->id)->update(['stop_operation_id' => $operationId, 'updated_at' => now()]);
             $this->record($context, 'recording_session.stop_requested', (string) $session->id, ['operation_id' => $operationId]);
 
             return DB::table('recording_sessions')->where('id', $session->id)->first();
@@ -131,6 +134,34 @@ final class RecordingSessionService
         }
 
         return $this->requestStop($tenantId, $context, (string) $session->id);
+    }
+
+    /**
+     * Reconcile pending recording intent against the canonical CallLeg lifecycle.
+     * Provider-specific readiness remains an adapter concern; answered is the
+     * current RMA-A dispatch boundary.
+     */
+    public function reconcileForLeg(string $tenantId, string $legId, ?ExecutionContext $context = null): void
+    {
+        $context ??= ExecutionContext::system(reason: 'recording session lifecycle reconciliation', tenantId: $tenantId, origin: 'telephony-observation');
+        DB::transaction(function () use ($tenantId, $legId, $context): void {
+            $sessions = DB::table('recording_sessions')
+                ->where('tenant_id', $tenantId)
+                ->where('call_leg_id', $legId)
+                ->where('observed_state', 'requested')
+                ->lockForUpdate()
+                ->get();
+            if ($sessions->isEmpty()) {
+                return;
+            }
+            $leg = DB::table('call_legs')->where('tenant_id', $tenantId)->where('id', $legId)->lockForUpdate()->first();
+            if ($leg === null) {
+                return;
+            }
+            foreach ($sessions as $session) {
+                $this->reconcileLocked($tenantId, $context, $session, $leg);
+            }
+        });
     }
 
     public function markOperationCompleted(string $operationId): void
@@ -187,6 +218,45 @@ final class RecordingSessionService
         DB::table('recording_sessions')->where('id', $session->id)->update($state === 'recording'
             ? ['observed_state' => 'recording', 'started_at' => $session->started_at ?? $at, 'updated_at' => now()]
             : ['observed_state' => 'stopped', 'stopped_at' => $at, 'updated_at' => now()]);
+    }
+
+    private function reconcileLocked(string $tenantId, ExecutionContext $context, object $session, ?object $leg = null): void
+    {
+        if ((string) $session->desired_state !== 'recording'
+            || (string) $session->observed_state !== 'requested'
+            || $session->start_operation_id !== null
+        ) {
+            return;
+        }
+        $leg ??= DB::table('call_legs')->where('tenant_id', $tenantId)->where('id', $session->call_leg_id)->lockForUpdate()->first();
+        if ($leg === null) {
+            return;
+        }
+        $state = CallState::from((string) $leg->observed_state);
+        if ($state === CallState::Answered || in_array($state, [CallState::Bridged, CallState::Held, CallState::Transferring], true)) {
+            $operationId = $this->calls->requestSubordinateRecordingOperation($tenantId, $context, self::START_OPERATION, (string) $leg->id, [
+                'call_id' => $session->call_id,
+                'leg_id' => $leg->id,
+                'recording_session_id' => $session->id,
+            ], $leg->runtime_node_id);
+            DB::table('recording_sessions')->where('tenant_id', $tenantId)->where('id', $session->id)->update(['start_operation_id' => $operationId, 'updated_at' => now()]);
+
+            return;
+        }
+        if ($state->terminal()) {
+            DB::table('recording_sessions')->where('tenant_id', $tenantId)->where('id', $session->id)->update([
+                'observed_state' => 'failed',
+                'failure_class' => FailureClass::Conflict->value,
+                'failure_code' => self::PRE_START_TERMINATION_CODE,
+                'failure_message' => 'recording subject terminated before recording could start',
+                'failed_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $this->record($context, 'recording_session.failed', (string) $session->id, [
+                'failure_class' => FailureClass::Conflict->value,
+                'failure_code' => self::PRE_START_TERMINATION_CODE,
+            ]);
+        }
     }
 
     private function record(ExecutionContext $context, string $event, string $sessionId, array $payload): void

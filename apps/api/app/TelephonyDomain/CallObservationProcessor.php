@@ -67,6 +67,7 @@ final class CallObservationProcessor
                 $state = $unbridge ? CallState::Answered : CallState::Bridged;
                 foreach ($legIds as $index => $legId) {
                     $this->calls->applyObservedLegTransition($tenantId, $legId, $nodeId, $channels[$index], $state);
+                    $this->recordings->reconcileForLeg($tenantId, $legId);
                 }
             }
 
@@ -93,12 +94,14 @@ final class CallObservationProcessor
                     ? ['unreachable', 'destination_not_found']
                     : [null, null];
                 $this->calls->terminalizeObservedProviderFailure($tenantId, $legId, $nodeId, $channelId, $failureClass, $failureCode, is_string($observation['observed_at'] ?? null) ? $observation['observed_at'] : null);
+                $this->recordings->reconcileForLeg($tenantId, $legId);
 
                 return;
             }
             $state = $type === 'call.leg.failed' ? CallState::Failed : CallState::Completed;
             $observedAt = is_string($observation['observed_at'] ?? null) ? $observation['observed_at'] : null;
             $this->calls->terminalizeObservedLeg($tenantId, $legId, $nodeId, $channelId, $state, $observedAt, $deferPreAnswerTerminalization);
+            $this->recordings->reconcileForLeg($tenantId, $legId);
 
             return;
         }
@@ -106,6 +109,7 @@ final class CallObservationProcessor
         if (isset(self::STATE_OBSERVATIONS[$type])) {
             $this->calls->bindObservedRuntimeChannel($tenantId, $legId, $nodeId, $channelId);
             $this->calls->applyObservedLegTransition($tenantId, $legId, $nodeId, $channelId, self::STATE_OBSERVATIONS[$type]);
+            $this->recordings->reconcileForLeg($tenantId, $legId);
 
             return;
         }

@@ -3,6 +3,7 @@
 namespace Tests\Feature\TelephonyDomain;
 
 use App\Identity\IdentityIds;
+use App\ControlPlane\Shared\ExecutionContext;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -34,13 +35,58 @@ final class RecordingSessionTest extends TestCase
         $this->assertSame($tenant, DB::table('recording_sessions')->where('id', $first['id'])->value('tenant_id'));
         $this->assertSame('recording', $first['desired_state']);
         $this->assertSame('requested', $first['observed_state']);
-        $this->assertSame('call.leg.start_recording', DB::table('runtime_operations')->where('id', $first['start_operation_id'])->value('operation_type'));
+        $this->assertNull($first['start_operation_id']);
+        $this->assertSame(0, DB::table('runtime_operations')->where('operation_type', 'call.leg.start_recording')->count());
+        DB::table('call_legs')->where('id', $legId)->update(['observed_state' => 'answered']);
+        app(\App\TelephonyDomain\RecordingSessionService::class)->reconcileForLeg($tenant, $legId, ExecutionContext::system(tenantId: $tenant, reason: 'test answer'));
+        app(\App\TelephonyDomain\RecordingSessionService::class)->reconcileForLeg($tenant, $legId, ExecutionContext::system(tenantId: $tenant, reason: 'duplicate test answer'));
+        $started = DB::table('recording_sessions')->where('id', $first['id'])->first();
+        $this->assertNotNull($started->start_operation_id);
+        $this->assertSame('call.leg.start_recording', DB::table('runtime_operations')->where('id', $started->start_operation_id)->value('operation_type'));
+        $this->assertSame(1, DB::table('runtime_operations')->where('operation_type', 'call.leg.start_recording')->count());
         $this->assertSame(1, DB::table('recording_sessions')->where('tenant_id', $tenant)->count());
 
         $this->actingAs($admin)->withSession($session)
             ->postJson('/api/v1/calls/'.$call['id'].'/operations', ['operation_type' => 'call.leg.start_recording', 'target_leg_id' => $legId])
             ->assertStatus(422);
         $this->assertSame(1, DB::table('recording_sessions')->where('tenant_id', $tenant)->count());
+    }
+
+    public function test_pending_intent_resolves_when_leg_terminates_before_answer(): void
+    {
+        [$admin, $tenant] = $this->admin('pre-answer-terminal');
+        $session = ['user_session_version' => 1, 'active_tenant_id' => $tenant];
+        $call = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/calls', ['direction' => 'outbound', 'destination_ref' => 'opaque:recording-terminal'])->assertCreated()->json('data');
+        $legId = (string) DB::table('call_legs')->where('call_id', $call['id'])->value('id');
+        $recording = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/calls/'.$call['id'].'/recordings', ['target_leg_id' => $legId])->assertStatus(202)->json('data');
+
+        DB::table('call_legs')->where('id', $legId)->update(['observed_state' => 'completed']);
+        app(\App\TelephonyDomain\RecordingSessionService::class)->reconcileForLeg($tenant, $legId, ExecutionContext::system(tenantId: $tenant, reason: 'test terminal'));
+        $failed = DB::table('recording_sessions')->where('id', $recording['id'])->first();
+        $this->assertSame('failed', $failed->observed_state);
+        $this->assertSame('recording_subject_terminated_before_start', $failed->failure_code);
+        $this->assertNull($failed->start_operation_id);
+
+        DB::table('call_legs')->where('id', $legId)->update(['observed_state' => 'answered']);
+        app(\App\TelephonyDomain\RecordingSessionService::class)->reconcileForLeg($tenant, $legId);
+        $this->assertSame(0, DB::table('runtime_operations')->where('operation_type', 'call.leg.start_recording')->count());
+    }
+
+    public function test_terminal_start_operation_failure_projects_to_session(): void
+    {
+        [$admin, $tenant] = $this->admin('operation-failure');
+        $session = ['user_session_version' => 1, 'active_tenant_id' => $tenant];
+        $call = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/calls', ['direction' => 'outbound', 'destination_ref' => 'opaque:recording-failure'])->assertCreated()->json('data');
+        $legId = (string) DB::table('call_legs')->where('call_id', $call['id'])->value('id');
+        DB::table('call_legs')->where('id', $legId)->update(['observed_state' => 'answered']);
+        $recording = $this->actingAs($admin)->withSession($session)->postJson('/api/v1/calls/'.$call['id'].'/recordings', ['target_leg_id' => $legId])->assertStatus(202)->json('data');
+        $operationId = (string) $recording['start_operation_id'];
+        DB::table('runtime_operations')->where('id', $operationId)->update(['status' => 'terminal_failed']);
+        app(\App\TelephonyDomain\RecordingSessionService::class)->markOperationFailed($operationId, \App\ControlPlane\RuntimeOperations\FailureClass::Conflict, 'channel_not_in_stasis', 'Channel not in Stasis application', \App\ControlPlane\RuntimeOperations\OperationStatus::TerminalFailed);
+        $failed = DB::table('recording_sessions')->where('id', $recording['id'])->first();
+        $this->assertSame('failed', $failed->observed_state);
+        $this->assertSame('channel_not_in_stasis', $failed->failure_code);
+        $this->assertNotNull($failed->failed_at);
     }
 
     public function test_stop_intent_updates_canonical_session_and_creates_subordinate_operation(): void
@@ -58,6 +104,9 @@ final class RecordingSessionTest extends TestCase
         $this->assertSame('stopped', $stopped['desired_state']);
         $this->assertNotNull($stopped['stop_operation_id']);
         $this->assertSame('call.leg.stop_recording', DB::table('runtime_operations')->where('id', $stopped['stop_operation_id'])->value('operation_type'));
+        DB::table('call_legs')->where('id', $legId)->update(['observed_state' => 'answered']);
+        app(\App\TelephonyDomain\RecordingSessionService::class)->reconcileForLeg($tenant, $legId);
+        $this->assertSame(0, DB::table('runtime_operations')->where('operation_type', 'call.leg.start_recording')->count());
     }
 
     public function test_recording_sessions_and_controls_are_tenant_scoped(): void
