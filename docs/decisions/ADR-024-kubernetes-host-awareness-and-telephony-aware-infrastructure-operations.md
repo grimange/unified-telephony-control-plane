@@ -436,3 +436,161 @@ management path: no routine capacity reconciliation, placement sync, or
 runtime topology-editing command is authorized. The management authority
 remains the ADR-032 Web Admin/API/PostgreSQL/automatic selection and
 reconciliation path.
+
+## Runtime family, capacity meaning, and scaling direction amendment — 2026-09-01
+
+### Why this amendment exists
+
+This ADR already owns K5 capacity and failure-domain policy, so it also owns
+what `capacity_weight` *means* and what a RuntimeNode's technology family is
+allowed to imply. The K5C amendment above defines the mechanism precisely but
+does not state the interpretation rules, which leaves room for two telecom
+folklore assumptions to be read back into the model later:
+
+1. that `runtime_family` is a performance class, with Asterisk treated as an
+   inherently small runtime and FreeSWITCH as an inherently large one; and
+2. that `capacity_weight` is a measured or benchmarked physical PBX maximum.
+
+Both readings are wrong. This amendment records the durable interpretation. It
+changes no field, semantics, selector, view, migration, API, or proven K5C
+behavior, and it does not reinterpret completed K5C evidence.
+
+### Runtime family is technology metadata, not a performance class
+
+`runtime_family` identifies the external runtime technology and its adapter
+binding. It carries no capacity, throughput, quality, or preference meaning:
+
+```text
+runtime_family = technology / adapter family metadata
+
+runtime_family != small / medium / large
+runtime_family != low-capacity / high-capacity
+runtime_family != preferred / inferior
+```
+
+Asterisk and FreeSWITCH are both first-class RuntimeNode execution families.
+Neither is a fallback for the other, and no fixed per-family concurrency
+figure is canonical anywhere in UTCP. Modern capacity for either runtime
+depends on the actual workload — codec-preserving bridging, transcoding,
+recording, conference mixing, media playback or injection, WebRTC/SIP media
+handling, other DSP work — plus runtime configuration and available hardware.
+A family identifier cannot express any of that and must not be used as a proxy
+for it.
+
+Selection therefore stays on the existing inputs and must not gain a family
+term: canonical eligibility (tenant, desired state, observed readiness,
+configuration and execution convergence), required capability, desired
+placement and failure-domain policy, and the applicable admission budget. The
+K5C ordering tuple is unchanged. `RuntimeNodeSelector`, `TelephonyDomainService`,
+and `kamailio_inbound_runtime_target_view` contain no `runtime_family`
+predicate today, and a hard-coded preference for either family must not be
+introduced in either direction.
+
+Vendor neutrality does not mean pretending both runtimes behave identically.
+Real differences are expressed as declared and observed capabilities and are
+executed inside adapters:
+
+```text
+UTCP operation
+  -> required capability
+  -> eligible RuntimeNode selection
+  -> adapter-specific execution
+```
+
+The canonical operation and capability contract stays UTCP-owned; the
+provider-specific mechanism stays adapter-owned. This amendment introduces no
+capability key.
+
+### What `capacity_weight` is, and what it is not
+
+`capacity_weight` is the current bounded deterministic **admission count**
+primitive defined by the K5C amendment above: a value of zero means unlimited,
+and otherwise a RuntimeNode is capacity-eligible exactly while
+`active telephony work < capacity_weight`, over one shared RuntimeNode-wide
+budget. That behavior is complete, live-proven, and unchanged here.
+
+It is explicitly none of the following:
+
+```text
+a benchmark result
+a hardware or media-capacity measurement
+a SIP channel specification
+a provider guarantee
+a universal concurrency ceiling
+a claim that every telephony workload costs the same
+```
+
+One unit of budget is one unit of admitted work, not one unit of measured
+compute. A recording or transcoding leg and a simple codec-preserving bridge
+consume one budget unit each while consuming materially different runtime
+resources. K5C chose that simplification deliberately for R0: it is a
+deterministic operator-declared admission limit, not a model of physical
+capacity. Operators should set it from what they intend a RuntimeNode to
+accept, and revise it from their own observed behavior.
+
+### Future workload-aware admission seam
+
+A later capacity model may become workload-aware — distinguishing costs such
+as simple media bridging, transcoding, recording, conference participation,
+media playback/injection, and WebRTC/SIP media handling — and may incorporate
+authoritative observed runtime or resource pressure. The durable rule is only:
+
+> Future admission may become workload-aware and evidence-driven. It must not
+> infer capacity from `runtime_family`.
+
+This is a future-compatible direction, not a committed implementation. No
+roadmap phase currently owns it. This amendment deliberately defines no new
+field, table, coefficient, percentage, CPU threshold, call limit, vendor
+scoring constant, scheduling algorithm, or API, and does not rename or alter
+`capacity_weight`. Any such model requires its own decision and its own proof.
+
+Capacity claims made then should rest on reproducible workload-specific
+evidence rather than folklore or arbitrary vendor numbers. Conceptual proof
+categories — none of which exist today, and none of which this amendment
+schedules — would include simple-bridge capacity, recording capacity,
+transcoding capacity, conference capacity, media-operation capacity,
+drain-under-load behavior, and reconvergence under load.
+
+### Infrastructure capacity stays Kubernetes-owned
+
+The separation established in the Decision section above is unchanged.
+Kubernetes remains authoritative for Node capacity, allocatable resources, Pod
+resource requests and limits, scheduling, and placement. UTCP owns telephony
+RuntimeNode eligibility, lifecycle, capability requirements, telephony
+admission, selection, placement interpretation, draining, and reconciliation.
+
+A future workload-aware model consuming CPU, memory, or media telemetry would
+consume those as ephemeral selection inputs under the existing observation
+rules. Observing infrastructure facts must not make UTCP a second Kubernetes
+scheduler or a competing canonical infrastructure authority.
+
+### Horizontal RuntimeNode distribution is the scaling direction
+
+UTCP is designed around a fleet of RuntimeNodes rather than one indefinitely
+enlarged PBX instance:
+
+```text
+Kamailio / signaling edge
+        |
+        v
+UTCP selection and admission
+        |
+   +----+----+---------+
+   |         |         |
+   v         v         v
+Runtime A  Runtime B  Runtime C
+   |         |         |
+Asterisk  FreeSWITCH  Asterisk
+```
+
+When practical capacity is reached, the architecturally compatible answers are
+adding RuntimeNodes, distributing work across them, and draining or replacing
+individual runtimes — the K5C/K5D/K5E corridor that is already proven — rather
+than a vendor-specific vertical-scaling assumption. Mixed-family fleets are
+architecturally normal, and a heterogeneous fleet must not be ordered by
+family.
+
+This describes intent and existing capability only. UTCP has no automatic
+horizontal autoscaling of telephony runtimes: adding or removing a RuntimeNode
+remains an operator action through the canonical management authority, and
+"automatic PBX horizontal scaling" remains an initial-roadmap non-goal.

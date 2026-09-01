@@ -136,6 +136,8 @@ C2 adds `RuntimeNode` as the sole canonical registry entity for managed telephon
 
 Runtime family (`asterisk`, `freeswitch`) identifies the external technology family. Adapter key (`asterisk-ari`, `freeswitch-esl`) records the future binding point. C2 validates and stores both values but does not instantiate adapters, open HTTP or WebSocket connections, run health checks, or execute commands.
 
+Runtime family is technology metadata only. It is not a capacity tier or performance class: Asterisk and FreeSWITCH are equally first-class execution families, and neither is treated as inherently low- or high-capacity. Real behavioral differences are expressed as declared and observed runtime capabilities and executed inside adapters. Runtime selection derives from canonical eligibility, required capability, placement and failure-domain policy, and the applicable admission budget, never from the family value. `runtime_nodes.capacity_weight` is the current deterministic admission count budget, not a benchmarked PBX maximum; see the ADR-024 2026-09-01 amendment for its meaning, the intentionally unimplemented workload-aware seam, and the horizontal multi-RuntimeNode scaling direction.
+
 Desired lifecycle state is administrator intent (`draft`, `active`, `draining`, `disabled`). Backend catalog authority provides safe runtime families, adapter keys, adapter capability support, endpoint requirements, credential requirements, and adapter-configuration availability to the web UI. C3 owns runtime observation, projection, command execution, and reconciliation. Observed state changes only through projection services that reference runtime-event evidence or stale-observation derivation; there is no administrative mark-ready path.
 
 `RuntimeNode` is a telephony runtime concept, not a Kubernetes machine. Kubernetes remains authoritative for Node existence and conditions, addresses, capacity, labels, taints, cordon state, and Pod placement. A Kubernetes Node may host zero, one, or multiple RuntimeNodes. Future Host views may associate those Kubernetes facts with RuntimeNodes and show telephony impact, while UTCP retains authority over RuntimeNode eligibility, active-call impact, draining readiness, and placement policy.
@@ -204,6 +206,7 @@ Observability components remain cluster-internal and are not exposed through Gat
 - Keep desired state and observed state distinct.
 - Keep vendor-specific behavior behind adapters.
 - Keep Kubernetes concepts out of the core telephony domain.
+- Keep runtime family free of capacity, performance, and preference meaning; scale telephony horizontally across RuntimeNodes rather than around one oversized runtime.
 - Keep Redis and WebSockets out of canonical business authority.
 - Keep CLI commands limited to bootstrap, diagnostics, recovery, migration, and verification.
 

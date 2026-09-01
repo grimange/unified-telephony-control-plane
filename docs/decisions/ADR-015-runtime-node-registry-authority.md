@@ -41,3 +41,20 @@ Desired lifecycle state is administrator intent. Observed state remains `unobser
 - C0 audit, idempotency, and outbox records are used for registry mutations without leaking secret material.
 - A future shared-runtime or cross-tenant runtime model requires a separate architecture decision.
 - C3 owns command execution, event normalization, observed-state projection, and reconciliation.
+
+## Runtime family interpretation clarification — 2026-09-01
+
+Runtime family and adapter key are technology and binding metadata only. They
+are not a capacity tier, performance class, quality ranking, or selection
+preference. `asterisk` and `freeswitch` are equally first-class RuntimeNode
+execution families, and neither may be treated as inherently smaller, larger,
+preferred, or inferior to the other.
+
+Real behavioral differences between runtimes belong in declared and observed
+runtime capabilities and inside adapters, not in the family value. Runtime
+selection derives from canonical eligibility, required capability, placement
+and failure-domain policy, and the applicable admission budget; no selection
+corridor may add a `runtime_family` predicate or family-based ordering term.
+
+See the ADR-024 2026-09-01 amendment for the capacity semantics and scaling
+direction that accompany this clarification.

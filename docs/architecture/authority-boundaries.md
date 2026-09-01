@@ -63,6 +63,8 @@ for recording and offline work. A future processor is not required to be a
 - Kamailio executes live SIP routing. UTCP owns desired gateway and routing policy.
 - rtpengine relays media. UTCP owns desired media-resource registration and health policy.
 - Asterisk and FreeSWITCH execute calls behind adapter contracts. Vendor-specific concepts should be normalized or exposed as explicit optional capabilities.
+- Runtime family is technology and adapter metadata, not a capacity tier or performance class. Asterisk and FreeSWITCH are equally first-class execution families; neither is inherently low- or high-capacity, and no selection corridor may order or prefer candidates by family. Runtime selection derives from canonical eligibility, required capability, placement and failure-domain policy, and the applicable admission budget.
+- `runtime_nodes.capacity_weight` is the current deterministic admission count budget defined by the K5C amendment to ADR-024. It is an operator-declared limit, not a benchmark, hardware measurement, SIP channel specification, or claim that every telephony workload costs the same. Kubernetes remains authoritative for Node capacity, allocatable resources, and scheduling; a future workload-aware admission model may consume such facts as selection inputs but must not infer capacity from runtime family or become a second Kubernetes scheduler.
 
 ## Unified Call Transfer & Handoff (planned)
 

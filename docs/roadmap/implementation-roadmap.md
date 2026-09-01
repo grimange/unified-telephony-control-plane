@@ -643,6 +643,14 @@ transcription, synthesis, and interactive media participants. No implementation
 phase is scheduled before current R0; this is architecture-only and is not an
 R0 gate.
 
+**Workload-aware runtime admission:** architecture-only future direction under
+the [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md)
+2026-09-01 amendment. `runtime_nodes.capacity_weight` remains the completed K5C
+deterministic admission count budget; no phase owns a workload-aware or
+measurement-driven successor, and none is scheduled. Any future model must stay
+vendor-neutral, rest on reproducible workload-specific evidence, and must not
+infer capacity from `runtime_family`. Not an R0 gate.
+
 **Queue/ACD, campaign behavior, advanced IVR workflow, billing/settlement,
 number purchasing/porting, SMS/MMS, and commercial carrier operations:** future
 extensions or application/provider domains, outside R0 core. C7B may reserve
