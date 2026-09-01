@@ -7,14 +7,17 @@ Current-State-Impact: yes
 The repository declares and validates the static Asterisk recording capability,
 and the provider-native smoke now passes stored WAV artifact finalization after
 the fixture was corrected to use the store-preserving ARI stop operation. The
-bounded provider-capability packet is closed locally. Immutable image
-publication and native-k3s deployment remain intentionally deferred to the next
-review step.
+accepted chain was published immutably and deployed through the canonical
+native-k3s workflow. The deployed Asterisk runtime is Ready on the published
+digest, and its static recording capability remains green. Full RMA-A product
+acceptance remains pending.
 
 ## Baseline
 
 - Branch: `main`
-- Starting HEAD and `origin/main`: `9652484638bccfecb1bb59a39848ee041aba1731`
+- Starting HEAD: `a9091ca913fc548b453917554267946aa6d92f2a`
+- Starting `origin/main` and remote `refs/heads/main`:
+  `9652484638bccfecb1bb59a39848ee041aba1731`
 - Starting worktree: clean
 - Prior blocker: ARI channel recording returned `No such file or directory`
   because the recording spool directory was absent.
@@ -72,6 +75,46 @@ recording `utcp-recording-runtime-7a099abc9517`:
 - stored-file endpoint: HTTP `200`
 - cleanup: HTTP `204`
 
+## Canonical publication and native-k3s deployment
+
+The accepted source commit `a9091ca913fc548b453917554267946aa6d92f2a` was
+pushed to `origin/main`. GitHub Actions workflow `33563847672`, job
+`100042391792`, checked out that exact source and completed successfully. The
+uploaded image-lock artifact was `native-k3s-image-lock-a9091ca913fc548b453917554267946aa6d92f2a`
+(artifact `9822526289`). `make server-image-sync` promoted that lock through
+the repository's canonical image-lock authority.
+
+The published Asterisk image was
+`ghcr.io/grimange/utcp-asterisk@sha256:06f3e171e864fbc4c8781899f243de00c4ac40e8d16d1326dab338d6de3afc08`.
+The published API image was
+`ghcr.io/grimange/utcp-api@sha256:c526967c0c55d584a8596c21972c5005b5a4c3b53c0fbf0e552a6821ecdf37ec`.
+The provider-native smoke proof is image-level proof associated with the exact
+source commit and published Asterisk digest; it was not a second full provider
+smoke against the deployed Pod. The deployed Pod separately passed the static
+runtime proof below.
+
+Deployment used context `default`, native-k3s control-plane node
+`utcp-dev01` (`192.168.254.124`), and namespaces `utcp-platform` and
+`utcp-runtime`. The canonical Asterisk Pod
+`asterisk-ari-bf9fd879-6ldwn` was Ready on `utcp-dev01`, Pod IP `10.42.0.112`,
+with restart count `0`; its actual image ID matched the published Asterisk
+digest. The API Pod
+`api-6dbbf85868-w92r4` was Ready with restart count `0`, and its actual image
+ID matched the published API digest. The deployed Asterisk runtime reported
+UID `1000(asterisk)`, `astspooldir => /var/spool/asterisk`, and
+`/var/spool/asterisk/recording` as `asterisk:asterisk`, mode `0750`; a
+runtime-user create/remove probe passed and left no artifact. The deployed
+module checks reported `res_stasis_recording.so`, `res_ari_recordings.so`, and
+`format_wav.so` Running, with `wav` and `wav16` registered. The deployed API
+status reported `asterisk_observed_ready=1`, one claimed listener, and one open
+event epoch. No NetworkPolicy, SIP topology, or recording architecture change
+was made.
+
+Native-k3s internal application proof passed, including API readiness, the
+migration Job, and data PVC binding. `make phase-status-consistency-check`
+passed after reconciling the current ledger. No full RecordingSession natural-
+live acceptance was run in this publication packet.
+
 The event observation timestamp precedes the stop response timestamp by about
 13 ms because Asterisk emits the completion event while the HTTP stop request
 is completing. This does not weaken the ordering contract: the smoke requires
@@ -81,9 +124,7 @@ all durable artifact representations.
 ## Scope and deployment
 
 No UTCP domain, RecordingSession, SIP, NetworkPolicy, FreeSWITCH, storage, or
-retention behavior was changed. The source changes are not yet published into
-an immutable image and were not deployed to native-k3s; those actions are
-deferred pending implementation review. The known generic
+retention behavior was changed. The known generic
 `make asterisk-ari-config-check` failure remains unrelated in
 `CallDomainService.php`.
 

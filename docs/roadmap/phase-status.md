@@ -105,9 +105,9 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** have GPT-5.6 Luna Medium complete the repository-owned
-Asterisk recording-runtime capability preflight and provider smoke, then
-publish/deploy it immutably before repeating fresh RMA-A acceptance. The bounded
+**Exactly one next action:** have Claude Code run
+`RMA_A_RECORDING_AUTHORITY_AND_LIFECYCLE_FINAL_NATURAL_LIVE_ACCEPTANCE` against
+the newly published and deployed immutable revision. The bounded
 packet now provisions `/var/spool/asterisk/recording`, validates runtime-user
 writability, explicitly loads recording modules, and gates WAV registration.
 Static and mutation checks pass. The provider-native smoke now uses the
@@ -117,9 +117,9 @@ gone after stop `204`, observes StoredRecording and stored-file HTTP `200`,
 proves a non-empty WAV artifact, and cleans it up successfully. The prior
 stored-artifact blocker was confirmed to be the fixture's use of ARI cancel /
 discard (`DELETE /recordings/live/{name}`), not an Asterisk capability defect.
-The provider recording-runtime capability packet is now closed locally, but
-full RMA-A acceptance remains pending. No immutable image was published and no
-native-k3s deployment was performed in this packet. The earlier WAV capability,
+The provider recording-runtime capability packet is now published, deployed,
+and verified on its immutable Asterisk revision, but full RMA-A acceptance
+remains pending. The earlier WAV capability,
 HTTP-422 normalization, and terminal RecordingSession failure-projection repair
 remain deployed and live-proven. The fresh post-repair acceptance proved SIP
 delivery, `9900` answer, canonical CallLeg `answered`, durable pre-answer intent,
@@ -231,7 +231,7 @@ documentation task. Current T4 implementation evidence:
 | Track | Status / release placement |
 | --- | --- |
 | K5 | Parallel / R0-Critical infrastructure track under [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md); does not serially gate T4 or C7A. K5A–K5E are Complete / natural-live-proven, satisfying the R0 requirement. K5F is Planned, not implemented, and not an R0 gate |
-| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); RMA-A lifecycle-aware reconciliation is implemented/tested and its pre-answer deferral, natural SIP delivery, natural CallLeg answer, and exactly-one automatic start dispatch are live-proven. The bounded WAV capability, ARI-422 normalization, and terminal failure-projection repair remain implemented, repository-validated, and deployed; the follow-on recording-runtime capability packet adds static/mutation gates, but its provider-native stored-artifact smoke is blocked after successful live start/stop. Complete natural-live recording lifecycle proof remains pending. RMA-B through RMA-H remain not started |
+| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); RMA-A lifecycle-aware reconciliation is implemented/tested and its pre-answer deferral, natural SIP delivery, natural CallLeg answer, and exactly-one automatic start dispatch are live-proven. The bounded WAV capability, ARI-422 normalization, terminal failure-projection repair, and provider recording-runtime capability are implemented, repository-validated, immutably published, deployed, and static/provider-ready. Complete natural-live RecordingSession lifecycle proof remains pending. RMA-B through RMA-H remain not started |
 | Operational Reporting & Insights | Future UTCP Core / Post-current-R0 roadmap; not a current phase or R0 gate; no implementation claimed under [`ADR-033`](../decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md) |
 | C8 | Planned UTCP core transfer/handoff track under [`ADR-025`](../decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md); advanced consultative and inter-runtime/provider handoff defaults to post-R0/R1 unless V1 proves a basic dependency |
 | Queue/ACD | Future extension; no R0 phase |
