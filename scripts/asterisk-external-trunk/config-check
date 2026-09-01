@@ -54,12 +54,12 @@ if printf '%s\n' "$outbound_block" | grep -Fq 'PJSIP_HEADER(add,'; then
   exit 1
 fi
 
-for module in app_stack.so app_dial.so res_pjsip_header_funcs.so; do
+for module in app_stack.so app_dial.so res_pjsip_header_funcs.so format_wav.so; do
   count="$(grep -Fc "load = $module" "$ROOT/infrastructure/docker/asterisk/config/modules.conf")"
   [ "$count" -eq 1 ] || { printf 'invalid_contract=required_module_load_count module=%s count=%s\n' "$module" "$count" >&2; exit 1; }
 done
 
-for module in app_stack.so app_dial.so res_pjsip_header_funcs.so; do
+for module in app_stack.so app_dial.so res_pjsip_header_funcs.so format_wav.so; do
   if grep -Eq "^[[:space:]]*noload[[:space:]]*=[[:space:]]*$module[[:space:]]*$" "$ROOT/infrastructure/docker/asterisk/config/modules.conf"; then
     printf 'invalid_contract=noload_conflicts_with_required_module module=%s\n' "$module" >&2
     exit 1

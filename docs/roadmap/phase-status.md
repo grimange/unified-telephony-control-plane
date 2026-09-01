@@ -105,10 +105,13 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** have GPT-5.6 Luna Medium add the installed
-`format_wav.so` to Asterisk's explicit `autoload = no` module set, correct the
-captured ARI-422 failure mapping/failure projection, deploy canonically, and
-repeat the complete fresh RMA-A acceptance. The accepted same-namespace
+**Exactly one next action:** publish and deploy the bounded WAV capability and
+failure-projection repair, then have GPT-5.6 Terra Medium repeat the complete
+fresh RMA-A acceptance. The repair adds explicit `format_wav.so` loading under
+`autoload = no`, maps ARI 422 to unsupported capability while preserving
+provider messages, and wires terminal RuntimeOperation failure projection into
+RecordingSession convergence. Runtime deployment remains pending. The accepted
+same-namespace
 Asterisk UDP/5060 NetworkPolicy repair is now live-proven: a fresh canonical
 Call reached the sole `asterisk-sip` endpoint, received `200 OK`, and naturally
 projected its CallLeg to `answered`. The deferred RecordingSession then created
@@ -225,7 +228,7 @@ documentation task. Current T4 implementation evidence:
 | Track | Status / release placement |
 | --- | --- |
 | K5 | Parallel / R0-Critical infrastructure track under [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md); does not serially gate T4 or C7A. K5A–K5E are Complete / natural-live-proven, satisfying the R0 requirement. K5F is Planned, not implemented, and not an R0 gate |
-| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); RMA-A lifecycle-aware reconciliation is implemented/tested and its pre-answer deferral, natural SIP delivery, natural CallLeg answer, and exactly-one automatic start dispatch are live-proven. Complete lifecycle proof is blocked at post-answer Asterisk recording start: the explicit `autoload = no` module set omits installed `format_wav.so` while the adapter requests `format=wav`, producing raw ARI HTTP 422. Live evidence also exposes incorrect 422-to-conflict normalization and missing terminal-failure projection to the RecordingSession. RMA-B through RMA-H remain not started |
+| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); RMA-A lifecycle-aware reconciliation is implemented/tested and its pre-answer deferral, natural SIP delivery, natural CallLeg answer, and exactly-one automatic start dispatch are live-proven. The bounded WAV capability, ARI-422 normalization, and terminal failure-projection repair is implemented and repository-validated; immutable image publication/deployment and complete natural-live lifecycle proof remain pending. RMA-B through RMA-H remain not started |
 | Operational Reporting & Insights | Future UTCP Core / Post-current-R0 roadmap; not a current phase or R0 gate; no implementation claimed under [`ADR-033`](../decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md) |
 | C8 | Planned UTCP core transfer/handoff track under [`ADR-025`](../decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md); advanced consultative and inter-runtime/provider handoff defaults to post-R0/R1 unless V1 proves a basic dependency |
 | Queue/ACD | Future extension; no R0 phase |

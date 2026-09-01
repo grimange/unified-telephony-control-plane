@@ -61,7 +61,7 @@ final class CommandWorker
                 if ($handler === null) {
                     $failureClass = FailureClass::UnsupportedCapability;
                     $status = $this->operations->fail($claim->id, $claim->leaseToken, $failureClass, 'handler_not_registered', 'no registered runtime operation handler');
-                    $this->recordings?->markOperationFailed($claim->id, $failureClass, 'handler_not_registered', 'no registered runtime operation handler', $status);
+                    $this->recordings()->markOperationFailed($claim->id, $failureClass, 'handler_not_registered', 'no registered runtime operation handler', $status);
 
                     continue;
                 }
@@ -69,7 +69,7 @@ final class CommandWorker
                 $adapter = $this->resolveAdapter($row, $handler);
                 if ($adapter instanceof FailureClass) {
                     $status = $this->operations->fail($claim->id, $claim->leaseToken, $adapter, 'adapter_not_available', 'runtime adapter was not available');
-                    $this->recordings?->markOperationFailed($claim->id, $adapter, 'adapter_not_available', 'runtime adapter was not available', $status);
+                    $this->recordings()->markOperationFailed($claim->id, $adapter, 'adapter_not_available', 'runtime adapter was not available', $status);
 
                     continue;
                 }
@@ -92,7 +92,7 @@ final class CommandWorker
                         (string) $row->aggregate_type,
                         (string) $row->aggregate_id,
                     );
-                    $this->recordings?->markOperationCompleted($claim->id);
+                    $this->recordings()->markOperationCompleted($claim->id);
                     $processed++;
                     Log::info('runtime operation completed', [
                         'component' => 'telephony-command-worker',
@@ -113,10 +113,10 @@ final class CommandWorker
                     (string) ($result['failure_code'] ?? 'handler_failed'),
                     (string) ($result['failure_message'] ?? 'runtime operation handler failed'),
                 );
-                $this->recordings?->markOperationFailed($claim->id, $failureClass, (string) ($result['failure_code'] ?? 'handler_failed'), (string) ($result['failure_message'] ?? 'runtime operation handler failed'), $status);
+                $this->recordings()->markOperationFailed($claim->id, $failureClass, (string) ($result['failure_code'] ?? 'handler_failed'), (string) ($result['failure_message'] ?? 'runtime operation handler failed'), $status);
             } catch (\Throwable $exception) {
                 $status = $this->operations->fail($claim->id, $claim->leaseToken, FailureClass::InternalError, 'worker_exception', $exception->getMessage());
-                $this->recordings?->markOperationFailed($claim->id, FailureClass::InternalError, 'worker_exception', $exception->getMessage(), $status);
+                $this->recordings()->markOperationFailed($claim->id, FailureClass::InternalError, 'worker_exception', $exception->getMessage(), $status);
             }
         }
 
@@ -143,6 +143,11 @@ final class CommandWorker
         }
 
         return array_values(array_unique($normalized));
+    }
+
+    private function recordings(): RecordingSessionService
+    {
+        return $this->recordings ?? app(RecordingSessionService::class);
     }
 
     private function resolveAdapter(object $operation, RuntimeOperationHandler $handler): RuntimeAdapter|FailureClass|null

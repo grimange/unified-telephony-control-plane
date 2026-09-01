@@ -15,14 +15,17 @@ expect_config_failure() {
     remove_dial) sed -i '/^load = app_dial\.so$/d' "$TMP/modules.conf" ;;
     remove_header) sed -i '/^load = res_pjsip_header_funcs\.so$/d' "$TMP/modules.conf" ;;
     remove_stack) sed -i '/^load = app_stack\.so$/d' "$TMP/modules.conf" ;;
+    remove_wav) sed -i '/^load = format_wav\.so$/d' "$TMP/modules.conf" ;;
     autoload_yes) sed -i 's/^autoload = no$/autoload = yes/' "$TMP/modules.conf" ;;
     noload_dial) printf '%s\n' 'noload = app_dial.so' >> "$TMP/modules.conf" ;;
     noload_stack) printf '%s\n' 'noload = app_stack.so' >> "$TMP/modules.conf" ;;
+    noload_wav) printf '%s\n' 'noload = format_wav.so' >> "$TMP/modules.conf" ;;
   esac
   if grep -Fq 'autoload = no' "$TMP/modules.conf" \
     && grep -Fq 'load = app_dial.so' "$TMP/modules.conf" \
     && grep -Fq 'load = res_pjsip_header_funcs.so' "$TMP/modules.conf" \
     && grep -Fq 'load = app_stack.so' "$TMP/modules.conf" \
+    && grep -Fq 'load = format_wav.so' "$TMP/modules.conf" \
     && ! grep -Eq "^[[:space:]]*noload[[:space:]]*=[[:space:]]*$expected[[:space:]]*$" "$TMP/modules.conf"; then
     printf 'mutation unexpectedly passed: %s\n' "$name" >&2
     exit 1
@@ -36,6 +39,8 @@ expect_config_failure 'remove app_stack load' remove_stack app_stack.so
 expect_config_failure 'autoload changed to yes' autoload_yes app_dial.so
 expect_config_failure 'noload conflicts with app_dial' noload_dial app_dial.so
 expect_config_failure 'noload conflicts with app_stack' noload_stack app_stack.so
+expect_config_failure 'remove format_wav load' remove_wav format_wav.so
+expect_config_failure 'noload conflicts with format_wav' noload_wav format_wav.so
 
 EXTENSIONS="$ROOT/infrastructure/docker/asterisk/config/extensions.conf"
 expect_dialplan_failure() {

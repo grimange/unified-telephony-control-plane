@@ -824,11 +824,26 @@ class AsteriskAriClient
         if ($status === 404) {
             throw new AsteriskAriException(FailureClass::Conflict, 'ari_resource_not_found', 'ARI resource was not found.');
         }
-        if ($status === 409 || $status === 422) {
-            throw new AsteriskAriException(FailureClass::Conflict, 'ari_resource_conflict', 'ARI resource conflict.');
+        if ($status === 409) {
+            throw new AsteriskAriException(FailureClass::Conflict, 'ari_resource_conflict', $this->ariErrorMessage($response['body'], 'ARI resource conflict.'));
+        }
+        if ($status === 422) {
+            throw new AsteriskAriException(FailureClass::UnsupportedCapability, 'ari_recording_format_unsupported', $this->ariErrorMessage($response['body'], 'ARI recording format is unsupported by the runtime.'));
         }
 
         throw new AsteriskAriException(FailureClass::RuntimeUnavailable, 'ari_http_unavailable', 'ARI HTTP request did not return success.', true);
+    }
+
+    private function ariErrorMessage(string $body, string $fallback): string
+    {
+        try {
+            $decoded = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+            $message = is_array($decoded) ? ($decoded['message'] ?? null) : null;
+
+            return is_string($message) && trim($message) !== '' ? trim($message) : $fallback;
+        } catch (JsonException) {
+            return $fallback;
+        }
     }
 
     /**

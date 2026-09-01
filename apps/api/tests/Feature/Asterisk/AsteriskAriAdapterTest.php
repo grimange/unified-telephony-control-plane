@@ -278,6 +278,33 @@ final class AsteriskAriAdapterTest extends TestCase
         ));
     }
 
+    public function test_recording_ari_422_is_unsupported_format_not_resource_conflict(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = new class(new AsteriskCatalog, app(AsteriskAriProfileService::class)) extends AsteriskAriClient
+        {
+            public function requestAri(string $runtimeNodeId, string $method, string $resource, array $query, int $timeoutMs, array $acceptedStatuses, ?array $body = null): array
+            {
+                return $this->ariRequest($runtimeNodeId, $method, $resource, $query, $timeoutMs, $acceptedStatuses, $body);
+            }
+
+            protected function request(string $method, string $url, array $headers, int $timeoutMs, ?string $body = null): array
+            {
+                return ['status' => 422, 'body' => '{"message":"Recording format is unknown"}'];
+            }
+        };
+
+        try {
+            $client->requestAri($nodeId, 'POST', 'channels/channel-1/record', [], 1000, [200]);
+            $this->fail('ARI 422 should throw');
+        } catch (AsteriskAriException $exception) {
+            $this->assertSame(FailureClass::UnsupportedCapability, $exception->failureClass);
+            $this->assertSame('ari_recording_format_unsupported', $exception->failureCode);
+            $this->assertSame('Recording format is unknown', $exception->getMessage());
+        }
+    }
+
     public function test_asterisk_adapter_rejects_unknown_conference_management_operations(): void
     {
         $catalog = new AsteriskCatalog;
