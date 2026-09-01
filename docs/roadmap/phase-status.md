@@ -105,15 +105,19 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** have GPT-5.6 Terra Medium temporarily load the
-already-present `res_pjsip_logger.so` on the two involved native-k3s Asterisk
-instances, enable bounded SIP logging, and perform one fresh canonical SIP
-delivery trace before restoring it. The fixture materialization repair is
-implemented and deployed, and `9900` resolves `Answer -> Echo`; the first
-synchronized trace proved ARI originate acceptance and remote termination but
-was inconclusive because the optional PJSIP logger module was not loaded. See
+**Exactly one next action:** have GPT-5.6 Terra Medium perform one new bounded
+canonical SIP trace with a verified TTY-backed Asterisk PJSIP capture whose
+lifetime covers the API request and complete originate timeout, then restore
+diagnostic settings. `res_pjsip_logger.so` has now been normally loaded and
+`pjsip set logger on` has been proven operational on both involved native-k3s
+Asterisk processes, but the attempted reproof console sessions expired seconds
+before its fresh canonical request; its ARI originate again succeeded and
+later terminated remotely without proving an INVITE or answer. The fixture
+materialization repair remains implemented and deployed, and `9900` resolves
+`Answer -> Echo`. See
 the [fixture repair evidence](../evidence/rma/rma-a-native-k3s-asterisk-echo-fixture-materialization-repair.md),
 [synchronized SIP trace](../evidence/rma/rma-a-asterisk-canonical-sip-delivery-synchronized-live-trace.md),
+[PJSIP transaction capture reproof](../evidence/rma/rma-a-asterisk-pjsip-transaction-capture-reproof.md),
 [live-proof blocker](../evidence/rma/rma-a-recording-session-lifecycle-natural-live-proof-blocker.md),
 [implementation evidence](../evidence/rma/rma-a-recording-session-lifecycle-aware-start-reconciliation-implementation.md),
 and [exact-cause audit](../evidence/rma/rma-a-asterisk-recording-start-conflict-exact-cause-audit.md).
