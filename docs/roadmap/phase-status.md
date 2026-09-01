@@ -105,13 +105,16 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** have GPT-5.6 Terra Medium perform the fresh
-complete RMA-A natural-live proof using the canonical Call and RecordingSession
-APIs. The lifecycle-aware implementation now defers subordinate start until
-canonical `answered` and resolves pre-answer termination; the exact prior audit
-captured Asterisk HTTP `409` / `Channel not in Stasis application` while the
-target channel still existed in `Down` state with no bridge or recording-name
-collision; see the [implementation evidence](../evidence/rma/rma-a-recording-session-lifecycle-aware-start-reconciliation-implementation.md)
+**Exactly one next action:** have GPT-5.6 Luna Medium make the bounded native-k3s
+Asterisk Echo-fixture materialization/attachment repair, then have GPT-5.6
+Terra Medium repeat the fresh complete RMA-A natural-live proof using the
+canonical Call and RecordingSession APIs. The lifecycle-aware implementation is
+tested and deployed; a fresh live Call proved pre-answer intent remains
+`recording / requested` with no start operation and terminal-before-eligibility
+converges vendor-neutrally. The maintained Echo destination did not naturally
+answer because extension `9900` resolved to the Asterisk reject catch-all while
+the optional fixture ConfigMap was absent. See the [live-proof blocker](../evidence/rma/rma-a-recording-session-lifecycle-natural-live-proof-blocker.md),
+[implementation evidence](../evidence/rma/rma-a-recording-session-lifecycle-aware-start-reconciliation-implementation.md),
 and [exact-cause audit](../evidence/rma/rma-a-asterisk-recording-start-conflict-exact-cause-audit.md).
 RMA is the next R0-critical track now that **K5E is COMPLETE /
 NATURAL-LIVE-PROVEN**. The
@@ -211,7 +214,7 @@ documentation task. Current T4 implementation evidence:
 | Track | Status / release placement |
 | --- | --- |
 | K5 | Parallel / R0-Critical infrastructure track under [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md); does not serially gate T4 or C7A. K5A–K5E are Complete / natural-live-proven, satisfying the R0 requirement. K5F is Planned, not implemented, and not an R0 gate |
-| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); RMA-A lifecycle-aware start reconciliation is implemented/tested, the identity-catalog repair is deployed and API authorization is proven, but complete natural live proof remains pending; RMA-B through RMA-H remain not started |
+| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); RMA-A lifecycle-aware start reconciliation is implemented/tested and deployed, with pre-answer deferral and terminal-before-eligibility resolution live-proven; complete lifecycle proof is blocked because the native-k3s Asterisk Echo fixture is absent and CallLegs do not naturally answer. RMA-B through RMA-H remain not started |
 | Operational Reporting & Insights | Future UTCP Core / Post-current-R0 roadmap; not a current phase or R0 gate; no implementation claimed under [`ADR-033`](../decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md) |
 | C8 | Planned UTCP core transfer/handoff track under [`ADR-025`](../decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md); advanced consultative and inter-runtime/provider handoff defaults to post-R0/R1 unless V1 proves a basic dependency |
 | Queue/ACD | Future extension; no R0 phase |
@@ -265,15 +268,18 @@ and ADRs for detail.
 
 RMA is the Recording & Media Archive track. It follows completed K5E and the
 established V1 Call/CallLeg corridor; RMA-A lifecycle-aware start reconciliation
-is implemented/tested, and the forward identity-catalog repair has been
-deployed with both declared RMA-A capabilities authorized through the
-tenant-admin role. Complete natural live proof remains pending after the
-bounded lifecycle repair. The exact live audit captured Asterisk HTTP `409` /
-`Channel not in Stasis application` while the target channel still existed in
-`Down` state, with no bridge or recording-name collision; immediate subordinate
-start dispatch had run while the canonical CallLeg was still `originating`.
-The earlier Asterisk endpoint-plus-URI and identity-catalog defects are
-repaired. See the [implementation evidence](../evidence/rma/rma-a-recording-session-lifecycle-aware-start-reconciliation-implementation.md)
+is implemented/tested and deployed, and the forward identity-catalog repair has
+been deployed with both declared RMA-A capabilities authorized through the
+tenant-admin role. A fresh natural-live proof now confirms pre-answer recording
+intent remains durable without a start RuntimeOperation and that termination
+before eligibility resolves the pending session with
+`recording_subject_terminated_before_start`. Complete RMA-A lifecycle proof is
+blocked at the native-k3s Asterisk Echo fixture: the optional fixture ConfigMap
+is absent and extension `9900` resolves to the reject catch-all, so the CallLeg
+does not naturally answer. The earlier Asterisk endpoint-plus-URI,
+identity-catalog, and premature pre-answer dispatch defects are repaired. See
+the [live-proof blocker](../evidence/rma/rma-a-recording-session-lifecycle-natural-live-proof-blocker.md),
+[implementation evidence](../evidence/rma/rma-a-recording-session-lifecycle-aware-start-reconciliation-implementation.md),
 and [exact-cause audit](../evidence/rma/rma-a-asterisk-recording-start-conflict-exact-cause-audit.md).
 RMA-B through RMA-H remain not started. RMA does not technically gate A0, and
 no artifact, archive, retention, playback, or download implementation is
