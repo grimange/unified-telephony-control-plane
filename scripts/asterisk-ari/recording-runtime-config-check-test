@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+TMP="$(mktemp -d)"
+trap 'cp "$TMP/Dockerfile" infrastructure/docker/asterisk/Dockerfile; cp "$TMP/readiness" infrastructure/docker/asterisk/readiness; cp "$TMP/modules.conf" infrastructure/docker/asterisk/config/modules.conf; rm -rf "$TMP"' EXIT
+cp infrastructure/docker/asterisk/Dockerfile "$TMP/Dockerfile"
+cp infrastructure/docker/asterisk/readiness "$TMP/readiness"
+cp infrastructure/docker/asterisk/config/modules.conf "$TMP/modules.conf"
+
+expect_failure() {
+  local expected="$1"
+  local output="$TMP/output"
+  if "$ROOT/scripts/asterisk-ari/recording-runtime-preflight" >"$output" 2>&1; then
+    printf 'recording runtime mutation unexpectedly passed: %s\n' "$expected" >&2
+    exit 1
+  fi
+  grep -Fq "$expected" "$output" || { cat "$output" >&2; exit 1; }
+}
+
+sed -i '/mkdir -p \/var\/spool\/asterisk\/recording/d' infrastructure/docker/asterisk/Dockerfile
+expect_failure 'recording spool directory is not provisioned'
+cp "$TMP/Dockerfile" infrastructure/docker/asterisk/Dockerfile
+
+sed -i '/format_wav\.so/d' infrastructure/docker/asterisk/config/modules.conf
+expect_failure 'format_wav.so is not explicitly loaded'
+cp "$TMP/modules.conf" infrastructure/docker/asterisk/config/modules.conf
+
+sed -i '/res_stasis_recording\.so/d' infrastructure/docker/asterisk/config/modules.conf
+expect_failure 'res_stasis_recording.so is not explicitly loaded'
+cp "$TMP/modules.conf" infrastructure/docker/asterisk/config/modules.conf
+
+sed -i '/res_ari_recordings\.so/d' infrastructure/docker/asterisk/config/modules.conf
+expect_failure 'res_ari_recordings.so is not explicitly loaded'
+cp "$TMP/modules.conf" infrastructure/docker/asterisk/config/modules.conf
+
+sed -i '/recording_directory_write_failed/d' infrastructure/docker/asterisk/readiness
+expect_failure 'readiness lacks runtime-user writability proof'
+cp "$TMP/readiness" infrastructure/docker/asterisk/readiness
+
+sed -i '/core show file formats/d' infrastructure/docker/asterisk/readiness
+expect_failure 'readiness lacks WAV registration proof'
+
+printf 'Asterisk recording runtime mutation tests passed\n'

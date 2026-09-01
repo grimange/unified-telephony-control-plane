@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PEER_IMAGE="${EXTERNAL_SIP_PEER_IMAGE:-utcp-external-sip-peer:dev}"
+docker build --quiet --tag "$PEER_IMAGE" -f "$ROOT/infrastructure/test-fixtures/external-sip-peer/Dockerfile" "$ROOT/infrastructure/test-fixtures/external-sip-peer" >/dev/null
+UTCP_ASTERISK_RECORDING_RUNTIME_SMOKE=1 "$ROOT/scripts/asterisk-ari/caller-identity-semantics-test"

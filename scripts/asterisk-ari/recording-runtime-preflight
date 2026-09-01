@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+dockerfile=infrastructure/docker/asterisk/Dockerfile
+asterisk_conf=infrastructure/docker/asterisk/config/asterisk.conf
+modules_conf=infrastructure/docker/asterisk/config/modules.conf
+readiness=infrastructure/docker/asterisk/readiness
+
+grep -Fq 'astspooldir => /var/spool/asterisk' "$asterisk_conf" || {
+  echo 'recording runtime preflight failed: effective astspooldir is not repository-pinned' >&2
+  exit 1
+}
+grep -Fq 'autoload = no' "$modules_conf" || {
+  echo 'recording runtime preflight failed: explicit module loading is not enabled' >&2
+  exit 1
+}
+grep -Fq 'load = res_stasis_recording.so' "$modules_conf" || {
+  echo 'recording runtime preflight failed: res_stasis_recording.so is not explicitly loaded' >&2
+  exit 1
+}
+grep -Fq 'load = res_ari_recordings.so' "$modules_conf" || {
+  echo 'recording runtime preflight failed: res_ari_recordings.so is not explicitly loaded' >&2
+  exit 1
+}
+grep -Fq 'load = format_wav.so' "$modules_conf" || {
+  echo 'recording runtime preflight failed: format_wav.so is not explicitly loaded' >&2
+  exit 1
+}
+grep -Fq 'mkdir -p /var/spool/asterisk/recording' "$dockerfile" || {
+  echo 'recording runtime preflight failed: recording spool directory is not provisioned' >&2
+  exit 1
+}
+grep -Fq 'chown -R asterisk:asterisk /opt/utcp-asterisk-config /var/lib/asterisk/sounds /var/spool/asterisk/recording' "$dockerfile" || {
+  echo 'recording runtime preflight failed: recording spool ownership is not provisioned' >&2
+  exit 1
+}
+grep -Fq 'chmod 0750 /var/spool/asterisk/recording' "$dockerfile" || {
+  echo 'recording runtime preflight failed: recording spool permissions are not bounded' >&2
+  exit 1
+}
+grep -Fq '/var/lib/asterisk/sounds/en/reference-tone.wav' "$dockerfile" || {
+  echo 'recording runtime preflight failed: deterministic media asset is not available in the default language directory' >&2
+  exit 1
+}
+grep -Fq 'recording_directory_write_failed' "$readiness" || {
+  echo 'recording runtime preflight failed: readiness lacks runtime-user writability proof' >&2
+  exit 1
+}
+grep -Fq 'core show file formats' "$readiness" || {
+  echo 'recording runtime preflight failed: readiness lacks WAV registration proof' >&2
+  exit 1
+}
+
+echo 'ASTERISK_RECORDING_RUNTIME_CAPABILITY_STATIC_PASS'

@@ -39,6 +39,9 @@ for file in \
   apps/api/app/RuntimeEngine/Commands/GenericRuntimeNodeInspectHandler.php \
   apps/api/app/RuntimeEngine/Listeners/RuntimeListenerLeaseRepository.php \
   infrastructure/docker/asterisk/Dockerfile \
+  infrastructure/docker/asterisk/readiness \
+  infrastructure/docker/asterisk/config/asterisk.conf \
+  infrastructure/docker/asterisk/config/modules.conf \
   infrastructure/kubernetes/components/asterisk-sip-fixtures/extensions.local.conf \
   infrastructure/kubernetes/components/asterisk-instance/kustomization.yaml \
   infrastructure/kubernetes/overlays/local-two-asterisk/kustomization.yaml \
@@ -57,6 +60,18 @@ do
 done
 
 grep -Fq '/var/lib/asterisk/sounds/reference-tone.wav' infrastructure/docker/asterisk/Dockerfile || fail "validation playback asset is not projected into Asterisk"
+grep -Fq '/var/lib/asterisk/sounds/en/reference-tone.wav' infrastructure/docker/asterisk/Dockerfile || fail "validation playback asset is not available in the default language directory"
+grep -Fq 'mkdir -p /var/spool/asterisk/recording' infrastructure/docker/asterisk/Dockerfile || fail "Asterisk recording spool directory is not provisioned in the image"
+grep -Fq 'chown -R asterisk:asterisk /opt/utcp-asterisk-config /var/lib/asterisk/sounds /var/spool/asterisk/recording' infrastructure/docker/asterisk/Dockerfile || fail "Asterisk recording spool ownership is not provisioned"
+grep -Fq 'chmod 0750 /var/spool/asterisk/recording' infrastructure/docker/asterisk/Dockerfile || fail "Asterisk recording spool permissions are not bounded"
+grep -Fq 'RECORDING_DIR=' infrastructure/docker/asterisk/readiness || fail "Asterisk readiness does not validate recording spool capability"
+grep -Fq 'recording_directory_write_failed' infrastructure/docker/asterisk/readiness || fail "Asterisk readiness does not prove runtime-user recording writability"
+grep -Fq 'core show file formats' infrastructure/docker/asterisk/readiness || fail "Asterisk readiness does not validate registered recording formats"
+grep -Fq 'wav_format_unavailable' infrastructure/docker/asterisk/readiness || fail "Asterisk readiness does not require WAV capability"
+for module in res_stasis_recording.so res_ari_recordings.so format_wav.so; do
+  [ "$(grep -Fc "load = $module" infrastructure/docker/asterisk/config/modules.conf)" -eq 1 ] || fail "required recording module load contract is missing: $module"
+done
+[ -x scripts/asterisk-ari/recording-runtime-test ] || fail "provider-native recording runtime smoke is missing"
 
 grep -q '^exten => c6-generic-proof,1,' infrastructure/kubernetes/components/asterisk-sip-fixtures/extensions.local.conf || fail "missing C6 generic inbound proof destination"
 grep -q 'Stasis(utcp-t0-observation,c6-generic-proof)' infrastructure/kubernetes/components/asterisk-sip-fixtures/extensions.local.conf || fail "C6 generic proof destination must enter the existing Stasis application"

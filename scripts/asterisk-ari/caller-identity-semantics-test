@@ -24,6 +24,9 @@ cleanup() {
   if [ -n "${stasis_listener_pid:-}" ]; then
     kill "$stasis_listener_pid" >/dev/null 2>&1 || true
   fi
+  if [ -n "${asterisk:-}" ]; then
+    docker exec "$asterisk" pkill -f utcp-t0-observation >/dev/null 2>&1 || true
+  fi
   docker rm -f "$asterisk" "$peer" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
   rm -rf "$tmp"
@@ -41,11 +44,11 @@ command -v docker >/dev/null 2>&1 || fail 'docker is required'
 docker image inspect "$ASTERISK_IMAGE" >/dev/null 2>&1 || fail "missing Asterisk image: $ASTERISK_IMAGE"
 docker image inspect "$PEER_IMAGE" >/dev/null 2>&1 || fail "missing peer image: $PEER_IMAGE"
 
-docker network create --subnet 172.30.0.0/24 "$network" >/dev/null
-docker run -d --name "$peer" --network "$network" --ip 172.30.0.2 \
+docker network create --subnet 172.31.0.0/24 "$network" >/dev/null
+docker run -d --name "$peer" --network "$network" --ip 172.31.0.2 \
   -e EXTERNAL_SIP_PEER_USERNAME=utcp-v1 \
   -e EXTERNAL_SIP_PEER_PASSWORD=utcp-synthetic-secret \
-  -e UTCP_SIGNALING_IP=172.30.0.3 \
+  -e UTCP_SIGNALING_IP=172.31.0.3 \
   "$PEER_IMAGE" >/dev/null
 
 peer_ready=0
@@ -61,7 +64,7 @@ done
 cp "$ROOT/infrastructure/docker/asterisk/config/pjsip.conf" "$tmp/pjsip.conf"
 sed -i "s#kamailio-sip-internal\.utcp-platform\.svc\.cluster\.local:5060#${peer}:5060#g" "$tmp/pjsip.conf"
 
-docker run -d --name "$asterisk" --network "$network" --ip 172.30.0.3 \
+docker run -d --name "$asterisk" --network "$network" --ip 172.31.0.3 \
   -p 127.0.0.1::8088 \
   -e ARI_USERNAME=utcp-ari \
   -e ARI_PASSWORD=utcp-ari-secret \
@@ -70,7 +73,7 @@ docker run -d --name "$asterisk" --network "$network" --ip 172.30.0.3 \
 
 asterisk_ready=0
 for attempt in $(seq 1 45); do
-  if timeout 5 docker exec "$asterisk" /usr/local/bin/utcp-asterisk-readiness >/dev/null 2>&1; then
+  if timeout 35 docker exec "$asterisk" /usr/local/bin/utcp-asterisk-readiness >/dev/null 2>&1; then
     asterisk_ready=1
     break
   fi
@@ -83,12 +86,15 @@ done
 docker exec "$peer" asterisk -rx 'pjsip set logger on' >/dev/null
 host_port="$(docker port "$asterisk" 8088/tcp | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')"
 [ -n "$host_port" ] || fail 'Asterisk ARI port was not published'
+asterisk_cli() {
+  docker exec "$asterisk" asterisk -C /tmp/utcp-asterisk/asterisk.conf -rx "$1"
+}
 
 # Register the repository-owned Stasis application through the same ARI event
 # WebSocket contract used by the managed listener. Without an active
 # subscription Asterisk correctly rejects an app= originate as unowned.
 ws_auth="$(printf '%s' 'utcp-ari:utcp-ari-secret' | base64 -w0)"
-docker exec "$asterisk" python3 -c 'import base64,socket,time
+docker exec -d "$asterisk" sh -c 'python3 -c '\''import base64,socket,time
 host="127.0.0.1"; port=8088
 s=socket.create_connection((host,port),10)
 key=base64.b64encode(b"utcp-semantic-ws-key").decode()
@@ -102,11 +108,21 @@ while b"\r\n\r\n" not in response:
  response += s.recv(4096)
 if b" 101 " not in response.split(b"\r\n",1)[0]:
  raise SystemExit("ARI WebSocket registration failed: "+response.decode(errors="replace"))
+s.settimeout(None)
+def send_frame(op,payload=b""):
+ header=bytes([0x80|op])
+ n=len(payload)
+ if n < 126: header += bytes([n])
+ elif n < 65536: header += bytes([126])+n.to_bytes(2,"big")
+ else: header += bytes([127])+n.to_bytes(8,"big")
+ s.sendall(header+payload)
 while True:
  data=s.recv(4096)
  if not data: break
-' >"$tmp/stasis-listener.log" 2>&1 &
-stasis_listener_pid=$!
+ if data and data[0] & 0x0f == 9:
+  send_frame(10, data[2:2+(data[1]&0x7f)])
+'\'' >"/tmp/utcp-stasis-listener.log" 2>&1'
+stasis_listener_pid=''
 stasis_registered=0
 for attempt in $(seq 1 20); do
   app_status="$(curl -sS -o /dev/null -w '%{http_code}' --user utcp-ari:utcp-ari-secret \
@@ -121,7 +137,16 @@ done
 
 body='{"variables":{"__UTCP_CALL_LEG_ID":"leg-semantic","__UTCP_ROUTE_DECISION_ID":"route-semantic","__UTCP_TRUNK_ENDPOINT_ID":"endpoint-semantic","__UTCP_CALLER_IDENTITY_ID":"caller-semantic"}}'
 response="$tmp/ari-response"
-ari_url="http://127.0.0.1:${host_port}/ari/channels?endpoint=Local%2F97001%40utcp-outbound&app=utcp-t0-observation&timeout=30&formats=ulaw&callerId=utcp-v1%20%3Cutcp-v1%3E&channelId=caller-identity-semantic"
+channel_pattern='Local/97001@utcp-outbound[^";]*;1'
+endpoint_query='Local%2F97001%40utcp-outbound'
+if [ "${UTCP_ASTERISK_RECORDING_RUNTIME_SMOKE:-0}" = 1 ]; then
+  # The provider smoke records a directly Stasis-owned PJSIP channel so the
+  # test exercises a real media-bearing channel, while the default semantic
+  # test continues to cover the canonical Local-channel control landing.
+  endpoint_query="PJSIP%2Fanonymous%2Fsip%3A97001%40${peer}%3A5060"
+  channel_pattern='PJSIP/anonymous[^";]*'
+fi
+ari_url="http://127.0.0.1:${host_port}/ari/channels?endpoint=${endpoint_query}&app=utcp-t0-observation&timeout=30&formats=ulaw&callerId=utcp-v1%20%3Cutcp-v1%3E&channelId=caller-identity-semantic"
 http_code="$(curl -sS -o "$response" -w '%{http_code}' --user utcp-ari:utcp-ari-secret \
   -H 'Content-Type: application/json' --data-binary "$body" "$ari_url")"
 [ "$http_code" = 200 ] || fail "ARI originate failed: http=${http_code} response=$(tr '\n' ' ' < "$response")"
@@ -159,18 +184,22 @@ fi
 
 local_control_half_valid=0
 answered_channel_sustained=1
-for attempt in $(seq 1 4); do
+sustain_attempts=4
+if [ "${UTCP_ASTERISK_RECORDING_RUNTIME_SMOKE:-0}" = 1 ]; then
+  sustain_attempts=1
+fi
+for attempt in $(seq 1 "$sustain_attempts"); do
   channel_json="$(curl -sS --user utcp-ari:utcp-ari-secret \
     "http://127.0.0.1:${host_port}/ari/channels/caller-identity-semantic" 2>/dev/null || true)"
-  if ! printf '%s\n' "$channel_json" | rg -q '"name"[[:space:]]*:[[:space:]]*"Local/97001@utcp-outbound[^";]*;1'; then
+  if ! printf '%s\n' "$channel_json" | rg -q "\"name\"[[:space:]]*:[[:space:]]*\"${channel_pattern}"; then
     answered_channel_sustained=0
   fi
-  if printf '%s\n' "$channel_json" | rg -q '"name"[[:space:]]*:[[:space:]]*"Local/97001@utcp-outbound[^";]*;1'; then
+  if printf '%s\n' "$channel_json" | rg -q "\"name\"[[:space:]]*:[[:space:]]*\"${channel_pattern}"; then
     local_control_half_valid=1
   fi
   sleep 1
 done
-[ "$local_control_half_valid" -eq 1 ] || fail "Local ;1 did not remain in the canonical ARI control landing: ${channel_json:-no channel response}"
+  [ "$local_control_half_valid" -eq 1 ] || fail "ARI channel did not remain in the expected control landing: ${channel_json:-no channel response}"
 [ "$answered_channel_sustained" -eq 1 ] || fail 'answered Local pair was not sustained beyond the historical failure window'
 
 asterisk_logs="$(docker logs "$asterisk" 2>&1 || true)"
@@ -178,11 +207,118 @@ if printf '%s\n' "$asterisk_logs" | rg -q 'No such extension/context|invalid ext
   fail 'Asterisk reported an invalid Local ;1 dialplan landing'
 fi
 
+if [ "${UTCP_ASTERISK_RECORDING_RUNTIME_SMOKE:-0}" = 1 ]; then
+  # Echo() on the synthetic peer provides a deterministic media path. Send
+  # PCMU RTP to the peer's answered SDP port; the peer echoes it back to the
+  # originator, so the recorded channel has real inbound audio.
+  rtp_target_port="$(printf '%s\n' "$logs" | awk 'BEGIN{ok=0} /^SIP\/2.0 200 OK/{ok=1} ok && /^m=audio[[:space:]]+[0-9]+/{print $2; exit}')"
+  [[ "$rtp_target_port" =~ ^[0-9]+$ ]] || fail 'synthetic peer SDP did not expose its answered RTP port'
+  rtp_source_port="$(printf '%s\n' "$logs" | awk '/^m=audio[[:space:]]+[0-9]+/{print $2; exit}')"
+  [[ "$rtp_source_port" =~ ^[0-9]+$ ]] || fail 'originating INVITE SDP did not expose its RTP port'
+  # Do not start recording until the ARI-owned channel has crossed the
+  # provider answer boundary.  Asterisk can accept the record request while
+  # the channel is still Down, but that transient state does not produce a
+  # finalized channel-owned WAV artifact.
+  channel_state=''
+  for attempt in $(seq 1 15); do
+    channel_json="$(curl -sS --user utcp-ari:utcp-ari-secret \
+      "http://127.0.0.1:${host_port}/ari/channels/caller-identity-semantic" 2>/dev/null || true)"
+    channel_state="$(printf '%s\n' "$channel_json" | sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+    [ "$channel_state" = Up ] && break
+    sleep 1
+  done
+  [ "$channel_state" = Up ] || fail "ARI recording smoke channel did not reach Up before recording: ${channel_json:-no channel response}"
+  asterisk_cli 'rtp set debug on' >/dev/null 2>&1 || true
+  docker exec -d -e RTP_TARGET_IP=172.31.0.2 -e RTP_TARGET_PORT="$rtp_target_port" \
+    -e RTP_SOURCE_PORT="$rtp_source_port" \
+    "$peer" /usr/local/bin/utcp-peer-rtp-sender >/dev/null
+  sleep 1
+  sender_pid="$(docker exec "$peer" pgrep -f utcp-peer-rtp-sender | head -1 || true)"
+  [ -n "$sender_pid" ] || fail 'synthetic RTP sender did not remain active after launch'
+  recording_name="utcp-recording-runtime-${suffix}"
+  recording_response="$tmp/recording-start-response"
+  recording_code="$(curl -sS -o "$recording_response" -w '%{http_code}' -X POST \
+    --user utcp-ari:utcp-ari-secret \
+    "http://127.0.0.1:${host_port}/ari/channels/caller-identity-semantic/record?name=${recording_name}&format=wav&ifExists=overwrite" || true)"
+  case "$recording_code" in
+    200|201) ;;
+    *) fail "ARI recording start failed: http=${recording_code} response=$(tr '\n' ' ' < "$recording_response")" ;;
+  esac
+  grep -Fq '"name"' "$recording_response" || fail 'ARI recording start response did not contain a recording resource'
+  rg -q '"format"[[:space:]]*:[[:space:]]*"wav"' "$recording_response" || fail "ARI recording start response did not report WAV format: $(tr '\n' ' ' < "$recording_response")"
+
+  live_code=0
+  for attempt in $(seq 1 10); do
+    live_code="$(curl -sS -o "$tmp/live-recording-response" -w '%{http_code}' \
+      --user utcp-ari:utcp-ari-secret \
+      "http://127.0.0.1:${host_port}/ari/recordings/live/${recording_name}" || true)"
+    [ "$live_code" = 200 ] && break
+    sleep 1
+  done
+  [ "$live_code" = 200 ] || fail "live recording was not observable: http=${live_code}"
+
+  # Keep the provider recording live long enough for the deterministic RTP
+  # stream to be consumed and flushed before stopping it.
+  sleep "${UTCP_RECORDING_RUNTIME_HOLD_SECONDS:-3}"
+
+  stop_code="$(curl -sS -o "$tmp/recording-stop-response" -w '%{http_code}' -X DELETE \
+    --user utcp-ari:utcp-ari-secret \
+    "http://127.0.0.1:${host_port}/ari/recordings/live/${recording_name}" || true)"
+  [ "$stop_code" = 204 ] || fail "ARI recording stop failed: http=${stop_code} response=$(tr '\n' ' ' < "$tmp/recording-stop-response")"
+
+  # Give the provider a short finalization window while the channel and Stasis
+  # application are still alive.  The stored-resource endpoint and filesystem
+  # are both authoritative; either may become visible first.
+  artifact="/var/spool/asterisk/recording/${recording_name}.wav"
+  artifact_ready=0
+  for attempt in $(seq 1 10); do
+    if docker exec "$asterisk" sh -c "test -s '$artifact'" >/dev/null 2>&1; then
+      artifact_ready=1
+      break
+    fi
+    stored_code="$(curl -sS -o "$tmp/stored-recording-response" -w '%{http_code}' \
+      --user utcp-ari:utcp-ari-secret \
+      "http://127.0.0.1:${host_port}/ari/recordings/stored/${recording_name}" || true)"
+    [ "$stored_code" = 200 ] && { artifact_ready=1; break; }
+    sleep 1
+  done
+
+  # Asterisk finalizes the channel-owned WAV on channel teardown on some
+  # versions even after the live-recording DELETE has returned. End the
+  # isolated provider channel before checking the durable artifact so the
+  # smoke proves the complete provider lifecycle rather than a transient
+  # in-memory recording handle.
+  channel_teardown_code="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE --user utcp-ari:utcp-ari-secret \
+    "http://127.0.0.1:${host_port}/ari/channels/caller-identity-semantic" || true)"
+  [ "$channel_teardown_code" = 204 ] || [ "$channel_teardown_code" = 404 ] || fail "ARI channel teardown after recording stop failed: http=${channel_teardown_code}"
+
+  for attempt in $(seq 1 10); do
+    [ "$artifact_ready" -eq 1 ] && break
+    if docker exec "$asterisk" sh -c "test -s '$artifact'" >/dev/null 2>&1; then
+      artifact_ready=1
+      break
+    fi
+    sleep 1
+  done
+  if [ "$artifact_ready" -ne 1 ]; then
+    stored_code="$(curl -sS -o "$tmp/stored-recording-response" -w '%{http_code}' \
+      --user utcp-ari:utcp-ari-secret \
+      "http://127.0.0.1:${host_port}/ari/recordings/stored/${recording_name}" || true)"
+    artifact_listing="$(docker exec "$asterisk" sh -c "find /var/spool/asterisk -maxdepth 4 -type f -name '${recording_name}*' -ls 2>/dev/null || true" 2>&1 || true)"
+    recording_dir_listing="$(docker exec "$asterisk" sh -c 'ls -la /var/spool/asterisk/recording 2>&1 || true' 2>&1 || true)"
+    channel_stats="$(asterisk_cli 'core show channels verbose' 2>&1 || true)"
+    spool_settings="$(asterisk_cli 'core show settings' 2>/dev/null | rg -i 'spool|record' || true)"
+    rtp_debug="$(docker logs "$asterisk" 2>&1 | rg -i 'RTP|strict RTP|record|no audio' | tail -80 || true)"
+    fail "WAV recording artifact was not created: ${artifact} stored_http=${stored_code} stored_body=$(tr '\n' ' ' < "$tmp/stored-recording-response" 2>/dev/null || true) files=${artifact_listing} dir=${recording_dir_listing} channels=${channel_stats} settings=${spool_settings} rtp=${rtp_debug}"
+  fi
+  printf 'asterisk_recording_runtime=pass recording_name=%s format=wav artifact=%s\n' "$recording_name" "$artifact"
+fi
+
 delete_code="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE --user utcp-ari:utcp-ari-secret \
   "http://127.0.0.1:${host_port}/ari/channels/caller-identity-semantic" || true)"
 [ "$delete_code" = 204 ] || [ "$delete_code" = 404 ] || fail "ARI teardown failed: http=${delete_code}"
 for attempt in $(seq 1 10); do
-  channels="$(docker exec "$asterisk" asterisk -rx 'core show channels concise' 2>/dev/null || true)"
+  channels="$(asterisk_cli 'core show channels concise' 2>/dev/null || true)"
   if ! printf '%s\n' "$channels" | rg -q 'Local/97001@utcp-outbound'; then
     break
   fi

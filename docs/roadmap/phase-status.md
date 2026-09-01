@@ -105,20 +105,19 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** have GPT-5.6 Luna Medium add the missing
-repository-owned `/var/spool/asterisk/recording` directory to the Asterisk
-image, publish/deploy it immutably, and then repeat the fresh RMA-A acceptance.
-The WAV capability, HTTP-422 normalization, and terminal RecordingSession
-failure-projection repair remain deployed and live-proven. The fresh
-post-repair acceptance again proved SIP delivery, `9900` answer, canonical
-CallLeg `answered`, durable pre-answer intent, and exactly-one start dispatch.
-The first two live post-answer ARI channel-record attempts now fail inside
-Asterisk with `No such file or directory`; the source RuntimeNode has
-`format_wav.so` Running and `wav` registered, but lacks
-`/var/spool/asterisk/recording`. The later retry after natural Echo-channel
-termination returned the expected 404 and the RecordingSession correctly
-projected its terminal failure to `failed`. The fixture materialization repair
-remains deployed and `9900` resolves `Answer -> Echo`. See
+**Exactly one next action:** have GPT-5.6 Luna Medium complete the repository-owned
+Asterisk recording-runtime capability preflight and provider smoke, then
+publish/deploy it immutably before repeating fresh RMA-A acceptance. The bounded
+packet now provisions `/var/spool/asterisk/recording`, validates runtime-user
+writability, explicitly loads recording modules, and gates WAV registration.
+Static and mutation checks pass, and a local provider smoke reaches WAV live
+recording start/stop, but stored artifact finalization remains blocked: the
+stored query returns 404 and the recording directory remains empty. No new
+image/configuration root cause is proven yet. The earlier WAV capability,
+HTTP-422 normalization, and terminal RecordingSession failure-projection repair
+remain deployed and live-proven. The fresh post-repair acceptance proved SIP
+delivery, `9900` answer, canonical CallLeg `answered`, durable pre-answer intent,
+and exactly-one start dispatch. See
 the [fixture repair evidence](../evidence/rma/rma-a-native-k3s-asterisk-echo-fixture-materialization-repair.md),
 [synchronized SIP trace](../evidence/rma/rma-a-asterisk-canonical-sip-delivery-synchronized-live-trace.md),
 [PJSIP transaction capture reproof](../evidence/rma/rma-a-asterisk-pjsip-transaction-capture-reproof.md),
@@ -127,7 +126,7 @@ the [fixture repair evidence](../evidence/rma/rma-a-native-k3s-asterisk-echo-fix
 [implementation evidence](../evidence/rma/rma-a-recording-session-lifecycle-aware-start-reconciliation-implementation.md),
 the [exact-cause audit](../evidence/rma/rma-a-asterisk-recording-start-conflict-exact-cause-audit.md),
 the [WAV repair evidence](../evidence/rma/rma-a-asterisk-wav-format-ari-422-and-recording-failure-projection-repair.md),
-and the [current final-acceptance evidence](../evidence/rma/rma-a-recording-authority-and-lifecycle-final-natural-live-acceptance.md).
+and the [recording-runtime capability evidence](../evidence/rma/rma-a-asterisk-recording-runtime-capability-and-preflight-closure.md).
 RMA is the next R0-critical track now that **K5E is COMPLETE /
 NATURAL-LIVE-PROVEN**. The
 2026-08-31 two-stage controlled live proof deployed `3202451` and closed both
@@ -226,7 +225,7 @@ documentation task. Current T4 implementation evidence:
 | Track | Status / release placement |
 | --- | --- |
 | K5 | Parallel / R0-Critical infrastructure track under [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md); does not serially gate T4 or C7A. K5A–K5E are Complete / natural-live-proven, satisfying the R0 requirement. K5F is Planned, not implemented, and not an R0 gate |
-| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); RMA-A lifecycle-aware reconciliation is implemented/tested and its pre-answer deferral, natural SIP delivery, natural CallLeg answer, and exactly-one automatic start dispatch are live-proven. The bounded WAV capability, ARI-422 normalization, and terminal failure-projection repair is implemented, repository-validated, immutably published/deployed, and runtime WAV capability-proven; complete natural-live recording lifecycle proof remains pending. RMA-B through RMA-H remain not started |
+| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); RMA-A lifecycle-aware reconciliation is implemented/tested and its pre-answer deferral, natural SIP delivery, natural CallLeg answer, and exactly-one automatic start dispatch are live-proven. The bounded WAV capability, ARI-422 normalization, and terminal failure-projection repair remain implemented, repository-validated, and deployed; the follow-on recording-runtime capability packet adds static/mutation gates, but its provider-native stored-artifact smoke is blocked after successful live start/stop. Complete natural-live recording lifecycle proof remains pending. RMA-B through RMA-H remain not started |
 | Operational Reporting & Insights | Future UTCP Core / Post-current-R0 roadmap; not a current phase or R0 gate; no implementation claimed under [`ADR-033`](../decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md) |
 | C8 | Planned UTCP core transfer/handoff track under [`ADR-025`](../decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md); advanced consultative and inter-runtime/provider handoff defaults to post-R0/R1 unless V1 proves a basic dependency |
 | Queue/ACD | Future extension; no R0 phase |

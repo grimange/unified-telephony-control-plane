@@ -6,6 +6,7 @@ MODULES_CONFIG="${MODULES_CONFIG:-/opt/utcp-asterisk-config/modules.conf}"
 ARI_URL="${ARI_URL:-http://127.0.0.1:8088/ari/asterisk/info}"
 ASTERISK_BIN=/usr/sbin/asterisk
 ASTERISK_BIN="${ASTERISK_BIN_OVERRIDE:-$ASTERISK_BIN}"
+RECORDING_DIR="${ASTERISK_RECORDING_DIR:-/var/spool/asterisk/recording}"
 
 fail() {
   check_class="$1"
@@ -26,6 +27,13 @@ cli() {
 [ -x "$ASTERISK_BIN" ] || fail startup asterisk_binary_unavailable
 [ -r "$ASTERISK_CONFIG" ] || fail startup asterisk_config_unreadable
 [ -r "$MODULES_CONFIG" ] || fail modules modules_config_unreadable
+[ -d "$RECORDING_DIR" ] || fail recording recording_directory_missing
+[ -w "$RECORDING_DIR" ] || fail recording recording_directory_not_writable
+recording_probe="$RECORDING_DIR/.utcp-recording-readiness-$$"
+if ! : > "$recording_probe" 2>/dev/null; then
+  fail recording recording_directory_write_failed
+fi
+rm -f "$recording_probe"
 
 if ! cli "core waitfullybooted" >/dev/null; then
   fail startup cli_not_fully_booted
@@ -82,5 +90,18 @@ fi
 if ! cli "pjsip show transports" | grep -Eq '^Transport:[[:space:]]+transport-udp-internal[[:space:]]+udp[[:space:]].*0\.0\.0\.0:5060$'; then
   fail pjsip_transport "transport_missing_or_not_udp_5060"
 fi
+
+wav_formats_ready=0
+# The caller-side readiness probe retries this bounded check while Asterisk
+# finishes loading explicitly configured modules. Keep this probe short so a
+# single invocation cannot consume the caller's entire retry window.
+for attempt in $(seq 1 5); do
+  if cli "core show file formats" | awk '$2 == "wav" || $2 == "wav16" { found=1 } END { exit found ? 0 : 1 }'; then
+    wav_formats_ready=1
+    break
+  fi
+  sleep 1
+done
+[ "$wav_formats_ready" -eq 1 ] || fail recording wav_format_unavailable
 
 printf 'asterisk_readiness=ok\n'
