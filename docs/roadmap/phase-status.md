@@ -105,19 +105,22 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** have GPT-5.6 Terra Medium perform one new bounded
-canonical SIP trace with a verified TTY-backed Asterisk PJSIP capture whose
-lifetime covers the API request and complete originate timeout, then restore
-diagnostic settings. `res_pjsip_logger.so` has now been normally loaded and
-`pjsip set logger on` has been proven operational on both involved native-k3s
-Asterisk processes, but the attempted reproof console sessions expired seconds
-before its fresh canonical request; its ARI originate again succeeded and
-later terminated remotely without proving an INVITE or answer. The fixture
-materialization repair remains implemented and deployed, and `9900` resolves
-`Answer -> Echo`. See
+**Exactly one next action:** have GPT-5.6 Luna Medium implement and test the
+bounded native-k3s NetworkPolicy correction that permits the existing
+`asterisk-ari` role to send and receive same-namespace UDP/5060 traffic for the
+canonical `asterisk-sip` path, then deploy it and have GPT-5.6 Terra Medium
+repeat the fresh natural-live proof. A persistent Asterisk-owned PJSIP
+filesystem trace now proves that ARI created the originating channel and that
+it sent seven INVITEs to `asterisk-sip`'s correct ClusterIP, while its sole ready
+backend received neither the SIP Call-ID nor the runtime channel. The deployed
+default-deny and `allow-asterisk-sip-from-kamailio` policy rules omit both this
+originator's UDP/5060 egress and the destination's same-namespace Asterisk
+ingress. The fixture materialization repair remains implemented and deployed,
+and `9900` resolves `Answer -> Echo`. See
 the [fixture repair evidence](../evidence/rma/rma-a-native-k3s-asterisk-echo-fixture-materialization-repair.md),
 [synchronized SIP trace](../evidence/rma/rma-a-asterisk-canonical-sip-delivery-synchronized-live-trace.md),
 [PJSIP transaction capture reproof](../evidence/rma/rma-a-asterisk-pjsip-transaction-capture-reproof.md),
+[persistent PJSIP filesystem trace](../evidence/rma/rma-a-asterisk-persistent-pjsip-filesystem-trace-reproof.md),
 [live-proof blocker](../evidence/rma/rma-a-recording-session-lifecycle-natural-live-proof-blocker.md),
 [implementation evidence](../evidence/rma/rma-a-recording-session-lifecycle-aware-start-reconciliation-implementation.md),
 and [exact-cause audit](../evidence/rma/rma-a-asterisk-recording-start-conflict-exact-cause-audit.md).
@@ -281,9 +284,17 @@ before eligibility resolves the pending session with
 `recording_subject_terminated_before_start`. Complete RMA-A lifecycle proof is
 blocked after the native-k3s Asterisk Echo fixture repair: the fixture ConfigMap
 is materialized and extension `9900` resolves to `Answer() -> Echo()`. A
-synchronized fresh trace proved ARI originate acceptance and remote termination,
-but did not capture SIP frames because `res_pjsip_logger.so` was present but not
-loaded; the exact SIP delivery boundary is not yet established.
+synchronized fresh trace now persists the complete originating-side SIP
+transaction: ARI accepted the channel, the originating Asterisk resolved and
+sent seven UDP INVITEs to the correct `asterisk-sip` ClusterIP, and the sole
+ready backend received neither the SIP Call-ID nor the runtime channel. The
+exact blocker is the default-deny plus
+`allow-asterisk-sip-from-kamailio` NetworkPolicy contract: it allows only
+Kamailio ingress to the selected Asterisk role and no corresponding
+same-namespace Asterisk UDP/5060 egress/ingress path. This is a bounded
+native-k3s policy repair; no evidence supports changing RecordingSession,
+adapter, endpoint, or dialplan semantics. See the
+[persistent PJSIP filesystem trace](../evidence/rma/rma-a-asterisk-persistent-pjsip-filesystem-trace-reproof.md).
 The earlier Asterisk endpoint-plus-URI,
 identity-catalog, and premature pre-answer dispatch defects are repaired. See
 the [live-proof blocker](../evidence/rma/rma-a-recording-session-lifecycle-natural-live-proof-blocker.md),
