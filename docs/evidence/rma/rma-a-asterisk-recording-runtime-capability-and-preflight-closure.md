@@ -62,3 +62,34 @@ immutable image and were not deployed to native-k3s because the required
 provider-native artifact gate is not passing. The known generic
 `make asterisk-ari-config-check` failure remains unrelated in
 `CallDomainService.php`.
+
+## 2026-09-01 RecordingFinished synchronization repair attempt
+
+This bounded follow-up started from local commit
+`e9151e296be53955fcf1ab1d807aea6daa08ab24` on `main`, with a clean worktree.
+The provider smoke previously asserted the stored resource immediately after
+the live-recording stop response. That assertion was premature as a lifecycle
+contract: ARI `204` accepts the stop request, but recording finalization is
+asynchronous. The smoke now keeps an ARI Stasis WebSocket listener, captures
+matching `RecordingStarted`, `RecordingFinished`, and `RecordingFailed` events
+by exact generated recording name, and waits within a finite 30-second
+convergence deadline for the finished event, inactive live resource, stored
+resource, stored-file endpoint, and non-empty filesystem artifact.
+
+The repair proved the matching `RecordingStarted` event, a live recording, and
+the matching `RecordingFinished` event. It also proved that the live recording
+was no longer active after the stop `204`. However, after the bounded window,
+`GET /ari/recordings/stored/<exact-name>` still returned `404 Recording not
+found`, the stored-file endpoint could not be proven, and the expected
+`/var/spool/asterisk/recording/<exact-name>.wav` artifact was not visible.
+The result is therefore the narrow verdict
+`RMA_A_ASTERISK_PROVIDER_RECORDING_FINALIZED_BUT_STORED_ARTIFACT_MISSING`.
+This is not evidence of a missing spool directory, WAV module, format
+registration, or runtime-user permission defect. The smoke now records the
+event and endpoint state, timestamps, filesystem listing, channel state, and
+RTP diagnostics for this boundary. No speculative Asterisk configuration,
+RecordingSession, storage, network policy, or architecture change was made.
+
+Because the composite preflight remains red at the provider artifact gate, no
+immutable image was published and native-k3s was not deployed. The current
+provider readiness packet remains open for a narrowly localized cause analysis.

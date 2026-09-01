@@ -94,7 +94,7 @@ asterisk_cli() {
 # WebSocket contract used by the managed listener. Without an active
 # subscription Asterisk correctly rejects an app= originate as unowned.
 ws_auth="$(printf '%s' 'utcp-ari:utcp-ari-secret' | base64 -w0)"
-docker exec -d "$asterisk" sh -c 'python3 -c '\''import base64,socket,time
+docker exec -d "$asterisk" sh -c 'python3 -c '\''import base64,json,socket,time
 host="127.0.0.1"; port=8088
 s=socket.create_connection((host,port),10)
 key=base64.b64encode(b"utcp-semantic-ws-key").decode()
@@ -109,6 +109,14 @@ while b"\r\n\r\n" not in response:
 if b" 101 " not in response.split(b"\r\n",1)[0]:
  raise SystemExit("ARI WebSocket registration failed: "+response.decode(errors="replace"))
 s.settimeout(None)
+events=open("/tmp/utcp-recording-events.jsonl","a", buffering=1)
+def receive(n):
+ data=b""
+ while len(data)<n:
+  part=s.recv(n-len(data))
+  if not part: raise EOFError
+  data += part
+ return data
 def send_frame(op,payload=b""):
  header=bytes([0x80|op])
  n=len(payload)
@@ -117,10 +125,19 @@ def send_frame(op,payload=b""):
  else: header += bytes([127])+n.to_bytes(8,"big")
  s.sendall(header+payload)
 while True:
- data=s.recv(4096)
- if not data: break
- if data and data[0] & 0x0f == 9:
-  send_frame(10, data[2:2+(data[1]&0x7f)])
+ first=receive(2); opcode=first[0] & 0x0f; length=first[1] & 0x7f
+ if length == 126: length=int.from_bytes(receive(2),"big")
+ elif length == 127: length=int.from_bytes(receive(8),"big")
+ payload=receive(length) if length else b""
+ if opcode == 9: send_frame(10,payload)
+ elif opcode == 8: break
+ elif opcode == 1:
+  try:
+   event=json.loads(payload.decode())
+   if event.get("type") in ("RecordingStarted","RecordingFinished","RecordingFailed"):
+    recording=event.get("recording") or {}
+    events.write(json.dumps({"observed_at":time.time(),"type":event.get("type"),"recording_name":recording.get("name"),"recording_format":recording.get("format"),"recording_state":recording.get("state"),"cause":event.get("cause"),"reason":event.get("reason")})+"\n")
+  except (ValueError,UnicodeDecodeError): pass
 '\'' >"/tmp/utcp-stasis-listener.log" 2>&1'
 stasis_listener_pid=''
 stasis_registered=0
@@ -134,6 +151,7 @@ for attempt in $(seq 1 20); do
   sleep 1
 done
 [ "$stasis_registered" -eq 1 ] || fail 'canonical ARI Stasis application did not register'
+docker exec "$asterisk" test -f /tmp/utcp-recording-events.jsonl || fail 'ARI lifecycle listener did not initialize its event capture file'
 
 body='{"variables":{"__UTCP_CALL_LEG_ID":"leg-semantic","__UTCP_ROUTE_DECISION_ID":"route-semantic","__UTCP_TRUNK_ENDPOINT_ID":"endpoint-semantic","__UTCP_CALLER_IDENTITY_ID":"caller-semantic"}}'
 response="$tmp/ari-response"
@@ -247,6 +265,23 @@ if [ "${UTCP_ASTERISK_RECORDING_RUNTIME_SMOKE:-0}" = 1 ]; then
   grep -Fq '"name"' "$recording_response" || fail 'ARI recording start response did not contain a recording resource'
   rg -q '"format"[[:space:]]*:[[:space:]]*"wav"' "$recording_response" || fail "ARI recording start response did not report WAV format: $(tr '\n' ' ' < "$recording_response")"
 
+  recording_started_at=''
+  recording_event_deadline=$((SECONDS + 20))
+  while [ "$SECONDS" -lt "$recording_event_deadline" ]; do
+    matching_events="$(docker exec "$asterisk" cat /tmp/utcp-recording-events.jsonl 2>/dev/null | grep -F "\"recording_name\": \"${recording_name}\"" || true)"
+    if printf '%s\n' "$matching_events" | rg -q '"type"[[:space:]]*:[[:space:]]*"RecordingFailed"'; then
+      failed_event="$(printf '%s\n' "$matching_events" | rg '"type"[[:space:]]*:[[:space:]]*"RecordingFailed"' | tail -1)"
+      fail "provider emitted RecordingFailed for ${recording_name}: ${failed_event}"
+    fi
+    started_event="$(printf '%s\n' "$matching_events" | rg '"type"[[:space:]]*:[[:space:]]*"RecordingStarted"' | tail -1 || true)"
+    if [ -n "$started_event" ]; then
+      recording_started_at="$(printf '%s\n' "$started_event" | sed -n 's/.*"observed_at"[[:space:]]*:[[:space:]]*\([0-9.]*\).*/\1/p')"
+      break
+    fi
+    sleep 0.2
+  done
+  [ -n "$recording_started_at" ] || fail "matching RecordingStarted event was not observed for ${recording_name} before 20s deadline; captured_events=$(docker exec "$asterisk" sh -c 'tail -20 /tmp/utcp-recording-events.jsonl 2>/dev/null || true' | tr '\n' ' ') listener=$(docker exec "$asterisk" sh -c 'tail -5 /tmp/utcp-stasis-listener.log 2>/dev/null || true' | tr '\n' ' ')"
+
   live_code=0
   for attempt in $(seq 1 10); do
     live_code="$(curl -sS -o "$tmp/live-recording-response" -w '%{http_code}' \
@@ -266,52 +301,63 @@ if [ "${UTCP_ASTERISK_RECORDING_RUNTIME_SMOKE:-0}" = 1 ]; then
     "http://127.0.0.1:${host_port}/ari/recordings/live/${recording_name}" || true)"
   [ "$stop_code" = 204 ] || fail "ARI recording stop failed: http=${stop_code} response=$(tr '\n' ' ' < "$tmp/recording-stop-response")"
 
-  # Give the provider a short finalization window while the channel and Stasis
-  # application are still alive.  The stored-resource endpoint and filesystem
-  # are both authoritative; either may become visible first.
+  stop_204_at="$(date +%s.%3N)"
   artifact="/var/spool/asterisk/recording/${recording_name}.wav"
-  artifact_ready=0
-  for attempt in $(seq 1 10); do
-    if docker exec "$asterisk" sh -c "test -s '$artifact'" >/dev/null 2>&1; then
-      artifact_ready=1
-      break
+  recording_finished_at=''
+  stored_visible_at=''
+  filesystem_visible_at=''
+  finalization_deadline=$((SECONDS + 30))
+  while [ "$SECONDS" -lt "$finalization_deadline" ]; do
+    matching_events="$(docker exec "$asterisk" cat /tmp/utcp-recording-events.jsonl 2>/dev/null | grep -F "\"recording_name\": \"${recording_name}\"" || true)"
+    if printf '%s\n' "$matching_events" | rg -q '"type"[[:space:]]*:[[:space:]]*"RecordingFailed"'; then
+      failed_event="$(printf '%s\n' "$matching_events" | rg '"type"[[:space:]]*:[[:space:]]*"RecordingFailed"' | tail -1)"
+      fail "provider emitted RecordingFailed after stop for ${recording_name}: ${failed_event}"
     fi
+    finished_event="$(printf '%s\n' "$matching_events" | rg '"type"[[:space:]]*:[[:space:]]*"RecordingFinished"' | tail -1 || true)"
+    if [ -n "$finished_event" ] && [ -z "$recording_finished_at" ]; then
+      recording_finished_at="$(printf '%s\n' "$finished_event" | sed -n 's/.*"observed_at"[[:space:]]*:[[:space:]]*\([0-9.]*\).*/\1/p')"
+    fi
+    live_code="$(curl -sS -o "$tmp/live-recording-response" -w '%{http_code}' \
+      --user utcp-ari:utcp-ari-secret \
+      "http://127.0.0.1:${host_port}/ari/recordings/live/${recording_name}" || true)"
     stored_code="$(curl -sS -o "$tmp/stored-recording-response" -w '%{http_code}' \
       --user utcp-ari:utcp-ari-secret \
       "http://127.0.0.1:${host_port}/ari/recordings/stored/${recording_name}" || true)"
-    [ "$stored_code" = 200 ] && { artifact_ready=1; break; }
-    sleep 1
-  done
-
-  # Asterisk finalizes the channel-owned WAV on channel teardown on some
-  # versions even after the live-recording DELETE has returned. End the
-  # isolated provider channel before checking the durable artifact so the
-  # smoke proves the complete provider lifecycle rather than a transient
-  # in-memory recording handle.
-  channel_teardown_code="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE --user utcp-ari:utcp-ari-secret \
-    "http://127.0.0.1:${host_port}/ari/channels/caller-identity-semantic" || true)"
-  [ "$channel_teardown_code" = 204 ] || [ "$channel_teardown_code" = 404 ] || fail "ARI channel teardown after recording stop failed: http=${channel_teardown_code}"
-
-  for attempt in $(seq 1 10); do
-    [ "$artifact_ready" -eq 1 ] && break
-    if docker exec "$asterisk" sh -c "test -s '$artifact'" >/dev/null 2>&1; then
-      artifact_ready=1
+    [ "$stored_code" = 200 ] && [ -z "$stored_visible_at" ] && stored_visible_at="$(date +%s.%3N)"
+    if docker exec "$asterisk" sh -c "test -f '$artifact' && test -s '$artifact'" >/dev/null 2>&1; then
+      [ -n "$filesystem_visible_at" ] || filesystem_visible_at="$(date +%s.%3N)"
+    fi
+    if [ -n "$recording_finished_at" ] && [ "$live_code" != 200 ] && [ "$stored_code" = 200 ] && [ -n "$filesystem_visible_at" ]; then
       break
     fi
-    sleep 1
+    sleep 0.2
   done
-  if [ "$artifact_ready" -ne 1 ]; then
-    stored_code="$(curl -sS -o "$tmp/stored-recording-response" -w '%{http_code}' \
-      --user utcp-ari:utcp-ari-secret \
-      "http://127.0.0.1:${host_port}/ari/recordings/stored/${recording_name}" || true)"
+  [ -n "$recording_finished_at" ] || fail "stop accepted (204) but matching RecordingFinished timed out after 30s for ${recording_name}; live_http=${live_code}"
+  [ "$live_code" != 200 ] || fail "matching RecordingFinished arrived but live recording remained active: ${recording_name}"
+  if [ "$stored_code" != 200 ]; then
     artifact_listing="$(docker exec "$asterisk" sh -c "find /var/spool/asterisk -maxdepth 4 -type f -name '${recording_name}*' -ls 2>/dev/null || true" 2>&1 || true)"
     recording_dir_listing="$(docker exec "$asterisk" sh -c 'ls -la /var/spool/asterisk/recording 2>&1 || true' 2>&1 || true)"
     channel_stats="$(asterisk_cli 'core show channels verbose' 2>&1 || true)"
-    spool_settings="$(asterisk_cli 'core show settings' 2>/dev/null | rg -i 'spool|record' || true)"
     rtp_debug="$(docker logs "$asterisk" 2>&1 | rg -i 'RTP|strict RTP|record|no audio' | tail -80 || true)"
-    fail "WAV recording artifact was not created: ${artifact} stored_http=${stored_code} stored_body=$(tr '\n' ' ' < "$tmp/stored-recording-response" 2>/dev/null || true) files=${artifact_listing} dir=${recording_dir_listing} channels=${channel_stats} settings=${spool_settings} rtp=${rtp_debug}"
+    fail "matching RecordingFinished arrived but stored recording remained unavailable: recording=${recording_name} started_at=${recording_started_at} stop_204_at=${stop_204_at} finished_at=${recording_finished_at} live_http=${live_code} stored_http=${stored_code} stored_body=$(tr '\n' ' ' < "$tmp/stored-recording-response" 2>/dev/null || true) finished_event=${finished_event} artifact=${artifact} artifact_listing=${artifact_listing} recording_dir=${recording_dir_listing} channels=${channel_stats} rtp=${rtp_debug}"
   fi
-  printf 'asterisk_recording_runtime=pass recording_name=%s format=wav artifact=%s\n' "$recording_name" "$artifact"
+  rg -q '"name"[[:space:]]*:[[:space:]]*"'"$recording_name"'"' "$tmp/stored-recording-response" || fail "stored recording returned the wrong name: $(tr '\n' ' ' < "$tmp/stored-recording-response")"
+  rg -q '"format"[[:space:]]*:[[:space:]]*"wav"' "$tmp/stored-recording-response" || fail "stored recording did not report WAV: $(tr '\n' ' ' < "$tmp/stored-recording-response")"
+  stored_file_code="$(curl -sS -o "$tmp/stored-recording-file" -w '%{http_code}' \
+    --user utcp-ari:utcp-ari-secret \
+    "http://127.0.0.1:${host_port}/ari/recordings/stored/${recording_name}/file" || true)"
+  [ "$stored_file_code" = 200 ] || fail "stored recording file endpoint failed: http=${stored_file_code}"
+  [ -n "$filesystem_visible_at" ] || fail "stored recording and RecordingFinished were observed but filesystem WAV was not visible before 30s: ${artifact}"
+  artifact_size="$(docker exec "$asterisk" sh -c "stat -c '%s' '$artifact'" 2>/dev/null || true)"
+  docker exec "$asterisk" sh -c "test -f '$artifact' && test -s '$artifact'" >/dev/null 2>&1 || fail "filesystem WAV was not a non-empty regular file: ${artifact} size=${artifact_size}"
+  printf 'asterisk_recording_runtime=pass recording_name=%s started_event=%s finished_event=%s stop_204_at=%s stored_visible_at=%s filesystem_visible_at=%s artifact=%s artifact_bytes=%s stored_file_http=%s\n' \
+    "$recording_name" "$started_event" "$finished_event" "$stop_204_at" "$stored_visible_at" "$filesystem_visible_at" "$artifact" "$artifact_size" "$stored_file_code"
+  cleanup_recording_code="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+    --user utcp-ari:utcp-ari-secret \
+    "http://127.0.0.1:${host_port}/ari/recordings/stored/${recording_name}" || true)"
+  [ "$cleanup_recording_code" = 204 ] || [ "$cleanup_recording_code" = 404 ] || fail "stored recording cleanup failed: http=${cleanup_recording_code}"
+  ! docker exec "$asterisk" sh -c "test -e '$artifact'" >/dev/null 2>&1 || fail "stored recording cleanup left filesystem artifact: ${artifact}"
+  printf 'asterisk_recording_runtime_cleanup=pass recording_name=%s cleanup_http=%s\n' "$recording_name" "$cleanup_recording_code"
 fi
 
 delete_code="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE --user utcp-ari:utcp-ari-secret \

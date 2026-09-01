@@ -110,10 +110,13 @@ Asterisk recording-runtime capability preflight and provider smoke, then
 publish/deploy it immutably before repeating fresh RMA-A acceptance. The bounded
 packet now provisions `/var/spool/asterisk/recording`, validates runtime-user
 writability, explicitly loads recording modules, and gates WAV registration.
-Static and mutation checks pass, and a local provider smoke reaches WAV live
-recording start/stop, but stored artifact finalization remains blocked: the
-stored query returns 404 and the recording directory remains empty. No new
-image/configuration root cause is proven yet. The earlier WAV capability,
+Static and mutation checks pass. The synchronized local provider smoke now
+captures the exact `RecordingStarted` and `RecordingFinished` events and proves
+the live resource is gone after stop `204`, but the stored query still returns
+404 and the recording directory remains empty after the bounded completion
+window. The precise current verdict is
+`RMA_A_ASTERISK_PROVIDER_RECORDING_FINALIZED_BUT_STORED_ARTIFACT_MISSING`.
+No new image/configuration root cause is proven yet. The earlier WAV capability,
 HTTP-422 normalization, and terminal RecordingSession failure-projection repair
 remain deployed and live-proven. The fresh post-repair acceptance proved SIP
 delivery, `9900` answer, canonical CallLeg `answered`, durable pre-answer intent,
