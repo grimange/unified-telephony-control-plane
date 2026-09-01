@@ -105,13 +105,15 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** have GPT-5.6 Terra Medium perform a narrow
-operational diagnosis of the canonical SIP originate path now that the
-repository-owned Echo fixture is loaded and resolves `9900 -> Answer -> Echo`.
-The fixture materialization repair is implemented and deployed, but fresh
-canonical Calls still produce no Asterisk channel and terminate remotely before
-canonical `answered`; complete RMA-A natural-live proof remains blocked. See
+**Exactly one next action:** have GPT-5.6 Terra Medium temporarily load the
+already-present `res_pjsip_logger.so` on the two involved native-k3s Asterisk
+instances, enable bounded SIP logging, and perform one fresh canonical SIP
+delivery trace before restoring it. The fixture materialization repair is
+implemented and deployed, and `9900` resolves `Answer -> Echo`; the first
+synchronized trace proved ARI originate acceptance and remote termination but
+was inconclusive because the optional PJSIP logger module was not loaded. See
 the [fixture repair evidence](../evidence/rma/rma-a-native-k3s-asterisk-echo-fixture-materialization-repair.md),
+[synchronized SIP trace](../evidence/rma/rma-a-asterisk-canonical-sip-delivery-synchronized-live-trace.md),
 [live-proof blocker](../evidence/rma/rma-a-recording-session-lifecycle-natural-live-proof-blocker.md),
 [implementation evidence](../evidence/rma/rma-a-recording-session-lifecycle-aware-start-reconciliation-implementation.md),
 and [exact-cause audit](../evidence/rma/rma-a-asterisk-recording-start-conflict-exact-cause-audit.md).
@@ -274,8 +276,10 @@ intent remains durable without a start RuntimeOperation and that termination
 before eligibility resolves the pending session with
 `recording_subject_terminated_before_start`. Complete RMA-A lifecycle proof is
 blocked after the native-k3s Asterisk Echo fixture repair: the fixture ConfigMap
-is materialized and extension `9900` resolves to `Answer() -> Echo()`, but fresh
-canonical Calls still produce no Asterisk channel and do not naturally answer.
+is materialized and extension `9900` resolves to `Answer() -> Echo()`. A
+synchronized fresh trace proved ARI originate acceptance and remote termination,
+but did not capture SIP frames because `res_pjsip_logger.so` was present but not
+loaded; the exact SIP delivery boundary is not yet established.
 The earlier Asterisk endpoint-plus-URI,
 identity-catalog, and premature pre-answer dispatch defects are repaired. See
 the [live-proof blocker](../evidence/rma/rma-a-recording-session-lifecycle-natural-live-proof-blocker.md),
