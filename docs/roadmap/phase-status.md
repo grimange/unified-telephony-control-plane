@@ -139,9 +139,8 @@ store-preserving provider stop retained the artifact, and naturally late
 recording observations did not regress the stopped state. FreeSWITCH remains
 honestly unsupported and no RMA-C authority appeared. See the
 [RMA-B direct-derivation reproof](../evidence/rma/rma-b-capture-reference-direct-derivation-focused-live-reproof-passed.md).
-**RMA-C Recording Artifact Authority is IMPLEMENTED / REPOSITORY-TESTED /
-IMMUTABLY PUBLISHED / DEPLOYED with focused deployed natural-live acceptance
-pending.** The observation-driven
+**RMA-C Recording Artifact Authority is COMPLETE /
+NATURAL-LIVE-PROVEN.** The observation-driven
 two-phase artifact authority creates one pending artifact from
 `recording_started` and finalizes it to available from `recording_stopped`,
 using direct tenant-scoped CaptureReference session correlation, an independent
@@ -155,12 +154,24 @@ finalization** because `AsteriskAriClient::sanitizeAriObject()` stripped the
 provider's `format` and `duration` fields before the RMA-C listener could read
 them. The bounded source repair now preserves those two whitelisted fields as
 safe bounded transport; the existing normalizer and artifact invariants remain
-unchanged. Repository validation is green, and the corrected revision is now
-immutably published and deployed; focused natural-live reproof remains pending. See the
-[sanitizer repair evidence](../evidence/rma/rma-c-ari-object-sanitizer-recording-metadata-repair.md)
+unchanged. Repository validation is green, the corrected revision `dc6ae91` is
+immutably published and deployed, and the 2026-09-02 focused deployed
+natural-live reproof **closed the blocker**. Two fresh natural transactions on
+the corrected digest proved the repaired chain end to end: provider
+`recording.format="wav"` now survives sanitization, reaches the receipt as
+`recording_format="wav"`, normalizes to `media_format="wav"` with
+`duration_ms=0` from a naturally supplied `duration=0`, finalizes the **same**
+artifact `pending → available`, emits exactly one `recording_artifact.available`,
+and projects through the existing `telephony.recordings.view` endpoint. Every
+authoritative event processor ran the repaired digest, with none on the blocked
+one. The 44-byte zero-PCM boundary is closed: both artifacts reached `available`,
+so availability depends on provider-reported completion plus a normalized format,
+never on byte size, duration, or audio content. No RMA-C proof gap remains. See the
+[RMA-C focused deployed natural-live reproof](../evidence/rma/rma-c-recording-artifact-authority-focused-deployed-natural-live-reproof-passed.md),
+the [sanitizer repair evidence](../evidence/rma/rma-c-ari-object-sanitizer-recording-metadata-repair.md),
 and the historical [RMA-C acceptance blocker](../evidence/rma/rma-c-recording-artifact-authority-focused-acceptance-blocker.md).
-**Exactly one next action:** publish and deploy the corrected immutable RMA-C
-revision, then re-run the focused deployed natural-live artifact acceptance
+**Exactly one next action:** run
+`RMA_D_ARCHIVE_TARGET_AND_SECRET_REFERENCE_AUTHORITY_IMPLEMENTATION_DESIGN`
 under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md).
 The pre-Call execution-image blocker is closed by the deployed,
 live-proven managed-workload observer repair: terminating and terminal Pods are
@@ -294,7 +305,7 @@ documentation task. Current T4 implementation evidence:
 | Track | Status / release placement |
 | --- | --- |
 | K5 | Parallel / R0-Critical infrastructure track under [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md); does not serially gate T4 or C7A. K5A–K5E are Complete / natural-live-proven, satisfying the R0 requirement. K5F is Planned, not implemented, and not an R0 gate |
-| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); **RMA-A Recording Authority and Lifecycle is COMPLETE / NATURAL-LIVE-PROVEN.** One fresh canonical transaction proved pre-answer intent with zero premature start, natural SIP answer, canonical `answered`, exactly-one automatic start, a real Asterisk WAV LiveRecording, canonical active convergence, start idempotency, canonical stop, the store-preserving ARI stop, a retained StoredRecording, canonical stopped convergence, stop idempotency, and complete audit continuity. The bounded WAV capability, ARI-422 normalization, terminal failure-projection repair, provider recording-runtime capability, and managed-workload live-Pod execution-image observation repair are implemented, repository-validated, immutably published, deployed, and live-proven. No RMA-A proof gap remains. **RMA-B Runtime-Neutral Capture Contract is COMPLETE / ACCEPTANCE-PROVEN.** The canonical capture identity is `utcp:capture/<RecordingSession.id>`, translated to the Asterisk provider capture `utcp-capture-<RecordingSession.id>`, and channel-less `RecordingStarted`/`RecordingFinished` events correlate back to the exact RecordingSession by primary key — a corridor that did not exist under RMA-A. The direct-derivation live reproof proved that one identity end to end, with the former `md5()` name and the legacy CallLeg-ID name both `404` at the provider, plus canonical payload purity, idempotency, the store-preserving provider stop, natural late-event monotonicity, the unchanged FreeSWITCH unsupported boundary, and no RMA-C leakage. No RMA-B proof gap remains. **RMA-C Recording Artifact Authority is implemented, repository-tested, published, and deployed, and its focused acceptance is BLOCKED at finalization:** the `pending` artifact is created with exact RecordingSession/Call/CallLeg/RuntimeNode/`capture_ref` correlation, but `AsteriskAriClient::sanitizeAriObject()` strips `format` and `duration` from the provider event, so `media_format` is never normalized and the artifact cannot reach `available`. RMA-D through RMA-H remain not started |
+| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); **RMA-A Recording Authority and Lifecycle is COMPLETE / NATURAL-LIVE-PROVEN.** One fresh canonical transaction proved pre-answer intent with zero premature start, natural SIP answer, canonical `answered`, exactly-one automatic start, a real Asterisk WAV LiveRecording, canonical active convergence, start idempotency, canonical stop, the store-preserving ARI stop, a retained StoredRecording, canonical stopped convergence, stop idempotency, and complete audit continuity. The bounded WAV capability, ARI-422 normalization, terminal failure-projection repair, provider recording-runtime capability, and managed-workload live-Pod execution-image observation repair are implemented, repository-validated, immutably published, deployed, and live-proven. No RMA-A proof gap remains. **RMA-B Runtime-Neutral Capture Contract is COMPLETE / ACCEPTANCE-PROVEN.** The canonical capture identity is `utcp:capture/<RecordingSession.id>`, translated to the Asterisk provider capture `utcp-capture-<RecordingSession.id>`, and channel-less `RecordingStarted`/`RecordingFinished` events correlate back to the exact RecordingSession by primary key — a corridor that did not exist under RMA-A. The direct-derivation live reproof proved that one identity end to end, with the former `md5()` name and the legacy CallLeg-ID name both `404` at the provider, plus canonical payload purity, idempotency, the store-preserving provider stop, natural late-event monotonicity, the unchanged FreeSWITCH unsupported boundary, and no RMA-C leakage. No RMA-B proof gap remains. **RMA-C Recording Artifact Authority is COMPLETE / NATURAL-LIVE-PROVEN.** One `RecordingArtifact` per RecordingSession is created `pending` from `recording_started` with exact RecordingSession/Call/CallLeg/RuntimeNode/`capture_ref` correlation and finalized to `available` from `recording_stopped`, carrying the provider-normalized `media_format` and `duration_ms`, with exactly one `recording_artifact.available` event and a minimal projection on the existing recording endpoint. The initial acceptance was blocked by `AsteriskAriClient::sanitizeAriObject()` stripping `format`/`duration`; that whitelist repair is deployed and the reproof closed the chain, including the 44-byte zero-PCM content-independence boundary. No RMA-C proof gap remains. RMA-D through RMA-H remain not started |
 | Operational Reporting & Insights | Future UTCP Core / Post-current-R0 roadmap; not a current phase or R0 gate; no implementation claimed under [`ADR-033`](../decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md) |
 | C8 | Planned UTCP core transfer/handoff track under [`ADR-025`](../decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md); advanced consultative and inter-runtime/provider handoff defaults to post-R0/R1 unless V1 proves a basic dependency |
 | Queue/ACD | Future extension; no R0 phase |
@@ -400,11 +411,15 @@ whole transaction. **RMA-B is COMPLETE / ACCEPTANCE-PROVEN and no RMA-B proof
 gap remains.** See the [canonical direct-derivation deployment
 evidence](../evidence/rma/rma-b-capture-reference-direct-derivation-canonical-deployment.md)
 and the [direct-derivation focused live reproof](../evidence/rma/rma-b-capture-reference-direct-derivation-focused-live-reproof-passed.md).
-RMA-C is implemented, repository-tested, published, and deployed; its initial
-focused deployed natural-live acceptance proved `pending` artifact creation with
-exact correlation but was BLOCKED at finalization by the ARI object sanitizer
-stripping the provider media format. The bounded sanitizer repair is now
-published and deployed; focused natural-live reproof remains pending. RMA-D
+**RMA-C Recording Artifact Authority is COMPLETE / NATURAL-LIVE-PROVEN.** Its
+initial acceptance proved `pending` artifact creation with exact correlation but
+was blocked at finalization by the ARI object sanitizer stripping the provider
+media format; the bounded whitelist repair `dc6ae91` is published, deployed, and
+closed by the 2026-09-02 focused natural-live reproof, which proved
+`recording.format="wav"` surviving sanitization through the receipt, the
+normalized observation, `pending → available` finalization of the same artifact,
+exactly one `recording_artifact.available`, the existing API projection, and the
+44-byte zero-PCM content-independence boundary. No RMA-C proof gap remains. RMA-D
 through RMA-H remain not started. RMA does not technically
 gate A0, and
 no artifact, archive, retention, playback, or download implementation is
