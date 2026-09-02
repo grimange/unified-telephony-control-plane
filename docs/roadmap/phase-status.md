@@ -105,15 +105,15 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** have Codex run
-`RMA_A_MANAGED_RUNTIME_EXECUTION_IMAGE_LIVE_POD_OBSERVATION_REPAIR`, then repeat
-`RMA_A_RECORDING_AUTHORITY_AND_LIFECYCLE_FINAL_NATURAL_LIVE_ACCEPTANCE`. The
-2026-09-01 final acceptance run could not create a fresh canonical Call:
-`ManagedRuntimeWorkloadConvergenceOperationHandler::observeExecutionImage()`
-adopts the first owned Pod without filtering `deletionTimestamp`, phase, or
-readiness, so a condemned Pod stranded on NotReady `utcp-dev02` pins
-`observed_execution_image` to a stale digest and outbound RuntimeNode selection
-returns HTTP 422. See the
+**Exactly one next action:** have Claude Code run
+`RMA_A_RECORDING_AUTHORITY_AND_LIFECYCLE_FINAL_NATURAL_LIVE_ACCEPTANCE` with
+Stage 0 execution-eligibility verification and Stage 1 full RMA-A lifecycle
+proof. The pre-Call execution-image blocker is closed by the deployed,
+live-proven managed-workload observer repair: terminating and terminal Pods are
+excluded, a live Ready Pod is preferred, and a prior observed image is retained
+when no acceptable live image exists. See the
+[execution-image observation repair](../evidence/rma/rma-a-managed-runtime-execution-image-live-pod-observation-repair.md)
+and the preserved historical
 [execution-image observation blocker](../evidence/rma/rma-a-runtime-node-execution-image-observation-live-proof-blocker.md).
 The provider recording capability itself was re-verified live and is not
 implicated. The bounded
@@ -240,7 +240,7 @@ documentation task. Current T4 implementation evidence:
 | Track | Status / release placement |
 | --- | --- |
 | K5 | Parallel / R0-Critical infrastructure track under [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md); does not serially gate T4 or C7A. K5A–K5E are Complete / natural-live-proven, satisfying the R0 requirement. K5F is Planned, not implemented, and not an R0 gate |
-| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); RMA-A lifecycle-aware reconciliation is implemented/tested and its pre-answer deferral, natural SIP delivery, natural CallLeg answer, and exactly-one automatic start dispatch are live-proven. The bounded WAV capability, ARI-422 normalization, terminal failure-projection repair, and provider recording-runtime capability are implemented, repository-validated, immutably published, deployed, and static/provider-ready. Complete natural-live RecordingSession lifecycle proof remains pending and is currently blocked before Call creation by the managed-workload execution-image observation defect recorded in [`rma-a-runtime-node-execution-image-observation-live-proof-blocker`](../evidence/rma/rma-a-runtime-node-execution-image-observation-live-proof-blocker.md). RMA-B through RMA-H remain not started |
+| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); RMA-A lifecycle-aware reconciliation is implemented/tested and its pre-answer deferral, natural SIP delivery, natural CallLeg answer, and exactly-one automatic start dispatch are live-proven. The bounded WAV capability, ARI-422 normalization, terminal failure-projection repair, provider recording-runtime capability, and managed-workload live-Pod execution-image observation repair are implemented, repository-validated, immutably published, deployed, and live-proven. The pre-Call execution-image blocker is closed; complete natural-live RecordingSession lifecycle proof remains pending. RMA-B through RMA-H remain not started |
 | Operational Reporting & Insights | Future UTCP Core / Post-current-R0 roadmap; not a current phase or R0 gate; no implementation claimed under [`ADR-033`](../decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md) |
 | C8 | Planned UTCP core transfer/handoff track under [`ADR-025`](../decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md); advanced consultative and inter-runtime/provider handoff defaults to post-R0/R1 unless V1 proves a basic dependency |
 | Queue/ACD | Future extension; no R0 phase |
@@ -301,7 +301,7 @@ without a start operation, terminal-before-eligibility resolution, the repaired
 Asterisk-to-Asterisk SIP delivery, `9900` answer, canonical CallLeg `answered`,
 and exactly-one automatic start dispatch. The WAV capability, ARI-422
 normalization, and terminal failure-projection repair is deployed and live
-proven. The first remaining blocker is Asterisk live-recording filesystem
+proven. The remaining downstream blocker is Asterisk live-recording filesystem
 provisioning: post-answer ARI channel-record attempts report `No such file or
 directory`, while the active source runtime has `format_wav.so` Running and
 `wav` registered but lacks `/var/spool/asterisk/recording`. The terminal retry
