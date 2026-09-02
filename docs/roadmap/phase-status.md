@@ -150,22 +150,18 @@ artifact identity, unique session cardinality, and the existing
 authority is removed after a zero-row assertion. Asterisk format/duration are
 normalized without provider storage leakage, and no archive/storage authority
 is claimed. See the [RMA-C implementation evidence](../evidence/rma/rma-c-recording-artifact-authority-implementation.md).
-Its 2026-09-02 focused deployed natural-live acceptance is **BLOCKED at
-finalization**. The transaction proved artifact absence before capture, exact
-`pending` creation with complete Call/CallLeg/RuntimeNode/`capture_ref`
-correlation, independent artifact identity, single-artifact cardinality, and the
-`telephony.recordings.view` projection — but the artifact never reached
-`available`, because `AsteriskAriClient::sanitizeAriObject()` is a strict
-whitelist that strips `format` and `duration` before the RMA-C listener reads
-them. Both receipts recorded `recording_format: null` while read-only ARI polling
-returned `format: "wav"` live and stored. `RecordingArtifactService` correctly
-refused to write an `available` row that would violate
-`recording_artifacts_available_metadata_check`. The bounded repair is adding
-`format` and `duration` to that sanitizer whitelist; see the
-[RMA-C acceptance blocker](../evidence/rma/rma-c-recording-artifact-authority-focused-acceptance-blocker.md).
-**Exactly one next action:** add `format` and `duration` to the ARI object
-sanitizer whitelist, then re-run the focused deployed natural-live artifact
-acceptance under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md).
+Its 2026-09-02 focused deployed natural-live acceptance was **BLOCKED at
+finalization** because `AsteriskAriClient::sanitizeAriObject()` stripped the
+provider's `format` and `duration` fields before the RMA-C listener could read
+them. The bounded source repair now preserves those two whitelisted fields as
+safe bounded transport; the existing normalizer and artifact invariants remain
+unchanged. Repository validation is green, but the corrected revision has not
+yet been republished, redeployed, or re-proven live. See the
+[sanitizer repair evidence](../evidence/rma/rma-c-ari-object-sanitizer-recording-metadata-repair.md)
+and the historical [RMA-C acceptance blocker](../evidence/rma/rma-c-recording-artifact-authority-focused-acceptance-blocker.md).
+**Exactly one next action:** publish and deploy the corrected immutable RMA-C
+revision, then re-run the focused deployed natural-live artifact acceptance
+under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md).
 The pre-Call execution-image blocker is closed by the deployed,
 live-proven managed-workload observer repair: terminating and terminal Pods are
 excluded, a live Ready Pod is preferred, and a prior observed image is retained

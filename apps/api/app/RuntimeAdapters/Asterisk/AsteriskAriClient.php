@@ -1117,7 +1117,7 @@ class AsteriskAriClient
 
     /**
      * @param  array<string, mixed>  $value
-     * @return array<string, string|null>
+     * @return array<string, mixed>
      */
     private function sanitizeAriObject(array $value): array
     {
@@ -1125,6 +1125,8 @@ class AsteriskAriClient
             'id' => is_string($value['id'] ?? null) ? mb_substr($value['id'], 0, 120) : null,
             'name' => is_string($value['name'] ?? null) ? mb_substr(preg_replace('/[^A-Za-z0-9_.:-]/', '_', $value['name']) ?: 'unknown', 0, 120) : null,
             'state' => is_string($value['state'] ?? null) ? mb_substr($value['state'], 0, 64) : null,
+            'format' => is_string($value['format'] ?? null) ? mb_substr($value['format'], 0, 32) : null,
+            'duration' => is_int($value['duration'] ?? null) ? $value['duration'] : null,
             'caller' => is_array($value['caller'] ?? null) ? ['number' => is_string($value['caller']['number'] ?? null) ? mb_substr($value['caller']['number'], 0, 120) : null] : null,
             'connected' => is_array($value['connected'] ?? null) ? ['number' => is_string($value['connected']['number'] ?? null) ? mb_substr($value['connected']['number'], 0, 120) : null] : null,
             'channelvars' => $this->sanitizeAriChannelvars($value['channelvars'] ?? null),

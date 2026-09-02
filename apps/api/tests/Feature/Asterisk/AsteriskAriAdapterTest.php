@@ -1115,6 +1115,53 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertSame('provider-channel-1', $sanitized['channel']['id']);
     }
 
+    public function test_raw_recording_websocket_event_preserves_bounded_format_and_integer_duration_only(): void
+    {
+        $client = new AsteriskAriClient(new AsteriskCatalog, app(AsteriskAriProfileService::class));
+        [$local, $remote] = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        $event = [
+            'type' => 'RecordingFinished',
+            'timestamp' => '2026-09-02T00:00:00Z',
+            'recording' => [
+                'name' => 'utcp-capture-example',
+                'format' => 'w!av',
+                'duration' => 3,
+                'state' => 'done',
+                'spool_path' => '/var/spool/asterisk/recording/example.wav',
+                'stored_uri' => '/ari/recordings/stored/example',
+            ],
+        ];
+
+        fwrite($remote, $this->serverFrame(0x1, json_encode($event, JSON_THROW_ON_ERROR)));
+
+        $sanitized = $client->readEvent($local);
+        $this->assertIsArray($sanitized);
+        $this->assertSame('w!av', $sanitized['recording']['format']);
+        $this->assertSame(3, $sanitized['recording']['duration']);
+        $this->assertArrayNotHasKey('spool_path', $sanitized['recording']);
+        $this->assertArrayNotHasKey('stored_uri', $sanitized['recording']);
+
+        fwrite($remote, $this->serverFrame(0x1, json_encode([
+            'type' => 'RecordingStarted',
+            'recording' => ['name' => 'utcp-capture-example', 'format' => 'wav', 'duration' => '3'],
+        ], JSON_THROW_ON_ERROR)));
+
+        $withoutNumericStringDuration = $client->readEvent($local);
+        $this->assertIsArray($withoutNumericStringDuration);
+        $this->assertSame('wav', $withoutNumericStringDuration['recording']['format']);
+        $this->assertNull($withoutNumericStringDuration['recording']['duration']);
+
+        fwrite($remote, $this->serverFrame(0x1, json_encode([
+            'type' => 'RecordingFinished',
+            'recording' => ['name' => 'utcp-capture-example', 'format' => 'wav'],
+        ], JSON_THROW_ON_ERROR)));
+
+        $withoutDuration = $client->readEvent($local);
+        $this->assertIsArray($withoutDuration);
+        $this->assertSame('wav', $withoutDuration['recording']['format']);
+        $this->assertNull($withoutDuration['recording']['duration']);
+    }
+
     public function test_raw_channel_destroyed_websocket_event_does_not_fabricate_or_accept_invalid_failure_facts(): void
     {
         $client = new AsteriskAriClient(new AsteriskCatalog, app(AsteriskAriProfileService::class));
