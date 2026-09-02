@@ -171,19 +171,20 @@ never on byte size, duration, or audio content. No RMA-C proof gap remains. See 
 the [sanitizer repair evidence](../evidence/rma/rma-c-ari-object-sanitizer-recording-metadata-repair.md),
 and the historical [RMA-C acceptance blocker](../evidence/rma/rma-c-recording-artifact-authority-focused-acceptance-blocker.md).
 RMA-D is designed, phase-boundary reconciled, implemented, repository-tested,
-published, and deployed. Its focused authenticated-API acceptance remains
-**FIXTURE-BLOCKED** pending publication/deployment of the bounded identity
-repair: the required live cross-tenant `404` could not be exercised because only
-one tenant and one membership existed and no canonical route could enroll a
-user into another tenant — so a tenant created through
-`POST /api/v1/admin/tenants` was unjoinable. The source repair is now
-**IMPLEMENTED / REPOSITORY-TESTED**: explicit `tenant_id` membership creation
-uses the dedicated platform-scoped `platform.memberships.manage` capability,
-while the absent-field path retains active-tenant
-`tenant.memberships.manage` behavior. See the [cross-tenant fixture blocker](../evidence/rma/rma-d-archive-target-acceptance-cross-tenant-fixture-blocker.md)
-and [platform membership enrollment authority repair](../evidence/identity/platform-membership-enrollment-authority-repair.md).
-**Exactly one next action:** publish and deploy the identity membership-enrollment
-repair, then re-run the RMA-D authenticated-API acceptance unchanged.
+published, and deployed. Its focused authenticated-API acceptance was
+**FIXTURE-BLOCKED** because only one tenant and one membership existed and no
+canonical route could enroll a user into another tenant — so a tenant created
+through `POST /api/v1/admin/tenants` was unjoinable. The source repair is
+**IMPLEMENTED / REPOSITORY-TESTED / IMMUTABLY PUBLISHED / DEPLOYED**: explicit
+`tenant_id` membership creation uses the dedicated platform-scoped
+`platform.memberships.manage` capability, while the absent-field path retains
+active-tenant `tenant.memberships.manage` behavior. The deployed migration and
+controller are verified, and the natural `platform-admin` acceptance identity
+is available. See the [cross-tenant fixture blocker](../evidence/rma/rma-d-archive-target-acceptance-cross-tenant-fixture-blocker.md),
+[platform membership enrollment authority repair](../evidence/identity/platform-membership-enrollment-authority-repair.md),
+and [canonical publication and deployment evidence](../evidence/identity/platform-membership-enrollment-authority-canonical-publication-and-deployment.md).
+**Exactly one next action:** re-run the RMA-D authenticated-API acceptance
+unchanged against the repaired deployment.
 The pre-Call execution-image blocker is closed by the deployed,
 live-proven managed-workload observer repair: terminating and terminal Pods are
 excluded, a live Ready Pod is preferred, and a prior observed image is retained
