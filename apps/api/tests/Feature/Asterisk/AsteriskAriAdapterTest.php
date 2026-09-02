@@ -29,6 +29,9 @@ use App\RuntimeEngine\Reconciliation\ReconcilerRegistry;
 use App\RuntimeEngine\Reconciliation\ReconciliationRepository;
 use App\RuntimeEngine\Reconciliation\ReconciliationWorker;
 use App\RuntimeEngine\Sources\EventSourceRepository;
+use App\RuntimeProvisioning\ManagedAsteriskProvisioningOperationHandler;
+use App\RuntimeProvisioning\ManagedFreeSwitchProvisioningOperationHandler;
+use App\RuntimeProvisioning\ManagedRuntimeWorkloadConvergenceOperationHandler;
 use App\RuntimeRegistry\RuntimeRegistryService;
 use App\TelephonyDomain\RuntimeChannelIdentity;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -1870,6 +1873,91 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertSame('operation_required', $next->status);
         $this->assertSame('runtime.node.inspect', $next->operationType, 'a successful workload convergence must advance to readiness observation, not emit another convergence');
         $this->assertSame(1, DB::table('runtime_operations')->where('runtime_node_id', $nodeId)->where('operation_type', 'runtime.node.workload.converge')->count());
+    }
+
+    public function test_managed_workload_observation_prefers_a_ready_live_pod_over_a_terminating_pod_returned_first(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $this->makeManaged($tenantId, $nodeId);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'labels' => json_encode(['kubernetes_workload' => ['namespace' => 'utcp-runtime', 'deployment' => 'asterisk-managed-observation-test']]),
+        ]);
+        $staleImage = 'docker-pullable://registry.example.test/utcp/asterisk@sha256:'.str_repeat('a', 64);
+        $currentImage = 'docker-pullable://registry.example.test/utcp/asterisk@sha256:'.str_repeat('b', 64);
+
+        $this->mock(KubernetesWorkloadClient::class, function (MockInterface $mock) use ($staleImage, $currentImage): void {
+            $mock->shouldReceive('applyDeployment')->once()->andReturn([]);
+            $mock->shouldReceive('listOwnedPods')->once()->andReturn([
+                [
+                    'metadata' => ['name' => 'asterisk-old', 'deletionTimestamp' => '2026-08-31T00:00:00Z'],
+                    'status' => [
+                        'phase' => 'Running',
+                        'conditions' => [['type' => 'Ready', 'status' => 'True']],
+                        'containerStatuses' => [['name' => 'asterisk', 'imageID' => $staleImage]],
+                    ],
+                ],
+                [
+                    'metadata' => ['name' => 'asterisk-current', 'deletionTimestamp' => null],
+                    'status' => [
+                        'phase' => 'Running',
+                        'conditions' => [['type' => 'Ready', 'status' => 'True']],
+                        'containerStatuses' => [['name' => 'asterisk', 'imageID' => $currentImage]],
+                    ],
+                ],
+            ]);
+        });
+
+        $result = new ManagedRuntimeWorkloadConvergenceOperationHandler(
+            app(KubernetesWorkloadClient::class),
+            app(RuntimeRegistryService::class),
+            [app(ManagedAsteriskProvisioningOperationHandler::class), app(ManagedFreeSwitchProvisioningOperationHandler::class)],
+        )->execute([
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $nodeId,
+        ], null);
+
+        $this->assertSame('completed', $result['status']);
+        $this->assertSame('sha256:'.str_repeat('b', 64), DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_execution_image'));
+        $this->assertNotSame('sha256:'.str_repeat('a', 64), DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_execution_image'));
+    }
+
+    public function test_managed_workload_observation_retains_prior_image_when_only_terminating_pod_exists(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $this->makeManaged($tenantId, $nodeId);
+        $priorImage = 'sha256:'.str_repeat('c', 64);
+        DB::table('runtime_nodes')->where('id', $nodeId)->update([
+            'observed_execution_image' => $priorImage,
+            'labels' => json_encode(['kubernetes_workload' => ['namespace' => 'utcp-runtime', 'deployment' => 'asterisk-managed-observation-retention-test']]),
+        ]);
+
+        $this->mock(KubernetesWorkloadClient::class, function (MockInterface $mock): void {
+            $mock->shouldReceive('applyDeployment')->once()->andReturn([]);
+            $mock->shouldReceive('listOwnedPods')->once()->andReturn([
+                [
+                    'metadata' => ['name' => 'asterisk-only-old', 'deletionTimestamp' => '2026-08-31T00:00:00Z'],
+                    'status' => [
+                        'phase' => 'Running',
+                        'conditions' => [['type' => 'Ready', 'status' => 'True']],
+                        'containerStatuses' => [['name' => 'asterisk', 'imageID' => 'docker-pullable://registry.example.test/utcp/asterisk@sha256:'.str_repeat('d', 64)]],
+                    ],
+                ],
+            ]);
+        });
+
+        $result = new ManagedRuntimeWorkloadConvergenceOperationHandler(
+            app(KubernetesWorkloadClient::class),
+            app(RuntimeRegistryService::class),
+            [app(ManagedAsteriskProvisioningOperationHandler::class), app(ManagedFreeSwitchProvisioningOperationHandler::class)],
+        )->execute([
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $nodeId,
+        ], null);
+
+        $this->assertSame('completed', $result['status']);
+        $this->assertSame($priorImage, DB::table('runtime_nodes')->where('id', $nodeId)->value('observed_execution_image'));
     }
 
     public function test_taking_over_a_lease_closes_any_epoch_left_open_by_a_superseded_owner(): void

@@ -5,6 +5,7 @@ namespace App\RuntimeProvisioning;
 use App\ControlPlane\RuntimeOperations\FailureClass;
 use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClient;
 use App\Infrastructure\RuntimeFencing\KubernetesWorkloadClientException;
+use App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentity;
 use App\RuntimeEngine\Commands\RunsWithoutRuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeOperationHandler;
@@ -98,17 +99,46 @@ final class ManagedRuntimeWorkloadConvergenceOperationHandler implements RunsWit
             return;
         }
 
-        $image = null;
+        $candidates = [];
         foreach ($this->kubernetes->listOwnedPods(
             (string) $workload['namespace'],
-            new \App\Infrastructure\RuntimeFencing\RuntimeNodeWorkloadIdentity((string) $workload['namespace'], (string) $workload['deployment']),
+            new RuntimeNodeWorkloadIdentity((string) $workload['namespace'], (string) $workload['deployment']),
         ) as $pod) {
+            if (($pod['metadata']['deletionTimestamp'] ?? null) !== null
+                || in_array($pod['status']['phase'] ?? null, ['Succeeded', 'Failed'], true)) {
+                continue;
+            }
+
+            $ready = false;
+            foreach (data_get($pod, 'status.conditions', []) as $condition) {
+                if (is_array($condition)
+                    && ($condition['type'] ?? null) === 'Ready'
+                    && ($condition['status'] ?? null) === 'True'
+                ) {
+                    $ready = true;
+                    break;
+                }
+            }
+
             foreach (data_get($pod, 'status.containerStatuses', []) as $status) {
                 if (($status['name'] ?? '') === 'asterisk' && is_string($status['imageID'] ?? null) && $status['imageID'] !== '') {
                     $image = RuntimeExecutionContract::digest($status['imageID']);
-                    break 2;
+                    if ($image !== null) {
+                        $candidates[] = [
+                            'name' => (string) data_get($pod, 'metadata.name', ''),
+                            'ready' => $ready,
+                            'image' => $image,
+                        ];
+                    }
+                    break;
                 }
             }
+        }
+
+        usort($candidates, static fn (array $left, array $right): int => [! $left['ready'], $left['name']] <=> [! $right['ready'], $right['name']]);
+        $image = $candidates[0]['image'] ?? null;
+        if ($image === null) {
+            return;
         }
 
         DB::table('runtime_nodes')->where('id', $node->id)->update(['observed_execution_image' => $image, 'updated_at' => now()]);
