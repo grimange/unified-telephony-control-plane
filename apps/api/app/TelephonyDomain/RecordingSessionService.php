@@ -215,12 +215,11 @@ final class RecordingSessionService
         if ($captureRef !== null) {
             $reference = CaptureReference::parse($captureRef);
             $identifier = substr($reference->canonical(), strlen('utcp:capture/'));
-            $session = $query->where('call_leg_id', $legId)->get()->first(function (object $candidate) use ($identifier): bool {
-                return hash_equals(md5((string) $candidate->id), $identifier);
-            });
-            if ($session !== null) {
-                $session = DB::table('recording_sessions')->where('tenant_id', $tenantId)->where('id', $session->id)->where('call_leg_id', $legId)->whereIn('observed_state', ['requested', 'recording'])->lockForUpdate()->first();
-            }
+            $session = $query
+                ->where('call_leg_id', $legId)
+                ->where('id', $identifier)
+                ->lockForUpdate()
+                ->first();
         } else {
             $session = $query->where('call_leg_id', $legId)->orderByDesc('requested_at')->lockForUpdate()->first();
         }

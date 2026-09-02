@@ -302,6 +302,38 @@ final class AsteriskAriAdapterTest extends TestCase
         }
     }
 
+    public function test_channel_less_recording_event_correlates_by_recording_session_primary_key(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $callLegId = IdentityIds::new();
+        $this->insertCallLegFixture($tenantId, $nodeId, $callLegId, 'local;capture');
+        $callId = (string) DB::table('call_legs')->where('id', $callLegId)->value('call_id');
+        $sessionId = 'f378c9e4c806daedb175c5d9f6173f20';
+        DB::table('recording_sessions')->insert([
+            'id' => $sessionId,
+            'tenant_id' => $tenantId,
+            'call_id' => $callId,
+            'call_leg_id' => $callLegId,
+            'desired_state' => 'recording',
+            'observed_state' => 'requested',
+            'requested_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $catalog = new AsteriskCatalog;
+        $observations = (new AsteriskAriEventNormalizer($catalog, $catalog->eventType('recording_started')))->normalize((object) [
+            'tenant_id' => $tenantId,
+            'runtime_node_id' => $nodeId,
+        ], [
+            'recording_name' => 'utcp-capture-'.$sessionId,
+        ]);
+
+        $this->assertSame('call.leg.recording_started', $observations[0]['observation_type']);
+        $this->assertSame($callLegId, $observations[0]['subject_id']);
+        $this->assertSame('utcp:capture/'.$sessionId, $observations[0]['payload']['capture_ref']);
+    }
+
     public function test_recording_ari_422_is_unsupported_format_not_resource_conflict(): void
     {
         [$tenantId, $nodeId] = $this->runtimeNode();

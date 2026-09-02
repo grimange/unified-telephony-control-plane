@@ -10,12 +10,14 @@ final class CaptureReferenceTest extends TestCase
 {
     public function test_valid_capture_references_round_trip_and_derive_from_recording_sessions(): void
     {
-        $reference = CaptureReference::parse('utcp:capture/07e7b201206ccf43f08a003ec5061611');
+        $id = 'f378c9e4c806daedb175c5d9f6173f20';
+        $reference = CaptureReference::parse('utcp:capture/'.$id);
 
-        $this->assertSame('utcp:capture/07e7b201206ccf43f08a003ec5061611', $reference->canonical());
-        $this->assertSame('utcp-capture-07e7b201206ccf43f08a003ec5061611', $reference->providerReference('asterisk'));
+        $this->assertSame('utcp:capture/'.$id, $reference->canonical());
+        $this->assertSame('utcp-capture-'.$id, $reference->providerReference('asterisk'));
         $this->assertSame($reference->canonical(), CaptureReference::canonicalFromProviderReference($reference->providerReference('asterisk')));
-        $this->assertSame('utcp:capture/'.md5('session-1'), CaptureReference::forRecordingSession('session-1')->canonical());
+        $this->assertSame('utcp:capture/'.$id, CaptureReference::forRecordingSession($id)->canonical());
+        $this->assertNotSame('utcp:capture/'.md5($id), CaptureReference::forRecordingSession($id)->canonical());
     }
 
     public function test_malformed_references_are_rejected_and_unrelated_provider_values_do_not_resolve(): void
@@ -24,6 +26,15 @@ final class CaptureReferenceTest extends TestCase
             try {
                 CaptureReference::parse($value);
                 self::fail('Expected invalid capture reference: '.$value);
+            } catch (InvalidArgumentException $exception) {
+                $this->assertSame('invalid_capture_ref', $exception->getMessage());
+            }
+        }
+
+        foreach (['', 'ABCDEF0123456789ABCDEF0123456789', 'not-a-recording-session-id'] as $id) {
+            try {
+                CaptureReference::forRecordingSession($id);
+                self::fail('Expected invalid recording session identifier: '.$id);
             } catch (InvalidArgumentException $exception) {
                 $this->assertSame('invalid_capture_ref', $exception->getMessage());
             }

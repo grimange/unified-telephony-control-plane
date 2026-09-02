@@ -26,7 +26,7 @@ final readonly class CaptureReference
 
     public static function forRecordingSession(string $id): self
     {
-        return new self(md5($id));
+        return self::parse(self::PREFIX.$id);
     }
 
     public function canonical(): string

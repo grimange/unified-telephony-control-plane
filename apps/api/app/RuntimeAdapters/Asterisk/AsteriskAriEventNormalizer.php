@@ -295,9 +295,9 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
         $identifier = substr($captureRef, strlen('utcp:capture/'));
         $session = DB::table('recording_sessions')
             ->where('tenant_id', (string) $receipt->tenant_id)
+            ->where('id', $identifier)
             ->whereIn('observed_state', ['requested', 'recording', 'stopped'])
-            ->get()
-            ->first(static fn (object $candidate): bool => hash_equals($identifier, md5((string) $candidate->id)));
+            ->first();
         if ($session === null) {
             return null;
         }

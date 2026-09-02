@@ -343,22 +343,19 @@ identity-catalog, and premature pre-answer dispatch defects are repaired. See
 the [live-proof blocker](../evidence/rma/rma-a-recording-session-lifecycle-natural-live-proof-blocker.md),
 [implementation evidence](../evidence/rma/rma-a-recording-session-lifecycle-aware-start-reconciliation-implementation.md),
 and [exact-cause audit](../evidence/rma/rma-a-asterisk-recording-start-conflict-exact-cause-audit.md).
-RMA-B is implemented, repository-tested, immutably published, and deployed as
-a runtime-neutral capture contract. Its 2026-09-02 focused acceptance run proved
-the capture mechanism live: neutral `capture_ref` in both RuntimeOperations, the
-Asterisk provider name derived from it, the CallLeg-ID naming authority gone,
-`runtime_capture_reference` in both results, channel-less `RecordingStarted`/
-`RecordingFinished` receipts normalizing into canonical
-`call.leg.recording_started`/`call.leg.recording_stopped` observations for the
-first time, exact RecordingSession targeting and convergence, idempotency, the
-store-preserving provider stop, natural late-event monotonicity, and FreeSWITCH
-remaining honestly unsupported. Acceptance is **BLOCKED** on one boundary: the
-canonical capture identifier is `md5()` of the RecordingSession id rather than
-the RecordingSession id, which makes the identity non-invertible and turns
-observation correlation into an unindexed tenant-wide scan of
-`recording_sessions`. The bounded repair is direct derivation plus primary-key
-lookup; see the
-[RMA-B acceptance blocker](../evidence/rma/rma-b-runtime-neutral-capture-contract-focused-acceptance-blocker.md).
+RMA-B was implemented, repository-tested, immutably published, and deployed as
+a runtime-neutral capture contract, and its 2026-09-02 focused acceptance run
+proved every material live boundary except capture identity invertibility. That
+run proved neutral `capture_ref` in both RuntimeOperations, Asterisk provider
+translation, the removed CallLeg-ID naming authority, normalized results,
+channel-less recording observations, exact session targeting and convergence,
+idempotency, store-preserving stop, late-event monotonicity, and FreeSWITCH
+remaining unsupported. The acceptance blocker was that the deployed revision
+derived capture identifiers with `md5()` and correlated by an unindexed scan.
+The repository repair now derives directly from `RecordingSession.id` and uses
+tenant-scoped primary-key lookup; see the [direct derivation repair evidence](../evidence/rma/rma-b-capture-reference-direct-derivation-repair.md).
+The corrected revision still requires republishing, deployment, and focused
+live acceptance before RMA-B can close.
 RMA-C through RMA-H remain not started. RMA does not technically
 gate A0, and
 no artifact, archive, retention, playback, or download implementation is
