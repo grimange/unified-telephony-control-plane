@@ -155,8 +155,8 @@ finalization** because `AsteriskAriClient::sanitizeAriObject()` stripped the
 provider's `format` and `duration` fields before the RMA-C listener could read
 them. The bounded source repair now preserves those two whitelisted fields as
 safe bounded transport; the existing normalizer and artifact invariants remain
-unchanged. Repository validation is green, but the corrected revision has not
-yet been republished, redeployed, or re-proven live. See the
+unchanged. Repository validation is green, and the corrected revision is now
+immutably published and deployed; focused natural-live reproof remains pending. See the
 [sanitizer repair evidence](../evidence/rma/rma-c-ari-object-sanitizer-recording-metadata-repair.md)
 and the historical [RMA-C acceptance blocker](../evidence/rma/rma-c-recording-artifact-authority-focused-acceptance-blocker.md).
 **Exactly one next action:** publish and deploy the corrected immutable RMA-C
@@ -400,10 +400,11 @@ whole transaction. **RMA-B is COMPLETE / ACCEPTANCE-PROVEN and no RMA-B proof
 gap remains.** See the [canonical direct-derivation deployment
 evidence](../evidence/rma/rma-b-capture-reference-direct-derivation-canonical-deployment.md)
 and the [direct-derivation focused live reproof](../evidence/rma/rma-b-capture-reference-direct-derivation-focused-live-reproof-passed.md).
-RMA-C is implemented, repository-tested, published, and deployed; its focused
-deployed natural-live acceptance proved `pending` artifact creation with exact
-correlation but is BLOCKED at finalization by the ARI object sanitizer stripping
-the provider media format. RMA-D
+RMA-C is implemented, repository-tested, published, and deployed; its initial
+focused deployed natural-live acceptance proved `pending` artifact creation with
+exact correlation but was BLOCKED at finalization by the ARI object sanitizer
+stripping the provider media format. The bounded sanitizer repair is now
+published and deployed; focused natural-live reproof remains pending. RMA-D
 through RMA-H remain not started. RMA does not technically
 gate A0, and
 no artifact, archive, retention, playback, or download implementation is
