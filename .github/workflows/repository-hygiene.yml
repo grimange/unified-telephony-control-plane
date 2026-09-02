@@ -33,6 +33,14 @@ jobs:
       - name: Show make help
         run: make help
 
+      - name: Check phase-status consistency
+        env:
+          STATUS_LEDGER_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: make phase-status-consistency-check
+
+      - name: Test phase-status consistency mutations
+        run: make phase-status-consistency-check-test
+
       - name: Run repository hygiene
         env:
           STATUS_LEDGER_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
