@@ -4,6 +4,7 @@ namespace Tests\Feature\TelephonyDomain;
 
 use App\Identity\IdentityIds;
 use App\ControlPlane\Shared\ExecutionContext;
+use App\ControlPlane\Shared\RecordingArtifactId;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -35,6 +36,7 @@ final class RecordingSessionTest extends TestCase
         $this->assertSame($tenant, DB::table('recording_sessions')->where('id', $first['id'])->value('tenant_id'));
         $this->assertSame('recording', $first['desired_state']);
         $this->assertSame('requested', $first['observed_state']);
+        $this->assertNull($first['artifact']);
         $this->assertNull($first['start_operation_id']);
         $this->assertSame(0, DB::table('runtime_operations')->where('operation_type', 'call.leg.start_recording')->count());
         DB::table('call_legs')->where('id', $legId)->update(['observed_state' => 'answered']);
@@ -125,6 +127,48 @@ final class RecordingSessionTest extends TestCase
         $this->actingAs($otherAdmin)->withSession(['user_session_version' => 1, 'active_tenant_id' => $otherTenant])
             ->getJson('/api/v1/calls/'.$call['id'].'/recordings/'.$recording['id'])->assertNotFound();
         $this->assertSame(0, DB::table('recording_sessions')->where('tenant_id', $otherTenant)->count());
+    }
+
+    public function test_recording_session_reads_expose_only_safe_artifact_metadata(): void
+    {
+        [$admin, $tenant] = $this->admin('artifact-api');
+        $session = ['user_session_version' => 1, 'active_tenant_id' => $tenant];
+        $call = $this->actingAs($admin)->withSession($session)
+            ->postJson('/api/v1/calls', ['direction' => 'outbound', 'destination_ref' => 'opaque:artifact-api'])
+            ->assertCreated()->json('data');
+        $legId = (string) DB::table('call_legs')->where('call_id', $call['id'])->value('id');
+        $recording = $this->actingAs($admin)->withSession($session)
+            ->postJson('/api/v1/calls/'.$call['id'].'/recordings', ['target_leg_id' => $legId])
+            ->assertStatus(202)->json('data');
+        $nodeId = (string) DB::table('call_legs')->where('id', $legId)->value('runtime_node_id');
+        DB::table('recording_artifacts')->insert([
+            'id' => RecordingArtifactId::new()->value(),
+            'tenant_id' => $tenant,
+            'recording_session_id' => $recording['id'],
+            'call_id' => $call['id'],
+            'call_leg_id' => $legId,
+            'runtime_node_id' => $nodeId,
+            'capture_ref' => 'utcp:capture/'.$recording['id'],
+            'state' => 'available',
+            'media_format' => 'wav',
+            'duration_ms' => 3000,
+            'available_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $data = $this->actingAs($admin)->withSession($session)
+            ->getJson('/api/v1/calls/'.$call['id'].'/recordings/'.$recording['id'])
+            ->assertOk()->json('data');
+
+        $this->assertSame('available', $data['artifact']['state']);
+        $this->assertSame('wav', $data['artifact']['media_format']);
+        $this->assertSame(3000, $data['artifact']['duration_ms']);
+        $this->assertNotEmpty($data['artifact']['id']);
+        $this->assertArrayHasKey('available_at', $data['artifact']);
+        foreach (['capture_ref', 'runtime_node_id', 'path', 'size', 'checksum', 'storage'] as $forbidden) {
+            $this->assertArrayNotHasKey($forbidden, $data['artifact']);
+        }
     }
 
     public function test_recording_session_schema_keeps_subject_and_lifecycle_authority_explicit(): void

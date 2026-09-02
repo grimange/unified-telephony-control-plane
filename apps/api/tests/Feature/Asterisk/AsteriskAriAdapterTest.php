@@ -327,11 +327,15 @@ final class AsteriskAriAdapterTest extends TestCase
             'runtime_node_id' => $nodeId,
         ], [
             'recording_name' => 'utcp-capture-'.$sessionId,
+            'recording_format' => 'WAV',
+            'recording_duration' => 3,
         ]);
 
         $this->assertSame('call.leg.recording_started', $observations[0]['observation_type']);
         $this->assertSame($callLegId, $observations[0]['subject_id']);
         $this->assertSame('utcp:capture/'.$sessionId, $observations[0]['payload']['capture_ref']);
+        $this->assertSame('wav', $observations[0]['payload']['media_format']);
+        $this->assertSame(3000, $observations[0]['payload']['duration_ms']);
     }
 
     public function test_recording_ari_422_is_unsupported_format_not_resource_conflict(): void

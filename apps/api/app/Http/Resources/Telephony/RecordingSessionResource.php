@@ -8,6 +8,8 @@ final class RecordingSessionResource extends JsonResource
 {
     public function toArray($request): array
     {
+        $artifact = $this->resource->artifact ?? null;
+
         return [
             'id' => $this->id,
             'tenant_id' => $this->tenant_id,
@@ -27,6 +29,13 @@ final class RecordingSessionResource extends JsonResource
             'failed_at' => $this->failed_at,
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
+            'artifact' => $artifact === null ? null : [
+                'id' => $artifact->id,
+                'state' => $artifact->state,
+                'media_format' => $artifact->media_format,
+                'duration_ms' => $artifact->duration_ms,
+                'available_at' => $artifact->available_at,
+            ],
         ];
     }
 }

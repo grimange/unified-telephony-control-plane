@@ -8,6 +8,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\Telephony\RecordingSessionResource;
 use App\Identity\Authorization\AuthorizationService;
 use App\TelephonyDomain\CallQueryService;
+use App\TelephonyDomain\RecordingArtifactService;
 use App\TelephonyDomain\RecordingSessionService;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
@@ -19,6 +20,7 @@ final class RecordingSessionController extends Controller
         private readonly AuthorizationService $authorization,
         private readonly CallQueryService $calls,
         private readonly RecordingSessionService $recordings,
+        private readonly RecordingArtifactService $artifacts,
     ) {}
 
     public function index(Request $request, string $call)
@@ -28,7 +30,7 @@ final class RecordingSessionController extends Controller
             abort(404);
         }
 
-        return RecordingSessionResource::collection($this->recordings->forCall($tenant, $call));
+        return RecordingSessionResource::collection(array_map(fn (object $session): object => $this->withArtifact($tenant, $session), $this->recordings->forCall($tenant, $call)));
     }
 
     public function store(Request $request, string $call)
@@ -44,7 +46,7 @@ final class RecordingSessionController extends Controller
             return response()->json(['message' => $exception->getMessage()], 422);
         }
 
-        return (new RecordingSessionResource($session))->response()->setStatusCode(202);
+        return (new RecordingSessionResource($this->withArtifact($tenant, $session)))->response()->setStatusCode(202);
     }
 
     public function show(Request $request, string $call, string $recordingSession)
@@ -53,7 +55,7 @@ final class RecordingSessionController extends Controller
         $session = $this->recordings->forTenant($tenant, $recordingSession);
         abort_if($session === null || (string) $session->call_id !== $call, 404);
 
-        return new RecordingSessionResource($session);
+        return new RecordingSessionResource($this->withArtifact($tenant, $session));
     }
 
     public function stop(Request $request, string $call, string $recordingSession)
@@ -67,7 +69,7 @@ final class RecordingSessionController extends Controller
             return response()->json(['message' => $exception->getMessage()], 422);
         }
 
-        return (new RecordingSessionResource($result))->response()->setStatusCode(202);
+        return (new RecordingSessionResource($this->withArtifact($tenant, $result)))->response()->setStatusCode(202);
     }
 
     private function tenant(Request $request, string $permission): string
@@ -93,5 +95,12 @@ final class RecordingSessionController extends Controller
         $value = $request->header('Idempotency-Key');
 
         return is_string($value) && $value !== '' ? IdempotencyKey::fromString($value) : null;
+    }
+
+    private function withArtifact(string $tenantId, object $session): object
+    {
+        $session->artifact = $this->artifacts->forRecordingSession($tenantId, (string) $session->id);
+
+        return $session;
     }
 }

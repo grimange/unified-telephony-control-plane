@@ -259,6 +259,8 @@ final class AsteriskAriEventListener
         }
         if (is_array($event['recording'] ?? null)) {
             $payload['recording_name'] = is_string($event['recording']['name'] ?? null) ? $event['recording']['name'] : null;
+            $payload['recording_format'] = is_string($event['recording']['format'] ?? null) ? $event['recording']['format'] : null;
+            $payload['recording_duration'] = is_int($event['recording']['duration'] ?? null) ? $event['recording']['duration'] : null;
         }
 
         if ($type === 'StasisStart') {

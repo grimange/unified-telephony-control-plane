@@ -322,6 +322,13 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
         if (is_string($payload['ari_event_type'] ?? null)) {
             $safe['ari_event_type'] = $payload['ari_event_type'];
         }
+        $format = is_string($payload['recording_format'] ?? null) ? strtolower(trim($payload['recording_format'])) : null;
+        if ($format !== null && preg_match('/\A[a-z0-9]{1,32}\z/', $format) === 1) {
+            $safe['media_format'] = $format;
+        }
+        if (is_int($payload['recording_duration'] ?? null) && $payload['recording_duration'] >= 0) {
+            $safe['duration_ms'] = $payload['recording_duration'] * 1000;
+        }
 
         return [
             'observation_type' => $this->eventType === $this->catalog->eventType('recording_started')

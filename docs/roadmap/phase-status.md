@@ -139,8 +139,19 @@ store-preserving provider stop retained the artifact, and naturally late
 recording observations did not regress the stopped state. FreeSWITCH remains
 honestly unsupported and no RMA-C authority appeared. See the
 [RMA-B direct-derivation reproof](../evidence/rma/rma-b-capture-reference-direct-derivation-focused-live-reproof-passed.md).
-**Exactly one next action:** begin `RMA-C — Recording Artifact Authority`
-under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md).
+**RMA-C Recording Artifact Authority is IMPLEMENTED / REPOSITORY-TESTED with
+focused deployed natural-live acceptance pending.** The observation-driven
+two-phase artifact authority creates one pending artifact from
+`recording_started` and finalizes it to available from `recording_stopped`,
+using direct tenant-scoped CaptureReference session correlation, an independent
+artifact identity, unique session cardinality, and the existing
+`telephony.recordings.view` projection. The dead `call_legs.recording_ref`
+authority is removed after a zero-row assertion. Asterisk format/duration are
+normalized without provider storage leakage, and no archive/storage authority
+is claimed. See the [RMA-C implementation evidence](../evidence/rma/rma-c-recording-artifact-authority-implementation.md).
+**Exactly one next action:** publish/deploy the RMA-C revision through the
+canonical image-lock path, then run the focused deployed natural-live artifact
+acceptance under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md).
 The pre-Call execution-image blocker is closed by the deployed,
 live-proven managed-workload observer repair: terminating and terminal Pods are
 excluded, a live Ready Pod is preferred, and a prior observed image is retained
@@ -379,7 +390,8 @@ whole transaction. **RMA-B is COMPLETE / ACCEPTANCE-PROVEN and no RMA-B proof
 gap remains.** See the [canonical direct-derivation deployment
 evidence](../evidence/rma/rma-b-capture-reference-direct-derivation-canonical-deployment.md)
 and the [direct-derivation focused live reproof](../evidence/rma/rma-b-capture-reference-direct-derivation-focused-live-reproof-passed.md).
-RMA-C through RMA-H remain not started. RMA does not technically
+RMA-C is implemented/repository-tested with focused acceptance pending; RMA-D
+through RMA-H remain not started. RMA does not technically
 gate A0, and
 no artifact, archive, retention, playback, or download implementation is
 claimed by RMA-A or RMA-B.

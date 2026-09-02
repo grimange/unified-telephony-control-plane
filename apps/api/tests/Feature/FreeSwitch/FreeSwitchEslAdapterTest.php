@@ -7,10 +7,14 @@ use App\RuntimeAdapters\FreeSwitch\FreeSwitchEslTransport;
 use App\RuntimeAdapters\FreeSwitch\FreeSwitchRuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeAdapterRegistry;
 use App\TelephonyDomain\RuntimeChannelIdentity;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 final class FreeSwitchEslAdapterTest extends TestCase
 {
+    use RefreshDatabase;
+
     public function test_freeswitch_adapter_is_registered_with_the_exact_core_capability_catalog(): void
     {
         $adapter = app(RuntimeAdapterRegistry::class)->get('freeswitch-esl');
@@ -138,6 +142,7 @@ final class FreeSwitchEslAdapterTest extends TestCase
             $this->assertSame('freeswitch_call_operation_unsupported', $result['failure_code']);
         }
         $this->assertSame([], $transport->requests);
+        $this->assertSame(0, DB::table('recording_artifacts')->count());
     }
 
     public function test_generic_media_reference_is_resolved_before_esl_execution(): void

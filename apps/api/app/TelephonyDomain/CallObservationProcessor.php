@@ -16,7 +16,11 @@ final class CallObservationProcessor
         'call.leg.bridged' => CallState::Bridged,
     ];
 
-    public function __construct(private readonly CallDomainService $calls, private readonly RecordingSessionService $recordings) {}
+    public function __construct(
+        private readonly CallDomainService $calls,
+        private readonly RecordingSessionService $recordings,
+        private readonly RecordingArtifactService $artifacts,
+    ) {}
 
     /** @param array<string, mixed> $observation */
     public function process(object $receipt, array $observation): void
@@ -85,7 +89,17 @@ final class CallObservationProcessor
                 return;
             }
 
-            $this->recordings->applyObservation($tenantId, $legId, $type === 'call.leg.recording_started' ? 'recording' : 'stopped', is_string($observation['observed_at'] ?? null) ? $observation['observed_at'] : null, $captureRef);
+            $observedAt = is_string($observation['observed_at'] ?? null) ? $observation['observed_at'] : null;
+            $this->recordings->applyObservation($tenantId, $legId, $type === 'call.leg.recording_started' ? 'recording' : 'stopped', $observedAt, $captureRef);
+            $this->artifacts->applyCaptureObservation(
+                $tenantId,
+                $captureRef,
+                $type === 'call.leg.recording_started' ? 'started' : 'finished',
+                $nodeId,
+                is_string($payload['media_format'] ?? null) ? $payload['media_format'] : null,
+                is_int($payload['duration_ms'] ?? null) ? $payload['duration_ms'] : null,
+                $observedAt,
+            );
 
             return;
         }
