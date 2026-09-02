@@ -105,10 +105,28 @@ forms. No manual host discovery, sync, projection, or reconciliation was
 required, and no durable UTCP Host authority exists. Read-only RBAC is unchanged.
 See the [`K5A live proof`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-proof.md)
 and [`K5A live-blocker repair`](../evidence/k5/k5a-host-kubernetes-node-visibility-live-blocker-repair.md).
-**Exactly one next action:** have Claude Code run
-`RMA_A_RECORDING_AUTHORITY_AND_LIFECYCLE_FINAL_NATURAL_LIVE_ACCEPTANCE` with
-Stage 0 execution-eligibility verification and Stage 1 full RMA-A lifecycle
-proof. The pre-Call execution-image blocker is closed by the deployed,
+**RMA-A Recording Authority and Lifecycle is COMPLETE /
+NATURAL-LIVE-PROVEN.** The 2026-09-02 acceptance run
+`RMA_A_RECORDING_AUTHORITY_AND_LIFECYCLE_FINAL_NATURAL_LIVE_ACCEPTANCE` passed
+every material boundary in one fresh canonical transaction on `d8b788d`: Stage-0
+execution eligibility, canonical Call `b720aebc`, pre-answer RecordingSession
+`07e7b201206ccf43f08a003ec5061611` with `start_operation_id=null` and **zero**
+`call.leg.start_recording` operations while the CallLeg was still `originating`,
+natural SIP answer through `9900 → Answer() → Echo()`, canonical `answered`,
+**exactly one** automatic start operation, a real Asterisk `format=wav`
+LiveRecording, canonical `recording/recording` convergence, start idempotency
+with no duplicate operation or provider recording, canonical stop, the
+store-preserving `POST /ari/recordings/live/{name}/stop`, matching
+`RecordingStarted`/`RecordingFinished` receipts, a retained StoredRecording and
+stored-file HTTP `200`, canonical `stopped/stopped` convergence, stop
+idempotency, and a complete audit chain that did not regress when the Call later
+terminated naturally. The stored WAV has a zero-length PCM payload because the
+Echo fixture corridor carries no audio RTP; that is a fixture media property,
+not a recording authority or lifecycle property. See the
+[RMA-A final acceptance evidence](../evidence/rma/rma-a-recording-authority-and-lifecycle-final-natural-live-acceptance-passed.md).
+**Exactly one next action:** begin `RMA-B — Runtime-Neutral Capture Contract`
+under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md).
+The pre-Call execution-image blocker is closed by the deployed,
 live-proven managed-workload observer repair: terminating and terminal Pods are
 excluded, a live Ready Pod is preferred, and a prior observed image is retained
 when no acceptable live image exists. See the
@@ -126,9 +144,9 @@ gone after stop `204`, observes StoredRecording and stored-file HTTP `200`,
 proves a non-empty WAV artifact, and cleans it up successfully. The prior
 stored-artifact blocker was confirmed to be the fixture's use of ARI cancel /
 discard (`DELETE /recordings/live/{name}`), not an Asterisk capability defect.
-The provider recording-runtime capability packet is now published, deployed,
-and verified on its immutable Asterisk revision, but full RMA-A acceptance
-remains pending. The earlier WAV capability,
+The provider recording-runtime capability packet is published, deployed,
+and verified on its immutable Asterisk revision, and full RMA-A acceptance is
+now closed by the 2026-09-02 natural-live run above. The earlier WAV capability,
 HTTP-422 normalization, and terminal RecordingSession failure-projection repair
 remain deployed and live-proven. The fresh post-repair acceptance proved SIP
 delivery, `9900` answer, canonical CallLeg `answered`, durable pre-answer intent,
@@ -240,7 +258,7 @@ documentation task. Current T4 implementation evidence:
 | Track | Status / release placement |
 | --- | --- |
 | K5 | Parallel / R0-Critical infrastructure track under [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md); does not serially gate T4 or C7A. K5A–K5E are Complete / natural-live-proven, satisfying the R0 requirement. K5F is Planned, not implemented, and not an R0 gate |
-| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); RMA-A lifecycle-aware reconciliation is implemented/tested and its pre-answer deferral, natural SIP delivery, natural CallLeg answer, and exactly-one automatic start dispatch are live-proven. The bounded WAV capability, ARI-422 normalization, terminal failure-projection repair, provider recording-runtime capability, and managed-workload live-Pod execution-image observation repair are implemented, repository-validated, immutably published, deployed, and live-proven. The pre-Call execution-image blocker is closed; complete natural-live RecordingSession lifecycle proof remains pending. RMA-B through RMA-H remain not started |
+| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); **RMA-A Recording Authority and Lifecycle is COMPLETE / NATURAL-LIVE-PROVEN.** One fresh canonical transaction proved pre-answer intent with zero premature start, natural SIP answer, canonical `answered`, exactly-one automatic start, a real Asterisk WAV LiveRecording, canonical active convergence, start idempotency, canonical stop, the store-preserving ARI stop, a retained StoredRecording, canonical stopped convergence, stop idempotency, and complete audit continuity. The bounded WAV capability, ARI-422 normalization, terminal failure-projection repair, provider recording-runtime capability, and managed-workload live-Pod execution-image observation repair are implemented, repository-validated, immutably published, deployed, and live-proven. No RMA-A proof gap remains. RMA-B through RMA-H remain not started |
 | Operational Reporting & Insights | Future UTCP Core / Post-current-R0 roadmap; not a current phase or R0 gate; no implementation claimed under [`ADR-033`](../decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md) |
 | C8 | Planned UTCP core transfer/handoff track under [`ADR-025`](../decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md); advanced consultative and inter-runtime/provider handoff defaults to post-R0/R1 unless V1 proves a basic dependency |
 | Queue/ACD | Future extension; no R0 phase |
@@ -293,24 +311,32 @@ NAT acceptance corridor. Gap C and Gap D are closed; see their linked evidence
 and ADRs for detail.
 
 RMA is the Recording & Media Archive track. It follows completed K5E and the
-established V1 Call/CallLeg corridor; RMA-A lifecycle-aware start reconciliation
-is implemented/tested and deployed, and the forward identity-catalog repair has
-been deployed with both declared RMA-A capabilities authorized through the
-tenant-admin role. Natural-live evidence now proves durable pre-answer intent
-without a start operation, terminal-before-eligibility resolution, the repaired
-Asterisk-to-Asterisk SIP delivery, `9900` answer, canonical CallLeg `answered`,
-and exactly-one automatic start dispatch. The WAV capability, ARI-422
-normalization, and terminal failure-projection repair is deployed and live
-proven. The remaining downstream blocker is Asterisk live-recording filesystem
-provisioning: post-answer ARI channel-record attempts report `No such file or
-directory`, while the active source runtime has `format_wav.so` Running and
-`wav` registered but lacks `/var/spool/asterisk/recording`. The terminal retry
-after natural call termination returns 404 and now correctly projects the
-RecordingSession to `failed`; it is downstream of the ENOENT. The bounded next
-repair is declarative creation of the Asterisk recording spool directory in the
-repository image, not a change to RecordingSession eligibility, SIP policy,
-endpoint, dialplan, channel-vs-bridge recording semantics, or failure taxonomy.
-See the [final RMA-A acceptance evidence](../evidence/rma/rma-a-recording-authority-and-lifecycle-final-natural-live-acceptance.md) and
+established V1 Call/CallLeg corridor. **RMA-A Recording Authority and Lifecycle
+is COMPLETE / NATURAL-LIVE-PROVEN** as of 2026-09-02. RMA-A lifecycle-aware
+start reconciliation is implemented, tested, and deployed, and the forward
+identity-catalog repair is deployed with both declared RMA-A capabilities
+authorized through the tenant-admin role. The final natural-live acceptance ran
+one fresh canonical transaction end to end and proved durable pre-answer intent
+with `start_operation_id=null` and zero `call.leg.start_recording` operations
+while the CallLeg was still `originating`, the repaired Asterisk-to-Asterisk SIP
+delivery, `9900 → Answer() → Echo()`, canonical CallLeg `answered`, exactly-one
+automatic start dispatch, a real Asterisk `format=wav` LiveRecording, canonical
+`recording/recording` convergence, start idempotency without a duplicate
+operation or duplicate provider recording, canonical stop, the store-preserving
+`POST /ari/recordings/live/{name}/stop`, matching `RecordingStarted` and
+`RecordingFinished` receipts, a retained StoredRecording with stored-file HTTP
+`200`, canonical `stopped/stopped` convergence, stop idempotency, and a complete
+audit chain that did not regress when the Call terminated naturally. The WAV
+capability, ARI-422 normalization, terminal failure-projection repair, provider
+recording-runtime capability, and managed-workload live-Pod execution-image
+observation repair are all deployed and live-proven. The former Asterisk
+live-recording spool blocker (`No such file or directory`) is historical and did
+not recur. The stored WAV carried a zero-length PCM payload because the Echo
+fixture corridor carries no audio RTP; that is a fixture media property, not a
+recording authority or lifecycle property, and audio payload capture was already
+proven separately at image level. No RMA-A proof gap remains.
+See the [RMA-A final acceptance evidence](../evidence/rma/rma-a-recording-authority-and-lifecycle-final-natural-live-acceptance-passed.md),
+the preserved historical [pre-repair acceptance](../evidence/rma/rma-a-recording-authority-and-lifecycle-final-natural-live-acceptance.md), and the
 [persistent PJSIP filesystem trace](../evidence/rma/rma-a-asterisk-persistent-pjsip-filesystem-trace-reproof.md).
 The earlier Asterisk endpoint-plus-URI,
 identity-catalog, and premature pre-answer dispatch defects are repaired. See
