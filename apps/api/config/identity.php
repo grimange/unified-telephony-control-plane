@@ -38,6 +38,8 @@ return [
         'telephony.calls.record' => ['scope' => 'tenant', 'description' => 'Legacy call recording operation compatibility'],
         'telephony.recordings.view' => ['scope' => 'tenant', 'description' => 'View technical recording sessions'],
         'telephony.recordings.manage' => ['scope' => 'tenant', 'description' => 'Manage technical recording sessions'],
+        'telephony.recording_archive_targets.view' => ['scope' => 'tenant', 'description' => 'View tenant recording archive targets'],
+        'telephony.recording_archive_targets.manage' => ['scope' => 'tenant', 'description' => 'Manage tenant recording archive targets and credential references'],
         'telephony.calls.manage' => ['scope' => 'tenant', 'description' => 'Manage tenant calls'],
     ],
 
@@ -76,6 +78,8 @@ return [
                 'runtime.credentials.rotate',
                 'telephony.external_connectivity.view',
                 'telephony.external_connectivity.manage',
+                'telephony.recording_archive_targets.view',
+                'telephony.recording_archive_targets.manage',
                 'telephony.routing.view',
                 'telephony.routing.manage',
             ],

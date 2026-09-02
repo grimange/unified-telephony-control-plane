@@ -6,7 +6,7 @@ use InvalidArgumentException;
 
 final class PayloadSafety
 {
-    private const SENSITIVE_KEY_PATTERN = '/password|passwd|secret|token|authorization|cookie|private[_-]?key|credential|sip[_-]?password/i';
+    private const SENSITIVE_KEY_PATTERN = '/password|passwd|secret(?!_fingerprint)|token|authorization|cookie|private[_-]?key|credential(?!_reference_id)|sip[_-]?password/i';
 
     /**
      * @param  array<string, mixed>  $payload

@@ -15,6 +15,7 @@ use App\Http\Controllers\RuntimeRegistry\AdminRuntimeNodeController;
 use App\Http\Controllers\TelephonyDomain\AdminC7aController;
 use App\Http\Controllers\TelephonyDomain\AdminC7bController;
 use App\Http\Controllers\TelephonyDomain\AdminConferenceController;
+use App\Http\Controllers\TelephonyDomain\AdminMediaArchiveTargetController;
 use App\Http\Controllers\TelephonyDomain\CallController;
 use App\Http\Controllers\TelephonyDomain\ConferenceController;
 use App\Http\Controllers\TelephonyDomain\ReferenceDialerController;
@@ -119,6 +120,13 @@ Route::prefix('api/v1/admin')->middleware(['identity.session'])->group(function 
     Route::post('/caller-identities', [AdminC7aController::class, 'createCallerIdentity']);
     Route::post('/caller-identities/{identity}/desired-state', [AdminC7aController::class, 'callerIdentityState']);
     Route::post('/caller-identities/{identity}/policies', [AdminC7aController::class, 'callerIdentityPolicy']);
+
+    Route::get('/recording-archive-targets', [AdminMediaArchiveTargetController::class, 'index']);
+    Route::post('/recording-archive-targets', [AdminMediaArchiveTargetController::class, 'store']);
+    Route::get('/recording-archive-targets/{target}', [AdminMediaArchiveTargetController::class, 'show']);
+    Route::patch('/recording-archive-targets/{target}', [AdminMediaArchiveTargetController::class, 'update']);
+    Route::post('/recording-archive-targets/{target}/desired-state', [AdminMediaArchiveTargetController::class, 'desiredState']);
+    Route::put('/recording-archive-targets/{target}/credential', [AdminMediaArchiveTargetController::class, 'credential']);
     Route::get('/inbound-routes', [AdminC7bController::class, 'inbound']);
     Route::post('/inbound-routes', [AdminC7bController::class, 'createInbound']);
     Route::get('/outbound-routes', [AdminC7bController::class, 'outbound']);
