@@ -343,9 +343,10 @@ identity-catalog, and premature pre-answer dispatch defects are repaired. See
 the [live-proof blocker](../evidence/rma/rma-a-recording-session-lifecycle-natural-live-proof-blocker.md),
 [implementation evidence](../evidence/rma/rma-a-recording-session-lifecycle-aware-start-reconciliation-implementation.md),
 and [exact-cause audit](../evidence/rma/rma-a-asterisk-recording-start-conflict-exact-cause-audit.md).
-RMA-B is implemented and repository-tested as a runtime-neutral capture contract;
-acceptance proof remains bounded and deferred. RMA-C through RMA-H remain not
-started. RMA does not technically gate A0, and
+RMA-B is implemented, repository-tested, immutably published, and deployed as
+a runtime-neutral capture contract; focused acceptance proof remains bounded
+and deferred. RMA-C through RMA-H remain not started. RMA does not technically
+gate A0, and
 no artifact, archive, retention, playback, or download implementation is
 claimed by RMA-A or RMA-B.
 
