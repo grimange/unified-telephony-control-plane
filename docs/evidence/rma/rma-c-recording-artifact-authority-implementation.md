@@ -60,8 +60,8 @@ no artifact is manufactured by an unsupported capture attempt.
 
 ## Validation and remaining proof
 
-The repository-native `make image-test-api` suite passed with 700 tests passed,
-9 skipped, and 5554 assertions. Focused coverage includes artifact identity,
+The repository-native `make image-test-api` suite passed with 701 tests passed,
+9 skipped, and 5572 assertions. Focused coverage includes artifact identity,
 schema/cardinality, lifecycle ordering, idempotency, tenant/session targeting,
 available-event uniqueness, Asterisk metadata normalization, safe API
 projection, and the unchanged FreeSWITCH unsupported boundary. PHP syntax,
