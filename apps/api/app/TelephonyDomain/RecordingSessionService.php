@@ -107,6 +107,7 @@ final class RecordingSessionService
                 'call_id' => $session->call_id,
                 'leg_id' => $leg->id,
                 'recording_session_id' => $session->id,
+                'capture_ref' => CaptureReference::forRecordingSession((string) $session->id)->canonical(),
             ], $leg->runtime_node_id);
             DB::table('recording_sessions')->where('id', $session->id)->update(['stop_operation_id' => $operationId, 'updated_at' => now()]);
             $this->record($context, 'recording_session.stop_requested', (string) $session->id, ['operation_id' => $operationId]);
@@ -205,12 +206,24 @@ final class RecordingSessionService
         ]);
     }
 
-    public function applyObservation(string $tenantId, string $legId, string $state, ?string $observedAt = null): void
+    public function applyObservation(string $tenantId, string $legId, string $state, ?string $observedAt = null, ?string $captureRef = null): void
     {
         if (! in_array($state, ['recording', 'stopped'], true)) {
             throw new InvalidArgumentException('invalid recording observation state');
         }
-        $session = DB::table('recording_sessions')->where('tenant_id', $tenantId)->where('call_leg_id', $legId)->whereIn('observed_state', ['requested', 'recording'])->orderByDesc('requested_at')->lockForUpdate()->first();
+        $query = DB::table('recording_sessions')->where('tenant_id', $tenantId)->whereIn('observed_state', ['requested', 'recording']);
+        if ($captureRef !== null) {
+            $reference = CaptureReference::parse($captureRef);
+            $identifier = substr($reference->canonical(), strlen('utcp:capture/'));
+            $session = $query->where('call_leg_id', $legId)->get()->first(function (object $candidate) use ($identifier): bool {
+                return hash_equals(md5((string) $candidate->id), $identifier);
+            });
+            if ($session !== null) {
+                $session = DB::table('recording_sessions')->where('tenant_id', $tenantId)->where('id', $session->id)->where('call_leg_id', $legId)->whereIn('observed_state', ['requested', 'recording'])->lockForUpdate()->first();
+            }
+        } else {
+            $session = $query->where('call_leg_id', $legId)->orderByDesc('requested_at')->lockForUpdate()->first();
+        }
         if ($session === null) {
             return;
         }
@@ -238,6 +251,7 @@ final class RecordingSessionService
                 'call_id' => $session->call_id,
                 'leg_id' => $leg->id,
                 'recording_session_id' => $session->id,
+                'capture_ref' => CaptureReference::forRecordingSession((string) $session->id)->canonical(),
             ], $leg->runtime_node_id);
             DB::table('recording_sessions')->where('tenant_id', $tenantId)->where('id', $session->id)->update(['start_operation_id' => $operationId, 'updated_at' => now()]);
 

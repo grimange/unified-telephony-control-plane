@@ -124,7 +124,7 @@ terminated naturally. The stored WAV has a zero-length PCM payload because the
 Echo fixture corridor carries no audio RTP; that is a fixture media property,
 not a recording authority or lifecycle property. See the
 [RMA-A final acceptance evidence](../evidence/rma/rma-a-recording-authority-and-lifecycle-final-natural-live-acceptance-passed.md).
-**Exactly one next action:** begin `RMA-B — Runtime-Neutral Capture Contract`
+**Exactly one next action:** execute the bounded `RMA_B_RUNTIME_NEUTRAL_CAPTURE_CONTRACT_IMPLEMENTATION`
 under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md).
 The pre-Call execution-image blocker is closed by the deployed,
 live-proven managed-workload observer repair: terminating and terminal Pods are
@@ -343,9 +343,11 @@ identity-catalog, and premature pre-answer dispatch defects are repaired. See
 the [live-proof blocker](../evidence/rma/rma-a-recording-session-lifecycle-natural-live-proof-blocker.md),
 [implementation evidence](../evidence/rma/rma-a-recording-session-lifecycle-aware-start-reconciliation-implementation.md),
 and [exact-cause audit](../evidence/rma/rma-a-asterisk-recording-start-conflict-exact-cause-audit.md).
-RMA-B through RMA-H remain not started. RMA does not technically gate A0, and
+RMA-B is implemented and repository-tested as a runtime-neutral capture contract;
+acceptance proof remains bounded and deferred. RMA-C through RMA-H remain not
+started. RMA does not technically gate A0, and
 no artifact, archive, retention, playback, or download implementation is
-claimed by RMA-A.
+claimed by RMA-A or RMA-B.
 
 ## Historical status rule
 

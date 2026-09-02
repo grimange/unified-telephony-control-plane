@@ -262,11 +262,14 @@ final class AsteriskAriAdapterTest extends TestCase
             ['call.leg.mute', 'POST', 'channels/channel-1/mute', 'channels.mute'],
             ['call.leg.unmute', 'DELETE', 'channels/channel-1/mute', 'channels.unmute'],
             ['call.leg.start_recording', 'POST', 'channels/channel-1/record', 'channels.record'],
-            ['call.leg.stop_recording', 'POST', 'recordings/live/leg-1/stop', 'recordings.stop'],
+            ['call.leg.stop_recording', 'POST', 'recordings/live/utcp-capture-0123456789abcdef0123456789abcdef/stop', 'recordings.stop'],
         ];
 
         foreach ($expected as [$operationType, $method, $resource, $providerAction]) {
-            $result = $client->executeCallOperation($tenantId, $nodeId, $operationType, [], $legs);
+            $payload = in_array($operationType, ['call.leg.start_recording', 'call.leg.stop_recording'], true)
+                ? ['capture_ref' => 'utcp:capture/0123456789abcdef0123456789abcdef']
+                : [];
+            $result = $client->executeCallOperation($tenantId, $nodeId, $operationType, $payload, $legs);
 
             $this->assertSame($providerAction, $result['provider_action']);
             $this->assertSame($method, $client->requests[array_key_last($client->requests)]['method']);
@@ -277,8 +280,26 @@ final class AsteriskAriAdapterTest extends TestCase
         $this->assertStringNotContainsString('/unhold', $resources);
         $this->assertCount(0, array_filter(
             $client->requests,
-            static fn (array $request): bool => $request['method'] === 'DELETE' && $request['resource'] === 'recordings/live/leg-1',
+            static fn (array $request): bool => $request['method'] === 'DELETE' && str_starts_with($request['resource'], 'recordings/live/'),
         ));
+    }
+
+    public function test_recording_operations_reject_missing_or_invalid_capture_reference(): void
+    {
+        [$tenantId, $nodeId] = $this->runtimeNode();
+        $this->configureAriNode($tenantId, $nodeId);
+        $client = $this->ariClientWithResponses([]);
+        $legs = [['id' => 'leg-1', 'call_id' => 'call-1', 'runtime_channel_id' => 'channel-1']];
+
+        foreach (['call.leg.start_recording', 'call.leg.stop_recording'] as $operation) {
+            try {
+                $client->executeCallOperation($tenantId, $nodeId, $operation, ['capture_ref' => 'not-a-capture'], $legs);
+                $this->fail('invalid capture syntax should fail before ARI execution');
+            } catch (AsteriskAriException $exception) {
+                $this->assertSame('invalid_capture_ref', $exception->failureCode);
+            }
+            $this->assertSame([], $client->requests);
+        }
     }
 
     public function test_recording_ari_422_is_unsupported_format_not_resource_conflict(): void

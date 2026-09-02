@@ -6,6 +6,7 @@ use App\ControlPlane\RuntimeOperations\FailureClass;
 use App\RuntimeEngine\Commands\RuntimeAdapter;
 use App\RuntimeEngine\Commands\RuntimeOperationHandler;
 use App\TelephonyDomain\CallOperationCatalog;
+use App\TelephonyDomain\CaptureReference;
 use InvalidArgumentException;
 
 final class SimulatorCallOperationHandler implements RuntimeOperationHandler
@@ -79,6 +80,12 @@ final class SimulatorCallOperationHandler implements RuntimeOperationHandler
         }
         if ($this->type === 'call.leg.play_media' && (! is_string($payload['media_ref'] ?? null) || ! str_starts_with($payload['media_ref'], 'utcp:media/'))) {
             throw new InvalidArgumentException('playMedia requires an opaque utcp:media reference');
+        }
+        if (in_array($this->type, ['call.leg.start_recording', 'call.leg.stop_recording'], true)) {
+            if (! is_string($payload['capture_ref'] ?? null)) {
+                throw new InvalidArgumentException('recording operations require an opaque capture reference');
+            }
+            CaptureReference::parse($payload['capture_ref']);
         }
     }
 

@@ -43,6 +43,8 @@ final class RecordingSessionTest extends TestCase
         $started = DB::table('recording_sessions')->where('id', $first['id'])->first();
         $this->assertNotNull($started->start_operation_id);
         $this->assertSame('call.leg.start_recording', DB::table('runtime_operations')->where('id', $started->start_operation_id)->value('operation_type'));
+        $startPayload = json_decode((string) DB::table('runtime_operations')->where('id', $started->start_operation_id)->value('payload'), true);
+        $this->assertSame('utcp:capture/'.md5((string) $first['id']), $startPayload['capture_ref']);
         $this->assertSame(1, DB::table('runtime_operations')->where('operation_type', 'call.leg.start_recording')->count());
         $this->assertSame(1, DB::table('recording_sessions')->where('tenant_id', $tenant)->count());
 
@@ -104,6 +106,8 @@ final class RecordingSessionTest extends TestCase
         $this->assertSame('stopped', $stopped['desired_state']);
         $this->assertNotNull($stopped['stop_operation_id']);
         $this->assertSame('call.leg.stop_recording', DB::table('runtime_operations')->where('id', $stopped['stop_operation_id'])->value('operation_type'));
+        $stopPayload = json_decode((string) DB::table('runtime_operations')->where('id', $stopped['stop_operation_id'])->value('payload'), true);
+        $this->assertSame('utcp:capture/'.md5((string) $recording['id']), $stopPayload['capture_ref']);
         DB::table('call_legs')->where('id', $legId)->update(['observed_state' => 'answered']);
         app(\App\TelephonyDomain\RecordingSessionService::class)->reconcileForLeg($tenant, $legId);
         $this->assertSame(0, DB::table('runtime_operations')->where('operation_type', 'call.leg.start_recording')->count());

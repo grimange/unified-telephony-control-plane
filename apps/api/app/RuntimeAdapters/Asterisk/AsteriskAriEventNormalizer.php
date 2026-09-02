@@ -3,6 +3,7 @@
 namespace App\RuntimeAdapters\Asterisk;
 
 use App\RuntimeEngine\Events\EventNormalizer;
+use App\TelephonyDomain\CaptureReference;
 use App\TelephonyDomain\MediaReference;
 use App\TelephonyDomain\RuntimeChannelIdentity;
 use Illuminate\Support\Facades\DB;
@@ -141,6 +142,14 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
             return null;
         }
 
+        $recording = $this->normalizeRecordingEvent($receipt, $payload);
+        if ($recording !== null || in_array($this->eventType, [
+            $this->catalog->eventType('recording_started'),
+            $this->catalog->eventType('recording_finished'),
+        ], true)) {
+            return $recording;
+        }
+
         $channelId = is_string($payload['channel_id'] ?? null) ? trim($payload['channel_id']) : '';
         if ($channelId === '' || $this->conferenceChannel($receipt, $channelId)) {
             return null;
@@ -260,6 +269,68 @@ final class AsteriskAriEventNormalizer implements EventNormalizer
             'subject_type' => 'call_leg',
             'subject_id' => $leg === null ? 'runtime:'.$channelId : (string) $leg->id,
             'observed_state' => $type === 'call.leg.offered' ? 'offered' : 'observed',
+            'configuration_version' => isset($payload['configuration_generation']) ? (int) $payload['configuration_generation'] : null,
+            'observed_at' => is_string($payload['occurred_at'] ?? null) ? $payload['occurred_at'] : now(),
+            'payload' => $safe,
+        ];
+    }
+
+    /** @return array<string, mixed>|null */
+    private function normalizeRecordingEvent(object $receipt, array $payload): ?array
+    {
+        if (! in_array($this->eventType, [
+            $this->catalog->eventType('recording_started'),
+            $this->catalog->eventType('recording_finished'),
+        ], true)) {
+            return null;
+        }
+
+        $captureRef = CaptureReference::canonicalFromProviderReference(
+            is_string($payload['recording_name'] ?? null) ? $payload['recording_name'] : null,
+        );
+        if ($captureRef === null) {
+            return null;
+        }
+
+        $identifier = substr($captureRef, strlen('utcp:capture/'));
+        $session = DB::table('recording_sessions')
+            ->where('tenant_id', (string) $receipt->tenant_id)
+            ->whereIn('observed_state', ['requested', 'recording', 'stopped'])
+            ->get()
+            ->first(static fn (object $candidate): bool => hash_equals($identifier, md5((string) $candidate->id)));
+        if ($session === null) {
+            return null;
+        }
+
+        $leg = DB::table('call_legs')
+            ->where('tenant_id', (string) $receipt->tenant_id)
+            ->where('runtime_node_id', (string) $receipt->runtime_node_id)
+            ->where('id', (string) $session->call_leg_id)
+            ->first();
+        if ($leg === null) {
+            return null;
+        }
+
+        $safe = [
+            'runtime_node_id' => (string) $receipt->runtime_node_id,
+            'capture_ref' => $captureRef,
+        ];
+        $channelId = is_string($payload['channel_id'] ?? null) ? trim($payload['channel_id']) : '';
+        if ($channelId !== '') {
+            $safe['runtime_channel_id'] = $channelId;
+        }
+        if (is_string($payload['ari_event_type'] ?? null)) {
+            $safe['ari_event_type'] = $payload['ari_event_type'];
+        }
+
+        return [
+            'observation_type' => $this->eventType === $this->catalog->eventType('recording_started')
+                ? 'call.leg.recording_started'
+                : 'call.leg.recording_stopped',
+            'observation_version' => 1,
+            'subject_type' => 'call_leg',
+            'subject_id' => (string) $leg->id,
+            'observed_state' => 'observed',
             'configuration_version' => isset($payload['configuration_generation']) ? (int) $payload['configuration_generation'] : null,
             'observed_at' => is_string($payload['occurred_at'] ?? null) ? $payload['occurred_at'] : now(),
             'payload' => $safe,

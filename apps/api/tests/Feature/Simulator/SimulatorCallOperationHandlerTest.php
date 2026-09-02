@@ -228,6 +228,7 @@ final class SimulatorCallOperationHandlerTest extends TestCase
             'call.legs.bridge', 'call.legs.unbridge', 'call.leg.attended_transfer' => ['call_id' => $callId, 'leg_ids' => [$legId, $secondLegId]],
             'call.leg.send_dtmf' => ['call_id' => $callId, 'leg_id' => $legId, 'digit' => '1'],
             'call.leg.play_media' => ['call_id' => $callId, 'leg_id' => $legId, 'media_ref' => 'utcp:media/c6b-test'],
+            'call.leg.start_recording', 'call.leg.stop_recording' => ['call_id' => $callId, 'leg_id' => $legId, 'capture_ref' => 'utcp:capture/'.md5($legId)],
             'call.hangup' => ['call_id' => $callId],
             default => ['call_id' => $callId, 'leg_id' => $legId],
         };

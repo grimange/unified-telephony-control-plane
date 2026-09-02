@@ -77,6 +77,18 @@ final class CallObservationProcessor
         $channelId = $this->channel($payload);
         $providerTerminalFailure = ($payload['provider_terminal_failure'] ?? false) === true;
         $deferPreAnswerTerminalization = ($payload['defer_pre_answer_terminalization'] ?? false) === true;
+        $recordingObservation = in_array($type, ['call.leg.recording_started', 'call.leg.recording_stopped'], true);
+        $captureRef = $this->string($payload, 'capture_ref');
+        if ($recordingObservation && $captureRef !== null) {
+            $legId = $this->resolveLegId($tenantId, (string) ($observation['subject_id'] ?? ''), $nodeId, $channelId, true);
+            if ($legId === null) {
+                return;
+            }
+
+            $this->recordings->applyObservation($tenantId, $legId, $type === 'call.leg.recording_started' ? 'recording' : 'stopped', is_string($observation['observed_at'] ?? null) ? $observation['observed_at'] : null, $captureRef);
+
+            return;
+        }
         $legId = $this->resolveLegId($tenantId, (string) ($observation['subject_id'] ?? ''), $nodeId, $channelId, $providerTerminalFailure || $deferPreAnswerTerminalization);
         if ($legId === null || $channelId === null) {
             return;

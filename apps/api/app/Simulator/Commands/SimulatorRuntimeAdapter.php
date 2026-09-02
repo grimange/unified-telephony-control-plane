@@ -141,6 +141,9 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter, RuntimeConference
                 'operation_type' => $operationType,
                 'call_id' => $payload['call_id'] ?? null,
                 'leg_id' => $payload['leg_id'] ?? null,
+                ...in_array($operationType, ['call.leg.start_recording', 'call.leg.stop_recording'], true)
+                    ? ['runtime_capture_reference' => $payload['capture_ref'] ?? null]
+                    : [],
             ],
         ];
     }
@@ -153,7 +156,8 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter, RuntimeConference
         if ($channelId === null && $legId !== null) {
             $channelId = 'simulator-call-'.$legId;
         }
-        if ($legId === null || $channelId === null) {
+        $recordingOperation = in_array($operationType, ['call.leg.start_recording', 'call.leg.stop_recording'], true);
+        if ($legId === null || ($channelId === null && ! $recordingOperation)) {
             return;
         }
         $epoch = $this->openEpoch($node);
@@ -168,6 +172,8 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter, RuntimeConference
             'call.leg.hold' => [['type' => 'call.leg.held', 'state' => 'held', 'delay' => 0]],
             'call.leg.resume' => [['type' => 'call.leg.resumed', 'state' => 'answered', 'delay' => 0]],
             'call.leg.hangup', 'call.leg.cancel_origination' => [['type' => 'call.leg.terminated', 'state' => 'completed', 'delay' => 0, 'reason' => 'requested']],
+            'call.leg.start_recording' => [['type' => 'call.leg.recording_started', 'state' => 'recording', 'delay' => 0]],
+            'call.leg.stop_recording' => [['type' => 'call.leg.recording_stopped', 'state' => 'stopped', 'delay' => 0]],
             default => [],
         };
         foreach ($observations as $observation) {
@@ -181,6 +187,7 @@ final class SimulatorRuntimeAdapter implements RuntimeAdapter, RuntimeConference
                     'call_id' => $payload['call_id'] ?? null,
                     'leg_id' => $legId,
                     'runtime_channel_id' => $channelId,
+                    'capture_ref' => $payload['capture_ref'] ?? null,
                     'termination_reason' => $observation['reason'] ?? null,
                 ], static fn (mixed $value): bool => $value !== null),
                 'occurred_at' => now()->addSeconds((int) $observation['delay'])->toISOString(),

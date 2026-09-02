@@ -130,12 +130,14 @@ final class FreeSwitchEslAdapterTest extends TestCase
 
     public function test_unsupported_media_and_recording_operations_remain_explicitly_unsupported(): void
     {
-        $client = new FreeSwitchEslClient(new RecordingTransport);
+        $transport = new RecordingTransport;
+        $client = new FreeSwitchEslClient($transport);
         foreach (['call.leg.attended_transfer', 'call.leg.start_recording', 'call.leg.stop_recording'] as $operation) {
             $result = $client->executeCallOperation('t', 'n', $operation, [], [['id' => 'a', 'call_id' => 'c', 'runtime_channel_id' => 'u-a']]);
             $this->assertSame('terminal_failure', $result['status']);
             $this->assertSame('freeswitch_call_operation_unsupported', $result['failure_code']);
         }
+        $this->assertSame([], $transport->requests);
     }
 
     public function test_generic_media_reference_is_resolved_before_esl_execution(): void

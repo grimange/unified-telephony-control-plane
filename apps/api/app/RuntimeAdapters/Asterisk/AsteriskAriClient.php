@@ -3,6 +3,7 @@
 namespace App\RuntimeAdapters\Asterisk;
 
 use App\ControlPlane\RuntimeOperations\FailureClass;
+use App\TelephonyDomain\CaptureReference;
 use App\TelephonyDomain\MediaReference;
 use App\TelephonyDomain\RuntimeChannelIdentity;
 use Illuminate\Support\Facades\Crypt;
@@ -399,8 +400,8 @@ class AsteriskAriClient
             'call.leg.redirect', 'call.leg.blind_transfer' => ['POST', $resource.'/redirect', ['endpoint' => $this->asteriskEndpoint((string) ($payload['destination_ref'] ?? ''))], 'channels.redirect'],
             'call.leg.play_media' => ['POST', $resource.'/play', ['media' => $this->asteriskMedia((string) ($payload['media_ref'] ?? ''))], 'channels.play'],
             'call.leg.stop_media' => ['DELETE', 'playbacks/'.rawurlencode((string) ($payload['playback_id'] ?? '')), [], 'playbacks.stop'],
-            'call.leg.start_recording' => ['POST', $resource.'/record', ['name' => $this->safeRuntimeReference((string) ($payload['recording_name'] ?? ($legs[0]['id'] ?? 'recording'))), 'format' => 'wav', 'ifExists' => 'overwrite'], 'channels.record'],
-            'call.leg.stop_recording' => ['POST', 'recordings/live/'.rawurlencode($this->safeRuntimeReference((string) ($payload['recording_name'] ?? ($legs[0]['id'] ?? 'recording')))).'/stop', [], 'recordings.stop'],
+            'call.leg.start_recording' => ['POST', $resource.'/record', ['name' => $this->asteriskCaptureName($payload), 'format' => 'wav', 'ifExists' => 'overwrite'], 'channels.record'],
+            'call.leg.stop_recording' => ['POST', 'recordings/live/'.rawurlencode($this->asteriskCaptureName($payload)).'/stop', [], 'recordings.stop'],
             default => null,
         };
 
@@ -432,7 +433,22 @@ class AsteriskAriClient
         [$method, $target, $query, $providerAction] = $action;
         $request($method, $target, $query);
 
-        return ['provider_action' => $providerAction, 'runtime_channel_id' => $channel];
+        $result = ['provider_action' => $providerAction, 'runtime_channel_id' => $channel];
+        if (in_array($operationType, ['call.leg.start_recording', 'call.leg.stop_recording'], true)) {
+            $result['runtime_capture_reference'] = CaptureReference::parse((string) ($payload['capture_ref'] ?? ''))->canonical();
+        }
+
+        return $result;
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function asteriskCaptureName(array $payload): string
+    {
+        try {
+            return CaptureReference::parse((string) ($payload['capture_ref'] ?? ''))->providerReference('asterisk');
+        } catch (InvalidArgumentException $exception) {
+            throw new AsteriskAriException(FailureClass::InvalidRequest, $exception->getMessage(), 'A valid canonical capture reference is required.');
+        }
     }
 
     /**
