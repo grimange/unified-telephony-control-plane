@@ -354,8 +354,10 @@ remaining unsupported. The acceptance blocker was that the deployed revision
 derived capture identifiers with `md5()` and correlated by an unindexed scan.
 The repository repair now derives directly from `RecordingSession.id` and uses
 tenant-scoped primary-key lookup; see the [direct derivation repair evidence](../evidence/rma/rma-b-capture-reference-direct-derivation-repair.md).
-The corrected revision still requires republishing, deployment, and focused
-live acceptance before RMA-B can close.
+The corrected direct-derivation revision is implemented, repository-tested,
+immutably published, and deployed. Focused live acceptance remains pending
+before RMA-B can close; see the [canonical direct-derivation deployment
+evidence](../evidence/rma/rma-b-capture-reference-direct-derivation-canonical-deployment.md).
 RMA-C through RMA-H remain not started. RMA does not technically
 gate A0, and
 no artifact, archive, retention, playback, or download implementation is
