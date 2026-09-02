@@ -134,6 +134,171 @@ final class IdentityAuthorizationTest extends TestCase
             ->assertUnprocessable();
     }
 
+    public function test_platform_admin_can_enroll_existing_user_into_new_tenant_without_active_context(): void
+    {
+        [$admin, $activeTenantId] = $this->createPlatformAdminWithTenant();
+        $user = $this->createUser('joinable-user@utcp.local.test', 'Joinable User');
+
+        $tenantId = $this->actingAs($admin)
+            ->withSession(['user_session_version' => 1])
+            ->postJson('/api/v1/admin/tenants', [
+                'slug' => 'joinable-tenant',
+                'display_name' => 'Joinable Tenant',
+            ])
+            ->assertCreated()
+            ->json('tenant.id');
+
+        $response = $this->actingAs($admin)
+            ->withSession(['user_session_version' => 1])
+            ->postJson('/api/v1/admin/memberships', [
+                'tenant_id' => $tenantId,
+                'user_id' => $user->id,
+                'role_key' => 'tenant-admin',
+            ])
+            ->assertCreated();
+
+        $membershipId = $response->json('membership_id');
+        $this->assertDatabaseHas('tenant_memberships', [
+            'id' => $membershipId,
+            'tenant_id' => $tenantId,
+            'user_id' => $user->id,
+            'status' => 'active',
+        ]);
+        $this->assertDatabaseHas('tenant_role_assignments', [
+            'membership_id' => $membershipId,
+            'role_key' => 'tenant-admin',
+        ]);
+        $this->assertDatabaseHas('control_plane_audit_records', [
+            'tenant_id' => $tenantId,
+            'action' => 'identity.membership.created',
+            'subject_id' => $membershipId,
+        ]);
+
+        $this->assertNotSame($activeTenantId, $tenantId);
+        $this->actingAs($user)
+            ->withSession(['user_session_version' => 1, '_token' => 'csrf-token'])
+            ->postJson('/api/v1/auth/tenant-context', [
+                'tenant_id' => $tenantId,
+                '_token' => 'csrf-token',
+            ])
+            ->assertOk()
+            ->assertJsonPath('active_tenant.tenant_id', $tenantId);
+    }
+
+    public function test_explicit_tenant_enrollment_requires_platform_membership_capability(): void
+    {
+        [$admin] = $this->createPlatformAdminWithTenant();
+        $user = $this->createUser('platform-scope-user@utcp.local.test', 'Platform Scope User');
+        $tenantId = $this->createTenant('platform-scope-target', 'Platform Scope Target');
+
+        DB::table('role_capabilities')->where([
+            'role_key' => 'platform-admin',
+            'capability_key' => 'platform.memberships.manage',
+        ])->delete();
+
+        $this->actingAs($admin)
+            ->withSession(['user_session_version' => 1])
+            ->postJson('/api/v1/admin/memberships', [
+                'tenant_id' => $tenantId,
+                'user_id' => $user->id,
+                'role_key' => 'tenant-admin',
+            ])
+            ->assertForbidden();
+
+        $this->assertDatabaseHas('role_capabilities', [
+            'role_key' => 'platform-admin',
+            'capability_key' => 'platform.tenants.manage',
+        ]);
+    }
+
+    public function test_tenant_admin_cannot_enroll_into_foreign_tenant(): void
+    {
+        [$admin, $tenantId] = $this->createTenantAdminOnly('tenant-scope-admin@utcp.local.test', 'tenant-scope');
+        $targetTenantId = $this->createTenant('foreign-target', 'Foreign Target');
+        $user = $this->createUser('foreign-target-user@utcp.local.test', 'Foreign Target User');
+
+        $this->actingAs($admin)
+            ->withSession(['user_session_version' => 1, 'active_tenant_id' => $tenantId])
+            ->postJson('/api/v1/admin/memberships', [
+                'tenant_id' => $targetTenantId,
+                'user_id' => $user->id,
+                'role_key' => 'tenant-admin',
+            ])
+            ->assertForbidden();
+    }
+
+    public function test_membership_idempotency_fingerprint_includes_effective_tenant(): void
+    {
+        [$admin] = $this->createPlatformAdminWithTenant();
+        $user = $this->createUser('idempotent-membership@utcp.local.test', 'Idempotent Membership');
+        $firstTenantId = $this->createTenant('idempotent-membership-one', 'Idempotent Membership One');
+        $secondTenantId = $this->createTenant('idempotent-membership-two', 'Idempotent Membership Two');
+        $payload = [
+            'tenant_id' => $firstTenantId,
+            'user_id' => $user->id,
+            'role_key' => 'tenant-admin',
+        ];
+
+        $first = $this->actingAs($admin)
+            ->withSession(['user_session_version' => 1])
+            ->postJson('/api/v1/admin/memberships', $payload, ['Idempotency-Key' => 'membership-target-proof-key'])
+            ->assertCreated()
+            ->json('membership_id');
+        $this->actingAs($admin)
+            ->withSession(['user_session_version' => 1])
+            ->postJson('/api/v1/admin/memberships', $payload, ['Idempotency-Key' => 'membership-target-proof-key'])
+            ->assertOk()
+            ->assertJsonPath('membership_id', $first);
+        $this->actingAs($admin)
+            ->withSession(['user_session_version' => 1])
+            ->postJson('/api/v1/admin/memberships', [
+                'tenant_id' => $secondTenantId,
+                'user_id' => $user->id,
+                'role_key' => 'tenant-admin',
+            ], ['Idempotency-Key' => 'membership-target-proof-key'])
+            ->assertConflict();
+
+        $this->assertSame(1, DB::table('tenant_memberships')->where('tenant_id', $firstTenantId)->where('user_id', $user->id)->count());
+        $this->assertSame(0, DB::table('tenant_memberships')->where('tenant_id', $secondTenantId)->where('user_id', $user->id)->count());
+    }
+
+    public function test_unknown_explicit_tenant_is_not_created_or_selected(): void
+    {
+        [$admin] = $this->createPlatformAdminWithTenant();
+        $user = $this->createUser('unknown-membership-target@utcp.local.test', 'Unknown Membership Target');
+        $unknownTenantId = IdentityIds::new();
+
+        $this->actingAs($admin)
+            ->withSession(['user_session_version' => 1])
+            ->postJson('/api/v1/admin/memberships', [
+                'tenant_id' => $unknownTenantId,
+                'user_id' => $user->id,
+                'role_key' => 'tenant-admin',
+            ])
+            ->assertNotFound();
+
+        $this->assertDatabaseMissing('tenant_memberships', [
+            'tenant_id' => $unknownTenantId,
+            'user_id' => $user->id,
+        ]);
+    }
+
+    public function test_identity_catalog_maps_platform_membership_management_only_to_platform_admin(): void
+    {
+        $this->assertDatabaseHas('capabilities', [
+            'key' => 'platform.memberships.manage',
+            'scope' => 'platform',
+        ]);
+        $this->assertDatabaseHas('role_capabilities', [
+            'role_key' => 'platform-admin',
+            'capability_key' => 'platform.memberships.manage',
+        ]);
+        $this->assertDatabaseMissing('role_capabilities', [
+            'role_key' => 'tenant-admin',
+            'capability_key' => 'platform.memberships.manage',
+        ]);
+    }
+
     public function test_password_change_and_admin_reset_invalidate_sessions(): void
     {
         [$admin] = $this->createPlatformAdminWithTenant();
@@ -428,5 +593,45 @@ final class IdentityAuthorizationTest extends TestCase
             'password_change_required' => false,
             'session_version' => 1,
         ]);
+    }
+
+    private function createTenant(string $slug, string $displayName): string
+    {
+        $tenantId = IdentityIds::new();
+        DB::table('tenants')->insert([
+            'id' => $tenantId,
+            'slug' => $slug,
+            'display_name' => $displayName,
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $tenantId;
+    }
+
+    /** @return array{0: User, 1: string} */
+    private function createTenantAdminOnly(string $email, string $slug): array
+    {
+        $user = $this->createUser($email, 'Tenant Scope Admin');
+        $tenantId = $this->createTenant($slug, 'Tenant Scope');
+        $membershipId = IdentityIds::new();
+        DB::table('tenant_memberships')->insert([
+            'id' => $membershipId,
+            'user_id' => $user->id,
+            'tenant_id' => $tenantId,
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        DB::table('tenant_role_assignments')->insert([
+            'id' => IdentityIds::new(),
+            'membership_id' => $membershipId,
+            'role_key' => 'tenant-admin',
+            'assigned_by_user_id' => null,
+            'created_at' => now(),
+        ]);
+
+        return [$user, $tenantId];
     }
 }

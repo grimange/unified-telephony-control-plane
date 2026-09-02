@@ -38,13 +38,29 @@ final class AdminMembershipController extends Controller
 
     public function store(Request $request, AuthorizationService $authorization, IdentityAdminService $admin, IdempotencyStore $idempotency): JsonResponse
     {
-        $tenantId = $this->tenantId($request);
-        $authorization->requireTenant($request->user()->id, $tenantId, 'tenant.memberships.manage');
         $data = $request->validate([
+            'tenant_id' => ['sometimes', 'string'],
             'user_id' => ['required', 'string'],
             'role_key' => ['required', 'string'],
         ]);
-        $fingerprint = ['tenant_id' => $tenantId, ...$data];
+        $platformScoped = array_key_exists('tenant_id', $data);
+        if ($platformScoped) {
+            $tenantId = $data['tenant_id'];
+            $authorization->requirePlatform($request->user()->id, 'platform.memberships.manage');
+            abort_unless(
+                DB::table('tenants')->where('id', $tenantId)->exists(),
+                404,
+                'Tenant not found.',
+            );
+        } else {
+            $tenantId = $this->tenantId($request);
+            $authorization->requireTenant($request->user()->id, $tenantId, 'tenant.memberships.manage');
+        }
+        $fingerprint = [
+            'tenant_id' => $tenantId,
+            'user_id' => $data['user_id'],
+            'role_key' => $data['role_key'],
+        ];
         $key = $this->idempotencyKey($request);
 
         if ($key !== null) {

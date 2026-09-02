@@ -6,6 +6,7 @@ return [
     'capabilities' => [
         'platform.tenants.view' => ['scope' => 'platform', 'description' => 'View tenants'],
         'platform.tenants.manage' => ['scope' => 'platform', 'description' => 'Manage tenants'],
+        'platform.memberships.manage' => ['scope' => 'platform', 'description' => 'Manage tenant memberships across tenants'],
         'platform.users.view' => ['scope' => 'platform', 'description' => 'View users'],
         'platform.users.manage' => ['scope' => 'platform', 'description' => 'Manage users'],
         'platform.infrastructure.view' => ['scope' => 'platform', 'description' => 'View observed Kubernetes infrastructure'],
@@ -50,6 +51,7 @@ return [
             'capabilities' => [
                 'platform.tenants.view',
                 'platform.tenants.manage',
+                'platform.memberships.manage',
                 'platform.users.view',
                 'platform.users.manage',
                 'platform.infrastructure.view',
