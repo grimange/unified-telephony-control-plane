@@ -419,7 +419,7 @@ closed by the 2026-09-02 focused natural-live reproof, which proved
 `recording.format="wav"` surviving sanitization through the receipt, the
 normalized observation, `pending → available` finalization of the same artifact,
 exactly one `recording_artifact.available`, the existing API projection, and the
-44-byte zero-PCM content-independence boundary. No RMA-C proof gap remains. **RMA-D Archive Target and Secret-Reference Authority is IMPLEMENTED / REPOSITORY-TESTED; canonical immutable publication/deployment and focused authenticated-API acceptance remain pending.** RMA-E through RMA-H remain not started. RMA does not technically
+44-byte zero-PCM content-independence boundary. No RMA-C proof gap remains. **RMA-D Archive Target and Secret-Reference Authority is IMPLEMENTED / REPOSITORY-TESTED / IMMUTABLY PUBLISHED / DEPLOYED; focused authenticated-API acceptance remains pending.** RMA-E through RMA-H remain not started. RMA does not technically
 gate A0, and
 no artifact, archive, retention, playback, or download implementation is
 claimed by RMA-A or RMA-B.
