@@ -124,7 +124,22 @@ terminated naturally. The stored WAV has a zero-length PCM payload because the
 Echo fixture corridor carries no audio RTP; that is a fixture media property,
 not a recording authority or lifecycle property. See the
 [RMA-A final acceptance evidence](../evidence/rma/rma-a-recording-authority-and-lifecycle-final-natural-live-acceptance-passed.md).
-**Exactly one next action:** execute the bounded `RMA_B_RUNTIME_NEUTRAL_CAPTURE_CONTRACT_IMPLEMENTATION`
+**RMA-B Runtime-Neutral Capture Contract is COMPLETE /
+ACCEPTANCE-PROVEN.** Its 2026-09-02 direct-derivation live reproof on the
+repaired revision `8e77cdc` proved one identity end to end:
+`RecordingSession.id = capture_ref identifier = Asterisk provider capture
+suffix = normalized observation identifier = targeted RecordingSession`
+(`9c0c895f17aa1ea65689932919011133`). Concurrent read-only provider polling
+returned `404` for both the previous `md5()` name and the legacy CallLeg-ID name
+for the whole transaction, while the direct name served the live and stored
+recording. Channel-less `RecordingStarted`/`RecordingFinished` events correlated
+back to the exact RecordingSession by primary key, the session converged
+`recording → stopped`, both idempotent replays created no second operation, the
+store-preserving provider stop retained the artifact, and naturally late
+recording observations did not regress the stopped state. FreeSWITCH remains
+honestly unsupported and no RMA-C authority appeared. See the
+[RMA-B direct-derivation reproof](../evidence/rma/rma-b-capture-reference-direct-derivation-focused-live-reproof-passed.md).
+**Exactly one next action:** begin `RMA-C — Recording Artifact Authority`
 under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md).
 The pre-Call execution-image blocker is closed by the deployed,
 live-proven managed-workload observer repair: terminating and terminal Pods are
@@ -258,7 +273,7 @@ documentation task. Current T4 implementation evidence:
 | Track | Status / release placement |
 | --- | --- |
 | K5 | Parallel / R0-Critical infrastructure track under [`ADR-024`](../decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md); does not serially gate T4 or C7A. K5A–K5E are Complete / natural-live-proven, satisfying the R0 requirement. K5F is Planned, not implemented, and not an R0 gate |
-| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); **RMA-A Recording Authority and Lifecycle is COMPLETE / NATURAL-LIVE-PROVEN.** One fresh canonical transaction proved pre-answer intent with zero premature start, natural SIP answer, canonical `answered`, exactly-one automatic start, a real Asterisk WAV LiveRecording, canonical active convergence, start idempotency, canonical stop, the store-preserving ARI stop, a retained StoredRecording, canonical stopped convergence, stop idempotency, and complete audit continuity. The bounded WAV capability, ARI-422 normalization, terminal failure-projection repair, provider recording-runtime capability, and managed-workload live-Pod execution-image observation repair are implemented, repository-validated, immutably published, deployed, and live-proven. No RMA-A proof gap remains. **RMA-B Runtime-Neutral Capture Contract is implemented, repository-tested, published, and deployed, and its focused acceptance is BLOCKED on one boundary:** the canonical capture identifier is `md5()` of the RecordingSession id rather than the RecordingSession id, making the identity non-invertible and correlation an unindexed tenant-wide scan. Every other RMA-B boundary passed live, including the channel-less recording observation corridor that did not exist under RMA-A. RMA-C through RMA-H remain not started |
+| RMA | In progress / UTCP Core / R0-Critical under [`ADR-029`](../decisions/ADR-029-recording-media-artifact-and-archive-authority.md); **RMA-A Recording Authority and Lifecycle is COMPLETE / NATURAL-LIVE-PROVEN.** One fresh canonical transaction proved pre-answer intent with zero premature start, natural SIP answer, canonical `answered`, exactly-one automatic start, a real Asterisk WAV LiveRecording, canonical active convergence, start idempotency, canonical stop, the store-preserving ARI stop, a retained StoredRecording, canonical stopped convergence, stop idempotency, and complete audit continuity. The bounded WAV capability, ARI-422 normalization, terminal failure-projection repair, provider recording-runtime capability, and managed-workload live-Pod execution-image observation repair are implemented, repository-validated, immutably published, deployed, and live-proven. No RMA-A proof gap remains. **RMA-B Runtime-Neutral Capture Contract is COMPLETE / ACCEPTANCE-PROVEN.** The canonical capture identity is `utcp:capture/<RecordingSession.id>`, translated to the Asterisk provider capture `utcp-capture-<RecordingSession.id>`, and channel-less `RecordingStarted`/`RecordingFinished` events correlate back to the exact RecordingSession by primary key — a corridor that did not exist under RMA-A. The direct-derivation live reproof proved that one identity end to end, with the former `md5()` name and the legacy CallLeg-ID name both `404` at the provider, plus canonical payload purity, idempotency, the store-preserving provider stop, natural late-event monotonicity, the unchanged FreeSWITCH unsupported boundary, and no RMA-C leakage. No RMA-B proof gap remains. RMA-C through RMA-H remain not started |
 | Operational Reporting & Insights | Future UTCP Core / Post-current-R0 roadmap; not a current phase or R0 gate; no implementation claimed under [`ADR-033`](../decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md) |
 | C8 | Planned UTCP core transfer/handoff track under [`ADR-025`](../decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md); advanced consultative and inter-runtime/provider handoff defaults to post-R0/R1 unless V1 proves a basic dependency |
 | Queue/ACD | Future extension; no R0 phase |
@@ -355,9 +370,15 @@ derived capture identifiers with `md5()` and correlated by an unindexed scan.
 The repository repair now derives directly from `RecordingSession.id` and uses
 tenant-scoped primary-key lookup; see the [direct derivation repair evidence](../evidence/rma/rma-b-capture-reference-direct-derivation-repair.md).
 The corrected direct-derivation revision is implemented, repository-tested,
-immutably published, and deployed. Focused live acceptance remains pending
-before RMA-B can close; see the [canonical direct-derivation deployment
-evidence](../evidence/rma/rma-b-capture-reference-direct-derivation-canonical-deployment.md).
+immutably published, deployed, and now **live-proven**: the 2026-09-02
+direct-derivation reproof showed `RecordingSession.id`, the `capture_ref`
+identifier, the Asterisk provider capture suffix, the normalized observation
+identifier, and the targeted RecordingSession are one value, with the former
+`md5()` name and the legacy CallLeg-ID name both `404` at the provider for the
+whole transaction. **RMA-B is COMPLETE / ACCEPTANCE-PROVEN and no RMA-B proof
+gap remains.** See the [canonical direct-derivation deployment
+evidence](../evidence/rma/rma-b-capture-reference-direct-derivation-canonical-deployment.md)
+and the [direct-derivation focused live reproof](../evidence/rma/rma-b-capture-reference-direct-derivation-focused-live-reproof-passed.md).
 RMA-C through RMA-H remain not started. RMA does not technically
 gate A0, and
 no artifact, archive, retention, playback, or download implementation is
