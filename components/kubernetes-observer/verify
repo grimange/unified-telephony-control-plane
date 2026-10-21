@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SDK='golang@sha256:4557cf171e3cdf5053a298d5171b1a5f5734d920260c25f22c79e94760eb2084'
+CACHE="${UTCP_GN_G1_CACHE:-/tmp/utcp-gn-g0-go-cache}"
+OUTPUT="${UTCP_GN_G1_OUTPUT:-/tmp/utcp-gn-g1-output}"
+mkdir -p "$CACHE" "$OUTPUT"
+args=(--rm --user "$(id -u):$(id -g)" -e GOPATH=/cache -e GOCACHE=/cache/build
+ -e UTCP_GN_G1_OUTPUT=/output -v "$CACHE:/cache" -v "$OUTPUT:/output"
+ -v "$ROOT/components/kubernetes-observer:/repo/components/kubernetes-observer:ro"
+ -v "$ROOT/docs/architecture/proposals/gn-g0/contracts/v1:/repo/docs/architecture/proposals/gn-g0/contracts/v1:ro"
+ -v "$ROOT/tests/gn-g1-observer:/repo/tests/gn-g1-observer:ro"
+ -w /repo/components/kubernetes-observer)
+if [ "${1:-}" = '--download' ]; then docker run "${args[@]}" "$SDK" go mod download; fi
+docker run "${args[@]}" --network none "$SDK" sh -ec '
+ go version
+ go list -m k8s.io/api k8s.io/apimachinery k8s.io/client-go
+ go mod verify
+ test -z "$(gofmt -l *.go)"
+ UTCP_GN_G1_EXPORT=1 go test -count=1 -v ./...
+ go test -race -count=1 ./...
+ go vet ./...
+'
+"$ROOT/tests/gn-g1-observer/verify-php"
+"$ROOT/components/kubernetes-observer/verify-static"

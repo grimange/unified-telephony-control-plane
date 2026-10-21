@@ -1,0 +1,163 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "request_id",
+    "operation_id",
+    "outcome",
+    "effect",
+    "dispatch",
+    "retry",
+    "target_uid",
+    "resource_version",
+    "target_generation",
+    "projection_fingerprint",
+    "retirement_id",
+    "deletion_timestamp",
+    "finished_at"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "utcp.infrastructure.v3"
+    },
+    "request_id": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "operation_id": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "outcome": {
+      "enum": [
+        "success",
+        "already_satisfied",
+        "invalid_request",
+        "unauthorized",
+        "forbidden",
+        "target_not_found",
+        "identity_mismatch",
+        "ownership_conflict",
+        "resource_version_conflict",
+        "stale_generation",
+        "timeout",
+        "cancelled",
+        "transport_unavailable",
+        "retryable_failure",
+        "terminal_failure",
+        "outcome_unknown",
+        "drift",
+        "busy"
+      ]
+    },
+    "effect": {
+      "enum": [
+        "none",
+        "unknown",
+        "created_suspended",
+        "observed_suspended",
+        "projection_applied",
+        "deletion_accepted",
+        "terminating",
+        "observed_absent",
+        "retirement_admitted"
+      ]
+    },
+    "dispatch": {
+      "enum": [
+        "not_sent",
+        "response_received",
+        "rejected",
+        "unknown"
+      ]
+    },
+    "retry": {
+      "enum": [
+        "never",
+        "reauthorize",
+        "backoff",
+        "observe_first"
+      ]
+    },
+    "target_uid": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "resource_version": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "target_generation": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 19,
+          "pattern": "^[1-9][0-9]{0,18}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "projection_fingerprint": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "retirement_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9][a-z0-9_.:-]*$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "deletion_timestamp": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

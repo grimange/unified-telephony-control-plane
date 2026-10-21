@@ -1,0 +1,187 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://utcp.invalid/contracts/v1/result.schema.json",
+  "type": "object",
+  "properties": {
+    "contract_version": {
+      "const": "utcp.infrastructure.v1"
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+    },
+    "operation_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+    },
+    "outcome": {
+      "enum": [
+        "success",
+        "already_satisfied",
+        "invalid_request",
+        "unauthorized",
+        "forbidden",
+        "target_not_found",
+        "identity_mismatch",
+        "ownership_conflict",
+        "resource_version_conflict",
+        "stale_generation",
+        "timeout",
+        "cancelled",
+        "transport_unavailable",
+        "retryable_failure",
+        "terminal_failure",
+        "outcome_unknown",
+        "drift",
+        "busy"
+      ]
+    },
+    "effect": {
+      "enum": [
+        "none",
+        "admitted",
+        "applied",
+        "observed_satisfied",
+        "unknown"
+      ]
+    },
+    "retry": {
+      "enum": [
+        "never",
+        "reauthorize",
+        "observe_first",
+        "backoff"
+      ]
+    },
+    "dispatch": {
+      "enum": [
+        "not_sent",
+        "rejected",
+        "response_received",
+        "unknown"
+      ]
+    },
+    "target_uid": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\r\\n]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "resource_version": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\r\\n]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "admitted_generation": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "applied_generation": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "contract_version",
+    "request_id",
+    "operation_id",
+    "outcome",
+    "effect",
+    "retry",
+    "dispatch",
+    "target_uid",
+    "resource_version",
+    "admitted_generation",
+    "applied_generation",
+    "finished_at"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "outcome_unknown"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "effect": {
+            "const": "unknown"
+          },
+          "retry": {
+            "const": "observe_first"
+          },
+          "dispatch": {
+            "const": "unknown"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "enum": [
+              "success",
+              "already_satisfied"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "target_uid": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[^\\r\\n]+$"
+          },
+          "resource_version": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[^\\r\\n]+$"
+          },
+          "dispatch": {
+            "const": "response_received"
+          }
+        }
+      }
+    }
+  ]
+}

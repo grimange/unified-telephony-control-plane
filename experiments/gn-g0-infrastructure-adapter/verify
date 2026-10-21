@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Disposable verification. Network is used only for pinned module acquisition.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SDK='golang@sha256:4557cf171e3cdf5053a298d5171b1a5f5734d920260c25f22c79e94760eb2084'
+CACHE="${UTCP_GN_G0_CACHE:-/tmp/utcp-gn-g0-go-cache}"
+mkdir -p "$CACHE"
+args=(--rm --user "$(id -u):$(id -g)" -e GOPATH=/cache -e GOCACHE=/cache/build
+  -v "$CACHE:/cache"
+  -v "$ROOT/experiments/gn-g0-infrastructure-adapter:/repo/experiments/gn-g0-infrastructure-adapter:ro"
+  -v "$ROOT/docs/architecture/proposals/gn-g0/contracts/v1:/repo/docs/architecture/proposals/gn-g0/contracts/v1:ro"
+  -w /repo/experiments/gn-g0-infrastructure-adapter)
+if [ "${1:-}" = '--download' ]; then
+  docker run "${args[@]}" "$SDK" go mod download
+fi
+docker run "${args[@]}" --network none "$SDK" sh -ec '
+  go version
+  go list -m k8s.io/api k8s.io/apimachinery k8s.io/client-go
+  go mod verify
+  test -z "$(gofmt -l adapter.go adapter_test.go)"
+  printf "go test -count=1 ./...\n"
+  go test -count=1 ./...
+  printf "go test -race -count=1 ./...\n"
+  go test -race -count=1 ./...
+  printf "go vet ./...\n"
+  go vet ./...
+  printf "go vet: PASS\n"
+'

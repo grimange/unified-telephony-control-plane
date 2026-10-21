@@ -1,0 +1,14 @@
+{
+  "contract_version": "utcp.infrastructure.v1",
+  "request_id": "request-10",
+  "operation_id": "operation-10",
+  "outcome": "success",
+  "effect": "applied",
+  "retry": "never",
+  "dispatch": "response_received",
+  "target_uid": "uid-a",
+  "resource_version": "102",
+  "admitted_generation": "10",
+  "applied_generation": "10",
+  "finished_at": "2026-10-21T12:00:01Z"
+}

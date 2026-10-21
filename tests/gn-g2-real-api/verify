@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""Create, verify, and destroy one owned GN-G2 cluster; never use ambient credentials."""
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+import uuid
+
+ROOT = Path(__file__).resolve().parents[2]
+NODE = 'rancher/k3s@sha256:4607083d3cac07e1ccde7317297271d13ed5f60f35a78f33fcef84858a9f1d69'
+SDK = 'golang@sha256:4557cf171e3cdf5053a298d5171b1a5f5734d920260c25f22c79e94760eb2084'
+
+
+def command(args, **kwargs):
+    return subprocess.check_output(args, text=True, **kwargs).strip()
+
+
+def clusters():
+    # k3d JSON includes environment secrets: project names only, never print it.
+    return {c['name'] for c in json.loads(command(['k3d', 'cluster', 'list', '-o', 'json']))}
+
+
+def save(path, data):
+    path.write_text(json.dumps(data, indent=2) + '\n')
+    path.chmod(0o600)
+
+
+def load(directory):
+    directory = Path(directory).resolve()
+    if directory.parent != Path('/tmp') or not directory.name.startswith('utcp-gn-g2-real-'):
+        raise RuntimeError('refusing unexpected run directory')
+    p = directory / 'identity.json'
+    data = json.loads(p.read_text())
+    if not re.fullmatch(r'gn-g2-proof-[a-f0-9]{12}', data['run']):
+        raise RuntimeError('refusing unexpected cluster name')
+    if data['context'] != 'k3d-' + data['run']:
+        raise RuntimeError('unexpected context')
+    return directory, data
+
+
+def owned(data):
+    name = 'k3d-' + data['run'] + '-server-0'
+    values = json.loads(command(['docker', 'inspect', '--format', '{{json .}}', name]))
+    labels = values['Config']['Labels']
+    if labels.get('utcp.gn-g2.run') != data['nonce'] or labels.get('k3d.cluster') != data['run']:
+        raise RuntimeError('cluster container is not owned by this run')
+    if data.get('container_id') and values['Id'] != data['container_id']:
+        raise RuntimeError('container identity changed')
+    return values['Id']
+
+
+def kubectl(directory, data, *args):
+    return command(['kubectl', '--kubeconfig', str(directory / 'kubeconfig'),
+                    '--context', data['context'], '--request-timeout=20s', *args])
+
+
+def prepare():
+    directory = Path(tempfile.mkdtemp(prefix='utcp-gn-g2-real-', dir='/tmp'))
+    directory.chmod(0o700)
+    nonce = uuid.uuid4().hex
+    run = 'gn-g2-proof-' + nonce[:12]
+    data = {'run': run, 'context': 'k3d-' + run, 'nonce': nonce,
+            'node_image': NODE, 'sdk_image': SDK, 'preexisting_clusters': sorted(clusters())}
+    if run in data['preexisting_clusters']:
+        raise RuntimeError('refusing existing cluster')
+    save(directory / 'identity.json', data)
+    (directory / 'evidence').mkdir(mode=0o700)
+    os.environ['KUBECONFIG'] = str(directory / 'kubeconfig')
+    os.environ['XDG_CONFIG_HOME'] = str(directory / 'config')
+    print('Disposable run directory: ' + str(directory), flush=True)
+    try:
+        subprocess.run(['k3d', 'cluster', 'create', run, '--image', NODE,
+                        '--servers', '1', '--agents', '0', '--no-lb',
+                        '--api-port', '127.0.0.1:0', '--runtime-label', 'utcp.gn-g2.run=' + nonce + '@server:0',
+                        '--kubeconfig-update-default=false', '--kubeconfig-switch-context=false',
+                        '--k3s-arg', '--disable=traefik,servicelb,metrics-server,local-storage,coredns@server:0',
+                        '--timeout', '120s', '--wait'], check=True)
+        data['container_id'] = owned(data)
+        save(directory / 'identity.json', data)
+        config = command(['k3d', 'kubeconfig', 'get', run])
+        (directory / 'kubeconfig').write_text(config + '\n')
+        (directory / 'kubeconfig').chmod(0o600)
+        view = json.loads(kubectl(directory, data, 'config', 'view', '--minify', '-o', 'json'))
+        if len(view['clusters']) != 1 or view['current-context'] != data['context']:
+            raise RuntimeError('unexpected kubeconfig identity')
+        # k3d retains literal :0 in kubeconfig with --no-lb; bind Docker's
+        # actual loopback-only ephemeral port before making any API request.
+        container = json.loads(command(['docker', 'inspect', '--format', '{{json .}}', 'k3d-' + run + '-server-0']))
+        bindings = container['NetworkSettings']['Ports']['6443/tcp']
+        if len(bindings) != 1 or bindings[0]['HostIp'] != '127.0.0.1' or not int(bindings[0]['HostPort']):
+            raise RuntimeError('unexpected API port binding')
+        kubectl(directory, data, 'config', 'set-cluster', view['clusters'][0]['name'],
+                '--server=https://127.0.0.1:' + bindings[0]['HostPort'])
+        view = json.loads(kubectl(directory, data, 'config', 'view', '--minify', '-o', 'json'))
+        endpoint = view['clusters'][0]['cluster']['server']
+        if not re.fullmatch(r'https://127\.0\.0\.1:[0-9]+', endpoint):
+            raise RuntimeError('refusing non-loopback API endpoint')
+        data['endpoint'] = endpoint
+        data['system_uid'] = kubectl(directory, data, 'get', 'namespace', 'kube-system', '-o', 'jsonpath={.metadata.uid}')
+        data['version'] = json.loads(kubectl(directory, data, 'get', '--raw=/version'))['gitVersion']
+        data['node'] = 'k3d-' + run + '-server-0'
+        save(directory / 'identity.json', data)
+        save(directory / 'evidence' / 'environment.json',
+             {k: data[k] for k in ['run', 'context', 'endpoint', 'system_uid', 'version', 'node', 'node_image', 'sdk_image']})
+        print(json.dumps({k: data[k] for k in ['run', 'context', 'endpoint', 'version', 'node']}), flush=True)
+        return directory
+    except BaseException:
+        # Only a container with our unpredictable run label can authorize deletion.
+        if run in clusters():
+            cleanup(directory)
+        raise
+
+
+def check_identity(directory, data):
+    owned(data)
+    if kubectl(directory, data, 'get', 'namespace', 'kube-system', '-o', 'jsonpath={.metadata.uid}') != data['system_uid']:
+        raise RuntimeError('API-server identity changed')
+
+
+def execute(directory):
+    directory, data = load(directory)
+    check_identity(directory, data)
+    cache = Path(os.environ.get('UTCP_GN_G2_CACHE', '/tmp/utcp-gn-g0-go-cache')).resolve()
+    if not cache.is_dir():
+        raise RuntimeError('pinned dependency cache unavailable; run existing verifier first')
+    args = ['docker', 'run', '--rm', '--network', 'host', '--user', str(os.getuid()) + ':' + str(os.getgid()),
+            '-e', 'GOPATH=/cache', '-e', 'GOCACHE=/cache/build', '-e', 'GOTOOLCHAIN=local', '-e', 'GOPROXY=off',
+            '-e', 'GN_G2_REAL_KUBECONFIG=/run-proof/kubeconfig', '-e', 'GN_G2_REAL_CONTEXT=' + data['context'],
+            '-e', 'GN_G2_REAL_RUN=' + data['run'], '-e', 'GN_G2_REAL_SYSTEM_UID=' + data['system_uid'],
+            '-e', 'GN_G2_REAL_EVIDENCE=/proof-output',
+            '-v', str(cache) + ':/cache', '-v', str(directory / 'kubeconfig') + ':/run-proof/kubeconfig:ro',
+            '-v', str(directory / 'evidence') + ':/proof-output', '-v', str(ROOT / 'components') + ':/repo/components:ro',
+            '-v', str(ROOT / 'docs/architecture/proposals/gn-g0/contracts/v1') + ':/repo/docs/architecture/proposals/gn-g0/contracts/v1:ro',
+            '-w', '/repo/components/kubernetes-effects', SDK,
+            'sh', '-ec', 'go version; go test -tags realapi -run TestRealAPI -count=1 -v -timeout=180s ./...; '
+            'go test -race -tags realapi -run TestRealAPI -count=1 -timeout=180s ./...; go vet -tags realapi ./...']
+    with (directory / 'evidence' / 'verification.log').open('w') as log:
+        result = subprocess.run(args, stdout=log, stderr=subprocess.STDOUT)
+    print('Real API verification log: ' + str(directory / 'evidence' / 'verification.log'), flush=True)
+    if result.returncode:
+        raise RuntimeError('real API verifier failed; inspect sanitized test log')
+
+
+def cleanup(directory):
+    directory, data = load(directory)
+    os.environ['KUBECONFIG'] = str(directory / 'kubeconfig')
+    os.environ['XDG_CONFIG_HOME'] = str(directory / 'config')
+    owned(data)
+    subprocess.run(['k3d', 'cluster', 'delete', data['run']], check=True)
+    remaining = clusters()
+    if data['run'] in remaining or not set(data['preexisting_clusters']).issubset(remaining):
+        raise RuntimeError('cluster cleanup or preservation check failed')
+    if command(['docker', 'ps', '-aq', '--filter', 'label=utcp.gn-g2.run=' + data['nonce']]):
+        raise RuntimeError('owned container remains')
+    if command(['docker', 'network', 'ls', '-q', '--filter', 'name=^k3d-' + data['run'] + '$']):
+        raise RuntimeError('owned network remains')
+    names = set(command(['docker', 'ps', '-a', '--format', '{{.Names}}']).splitlines())
+    if {'k3d-' + data['run'] + suffix for suffix in ['-server-0', '-tools']} & names:
+        raise RuntimeError('owned server or tools container remains')
+    volume = 'k3d-' + data['run'] + '-images'
+    if volume in command(['docker', 'volume', 'ls', '--format', '{{.Name}}']).splitlines():
+        raise RuntimeError('owned image volume remains')
+    (directory / 'kubeconfig').unlink(missing_ok=True)
+    save(directory / 'evidence' / 'cleanup.json', {'cluster': data['run'], 'deleted': True,
+         'owned_containers_remaining': 0, 'owned_network_remaining': False, 'kubeconfig_removed': True,
+         'owned_image_volume_remaining': False, 'preexisting_clusters_preserved': True})
+    print('Cleanup verified: ' + data['run'], flush=True)
+
+
+if __name__ == '__main__':
+    mode = sys.argv[1] if len(sys.argv) > 1 else 'verify'
+    if mode == 'prepare':
+        prepare()
+    elif mode in ('execute', 'cleanup') and len(sys.argv) == 3:
+        {'execute': execute, 'cleanup': cleanup}[mode](sys.argv[2])
+    elif mode == 'verify' and len(sys.argv) == 1:
+        subprocess.run([sys.executable, str(Path(__file__).with_name('test_verify.py'))], check=True)
+        subprocess.run([sys.executable, str(Path(__file__).with_name('verify-static'))], check=True)
+        directory = prepare()
+        try:
+            execute(directory)
+        finally:
+            cleanup(directory)
+    else:
+        raise SystemExit('usage: verify [prepare|execute RUN_DIRECTORY|cleanup RUN_DIRECTORY]')

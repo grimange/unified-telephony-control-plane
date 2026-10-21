@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""Validate this proof packet without network or cluster credentials."""
+import json
+from pathlib import Path
+import re
+
+root = Path(__file__).resolve().parents[2]
+paths = [root / 'tests/gn-g2-real-api',
+         root / 'docs/architecture/proposals/UTCP_GN_G2_REAL_KUBERNETES_API_CONDITIONAL_EFFECT_VERIFICATION.md',
+         root / 'docs/architecture/proposals/gn-g2/GN-G2-lifecycle-v2-implementation-assignment.md']
+errors = []
+files = []
+for base in paths:
+    if not base.exists():
+        errors.append(f'missing proof artifact: {base.relative_to(root)}')
+        continue
+    files.extend(p for p in (base.rglob('*') if base.is_dir() else [base]) if p.is_file())
+for path in files:
+    text = path.read_text(encoding='utf-8')
+    if not text.endswith('\n') or any(line.rstrip() != line for line in text.splitlines()):
+        errors.append(f'whitespace: {path.relative_to(root)}')
+    if any('-----BEGIN ' + kind + '-----' in text for kind in ['PRIVATE KEY', 'RSA PRIVATE KEY']):
+        errors.append(f'private key payload: {path.relative_to(root)}')
+    if path.suffix == '.json':
+        json.loads(text)
+    if path.suffix == '.md':
+        for target in re.findall(r'\[[^\]]*\]\(([^)]+)\)', text):
+            if re.match(r'^[a-z]+://', target) or target.startswith('#'):
+                continue
+            if not (path.parent / target.split('#')[0]).exists():
+                errors.append(f'broken link: {path.relative_to(root)}: {target}')
+if errors:
+    raise SystemExit('\n'.join(errors))
+print(f'GN-G2 real API documentation/hygiene: PASS ({len(files)} files)')

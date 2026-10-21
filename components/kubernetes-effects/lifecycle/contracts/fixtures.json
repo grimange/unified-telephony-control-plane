@@ -1,0 +1,954 @@
+{
+  "contract_version": "utcp.infrastructure.v2",
+  "positive": [
+    {
+      "name": "create_suspended-10",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": null,
+          "expected_resource_version": null
+        },
+        "target_generation": "10",
+        "intent_fingerprint": "db8b7641cb51d56b7234fc413293548316c7be257277c5ecdfb5d2b9595bd249",
+        "action": "create_suspended",
+        "intent": {
+          "kind": "create_suspended",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      },
+      "expected_fingerprint": "db8b7641cb51d56b7234fc413293548316c7be257277c5ecdfb5d2b9595bd249"
+    },
+    {
+      "name": "create_suspended-9223372036854775807",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": null,
+          "expected_resource_version": null
+        },
+        "target_generation": "9223372036854775807",
+        "intent_fingerprint": "0ea54444863c9f9279a550379ebada7d2edc8dee554380c61a34b4b22115e9a5",
+        "action": "create_suspended",
+        "intent": {
+          "kind": "create_suspended",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      },
+      "expected_fingerprint": "0ea54444863c9f9279a550379ebada7d2edc8dee554380c61a34b4b22115e9a5"
+    },
+    {
+      "name": "converge_projection-10",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "1"
+        },
+        "target_generation": "10",
+        "intent_fingerprint": "8a24bbcdbef66d02a38c82260597eeb07eae1fa6d5cb6c79b3b25e5dc55ef0c3",
+        "action": "converge_projection",
+        "intent": {
+          "kind": "converge_projection",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a",
+          "replicas": 0
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      },
+      "expected_fingerprint": "8a24bbcdbef66d02a38c82260597eeb07eae1fa6d5cb6c79b3b25e5dc55ef0c3"
+    },
+    {
+      "name": "converge_projection-9223372036854775807",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "1"
+        },
+        "target_generation": "9223372036854775807",
+        "intent_fingerprint": "590efe70151dc9918ee1d4ba943cbdead25db4f9ee20da19ffd37954e134291a",
+        "action": "converge_projection",
+        "intent": {
+          "kind": "converge_projection",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a",
+          "replicas": 0
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      },
+      "expected_fingerprint": "590efe70151dc9918ee1d4ba943cbdead25db4f9ee20da19ffd37954e134291a"
+    },
+    {
+      "name": "retire_delete-10",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "1"
+        },
+        "target_generation": "10",
+        "intent_fingerprint": "04baeb5665384724983405cc1aef181a93d8ac98c7af82c303f86a423df96488",
+        "action": "retire_delete",
+        "intent": {
+          "kind": "retire_delete",
+          "retirement_id": "retirement-a",
+          "retirement_generation": "10",
+          "retirement_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      },
+      "expected_fingerprint": "04baeb5665384724983405cc1aef181a93d8ac98c7af82c303f86a423df96488"
+    },
+    {
+      "name": "retire_delete-9223372036854775807",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "1"
+        },
+        "target_generation": "9223372036854775807",
+        "intent_fingerprint": "5cd3445c34a39eae400fdd9812f916e10706a962b12f4d30f279ae3b3737bbc2",
+        "action": "retire_delete",
+        "intent": {
+          "kind": "retire_delete",
+          "retirement_id": "retirement-a",
+          "retirement_generation": "9223372036854775807",
+          "retirement_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      },
+      "expected_fingerprint": "5cd3445c34a39eae400fdd9812f916e10706a962b12f4d30f279ae3b3737bbc2"
+    }
+  ],
+  "negative": [
+    {
+      "name": "unsupported-version",
+      "action": {
+        "contract_version": "utcp.infrastructure.v3",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": null,
+          "expected_resource_version": null
+        },
+        "target_generation": "10",
+        "intent_fingerprint": "db8b7641cb51d56b7234fc413293548316c7be257277c5ecdfb5d2b9595bd249",
+        "action": "create_suspended",
+        "intent": {
+          "kind": "create_suspended",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      }
+    },
+    {
+      "name": "unsupported-action",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": null,
+          "expected_resource_version": null
+        },
+        "target_generation": "10",
+        "intent_fingerprint": "db8b7641cb51d56b7234fc413293548316c7be257277c5ecdfb5d2b9595bd249",
+        "action": "create",
+        "intent": {
+          "kind": "create_suspended",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      }
+    },
+    {
+      "name": "unknown-field",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": null,
+          "expected_resource_version": null
+        },
+        "target_generation": "10",
+        "intent_fingerprint": "db8b7641cb51d56b7234fc413293548316c7be257277c5ecdfb5d2b9595bd249",
+        "action": "create_suspended",
+        "intent": {
+          "kind": "create_suspended",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a",
+        "untrusted": "secret-never-projected"
+      }
+    },
+    {
+      "name": "numeric-generation",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": null,
+          "expected_resource_version": null
+        },
+        "target_generation": 10,
+        "intent_fingerprint": "db8b7641cb51d56b7234fc413293548316c7be257277c5ecdfb5d2b9595bd249",
+        "action": "create_suspended",
+        "intent": {
+          "kind": "create_suspended",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      }
+    },
+    {
+      "name": "leading-zero-generation",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": null,
+          "expected_resource_version": null
+        },
+        "target_generation": "010",
+        "intent_fingerprint": "db8b7641cb51d56b7234fc413293548316c7be257277c5ecdfb5d2b9595bd249",
+        "action": "create_suspended",
+        "intent": {
+          "kind": "create_suspended",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      }
+    },
+    {
+      "name": "generation-overflow",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": null,
+          "expected_resource_version": null
+        },
+        "target_generation": "9223372036854775808",
+        "intent_fingerprint": "db8b7641cb51d56b7234fc413293548316c7be257277c5ecdfb5d2b9595bd249",
+        "action": "create_suspended",
+        "intent": {
+          "kind": "create_suspended",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      }
+    },
+    {
+      "name": "wrong-incarnation-name",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-other",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": null,
+          "expected_resource_version": null
+        },
+        "target_generation": "10",
+        "intent_fingerprint": "db8b7641cb51d56b7234fc413293548316c7be257277c5ecdfb5d2b9595bd249",
+        "action": "create_suspended",
+        "intent": {
+          "kind": "create_suspended",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      }
+    },
+    {
+      "name": "creation-bound-uid",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-other",
+          "expected_resource_version": null
+        },
+        "target_generation": "10",
+        "intent_fingerprint": "db8b7641cb51d56b7234fc413293548316c7be257277c5ecdfb5d2b9595bd249",
+        "action": "create_suspended",
+        "intent": {
+          "kind": "create_suspended",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      }
+    },
+    {
+      "name": "malformed-claim",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": null,
+          "expected_resource_version": null
+        },
+        "target_generation": "10",
+        "intent_fingerprint": "db8b7641cb51d56b7234fc413293548316c7be257277c5ecdfb5d2b9595bd249",
+        "action": "create_suspended",
+        "intent": {
+          "kind": "create_suspended",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "10",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      }
+    },
+    {
+      "name": "unsafe-projection-field",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": null,
+          "expected_resource_version": null
+        },
+        "target_generation": "10",
+        "intent_fingerprint": "db8b7641cb51d56b7234fc413293548316c7be257277c5ecdfb5d2b9595bd249",
+        "action": "create_suspended",
+        "intent": {
+          "kind": "create_suspended",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "command": [
+              "telephony"
+            ]
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      }
+    },
+    {
+      "name": "mutable-image",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": null,
+          "expected_resource_version": null
+        },
+        "target_generation": "10",
+        "intent_fingerprint": "db8b7641cb51d56b7234fc413293548316c7be257277c5ecdfb5d2b9595bd249",
+        "action": "create_suspended",
+        "intent": {
+          "kind": "create_suspended",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "asterisk:latest",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      }
+    },
+    {
+      "name": "wrong-projection-fingerprint",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": null,
+          "expected_resource_version": null
+        },
+        "target_generation": "10",
+        "intent_fingerprint": "db8b7641cb51d56b7234fc413293548316c7be257277c5ecdfb5d2b9595bd249",
+        "action": "create_suspended",
+        "intent": {
+          "kind": "create_suspended",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      }
+    },
+    {
+      "name": "wrong-intent-fingerprint",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": null,
+          "expected_resource_version": null
+        },
+        "target_generation": "10",
+        "intent_fingerprint": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "action": "create_suspended",
+        "intent": {
+          "kind": "create_suspended",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      }
+    },
+    {
+      "name": "mixed-intent-kind",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": null,
+          "expected_resource_version": null
+        },
+        "target_generation": "10",
+        "intent_fingerprint": "db8b7641cb51d56b7234fc413293548316c7be257277c5ecdfb5d2b9595bd249",
+        "action": "create_suspended",
+        "intent": {
+          "kind": "retire_delete",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      }
+    },
+    {
+      "name": "replica-string",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "1"
+        },
+        "target_generation": "10",
+        "intent_fingerprint": "8a24bbcdbef66d02a38c82260597eeb07eae1fa6d5cb6c79b3b25e5dc55ef0c3",
+        "action": "converge_projection",
+        "intent": {
+          "kind": "converge_projection",
+          "projection": {
+            "template_version": "inert.pause.v1",
+            "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+            "configuration_id": "config-a",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "projection_fingerprint": "396ca0160ca916440f719319acfae52424784e9fd9753884ebfaf714894fd80a",
+          "replicas": "1"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      }
+    },
+    {
+      "name": "retirement-generation-mismatch",
+      "action": {
+        "contract_version": "utcp.infrastructure.v2",
+        "request_id": "request-a",
+        "operation_id": "operation-a",
+        "tenant_id": "tenant-a",
+        "runtime_node_id": "node-a",
+        "target": {
+          "cluster_id": "cluster-a",
+          "namespace": "proof",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-a",
+          "target_id": "target-a",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "1"
+        },
+        "target_generation": "10",
+        "intent_fingerprint": "04baeb5665384724983405cc1aef181a93d8ac98c7af82c303f86a423df96488",
+        "action": "retire_delete",
+        "intent": {
+          "kind": "retire_delete",
+          "retirement_id": "retirement-a",
+          "retirement_generation": "11",
+          "retirement_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "idempotency_key": "idempotency-a",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "lease_expires_at": "2030-01-02T03:05:05Z"
+        },
+        "deadline": "2030-01-02T03:04:10Z",
+        "correlation_id": "correlation-a",
+        "audit_id": "audit-a"
+      }
+    }
+  ]
+}

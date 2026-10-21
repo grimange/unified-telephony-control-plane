@@ -1,0 +1,282 @@
+[
+  {
+    "name": "normative",
+    "action": {
+      "contract_version": "utcp.infrastructure.v1",
+      "request_id": "request-10",
+      "operation_id": "operation-10",
+      "tenant_id": "tenant-fixture",
+      "runtime_node_id": "runtime-fixture",
+      "target": {
+        "cluster_id": "cluster-fixture",
+        "namespace": "utcp-runtime",
+        "kind": "Deployment",
+        "name": "runtime-fixture-inc-a",
+        "target_id": "target-fixture",
+        "incarnation_id": "inc-a",
+        "expected_uid": "uid-a",
+        "expected_resource_version": "100",
+        "runtime_node_slug": "runtime-fixture"
+      },
+      "target_generation": "10",
+      "intent_fingerprint": "d165f4121a0e4bb2bc39d99227ae93dda3b1898e5f661d52f842ed23458b3ab1",
+      "action": "set_replicas",
+      "replicas": 0,
+      "idempotency_key": "intent-10",
+      "claim": {
+        "attempt": 1,
+        "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "lease_expires_at": "2026-10-21T12:00:20Z"
+      },
+      "deadline": "2026-10-21T12:00:10Z",
+      "correlation_id": "correlation-fixture",
+      "audit_id": "audit-fixture"
+    },
+    "expected": "d165f4121a0e4bb2bc39d99227ae93dda3b1898e5f661d52f842ed23458b3ab1"
+  },
+  {
+    "name": "admit_same_intent",
+    "action": {
+      "contract_version": "utcp.infrastructure.v1",
+      "request_id": "request-10",
+      "operation_id": "operation-10",
+      "tenant_id": "tenant-fixture",
+      "runtime_node_id": "runtime-fixture",
+      "target": {
+        "cluster_id": "cluster-fixture",
+        "namespace": "utcp-runtime",
+        "kind": "Deployment",
+        "name": "runtime-fixture-inc-a",
+        "target_id": "target-fixture",
+        "incarnation_id": "inc-a",
+        "expected_uid": "uid-a",
+        "expected_resource_version": "100",
+        "runtime_node_slug": "runtime-fixture"
+      },
+      "target_generation": "10",
+      "intent_fingerprint": "d165f4121a0e4bb2bc39d99227ae93dda3b1898e5f661d52f842ed23458b3ab1",
+      "action": "admit_generation",
+      "replicas": 0,
+      "idempotency_key": "intent-10",
+      "claim": {
+        "attempt": 1,
+        "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "lease_expires_at": "2026-10-21T12:00:20Z"
+      },
+      "deadline": "2026-10-21T12:00:10Z",
+      "correlation_id": "correlation-fixture",
+      "audit_id": "audit-fixture"
+    },
+    "expected": "d165f4121a0e4bb2bc39d99227ae93dda3b1898e5f661d52f842ed23458b3ab1"
+  },
+  {
+    "name": "generation_2pow53_plus1",
+    "action": {
+      "contract_version": "utcp.infrastructure.v1",
+      "request_id": "request-10",
+      "operation_id": "operation-10",
+      "tenant_id": "tenant-fixture",
+      "runtime_node_id": "runtime-fixture",
+      "target": {
+        "cluster_id": "cluster-fixture",
+        "namespace": "utcp-runtime",
+        "kind": "Deployment",
+        "name": "runtime-fixture-inc-a",
+        "target_id": "target-fixture",
+        "incarnation_id": "inc-a",
+        "expected_uid": "uid-a",
+        "expected_resource_version": "100",
+        "runtime_node_slug": "runtime-fixture"
+      },
+      "target_generation": "9007199254740993",
+      "intent_fingerprint": "b438d98fdd24583c73bcaba3566da15d422bba410e0666ed670790c6e44d96c8",
+      "action": "set_replicas",
+      "replicas": 0,
+      "idempotency_key": "intent-10",
+      "claim": {
+        "attempt": 1,
+        "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "lease_expires_at": "2026-10-21T12:00:20Z"
+      },
+      "deadline": "2026-10-21T12:00:10Z",
+      "correlation_id": "correlation-fixture",
+      "audit_id": "audit-fixture"
+    },
+    "expected": "b438d98fdd24583c73bcaba3566da15d422bba410e0666ed670790c6e44d96c8"
+  },
+  {
+    "name": "generation_signed_max",
+    "action": {
+      "contract_version": "utcp.infrastructure.v1",
+      "request_id": "request-10",
+      "operation_id": "operation-10",
+      "tenant_id": "tenant-fixture",
+      "runtime_node_id": "runtime-fixture",
+      "target": {
+        "cluster_id": "cluster-fixture",
+        "namespace": "utcp-runtime",
+        "kind": "Deployment",
+        "name": "runtime-fixture-inc-a",
+        "target_id": "target-fixture",
+        "incarnation_id": "inc-a",
+        "expected_uid": "uid-a",
+        "expected_resource_version": "100",
+        "runtime_node_slug": "runtime-fixture"
+      },
+      "target_generation": "9223372036854775807",
+      "intent_fingerprint": "0dcae23a96a015f7721d6c486d0d07b1a9d5385d2d5ce8baf2694cfaf14abebc",
+      "action": "set_replicas",
+      "replicas": 0,
+      "idempotency_key": "intent-10",
+      "claim": {
+        "attempt": 1,
+        "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "lease_expires_at": "2026-10-21T12:00:20Z"
+      },
+      "deadline": "2026-10-21T12:00:10Z",
+      "correlation_id": "correlation-fixture",
+      "audit_id": "audit-fixture"
+    },
+    "expected": "0dcae23a96a015f7721d6c486d0d07b1a9d5385d2d5ce8baf2694cfaf14abebc"
+  },
+  {
+    "name": "replicas_100",
+    "action": {
+      "contract_version": "utcp.infrastructure.v1",
+      "request_id": "request-10",
+      "operation_id": "operation-10",
+      "tenant_id": "tenant-fixture",
+      "runtime_node_id": "runtime-fixture",
+      "target": {
+        "cluster_id": "cluster-fixture",
+        "namespace": "utcp-runtime",
+        "kind": "Deployment",
+        "name": "runtime-fixture-inc-a",
+        "target_id": "target-fixture",
+        "incarnation_id": "inc-a",
+        "expected_uid": "uid-a",
+        "expected_resource_version": "100",
+        "runtime_node_slug": "runtime-fixture"
+      },
+      "target_generation": "10",
+      "intent_fingerprint": "785780ac71dd240a447892f230cdc720326feef17326854138a51ec379b8e4d8",
+      "action": "set_replicas",
+      "replicas": 100,
+      "idempotency_key": "intent-10",
+      "claim": {
+        "attempt": 1,
+        "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "lease_expires_at": "2026-10-21T12:00:20Z"
+      },
+      "deadline": "2026-10-21T12:00:10Z",
+      "correlation_id": "correlation-fixture",
+      "audit_id": "audit-fixture"
+    },
+    "expected": "785780ac71dd240a447892f230cdc720326feef17326854138a51ec379b8e4d8"
+  },
+  {
+    "name": "different_retry_context",
+    "action": {
+      "contract_version": "utcp.infrastructure.v1",
+      "request_id": "retry-2",
+      "operation_id": "operation-10",
+      "tenant_id": "tenant-fixture",
+      "runtime_node_id": "runtime-fixture",
+      "target": {
+        "cluster_id": "cluster-fixture",
+        "namespace": "utcp-runtime",
+        "kind": "Deployment",
+        "name": "runtime-fixture-inc-a",
+        "target_id": "target-fixture",
+        "incarnation_id": "inc-a",
+        "expected_uid": "uid-a",
+        "expected_resource_version": "100",
+        "runtime_node_slug": "runtime-fixture"
+      },
+      "target_generation": "10",
+      "intent_fingerprint": "d165f4121a0e4bb2bc39d99227ae93dda3b1898e5f661d52f842ed23458b3ab1",
+      "action": "set_replicas",
+      "replicas": 0,
+      "idempotency_key": "intent-10",
+      "claim": {
+        "attempt": 2,
+        "fencing_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "lease_expires_at": "2030-01-02T03:05:05Z"
+      },
+      "deadline": "2030-01-02T03:04:10Z",
+      "correlation_id": "correlation-fixture",
+      "audit_id": "audit-fixture"
+    },
+    "expected": "d165f4121a0e4bb2bc39d99227ae93dda3b1898e5f661d52f842ed23458b3ab1"
+  },
+  {
+    "name": "unicode_uid",
+    "action": {
+      "contract_version": "utcp.infrastructure.v1",
+      "request_id": "request-10",
+      "operation_id": "operation-10",
+      "tenant_id": "tenant-fixture",
+      "runtime_node_id": "runtime-fixture",
+      "target": {
+        "cluster_id": "cluster-fixture",
+        "namespace": "utcp-runtime",
+        "kind": "Deployment",
+        "name": "runtime-fixture-inc-a",
+        "target_id": "target-fixture",
+        "incarnation_id": "inc-a",
+        "expected_uid": "uid-λ-é-🚀",
+        "expected_resource_version": "100",
+        "runtime_node_slug": "runtime-fixture"
+      },
+      "target_generation": "10",
+      "intent_fingerprint": "0515abd84dafe7b59624cee02c146c044cc48ffc0ad0fbbbd370a4fd0952b87f",
+      "action": "set_replicas",
+      "replicas": 0,
+      "idempotency_key": "intent-10",
+      "claim": {
+        "attempt": 1,
+        "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "lease_expires_at": "2026-10-21T12:00:20Z"
+      },
+      "deadline": "2026-10-21T12:00:10Z",
+      "correlation_id": "correlation-fixture",
+      "audit_id": "audit-fixture"
+    },
+    "expected": "0515abd84dafe7b59624cee02c146c044cc48ffc0ad0fbbbd370a4fd0952b87f"
+  },
+  {
+    "name": "opaque_resource_version",
+    "action": {
+      "contract_version": "utcp.infrastructure.v1",
+      "request_id": "request-10",
+      "operation_id": "operation-10",
+      "tenant_id": "tenant-fixture",
+      "runtime_node_id": "runtime-fixture",
+      "target": {
+        "cluster_id": "cluster-fixture",
+        "namespace": "utcp-runtime",
+        "kind": "Deployment",
+        "name": "runtime-fixture-inc-a",
+        "target_id": "target-fixture",
+        "incarnation_id": "inc-a",
+        "expected_uid": "uid-a",
+        "expected_resource_version": "opaque:rv/α",
+        "runtime_node_slug": "runtime-fixture"
+      },
+      "target_generation": "10",
+      "intent_fingerprint": "d165f4121a0e4bb2bc39d99227ae93dda3b1898e5f661d52f842ed23458b3ab1",
+      "action": "set_replicas",
+      "replicas": 0,
+      "idempotency_key": "intent-10",
+      "claim": {
+        "attempt": 1,
+        "fencing_token": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "lease_expires_at": "2026-10-21T12:00:20Z"
+      },
+      "deadline": "2026-10-21T12:00:10Z",
+      "correlation_id": "correlation-fixture",
+      "audit_id": "audit-fixture"
+    },
+    "expected": "d165f4121a0e4bb2bc39d99227ae93dda3b1898e5f661d52f842ed23458b3ab1"
+  }
+]

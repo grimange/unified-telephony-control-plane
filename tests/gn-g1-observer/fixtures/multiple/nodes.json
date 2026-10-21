@@ -1,0 +1,93 @@
+{
+  "apiVersion": "v1",
+  "kind": "NodeList",
+  "metadata": {
+    "resourceVersion": "nodes-fixture-rv"
+  },
+  "items": [
+    {
+      "apiVersion": "v1",
+      "kind": "Node",
+      "metadata": {
+        "name": "node-b",
+        "uid": "uid-node-b",
+        "resourceVersion": "n-node-b",
+        "labels": {
+          "topology.kubernetes.io/zone": "zone-a",
+          "kubernetes.io/hostname": "node-b",
+          "private.example/credential": "unsafe-fixture-marker"
+        }
+      },
+      "spec": {
+        "unschedulable": false,
+        "taints": []
+      },
+      "status": {
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True",
+            "reason": "KubeletReady",
+            "message": "unsafe-fixture-marker"
+          }
+        ],
+        "addresses": [
+          {
+            "type": "InternalIP",
+            "address": "10.0.0.2"
+          }
+        ],
+        "capacity": {
+          "cpu": "2",
+          "memory": "4Gi"
+        },
+        "allocatable": {
+          "cpu": "1500m",
+          "memory": "3Gi"
+        }
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Node",
+      "metadata": {
+        "name": "node-a",
+        "uid": "uid-node-a",
+        "resourceVersion": "n-node-a",
+        "labels": {
+          "topology.kubernetes.io/zone": "zone-a",
+          "kubernetes.io/hostname": "node-a",
+          "private.example/credential": "unsafe-fixture-marker"
+        }
+      },
+      "spec": {
+        "unschedulable": false,
+        "taints": []
+      },
+      "status": {
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True",
+            "reason": "KubeletReady",
+            "message": "unsafe-fixture-marker"
+          }
+        ],
+        "addresses": [
+          {
+            "type": "InternalIP",
+            "address": "10.0.0.2"
+          }
+        ],
+        "capacity": {
+          "cpu": "2",
+          "memory": "4Gi"
+        },
+        "allocatable": {
+          "cpu": "1500m",
+          "memory": "3Gi"
+        }
+      }
+    }
+  ]
+}

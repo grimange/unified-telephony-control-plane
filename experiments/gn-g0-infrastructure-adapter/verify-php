@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+IMAGE='sha256:9efe210fb8c8e7c90d80fce2b6916b46824f0f0428d6037dd599ec5ef1dd4d7d'
+args=(--rm --network none --entrypoint php
+ -e APP_ENV=testing -e DB_CONNECTION=sqlite -e DB_DATABASE=:memory: -e DB_URL=
+ -e CACHE_STORE=array -e QUEUE_CONNECTION=sync -e SESSION_DRIVER=array -e LOG_CHANNEL=null)
+for path in app tests config database routes; do
+ args+=(-v "$ROOT/apps/api/$path:/var/www/html/$path:ro")
+done
+for path in phpunit.xml bootstrap/app.php bootstrap/providers.php; do
+ args+=(-v "$ROOT/apps/api/$path:/var/www/html/$path:ro")
+done
+args+=(-v "$ROOT/experiments/gn-g0-infrastructure-adapter/PhpContractParityTest.php:/proof/PhpContractParityTest.php:ro"
+ -v "$ROOT/docs/architecture/proposals/gn-g0/contracts/v1:/contracts:ro")
+docker run "${args[@]}" "$IMAGE" vendor/bin/phpunit --do-not-cache-result \
+ tests/Feature/Infrastructure/HttpKubernetesWorkloadClientTest.php \
+ tests/Feature/Infrastructure/KubernetesResourceWriterTest.php \
+ tests/Feature/Infrastructure/KubernetesHostVisibilityTest.php \
+ tests/Feature/Infrastructure/KubernetesRuntimeFenceAdapterTest.php \
+ tests/Feature/Infrastructure/HttpKubernetesMaintenanceClientTest.php \
+ tests/Feature/ControlPlane/RuntimeOperationRepositoryTest.php \
+ tests/Unit/ControlPlane/RuntimeOperationStateMachineTest.php \
+ tests/Feature/RuntimeProvisioning/ManagedAsteriskProvisioningOperationTest.php \
+ tests/Feature/RuntimeProvisioning/ManagedFreeSwitchProvisioningTest.php \
+ tests/Feature/RuntimeProvisioning/ManagedRuntimeDeprovisioningOperationTest.php \
+ tests/Unit/Infrastructure/K5DHostMaintenanceContractTest.php \
+ tests/Unit/RuntimeEngine/ReconcilerKubernetesAuthorityTest.php \
+ /proof/PhpContractParityTest.php

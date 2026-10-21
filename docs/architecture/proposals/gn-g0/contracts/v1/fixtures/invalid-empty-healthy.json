@@ -1,0 +1,53 @@
+{
+  "contract_version": "utcp.infrastructure.v1",
+  "request_id": "request-observe",
+  "cluster_id": "cluster-fixture",
+  "complete": true,
+  "started_at": "2026-10-21T12:00:00Z",
+  "finished_at": "2026-10-21T12:00:01Z",
+  "nodes_status": {
+    "complete": true,
+    "resource_version": "node-rv",
+    "pages": 1,
+    "started_at": "2026-10-21T12:00:00Z",
+    "finished_at": "2026-10-21T12:00:01Z"
+  },
+  "pods_status": {
+    "complete": true,
+    "resource_version": "pod-rv",
+    "pages": 1,
+    "started_at": "2026-10-21T12:00:00Z",
+    "finished_at": "2026-10-21T12:00:01Z"
+  },
+  "nodes": [
+    {
+      "uid": "node-uid",
+      "name": "node-fixture",
+      "resource_version": "21",
+      "ready": "True",
+      "unschedulable": false,
+      "topology": {
+        "region": null,
+        "zone": "zone-fixture",
+        "hostname": "node-fixture"
+      },
+      "conditions": [
+        {
+          "type": "Ready",
+          "status": "True",
+          "reason": null
+        }
+      ],
+      "addresses": [],
+      "capacity": {},
+      "allocatable": {},
+      "labels": {
+        "kubernetes.io/hostname": "node-fixture",
+        "topology.kubernetes.io/zone": "zone-fixture"
+      },
+      "taints": []
+    }
+  ],
+  "pods": null,
+  "error": null
+}

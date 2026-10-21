@@ -1,0 +1,251 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "request_id",
+    "operation_id",
+    "tenant_id",
+    "runtime_node_id",
+    "target",
+    "target_generation",
+    "intent_fingerprint",
+    "action",
+    "intent",
+    "idempotency_key",
+    "claim",
+    "deadline",
+    "correlation_id",
+    "audit_id",
+    "canonical_state"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "utcp.infrastructure.v3"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9_.:-]*$"
+    },
+    "operation_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9_.:-]*$"
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9_.:-]*$"
+    },
+    "runtime_node_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9_.:-]*$"
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cluster_id",
+        "namespace",
+        "kind",
+        "name",
+        "runtime_node_slug",
+        "target_id",
+        "incarnation_id",
+        "expected_uid",
+        "expected_resource_version"
+      ],
+      "properties": {
+        "cluster_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9][a-z0-9_.:-]*$"
+        },
+        "namespace": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 63,
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "kind": {
+          "const": "Deployment"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 63,
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "runtime_node_slug": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 63,
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "target_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9][a-z0-9_.:-]*$"
+        },
+        "incarnation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[a-f0-9]{32}$"
+        },
+        "expected_uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expected_resource_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\r\\n]+$"
+        }
+      }
+    },
+    "target_generation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 19,
+      "pattern": "^[1-9][0-9]{0,18}$"
+    },
+    "intent_fingerprint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "action": {
+      "const": "converge_projection"
+    },
+    "intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "projection",
+        "projection_fingerprint",
+        "replicas"
+      ],
+      "properties": {
+        "kind": {
+          "const": "converge_projection"
+        },
+        "projection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "template_version",
+            "image",
+            "configuration_id",
+            "configuration_sha256",
+            "secret_name"
+          ],
+          "properties": {
+            "template_version": {
+              "enum": [
+                "asterisk.managed.v1",
+                "freeswitch.managed.v1"
+              ]
+            },
+            "image": {
+              "type": "string",
+              "maxLength": 256,
+              "pattern": "^[a-z0-9][a-z0-9.:-]*/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$"
+            },
+            "configuration_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[a-z0-9][a-z0-9_.:-]*$"
+            },
+            "configuration_sha256": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "secret_name": {
+              "type": "string",
+              "maxLength": 63,
+              "minLength": 1,
+              "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+            }
+          }
+        },
+        "projection_fingerprint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9_.:-]*$"
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempt",
+        "fencing_token",
+        "lease_expires_at"
+      ],
+      "properties": {
+        "attempt": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "fencing_token": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "lease_expires_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlation_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9_.:-]*$"
+    },
+    "audit_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9_.:-]*$"
+    },
+    "canonical_state": {
+      "const": "bound"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

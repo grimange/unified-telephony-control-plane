@@ -1,0 +1,267 @@
+[
+  {
+    "bound_verbs": [
+      "get",
+      "patch",
+      "delete"
+    ],
+    "case": "environment",
+    "context": "k3d-gn-g2-proof-6d25ea213201",
+    "create_scope": "run namespace; RBAC resourceNames cannot restrict CREATE",
+    "endpoint": "https://127.0.0.1:32772",
+    "kubernetes": "v1.35.3+k3s1",
+    "run": "gn-g2-proof-6d25ea213201"
+  },
+  {
+    "case": "duplicate_create",
+    "code": 409,
+    "reason": "AlreadyExists"
+  },
+  {
+    "case": "create_suspended",
+    "default_strategy": "RollingUpdate",
+    "duplicate": "already_satisfied",
+    "ownership_conflict": "rejected",
+    "paused": true,
+    "replicas": 0,
+    "resource_version": "1227",
+    "uid": "0fc6e651-64df-42bf-a031-24070efc9b58"
+  },
+  {
+    "case": "projection_predicate_UID",
+    "code": 422,
+    "reason": "Invalid"
+  },
+  {
+    "case": "projection_predicate_resourceVersion",
+    "code": 422,
+    "reason": "Invalid"
+  },
+  {
+    "case": "projection_predicate_generation",
+    "code": 422,
+    "reason": "Invalid"
+  },
+  {
+    "case": "projection_predicate_fingerprint",
+    "code": 422,
+    "reason": "Invalid"
+  },
+  {
+    "admitted": "11",
+    "applied": "11",
+    "atomic_marker_projection": true,
+    "case": "projection",
+    "older": "stale_generation",
+    "preserved_unrelated": true,
+    "stale_RV": "resource_version_conflict",
+    "wrong_UID": "identity_mismatch"
+  },
+  {
+    "RV": "1278",
+    "case": "two_adapter_CAS",
+    "generation": "10",
+    "outcomes": [
+      "invalid_request",
+      "success"
+    ],
+    "rejections": 1,
+    "replicas": 1,
+    "successes": 1
+  },
+  {
+    "UID": "8b5bf3c7-48bc-4ae3-a385-fd7bd5e160f5",
+    "case": "create_race",
+    "competing_intent": false,
+    "loser_observe_first": "already_satisfied",
+    "server_name_conflicts": 1,
+    "successes": 1
+  },
+  {
+    "UID": "8ea14e4a-1c09-4d77-bed9-96bb3971e9ae",
+    "case": "create_race",
+    "competing_intent": true,
+    "loser_observe_first": "ownership_conflict",
+    "server_name_conflicts": 1,
+    "successes": 1
+  },
+  {
+    "case": "delete_wrong_UID",
+    "code": 409,
+    "reason": "Conflict"
+  },
+  {
+    "case": "delete_wrong_RV",
+    "code": 409,
+    "reason": "Conflict"
+  },
+  {
+    "UID_RV_delete_preconditions": "409",
+    "case": "retire_delete",
+    "completion": "observed_absent",
+    "finalizer_release": "fixture administrator only",
+    "held": "terminating",
+    "request": "deletion_accepted"
+  },
+  {
+    "barrier_preserved": true,
+    "case": "retirement_intervening_RV",
+    "delete_applied": false,
+    "outcome": "resource_version_conflict",
+    "retry": "canonical reauthorization required; adapter does not refresh"
+  },
+  {
+    "UID_changed": true,
+    "case": "same_name_replacement",
+    "old_delete": "identity_mismatch",
+    "old_projection": "identity_mismatch",
+    "old_recovery": "identity_mismatch"
+  },
+  {
+    "case": "claim_rejection",
+    "created": false,
+    "expired_before_dispatch": true,
+    "superseded_before_dispatch": true
+  },
+  {
+    "activation": false,
+    "already_dispatched_can_apply": true,
+    "case": "delayed_create_after_modeled_retirement",
+    "cleanup": "fresh authorized exact UID retirement",
+    "stale_recovery": "rejected",
+    "suspended": true
+  },
+  {
+    "applied": true,
+    "attempts": 1,
+    "case": "unknown_create",
+    "effect": "observed_suspended",
+    "forwarded": 1,
+    "outcome": "outcome_unknown",
+    "recovery": "already_satisfied",
+    "recovery_writes": 0
+  },
+  {
+    "applied": false,
+    "attempts": 1,
+    "case": "unknown_create",
+    "effect": "unknown",
+    "forwarded": 0,
+    "outcome": "outcome_unknown",
+    "recovery": "outcome_unknown",
+    "recovery_writes": 0
+  },
+  {
+    "applied": true,
+    "attempts": 1,
+    "case": "unknown_patch",
+    "effect": "projection_applied",
+    "forwarded": 1,
+    "outcome": "outcome_unknown",
+    "recovery": "already_satisfied",
+    "recovery_writes": 0
+  },
+  {
+    "applied": false,
+    "attempts": 1,
+    "case": "unknown_patch",
+    "effect": "none",
+    "forwarded": 0,
+    "outcome": "outcome_unknown",
+    "recovery": "drift",
+    "recovery_writes": 0
+  },
+  {
+    "applied": true,
+    "attempts": 1,
+    "case": "unknown_delete",
+    "effect": "observed_absent",
+    "forwarded": 1,
+    "outcome": "outcome_unknown",
+    "recovery": "already_satisfied",
+    "recovery_writes": 0
+  },
+  {
+    "applied": false,
+    "attempts": 1,
+    "case": "unknown_delete",
+    "effect": "none",
+    "forwarded": 0,
+    "outcome": "outcome_unknown",
+    "recovery": "drift",
+    "recovery_writes": 0
+  },
+  {
+    "case": "RBAC_Secrets_GET",
+    "code": 403,
+    "reason": "Forbidden"
+  },
+  {
+    "case": "RBAC_Nodes_PATCH",
+    "code": 403,
+    "reason": "Forbidden"
+  },
+  {
+    "case": "RBAC_cross_namespace_CREATE",
+    "code": 403,
+    "reason": "Forbidden"
+  },
+  {
+    "case": "RBAC_cross_namespace_GET",
+    "code": 403,
+    "reason": "Forbidden"
+  },
+  {
+    "case": "RBAC_cross_namespace_DELETE",
+    "code": 403,
+    "reason": "Forbidden"
+  },
+  {
+    "case": "RBAC_unrelated_name_PATCH",
+    "code": 403,
+    "reason": "Forbidden"
+  },
+  {
+    "case": "RBAC_scale_PATCH",
+    "code": 403,
+    "reason": "Forbidden"
+  },
+  {
+    "case": "RBAC_Services_CREATE",
+    "code": 403,
+    "reason": "Forbidden"
+  },
+  {
+    "case": "RBAC_Deployment_LIST",
+    "code": 403,
+    "reason": "Forbidden"
+  },
+  {
+    "adapter_credential_not_cluster_admin": true,
+    "case": "RBAC_boundary",
+    "create_resource_names_limitation": "namespace-only create RBAC; application envelope remains required",
+    "denials": 9
+  },
+  {
+    "case": "inertness_observation",
+    "namespace": "gn-g2-proof-6d25ea213201-lifecycle",
+    "pods": 0,
+    "replica_sets": 0
+  },
+  {
+    "case": "cleanup",
+    "deleted": true,
+    "namespace": "gn-g2-proof-6d25ea213201-lifecycle"
+  },
+  {
+    "case": "inertness_observation",
+    "namespace": "gn-g2-proof-6d25ea213201-lifecycle-other",
+    "pods": 0,
+    "replica_sets": 0
+  },
+  {
+    "case": "cleanup",
+    "deleted": true,
+    "namespace": "gn-g2-proof-6d25ea213201-lifecycle-other"
+  }
+]

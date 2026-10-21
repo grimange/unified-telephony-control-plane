@@ -1,0 +1,29 @@
+{
+  "contract_version": "utcp.infrastructure.v1",
+  "request_id": "request-observe",
+  "cluster_id": "cluster-fixture",
+  "complete": false,
+  "started_at": "2026-10-21T12:00:00Z",
+  "finished_at": "2026-10-21T12:00:01Z",
+  "nodes_status": {
+    "complete": true,
+    "resource_version": "node-rv",
+    "pages": 1,
+    "started_at": "2026-10-21T12:00:00Z",
+    "finished_at": "2026-10-21T12:00:01Z"
+  },
+  "pods_status": {
+    "complete": false,
+    "resource_version": null,
+    "pages": 0,
+    "started_at": "2026-10-21T12:00:00Z",
+    "finished_at": "2026-10-21T12:00:01Z"
+  },
+  "nodes": null,
+  "pods": null,
+  "error": {
+    "code": "forbidden",
+    "retry": "never",
+    "dispatch": "rejected"
+  }
+}

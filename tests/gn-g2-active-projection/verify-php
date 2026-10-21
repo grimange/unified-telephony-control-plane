@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+OUTPUT="${UTCP_GN_G2_ACTIVE_OUTPUT:-/tmp/utcp-gn-g2-active-output}"
+IMAGE='sha256:9efe210fb8c8e7c90d80fce2b6916b46824f0f0428d6037dd599ec5ef1dd4d7d'
+mkdir -p "$OUTPUT"
+PROOF="$OUTPUT/php-active-proof.json"
+if [[ -L "$PROOF" ]]; then
+ echo 'Refusing a symlink proof output.' >&2
+ exit 1
+fi
+touch "$PROOF"
+chmod 0666 "$PROOF"
+args=(--rm --network none --entrypoint php
+ -e APP_ENV=testing -e DB_CONNECTION=sqlite -e DB_DATABASE=:memory: -e DB_URL=
+ -e CACHE_STORE=array -e QUEUE_CONNECTION=sync -e SESSION_DRIVER=array -e LOG_CHANNEL=null)
+for path in app tests config database routes; do
+ args+=(-v "$ROOT/apps/api/$path:/var/www/html/$path:ro")
+done
+for path in phpunit.xml bootstrap/app.php bootstrap/providers.php; do
+ args+=(-v "$ROOT/apps/api/$path:/var/www/html/$path:ro")
+done
+args+=(-v "$ROOT/tests/gn-g2-active-projection:/proof:ro" -v "$OUTPUT:/output:ro" -v "$PROOF:/output/php-active-proof.json"
+ -v "$ROOT/components/kubernetes-effects/active/contracts:/active-contracts:ro"
+ -v "$ROOT/tests/gn-g2-lifecycle:/gn-g2-lifecycle:ro" -v "$ROOT/tests/gn-g2-effects:/gn-g2-effects:ro")
+docker run "${args[@]}" "$IMAGE" vendor/bin/phpunit --do-not-cache-result \
+ tests/Feature/ControlPlane/RuntimeOperationRepositoryTest.php /proof/ActiveProjectionParityTest.php

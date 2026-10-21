@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://utcp.invalid/contracts/v1/action.schema.json",
+  "type": "object",
+  "properties": {
+    "contract_version": {
+      "const": "utcp.infrastructure.v1"
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+    },
+    "operation_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+    },
+    "tenant_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+    },
+    "runtime_node_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "cluster_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+        },
+        "namespace": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$",
+          "maxLength": 253
+        },
+        "kind": {
+          "const": "Deployment"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$",
+          "maxLength": 253
+        },
+        "target_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+        },
+        "incarnation_id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+        },
+        "expected_uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\r\\n]+$"
+        },
+        "expected_resource_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[^\\r\\n]+$"
+        },
+        "runtime_node_slug": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "maxLength": 63
+        }
+      },
+      "required": [
+        "cluster_id",
+        "namespace",
+        "kind",
+        "name",
+        "target_id",
+        "incarnation_id",
+        "expected_uid",
+        "expected_resource_version",
+        "runtime_node_slug"
+      ],
+      "additionalProperties": false
+    },
+    "target_generation": {
+      "type": "string",
+      "pattern": "^[1-9][0-9]{0,18}$"
+    },
+    "intent_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "action": {
+      "enum": [
+        "admit_generation",
+        "set_replicas"
+      ]
+    },
+    "replicas": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "idempotency_key": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+    },
+    "claim": {
+      "type": "object",
+      "properties": {
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "fencing_token": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "lease_expires_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "attempt",
+        "fencing_token",
+        "lease_expires_at"
+      ],
+      "additionalProperties": false
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "correlation_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+    },
+    "audit_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+    }
+  },
+  "required": [
+    "contract_version",
+    "request_id",
+    "operation_id",
+    "tenant_id",
+    "runtime_node_id",
+    "target",
+    "target_generation",
+    "intent_fingerprint",
+    "action",
+    "replicas",
+    "idempotency_key",
+    "claim",
+    "deadline",
+    "correlation_id",
+    "audit_id"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,841 @@
+{
+  "positive": [
+    {
+      "name": "asterisk.managed.v1",
+      "action": {
+        "contract_version": "utcp.infrastructure.v3",
+        "canonical_state": "bound",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "tenant_id": "tenant-1",
+        "runtime_node_id": "runtime-1",
+        "target": {
+          "cluster_id": "test-cluster",
+          "namespace": "test-ns",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-1",
+          "target_id": "target-1",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "10"
+        },
+        "target_generation": "9223372036854775807",
+        "intent_fingerprint": "72e8077880545c892c944e4f8bcb1b2ebe678d905b245765aeda1d794a9716b9",
+        "action": "converge_projection",
+        "intent": {
+          "kind": "converge_projection",
+          "projection": {
+            "template_version": "asterisk.managed.v1",
+            "image": "127.0.0.1:5001/utcp/asterisk-ari@sha256:6027f3bc1464e4c7ed3485bb5a078a529e93ce3f04a2b3d3b0a03d5ac00598e9",
+            "configuration_id": "config-1",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "secret_name": "runtime-secret"
+          },
+          "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+          "replicas": 1
+        },
+        "idempotency_key": "idem-1",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "lease_expires_at": "2030-01-01T00:00:00Z"
+        },
+        "deadline": "2030-01-01T00:00:00Z",
+        "correlation_id": "correlation-1",
+        "audit_id": "audit-1"
+      }
+    },
+    {
+      "name": "freeswitch.managed.v1",
+      "action": {
+        "contract_version": "utcp.infrastructure.v3",
+        "canonical_state": "bound",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "tenant_id": "tenant-1",
+        "runtime_node_id": "runtime-1",
+        "target": {
+          "cluster_id": "test-cluster",
+          "namespace": "test-ns",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-1",
+          "target_id": "target-1",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "10"
+        },
+        "target_generation": "9223372036854775807",
+        "intent_fingerprint": "e72758b96656d2964553b5b9f3d11d9c8c6a3ae495be88a1af276b7ceb6141cd",
+        "action": "converge_projection",
+        "intent": {
+          "kind": "converge_projection",
+          "projection": {
+            "template_version": "freeswitch.managed.v1",
+            "image": "127.0.0.1:5001/utcp/freeswitch@sha256:3eedabc8afb2e3d1a4fc1e4ef8a6439bec2c7a30df4588566989dd9346ba3a11",
+            "configuration_id": "config-1",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "secret_name": "runtime-secret"
+          },
+          "projection_fingerprint": "783fd57198b5a634743df9d254c1d07ac7155109640994e5aae63ae214220e5a",
+          "replicas": 1
+        },
+        "idempotency_key": "idem-1",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "lease_expires_at": "2030-01-01T00:00:00Z"
+        },
+        "deadline": "2030-01-01T00:00:00Z",
+        "correlation_id": "correlation-1",
+        "audit_id": "audit-1"
+      }
+    }
+  ],
+  "negative": [
+    {
+      "name": "unknown_field",
+      "action": {
+        "contract_version": "utcp.infrastructure.v3",
+        "canonical_state": "bound",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "tenant_id": "tenant-1",
+        "runtime_node_id": "runtime-1",
+        "target": {
+          "cluster_id": "test-cluster",
+          "namespace": "test-ns",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-1",
+          "target_id": "target-1",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "10"
+        },
+        "target_generation": "9223372036854775807",
+        "intent_fingerprint": "72e8077880545c892c944e4f8bcb1b2ebe678d905b245765aeda1d794a9716b9",
+        "action": "converge_projection",
+        "intent": {
+          "kind": "converge_projection",
+          "projection": {
+            "template_version": "asterisk.managed.v1",
+            "image": "127.0.0.1:5001/utcp/asterisk-ari@sha256:6027f3bc1464e4c7ed3485bb5a078a529e93ce3f04a2b3d3b0a03d5ac00598e9",
+            "configuration_id": "config-1",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "secret_name": "runtime-secret"
+          },
+          "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+          "replicas": 1
+        },
+        "idempotency_key": "idem-1",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "lease_expires_at": "2030-01-01T00:00:00Z"
+        },
+        "deadline": "2030-01-01T00:00:00Z",
+        "correlation_id": "correlation-1",
+        "audit_id": "audit-1",
+        "template": {}
+      }
+    },
+    {
+      "name": "preparing",
+      "action": {
+        "contract_version": "utcp.infrastructure.v3",
+        "canonical_state": "preparing",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "tenant_id": "tenant-1",
+        "runtime_node_id": "runtime-1",
+        "target": {
+          "cluster_id": "test-cluster",
+          "namespace": "test-ns",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-1",
+          "target_id": "target-1",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "10"
+        },
+        "target_generation": "9223372036854775807",
+        "intent_fingerprint": "72e8077880545c892c944e4f8bcb1b2ebe678d905b245765aeda1d794a9716b9",
+        "action": "converge_projection",
+        "intent": {
+          "kind": "converge_projection",
+          "projection": {
+            "template_version": "asterisk.managed.v1",
+            "image": "127.0.0.1:5001/utcp/asterisk-ari@sha256:6027f3bc1464e4c7ed3485bb5a078a529e93ce3f04a2b3d3b0a03d5ac00598e9",
+            "configuration_id": "config-1",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "secret_name": "runtime-secret"
+          },
+          "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+          "replicas": 1
+        },
+        "idempotency_key": "idem-1",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "lease_expires_at": "2030-01-01T00:00:00Z"
+        },
+        "deadline": "2030-01-01T00:00:00Z",
+        "correlation_id": "correlation-1",
+        "audit_id": "audit-1"
+      }
+    },
+    {
+      "name": "null_binding",
+      "action": {
+        "contract_version": "utcp.infrastructure.v3",
+        "canonical_state": "bound",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "tenant_id": "tenant-1",
+        "runtime_node_id": "runtime-1",
+        "target": {
+          "cluster_id": "test-cluster",
+          "namespace": "test-ns",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-1",
+          "target_id": "target-1",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": null,
+          "expected_resource_version": "10"
+        },
+        "target_generation": "9223372036854775807",
+        "intent_fingerprint": "72e8077880545c892c944e4f8bcb1b2ebe678d905b245765aeda1d794a9716b9",
+        "action": "converge_projection",
+        "intent": {
+          "kind": "converge_projection",
+          "projection": {
+            "template_version": "asterisk.managed.v1",
+            "image": "127.0.0.1:5001/utcp/asterisk-ari@sha256:6027f3bc1464e4c7ed3485bb5a078a529e93ce3f04a2b3d3b0a03d5ac00598e9",
+            "configuration_id": "config-1",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "secret_name": "runtime-secret"
+          },
+          "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+          "replicas": 1
+        },
+        "idempotency_key": "idem-1",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "lease_expires_at": "2030-01-01T00:00:00Z"
+        },
+        "deadline": "2030-01-01T00:00:00Z",
+        "correlation_id": "correlation-1",
+        "audit_id": "audit-1"
+      }
+    },
+    {
+      "name": "mutable_image",
+      "action": {
+        "contract_version": "utcp.infrastructure.v3",
+        "canonical_state": "bound",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "tenant_id": "tenant-1",
+        "runtime_node_id": "runtime-1",
+        "target": {
+          "cluster_id": "test-cluster",
+          "namespace": "test-ns",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-1",
+          "target_id": "target-1",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "10"
+        },
+        "target_generation": "9223372036854775807",
+        "intent_fingerprint": "72e8077880545c892c944e4f8bcb1b2ebe678d905b245765aeda1d794a9716b9",
+        "action": "converge_projection",
+        "intent": {
+          "kind": "converge_projection",
+          "projection": {
+            "template_version": "asterisk.managed.v1",
+            "image": "example:latest",
+            "configuration_id": "config-1",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "secret_name": "runtime-secret"
+          },
+          "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+          "replicas": 1
+        },
+        "idempotency_key": "idem-1",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "lease_expires_at": "2030-01-01T00:00:00Z"
+        },
+        "deadline": "2030-01-01T00:00:00Z",
+        "correlation_id": "correlation-1",
+        "audit_id": "audit-1"
+      }
+    },
+    {
+      "name": "unapproved_profile",
+      "action": {
+        "contract_version": "utcp.infrastructure.v3",
+        "canonical_state": "bound",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "tenant_id": "tenant-1",
+        "runtime_node_id": "runtime-1",
+        "target": {
+          "cluster_id": "test-cluster",
+          "namespace": "test-ns",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-1",
+          "target_id": "target-1",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "10"
+        },
+        "target_generation": "9223372036854775807",
+        "intent_fingerprint": "72e8077880545c892c944e4f8bcb1b2ebe678d905b245765aeda1d794a9716b9",
+        "action": "converge_projection",
+        "intent": {
+          "kind": "converge_projection",
+          "projection": {
+            "template_version": "arbitrary.v1",
+            "image": "127.0.0.1:5001/utcp/asterisk-ari@sha256:6027f3bc1464e4c7ed3485bb5a078a529e93ce3f04a2b3d3b0a03d5ac00598e9",
+            "configuration_id": "config-1",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "secret_name": "runtime-secret"
+          },
+          "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+          "replicas": 1
+        },
+        "idempotency_key": "idem-1",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "lease_expires_at": "2030-01-01T00:00:00Z"
+        },
+        "deadline": "2030-01-01T00:00:00Z",
+        "correlation_id": "correlation-1",
+        "audit_id": "audit-1"
+      }
+    },
+    {
+      "name": "numeric_generation",
+      "action": {
+        "contract_version": "utcp.infrastructure.v3",
+        "canonical_state": "bound",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "tenant_id": "tenant-1",
+        "runtime_node_id": "runtime-1",
+        "target": {
+          "cluster_id": "test-cluster",
+          "namespace": "test-ns",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-1",
+          "target_id": "target-1",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "10"
+        },
+        "target_generation": 9007199254740993,
+        "intent_fingerprint": "72e8077880545c892c944e4f8bcb1b2ebe678d905b245765aeda1d794a9716b9",
+        "action": "converge_projection",
+        "intent": {
+          "kind": "converge_projection",
+          "projection": {
+            "template_version": "asterisk.managed.v1",
+            "image": "127.0.0.1:5001/utcp/asterisk-ari@sha256:6027f3bc1464e4c7ed3485bb5a078a529e93ce3f04a2b3d3b0a03d5ac00598e9",
+            "configuration_id": "config-1",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "secret_name": "runtime-secret"
+          },
+          "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+          "replicas": 1
+        },
+        "idempotency_key": "idem-1",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "lease_expires_at": "2030-01-01T00:00:00Z"
+        },
+        "deadline": "2030-01-01T00:00:00Z",
+        "correlation_id": "correlation-1",
+        "audit_id": "audit-1"
+      }
+    },
+    {
+      "name": "unknown_secret_field",
+      "action": {
+        "contract_version": "utcp.infrastructure.v3",
+        "canonical_state": "bound",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "tenant_id": "tenant-1",
+        "runtime_node_id": "runtime-1",
+        "target": {
+          "cluster_id": "test-cluster",
+          "namespace": "test-ns",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-1",
+          "target_id": "target-1",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "10"
+        },
+        "target_generation": "9223372036854775807",
+        "intent_fingerprint": "72e8077880545c892c944e4f8bcb1b2ebe678d905b245765aeda1d794a9716b9",
+        "action": "converge_projection",
+        "intent": {
+          "kind": "converge_projection",
+          "projection": {
+            "template_version": "asterisk.managed.v1",
+            "image": "127.0.0.1:5001/utcp/asterisk-ari@sha256:6027f3bc1464e4c7ed3485bb5a078a529e93ce3f04a2b3d3b0a03d5ac00598e9",
+            "configuration_id": "config-1",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "secret_name": "runtime-secret",
+            "secret_data": "forbidden"
+          },
+          "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+          "replicas": 1
+        },
+        "idempotency_key": "idem-1",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "lease_expires_at": "2030-01-01T00:00:00Z"
+        },
+        "deadline": "2030-01-01T00:00:00Z",
+        "correlation_id": "correlation-1",
+        "audit_id": "audit-1"
+      }
+    },
+    {
+      "name": "null_secret",
+      "action": {
+        "contract_version": "utcp.infrastructure.v3",
+        "canonical_state": "bound",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "tenant_id": "tenant-1",
+        "runtime_node_id": "runtime-1",
+        "target": {
+          "cluster_id": "test-cluster",
+          "namespace": "test-ns",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-1",
+          "target_id": "target-1",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "10"
+        },
+        "target_generation": "9223372036854775807",
+        "intent_fingerprint": "72e8077880545c892c944e4f8bcb1b2ebe678d905b245765aeda1d794a9716b9",
+        "action": "converge_projection",
+        "intent": {
+          "kind": "converge_projection",
+          "projection": {
+            "template_version": "asterisk.managed.v1",
+            "image": "127.0.0.1:5001/utcp/asterisk-ari@sha256:6027f3bc1464e4c7ed3485bb5a078a529e93ce3f04a2b3d3b0a03d5ac00598e9",
+            "configuration_id": "config-1",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "secret_name": null
+          },
+          "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+          "replicas": 1
+        },
+        "idempotency_key": "idem-1",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "lease_expires_at": "2030-01-01T00:00:00Z"
+        },
+        "deadline": "2030-01-01T00:00:00Z",
+        "correlation_id": "correlation-1",
+        "audit_id": "audit-1"
+      }
+    },
+    {
+      "name": "privileged_escape",
+      "action": {
+        "contract_version": "utcp.infrastructure.v3",
+        "canonical_state": "bound",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "tenant_id": "tenant-1",
+        "runtime_node_id": "runtime-1",
+        "target": {
+          "cluster_id": "test-cluster",
+          "namespace": "test-ns",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-1",
+          "target_id": "target-1",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "10"
+        },
+        "target_generation": "9223372036854775807",
+        "intent_fingerprint": "72e8077880545c892c944e4f8bcb1b2ebe678d905b245765aeda1d794a9716b9",
+        "action": "converge_projection",
+        "intent": {
+          "kind": "converge_projection",
+          "projection": {
+            "template_version": "asterisk.managed.v1",
+            "image": "127.0.0.1:5001/utcp/asterisk-ari@sha256:6027f3bc1464e4c7ed3485bb5a078a529e93ce3f04a2b3d3b0a03d5ac00598e9",
+            "configuration_id": "config-1",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "secret_name": "runtime-secret",
+            "privileged": true
+          },
+          "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+          "replicas": 1
+        },
+        "idempotency_key": "idem-1",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "lease_expires_at": "2030-01-01T00:00:00Z"
+        },
+        "deadline": "2030-01-01T00:00:00Z",
+        "correlation_id": "correlation-1",
+        "audit_id": "audit-1"
+      }
+    },
+    {
+      "name": "action_mismatch",
+      "action": {
+        "contract_version": "utcp.infrastructure.v3",
+        "canonical_state": "bound",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "tenant_id": "tenant-1",
+        "runtime_node_id": "runtime-1",
+        "target": {
+          "cluster_id": "test-cluster",
+          "namespace": "test-ns",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-1",
+          "target_id": "target-1",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "10"
+        },
+        "target_generation": "9223372036854775807",
+        "intent_fingerprint": "72e8077880545c892c944e4f8bcb1b2ebe678d905b245765aeda1d794a9716b9",
+        "action": "create_suspended",
+        "intent": {
+          "kind": "converge_projection",
+          "projection": {
+            "template_version": "asterisk.managed.v1",
+            "image": "127.0.0.1:5001/utcp/asterisk-ari@sha256:6027f3bc1464e4c7ed3485bb5a078a529e93ce3f04a2b3d3b0a03d5ac00598e9",
+            "configuration_id": "config-1",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "secret_name": "runtime-secret"
+          },
+          "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+          "replicas": 1
+        },
+        "idempotency_key": "idem-1",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "lease_expires_at": "2030-01-01T00:00:00Z"
+        },
+        "deadline": "2030-01-01T00:00:00Z",
+        "correlation_id": "correlation-1",
+        "audit_id": "audit-1"
+      }
+    },
+    {
+      "name": "unqualified_image",
+      "action": {
+        "contract_version": "utcp.infrastructure.v3",
+        "canonical_state": "bound",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "tenant_id": "tenant-1",
+        "runtime_node_id": "runtime-1",
+        "target": {
+          "cluster_id": "test-cluster",
+          "namespace": "test-ns",
+          "kind": "Deployment",
+          "name": "utcp-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "runtime_node_slug": "runtime-1",
+          "target_id": "target-1",
+          "incarnation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expected_uid": "uid-a",
+          "expected_resource_version": "10"
+        },
+        "target_generation": "9223372036854775807",
+        "intent_fingerprint": "72e8077880545c892c944e4f8bcb1b2ebe678d905b245765aeda1d794a9716b9",
+        "action": "converge_projection",
+        "intent": {
+          "kind": "converge_projection",
+          "projection": {
+            "template_version": "asterisk.managed.v1",
+            "image": "asterisk@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "configuration_id": "config-1",
+            "configuration_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "secret_name": "runtime-secret"
+          },
+          "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+          "replicas": 1
+        },
+        "idempotency_key": "idem-1",
+        "claim": {
+          "attempt": 1,
+          "fencing_token": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "lease_expires_at": "2030-01-01T00:00:00Z"
+        },
+        "deadline": "2030-01-01T00:00:00Z",
+        "correlation_id": "correlation-1",
+        "audit_id": "audit-1"
+      }
+    }
+  ],
+  "positive_results": [
+    {
+      "name": "projection_applied",
+      "result": {
+        "contract_version": "utcp.infrastructure.v3",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "outcome": "success",
+        "effect": "projection_applied",
+        "dispatch": "response_received",
+        "retry": "never",
+        "target_uid": "uid-a",
+        "resource_version": "11",
+        "target_generation": "9223372036854775807",
+        "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+        "retirement_id": null,
+        "deletion_timestamp": null,
+        "finished_at": "2030-01-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "already_satisfied",
+      "result": {
+        "contract_version": "utcp.infrastructure.v3",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "outcome": "already_satisfied",
+        "effect": "projection_applied",
+        "dispatch": "response_received",
+        "retry": "never",
+        "target_uid": "uid-a",
+        "resource_version": "11",
+        "target_generation": "9223372036854775807",
+        "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+        "retirement_id": null,
+        "deletion_timestamp": null,
+        "finished_at": "2030-01-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "lost_response",
+      "result": {
+        "contract_version": "utcp.infrastructure.v3",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "outcome": "outcome_unknown",
+        "effect": "unknown",
+        "dispatch": "unknown",
+        "retry": "observe_first",
+        "target_uid": "uid-a",
+        "resource_version": null,
+        "target_generation": "9223372036854775807",
+        "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+        "retirement_id": null,
+        "deletion_timestamp": null,
+        "finished_at": "2030-01-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "rejected_stale_generation",
+      "result": {
+        "contract_version": "utcp.infrastructure.v3",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "outcome": "stale_generation",
+        "effect": "none",
+        "dispatch": "not_sent",
+        "retry": "never",
+        "target_uid": "uid-a",
+        "resource_version": "11",
+        "target_generation": "9223372036854775807",
+        "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+        "retirement_id": null,
+        "deletion_timestamp": null,
+        "finished_at": "2030-01-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "superseded_recovery",
+      "result": {
+        "contract_version": "utcp.infrastructure.v3",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "outcome": "drift",
+        "effect": "none",
+        "dispatch": "not_sent",
+        "retry": "reauthorize",
+        "target_uid": "uid-a",
+        "resource_version": "11",
+        "target_generation": "9223372036854775807",
+        "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+        "retirement_id": null,
+        "deletion_timestamp": null,
+        "finished_at": "2030-01-01T00:00:00Z"
+      }
+    }
+  ],
+  "negative_results": [
+    {
+      "name": "unsupported_version",
+      "result": {
+        "contract_version": "utcp.infrastructure.v99",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "outcome": "success",
+        "effect": "projection_applied",
+        "dispatch": "response_received",
+        "retry": "never",
+        "target_uid": "uid-a",
+        "resource_version": "11",
+        "target_generation": "9223372036854775807",
+        "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+        "retirement_id": null,
+        "deletion_timestamp": null,
+        "finished_at": "2030-01-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "unknown_outcome",
+      "result": {
+        "contract_version": "utcp.infrastructure.v3",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "outcome": "healthy",
+        "effect": "projection_applied",
+        "dispatch": "response_received",
+        "retry": "never",
+        "target_uid": "uid-a",
+        "resource_version": "11",
+        "target_generation": "9223372036854775807",
+        "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+        "retirement_id": null,
+        "deletion_timestamp": null,
+        "finished_at": "2030-01-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "numeric_generation",
+      "result": {
+        "contract_version": "utcp.infrastructure.v3",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "outcome": "success",
+        "effect": "projection_applied",
+        "dispatch": "response_received",
+        "retry": "never",
+        "target_uid": "uid-a",
+        "resource_version": "11",
+        "target_generation": 9007199254740993,
+        "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+        "retirement_id": null,
+        "deletion_timestamp": null,
+        "finished_at": "2030-01-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "raw_object_escape",
+      "result": {
+        "contract_version": "utcp.infrastructure.v3",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "outcome": "success",
+        "effect": "projection_applied",
+        "dispatch": "response_received",
+        "retry": "never",
+        "target_uid": "uid-a",
+        "resource_version": "11",
+        "target_generation": "9223372036854775807",
+        "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+        "retirement_id": null,
+        "deletion_timestamp": null,
+        "finished_at": "2030-01-01T00:00:00Z",
+        "raw_deployment": {
+          "spec": {}
+        }
+      }
+    },
+    {
+      "name": "unknown_retry",
+      "result": {
+        "contract_version": "utcp.infrastructure.v3",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "outcome": "success",
+        "effect": "projection_applied",
+        "dispatch": "response_received",
+        "retry": "blind_replay",
+        "target_uid": "uid-a",
+        "resource_version": "11",
+        "target_generation": "9223372036854775807",
+        "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+        "retirement_id": null,
+        "deletion_timestamp": null,
+        "finished_at": "2030-01-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "invalid_finished_at",
+      "result": {
+        "contract_version": "utcp.infrastructure.v3",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "outcome": "success",
+        "effect": "projection_applied",
+        "dispatch": "response_received",
+        "retry": "never",
+        "target_uid": "uid-a",
+        "resource_version": "11",
+        "target_generation": "9223372036854775807",
+        "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+        "retirement_id": null,
+        "deletion_timestamp": null,
+        "finished_at": "yesterday"
+      }
+    },
+    {
+      "name": "missing_target_identity_field",
+      "result": {
+        "contract_version": "utcp.infrastructure.v3",
+        "request_id": "request-1",
+        "operation_id": "operation-1",
+        "outcome": "success",
+        "effect": "projection_applied",
+        "dispatch": "response_received",
+        "retry": "never",
+        "resource_version": "11",
+        "target_generation": "9223372036854775807",
+        "projection_fingerprint": "ad5be0d21f5ec3394b5c79ad0d6a5ff9744bbd93c90d2f39a593d664b1677dd3",
+        "retirement_id": null,
+        "deletion_timestamp": null,
+        "finished_at": "2030-01-01T00:00:00Z"
+      }
+    }
+  ]
+}

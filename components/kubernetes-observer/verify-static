@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""Standard-library-only checks for task-owned isolated GN-G1 artifacts."""
+import json
+import re
+from pathlib import Path
+
+root = Path(__file__).resolve().parents[2]
+paths = [root / 'components/kubernetes-observer', root / 'tests/gn-g1-observer',
+         root / 'docs/architecture/proposals/gn-g1',
+         root / 'docs/architecture/proposals/UTCP_GN_G1_READ_ONLY_GO_INFRASTRUCTURE_OBSERVATION_PARITY.md']
+files = sorted(p for base in paths for p in (base.rglob('*') if base.is_dir() else [base]) if p.is_file())
+errors = [f'missing artifact: {base.relative_to(root)}' for base in paths if not base.exists()]
+for path in files:
+    if not path.exists():
+        errors.append(f'missing artifact: {path.relative_to(root)}')
+        continue
+    text = path.read_text(encoding='utf-8')
+    if not text.endswith('\n') or any(line.rstrip() != line for line in text.splitlines()):
+        errors.append(f'whitespace: {path.relative_to(root)}')
+    if any('-----BEGIN ' + kind + '-----' in text for kind in ['PRIVATE KEY', 'RSA PRIVATE KEY']):
+        errors.append(f'private key payload: {path.relative_to(root)}')
+    if path.suffix == '.json':
+        json.loads(text)
+    if path.suffix == '.md':
+        for target in re.findall(r'\[[^\]]*\]\(([^)]+)\)', text):
+            if re.match(r'^[a-z]+://', target) or target.startswith('#'):
+                continue
+            target = target.split('#')[0]
+            if not (path.parent / target).exists():
+                errors.append(f'broken local link in {path.relative_to(root)}: {target}')
+    if path.suffix == '.go' and not path.name.endswith('_test.go'):
+        forbidden = [r'package main\b', r'\.(?:Post|Put|Patch|Delete|Watch)\(',
+                     r'InClusterConfig|BuildConfigFromFlags|ListenAndServe|database/sql|go-redis',
+                     r'os\.Getenv\(']
+        if any(re.search(pattern, text) for pattern in forbidden):
+            errors.append(f'isolation boundary: {path.relative_to(root)}')
+if errors:
+    raise SystemExit('\n'.join(errors))
+print(f'GN-G1 static/document validation: PASS ({len(files)} task-owned files; UTF-8, whitespace, JSON, local links, isolation guards)')

@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Validate the isolated lifecycle packet, local links and checked-in secret boundaries."""
+import ast
+import json
+from pathlib import Path
+import re
+import subprocess
+
+root = Path(__file__).resolve().parents[2]
+bases = [root / 'components/kubernetes-effects/lifecycle', root / 'tests/gn-g2-lifecycle',
+         root / 'docs/architecture/proposals/gn-g2/contracts/v2']
+report = root / 'docs/architecture/proposals/UTCP_GN_G2_LIFECYCLE_V2_CONDITIONAL_DEPLOYMENT_MANAGEMENT.md'
+if report.exists():
+    bases.append(report)
+evidence = root / 'docs/architecture/proposals/gn-g2/lifecycle-v2-real-api-evidence.json'
+if evidence.exists():
+    bases.append(evidence)
+errors = []
+for name in ['action.schema.json', 'result.schema.json', 'fixtures.json']:
+    source = root / 'docs/architecture/proposals/gn-g2/contracts/v2' / name
+    embedded = root / 'components/kubernetes-effects/lifecycle/contracts' / name
+    if not source.is_file() or not embedded.is_file() or source.read_bytes() != embedded.read_bytes():
+        errors.append('contract copy mismatch: ' + name)
+files = sorted(p for base in bases for p in (base.rglob('*') if base.is_dir() else [base]) if p.is_file())
+for path in files:
+    if '__pycache__' in path.parts:
+        errors.append('generated cache: ' + str(path.relative_to(root)))
+        continue
+    text = path.read_text()
+    if not text.endswith('\n') or any(line.rstrip() != line for line in text.splitlines()):
+        errors.append('whitespace: ' + str(path.relative_to(root)))
+    if re.search(r'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----', text):
+        errors.append('private key: ' + str(path.relative_to(root)))
+    if path.suffix == '.json':
+        json.loads(text)
+    if path.suffix == '.py':
+        ast.parse(text)
+    if path.suffix == '.php':
+        subprocess.run(['php', '-l', str(path)], check=True, stdout=subprocess.DEVNULL)
+    if path.suffix == '.md':
+        for target in re.findall(r'\[[^\]]*\]\(([^)]+)\)', text):
+            if re.match(r'^[a-z]+://', target) or target.startswith('#'):
+                continue
+            if not (path.parent / target.split('#')[0]).exists():
+                errors.append('broken link: ' + str(path.relative_to(root)) + ': ' + target)
+    if path.suffix == '.go' and not path.name.endswith('_test.go'):
+        for pattern in [r'package main\b', r'InClusterConfig|BuildConfigFromFlags|ListenAndServe',
+                        r'database/sql|go-redis|os\.Getenv\(']:
+            if re.search(pattern, text):
+                errors.append('isolation: ' + str(path.relative_to(root)) + ': ' + pattern)
+if errors:
+    raise SystemExit('\n'.join(errors))
+print(f'Lifecycle static/docs/JSON/PHP/secret/isolation checks: PASS ({len(files)} files)')

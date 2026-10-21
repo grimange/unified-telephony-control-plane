@@ -1,0 +1,139 @@
+GN-G0 verification — 2026-10-21
+===============================
+Repository: main @ 4ef700639c50a58933bc5a0d1e7ae08628cc4c62
+Scope: source inspection, schemas and isolated unit/fake/HTTP simulation only.
+No live credentials, cluster access, cluster mutation or production routing.
+Host Go absent; no host packages installed.
+SDK: golang:1.25.8-bookworm resolved and executed by immutable digest
+  golang@sha256:4557cf171e3cdf5053a298d5171b1a5f5734d920260c25f22c79e94760eb2084
+Local PHP test image:
+  sha256:9efe210fb8c8e7c90d80fce2b6916b46824f0f0428d6037dd599ec5ef1dd4d7d
+PHP 8.4.15 / PHPUnit 11.5.56. In-memory SQLite, network disabled.
+Source/contracts mounted read-only; Go cache /tmp/utcp-gn-g0-go-cache.
+No registry endpoint, token, kubeconfig or Docker socket mounted.
+
+Go: PASS / exit 0
+=================
+Acquisition commands:
+  docker pull golang:1.25.8-bookworm
+  experiments/gn-g0-infrastructure-adapter/verify --download
+Final verification command:
+  experiments/gn-g0-infrastructure-adapter/verify
+This runs go mod verify, gofmt check, go test -count=1 ./...,
+go test -race -count=1 ./..., and go vet ./... in the pinned SDK, network none.
+10 top-level tests; 29 schema fixtures plus protocol/ownership subcases.
+Final captured output:
+go version go1.25.8 linux/amd64
+k8s.io/api v0.35.3
+k8s.io/apimachinery v0.35.3
+k8s.io/client-go v0.35.3
+all modules verified
+go test -count=1 ./...
+ok  	utcp.invalid/experiments/gn-g0	0.423s
+go test -race -count=1 ./...
+ok  	utcp.invalid/experiments/gn-g0	3.121s
+go vet ./...
+go vet: PASS
+
+PHP: PASS / exit 0
+==================
+Command: experiments/gn-g0-infrastructure-adapter/verify-php
+The runner lists the exact existing PHPUnit suites and isolated proof path.
+Existing focused suites separately passed 91 tests / 611 assertions.
+Final combined existing + 3 proof-test output:
+PHPUnit 11.5.56 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.4.15
+Configuration: /var/www/html/phpunit.xml
+
+................................................................. 65 / 94 ( 69%)
+.............................                                     94 / 94 (100%)
+
+Time: 00:03.336, Memory: 60.50 MB
+
+OK (94 tests, 645 assertions)
+
+Repository checks: PASS / exit 0
+================================
+Command:
+  make repository-hygiene phase-status-consistency-check control-plane-config-check workflow-check
+Captured output (before this final results file/manifest was added):
+phase-status consistency check: PASS (changed=49, evidence=0, status-impact=no)
+local runtime cutoff config check passed
+repository hygiene checks passed
+phase-status consistency check: PASS (changed=49, evidence=0, status-impact=no)
+control-plane-config-check: required C0 files exist
+control-plane-config-check: no runtime-specific production vocabulary found
+control-plane-config-check: no runtime-specific public routes found
+control-plane-config-check: no future process roles deployed
+control-plane-config-check: migration indexes, safety checks, and locking primitives are present
+control-plane-config-check: PHP syntax valid
+control-plane-config-check: PASS
+GitHub Actions references are pinned to immutable commit SHAs
+
+Baseline defect: FAIL / make exit 2 / pre-existing
+==================================================
+Command: make runtime-engine-config-check
+Exact output:
+runtime engine config check failed: ordinary platform workers must not carry the Kubernetes API client label: ['utcp-platform/api', 'utcp-platform/scheduler', 'utcp-platform/telephony-reconciler']
+make: *** [Makefile:546: runtime-engine-config-check] Error 1
+
+Disposition: no checker/manifests changed. Exact-set workload/ServiceAccount
+assertion repair and safe mutation-harness cleanup belong to a separate packet.
+Do not run config-check-test in this packet: its policy cleanup is not EXIT-safe.
+This failure must be repaired or explicitly isolated before GN-G1 acceptance.
+
+Other verification and limits
+=============================
+bash -n experiments/gn-g0-infrastructure-adapter/verify experiments/gn-g0-infrastructure-adapter/verify-php: PASS.
+Initial offline module metadata miss resolved with verify --download.
+Initial PHP proof label key-order assertion corrected to JSON object equality;
+final PHP proof passed. No production behavior changed to satisfy tests.
+Initial documentation link check found the not-yet-written results artifact;
+final packet verification is recorded below.
+Unit-tested: fingerprint, normalization, schemas and safe output.
+Client-go fake: typed Node/Pod acquisition fixtures, missing target.
+httptest simulated: pagination, conditional RFC6902 enforcement, API errors,
+context cancellation/deadlines, delayed write, duplicate workers, lost response.
+Not verified: actual API-server admission/defaulting/storage/CAS/DELETE;
+full PHP public/tenant observation parity; mTLS/rotation; real performance;
+PG target/generation/callback; create/projection/delete execution;
+legacy-request audit drain; credential cutoff; deployment/live V1/K5 proof.
+No fake/simulation pass is a live or actual Kubernetes concurrency acceptance.
+
+Final packet checks — PASS
+==========================
+Command: make repository-hygiene phase-status-consistency-check control-plane-config-check workflow-check
+phase-status consistency check: PASS (changed=50, evidence=0, status-impact=no)
+local runtime cutoff config check passed
+repository hygiene checks passed
+phase-status consistency check: PASS (changed=50, evidence=0, status-impact=no)
+control-plane-config-check: required C0 files exist
+control-plane-config-check: no runtime-specific production vocabulary found
+control-plane-config-check: no runtime-specific public routes found
+control-plane-config-check: no future process roles deployed
+control-plane-config-check: migration indexes, safety checks, and locking primitives are present
+control-plane-config-check: PHP syntax valid
+control-plane-config-check: PASS
+GitHub Actions references are pinned to immutable commit SHAs
+
+Command: python3 experiments/gn-g0-infrastructure-adapter/verify-text
+proposal text check: PASS (50 files, 79 local links; anchors/external links not checked)
+Command: git diff --check
+Exit 0, no output. Untracked text is additionally covered by verify-text.
+Commands: git diff --name-only; git diff --cached --name-only
+Both empty: no tracked modifications or staged changes.
+Command: git status --short --untracked-files=all
+50 untracked files: unchanged E1, revised already-untracked ADR, 48 new task files.
+The report's exact task-owned inventory enumerates all 49 new/revised paths.
+Starting/final branch main; HEAD 4ef700639c50a58933bc5a0d1e7ae08628cc4c62.
+Original E1 SHA-256 preserved:
+b542798ee269fd6552a3f801c3bd9a092aabf8bfc4d2cfe53977d2e7132a5fc4
+No files staged, committed or pushed. No accepted ADR or phase ledger edits.
+Current-State Ledger Impact: NO_CHANGE_REQUIRED.
+Phase-Status Consistency Check: PASS.
+ADR Status: PROPOSED / NOT ADOPTED.
+Runtime Code Changed: NO (isolated experiment source only).
+Live Kubernetes Mutation: NO.
+Go Feasibility Verified: YES, bounded unit/fake/HTTP simulation only.
+Verdict: GN_G0_COMPLETE_WITH_EXPLICIT_DEFERRED_PROOF.

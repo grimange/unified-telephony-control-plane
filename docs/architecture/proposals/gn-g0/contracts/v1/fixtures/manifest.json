@@ -1,0 +1,147 @@
+[
+  {
+    "file": "action-admit.json",
+    "schema": "action.schema.json",
+    "valid": true
+  },
+  {
+    "file": "action-replicas.json",
+    "schema": "action.schema.json",
+    "valid": true
+  },
+  {
+    "file": "invalid-arbitrary-manifest.json",
+    "schema": "action.schema.json",
+    "valid": false
+  },
+  {
+    "file": "invalid-missing-uid.json",
+    "schema": "action.schema.json",
+    "valid": false
+  },
+  {
+    "file": "invalid-numeric-generation.json",
+    "schema": "action.schema.json",
+    "valid": false
+  },
+  {
+    "file": "invalid-unsupported-create.json",
+    "schema": "action.schema.json",
+    "valid": false
+  },
+  {
+    "file": "observation-request.json",
+    "schema": "observation-request.schema.json",
+    "valid": true
+  },
+  {
+    "file": "observation-complete.json",
+    "schema": "observation.schema.json",
+    "valid": true
+  },
+  {
+    "file": "observation-forbidden.json",
+    "schema": "observation.schema.json",
+    "valid": true
+  },
+  {
+    "file": "observation-incomplete.json",
+    "schema": "observation.schema.json",
+    "valid": true
+  },
+  {
+    "file": "invalid-empty-healthy.json",
+    "schema": "observation.schema.json",
+    "valid": false
+  },
+  {
+    "file": "result-success.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-already_satisfied.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-invalid_request.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-unauthorized.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-forbidden.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-target_not_found.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-identity_mismatch.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-ownership_conflict.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-resource_version_conflict.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-stale_generation.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-timeout.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-cancelled.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-transport_unavailable.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-retryable_failure.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-terminal_failure.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-outcome_unknown.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-drift.json",
+    "schema": "result.schema.json",
+    "valid": true
+  },
+  {
+    "file": "result-busy.json",
+    "schema": "result.schema.json",
+    "valid": true
+  }
+]

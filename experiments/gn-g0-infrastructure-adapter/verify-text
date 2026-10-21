@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+"""Bounded proposal link/whitespace verification, including untracked files."""
+from pathlib import Path
+import re
+import sys
+from urllib.parse import unquote, urlsplit
+
+root = Path(__file__).resolve().parents[2]
+directories = [root / "docs/architecture/proposals", Path(__file__).resolve().parent]
+files = sorted(p for d in directories for p in d.rglob("*") if p.is_file())
+errors = []
+links = 0
+for path in files:
+    text = path.read_text(encoding="utf-8")
+    label = str(path.relative_to(root))
+    if not text.endswith("\n"):
+        errors.append(f"{label}: missing final newline")
+    for number, line in enumerate(text.splitlines(), 1):
+        if line.rstrip(" \t") != line:
+            errors.append(f"{label}:{number}: trailing whitespace")
+    if path.suffix != ".md":
+        continue
+    for match in re.finditer(r"\[[^\]\n]*\]\(([^)\n]+)\)", text):
+        target = match.group(1).strip().strip("<>")
+        uri = urlsplit(target)
+        if uri.scheme or not uri.path:
+            continue
+        links += 1
+        resolved = (path.parent / unquote(uri.path)).resolve()
+        if not resolved.exists():
+            errors.append(f"{label}: missing local link {target}")
+if errors:
+    print("\n".join(errors), file=sys.stderr)
+    sys.exit(1)
+print(f"proposal text check: PASS ({len(files)} files, {links} local links; anchors/external links not checked)")

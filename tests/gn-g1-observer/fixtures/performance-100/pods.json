@@ -1,0 +1,5209 @@
+{
+  "apiVersion": "v1",
+  "kind": "PodList",
+  "metadata": {
+    "resourceVersion": "pods-fixture-rv"
+  },
+  "items": [
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-000",
+        "uid": "pod-uid-0",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-000",
+          "utcp.dev/runtime-node": "runtime-000",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-001",
+        "uid": "pod-uid-1",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-001",
+          "utcp.dev/runtime-node": "runtime-001",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-002",
+        "uid": "pod-uid-2",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-002",
+          "utcp.dev/runtime-node": "runtime-002",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-003",
+        "uid": "pod-uid-3",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-003",
+          "utcp.dev/runtime-node": "runtime-003",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-004",
+        "uid": "pod-uid-4",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-004",
+          "utcp.dev/runtime-node": "runtime-004",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-005",
+        "uid": "pod-uid-5",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-005",
+          "utcp.dev/runtime-node": "runtime-005",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-006",
+        "uid": "pod-uid-6",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-006",
+          "utcp.dev/runtime-node": "runtime-006",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-007",
+        "uid": "pod-uid-7",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-007",
+          "utcp.dev/runtime-node": "runtime-007",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-008",
+        "uid": "pod-uid-8",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-008",
+          "utcp.dev/runtime-node": "runtime-008",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-009",
+        "uid": "pod-uid-9",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-009",
+          "utcp.dev/runtime-node": "runtime-009",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-010",
+        "uid": "pod-uid-10",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-010",
+          "utcp.dev/runtime-node": "runtime-010",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-011",
+        "uid": "pod-uid-11",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-011",
+          "utcp.dev/runtime-node": "runtime-011",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-012",
+        "uid": "pod-uid-12",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-012",
+          "utcp.dev/runtime-node": "runtime-012",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-013",
+        "uid": "pod-uid-13",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-013",
+          "utcp.dev/runtime-node": "runtime-013",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-014",
+        "uid": "pod-uid-14",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-014",
+          "utcp.dev/runtime-node": "runtime-014",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-015",
+        "uid": "pod-uid-15",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-015",
+          "utcp.dev/runtime-node": "runtime-015",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-016",
+        "uid": "pod-uid-16",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-016",
+          "utcp.dev/runtime-node": "runtime-016",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-017",
+        "uid": "pod-uid-17",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-017",
+          "utcp.dev/runtime-node": "runtime-017",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-018",
+        "uid": "pod-uid-18",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-018",
+          "utcp.dev/runtime-node": "runtime-018",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-019",
+        "uid": "pod-uid-19",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-019",
+          "utcp.dev/runtime-node": "runtime-019",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-020",
+        "uid": "pod-uid-20",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-020",
+          "utcp.dev/runtime-node": "runtime-020",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-021",
+        "uid": "pod-uid-21",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-021",
+          "utcp.dev/runtime-node": "runtime-021",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-022",
+        "uid": "pod-uid-22",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-022",
+          "utcp.dev/runtime-node": "runtime-022",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-023",
+        "uid": "pod-uid-23",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-023",
+          "utcp.dev/runtime-node": "runtime-023",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-024",
+        "uid": "pod-uid-24",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-024",
+          "utcp.dev/runtime-node": "runtime-024",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-025",
+        "uid": "pod-uid-25",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-025",
+          "utcp.dev/runtime-node": "runtime-025",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-026",
+        "uid": "pod-uid-26",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-026",
+          "utcp.dev/runtime-node": "runtime-026",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-027",
+        "uid": "pod-uid-27",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-027",
+          "utcp.dev/runtime-node": "runtime-027",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-028",
+        "uid": "pod-uid-28",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-028",
+          "utcp.dev/runtime-node": "runtime-028",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-029",
+        "uid": "pod-uid-29",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-029",
+          "utcp.dev/runtime-node": "runtime-029",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-030",
+        "uid": "pod-uid-30",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-030",
+          "utcp.dev/runtime-node": "runtime-030",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-031",
+        "uid": "pod-uid-31",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-031",
+          "utcp.dev/runtime-node": "runtime-031",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-032",
+        "uid": "pod-uid-32",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-032",
+          "utcp.dev/runtime-node": "runtime-032",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-033",
+        "uid": "pod-uid-33",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-033",
+          "utcp.dev/runtime-node": "runtime-033",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-034",
+        "uid": "pod-uid-34",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-034",
+          "utcp.dev/runtime-node": "runtime-034",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-035",
+        "uid": "pod-uid-35",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-035",
+          "utcp.dev/runtime-node": "runtime-035",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-036",
+        "uid": "pod-uid-36",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-036",
+          "utcp.dev/runtime-node": "runtime-036",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-037",
+        "uid": "pod-uid-37",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-037",
+          "utcp.dev/runtime-node": "runtime-037",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-038",
+        "uid": "pod-uid-38",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-038",
+          "utcp.dev/runtime-node": "runtime-038",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-039",
+        "uid": "pod-uid-39",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-039",
+          "utcp.dev/runtime-node": "runtime-039",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-040",
+        "uid": "pod-uid-40",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-040",
+          "utcp.dev/runtime-node": "runtime-040",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-041",
+        "uid": "pod-uid-41",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-041",
+          "utcp.dev/runtime-node": "runtime-041",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-042",
+        "uid": "pod-uid-42",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-042",
+          "utcp.dev/runtime-node": "runtime-042",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-043",
+        "uid": "pod-uid-43",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-043",
+          "utcp.dev/runtime-node": "runtime-043",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-044",
+        "uid": "pod-uid-44",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-044",
+          "utcp.dev/runtime-node": "runtime-044",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-045",
+        "uid": "pod-uid-45",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-045",
+          "utcp.dev/runtime-node": "runtime-045",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-046",
+        "uid": "pod-uid-46",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-046",
+          "utcp.dev/runtime-node": "runtime-046",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-047",
+        "uid": "pod-uid-47",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-047",
+          "utcp.dev/runtime-node": "runtime-047",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-048",
+        "uid": "pod-uid-48",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-048",
+          "utcp.dev/runtime-node": "runtime-048",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-049",
+        "uid": "pod-uid-49",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-049",
+          "utcp.dev/runtime-node": "runtime-049",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-050",
+        "uid": "pod-uid-50",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-050",
+          "utcp.dev/runtime-node": "runtime-050",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-051",
+        "uid": "pod-uid-51",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-051",
+          "utcp.dev/runtime-node": "runtime-051",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-052",
+        "uid": "pod-uid-52",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-052",
+          "utcp.dev/runtime-node": "runtime-052",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-053",
+        "uid": "pod-uid-53",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-053",
+          "utcp.dev/runtime-node": "runtime-053",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-054",
+        "uid": "pod-uid-54",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-054",
+          "utcp.dev/runtime-node": "runtime-054",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-055",
+        "uid": "pod-uid-55",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-055",
+          "utcp.dev/runtime-node": "runtime-055",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-056",
+        "uid": "pod-uid-56",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-056",
+          "utcp.dev/runtime-node": "runtime-056",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-057",
+        "uid": "pod-uid-57",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-057",
+          "utcp.dev/runtime-node": "runtime-057",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-058",
+        "uid": "pod-uid-58",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-058",
+          "utcp.dev/runtime-node": "runtime-058",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-059",
+        "uid": "pod-uid-59",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-059",
+          "utcp.dev/runtime-node": "runtime-059",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-060",
+        "uid": "pod-uid-60",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-060",
+          "utcp.dev/runtime-node": "runtime-060",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-061",
+        "uid": "pod-uid-61",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-061",
+          "utcp.dev/runtime-node": "runtime-061",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-062",
+        "uid": "pod-uid-62",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-062",
+          "utcp.dev/runtime-node": "runtime-062",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-063",
+        "uid": "pod-uid-63",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-063",
+          "utcp.dev/runtime-node": "runtime-063",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-064",
+        "uid": "pod-uid-64",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-064",
+          "utcp.dev/runtime-node": "runtime-064",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-065",
+        "uid": "pod-uid-65",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-065",
+          "utcp.dev/runtime-node": "runtime-065",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-066",
+        "uid": "pod-uid-66",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-066",
+          "utcp.dev/runtime-node": "runtime-066",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-067",
+        "uid": "pod-uid-67",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-067",
+          "utcp.dev/runtime-node": "runtime-067",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-068",
+        "uid": "pod-uid-68",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-068",
+          "utcp.dev/runtime-node": "runtime-068",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-069",
+        "uid": "pod-uid-69",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-069",
+          "utcp.dev/runtime-node": "runtime-069",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-070",
+        "uid": "pod-uid-70",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-070",
+          "utcp.dev/runtime-node": "runtime-070",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-071",
+        "uid": "pod-uid-71",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-071",
+          "utcp.dev/runtime-node": "runtime-071",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-072",
+        "uid": "pod-uid-72",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-072",
+          "utcp.dev/runtime-node": "runtime-072",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-073",
+        "uid": "pod-uid-73",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-073",
+          "utcp.dev/runtime-node": "runtime-073",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-074",
+        "uid": "pod-uid-74",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-074",
+          "utcp.dev/runtime-node": "runtime-074",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-075",
+        "uid": "pod-uid-75",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-075",
+          "utcp.dev/runtime-node": "runtime-075",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-076",
+        "uid": "pod-uid-76",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-076",
+          "utcp.dev/runtime-node": "runtime-076",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-077",
+        "uid": "pod-uid-77",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-077",
+          "utcp.dev/runtime-node": "runtime-077",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-078",
+        "uid": "pod-uid-78",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-078",
+          "utcp.dev/runtime-node": "runtime-078",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-079",
+        "uid": "pod-uid-79",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-079",
+          "utcp.dev/runtime-node": "runtime-079",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-080",
+        "uid": "pod-uid-80",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-080",
+          "utcp.dev/runtime-node": "runtime-080",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-081",
+        "uid": "pod-uid-81",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-081",
+          "utcp.dev/runtime-node": "runtime-081",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-082",
+        "uid": "pod-uid-82",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-082",
+          "utcp.dev/runtime-node": "runtime-082",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-083",
+        "uid": "pod-uid-83",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-083",
+          "utcp.dev/runtime-node": "runtime-083",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-084",
+        "uid": "pod-uid-84",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-084",
+          "utcp.dev/runtime-node": "runtime-084",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-085",
+        "uid": "pod-uid-85",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-085",
+          "utcp.dev/runtime-node": "runtime-085",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-086",
+        "uid": "pod-uid-86",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-086",
+          "utcp.dev/runtime-node": "runtime-086",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-087",
+        "uid": "pod-uid-87",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-087",
+          "utcp.dev/runtime-node": "runtime-087",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-088",
+        "uid": "pod-uid-88",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-088",
+          "utcp.dev/runtime-node": "runtime-088",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-089",
+        "uid": "pod-uid-89",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-089",
+          "utcp.dev/runtime-node": "runtime-089",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-090",
+        "uid": "pod-uid-90",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-090",
+          "utcp.dev/runtime-node": "runtime-090",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-091",
+        "uid": "pod-uid-91",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-091",
+          "utcp.dev/runtime-node": "runtime-091",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-092",
+        "uid": "pod-uid-92",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-092",
+          "utcp.dev/runtime-node": "runtime-092",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-093",
+        "uid": "pod-uid-93",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-093",
+          "utcp.dev/runtime-node": "runtime-093",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-094",
+        "uid": "pod-uid-94",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-094",
+          "utcp.dev/runtime-node": "runtime-094",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-095",
+        "uid": "pod-uid-95",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-095",
+          "utcp.dev/runtime-node": "runtime-095",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-096",
+        "uid": "pod-uid-96",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-096",
+          "utcp.dev/runtime-node": "runtime-096",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-097",
+        "uid": "pod-uid-97",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-097",
+          "utcp.dev/runtime-node": "runtime-097",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-1",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-098",
+        "uid": "pod-uid-98",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-098",
+          "utcp.dev/runtime-node": "runtime-098",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-2",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    },
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "name": "pod-099",
+        "uid": "pod-uid-99",
+        "namespace": "utcp-runtime",
+        "resourceVersion": "p-pod-a",
+        "labels": {
+          "app.kubernetes.io/part-of": "utcp",
+          "app.kubernetes.io/instance": "runtime-099",
+          "utcp.dev/runtime-node": "runtime-099",
+          "utcp.io/tenant-id": "untrusted-tenant-label"
+        },
+        "annotations": {
+          "private.example/token": "unsafe-fixture-marker"
+        },
+        "ownerReferences": [
+          {
+            "kind": "ReplicaSet",
+            "name": "rs-runtime-a",
+            "uid": "rs-uid-runtime-a",
+            "controller": true
+          }
+        ]
+      },
+      "spec": {
+        "nodeName": "node-0",
+        "containers": [
+          {
+            "name": "runtime",
+            "image": "fixture.invalid/runtime",
+            "env": [
+              {
+                "name": "TOKEN",
+                "value": "unsafe-fixture-marker"
+              }
+            ]
+          }
+        ]
+      },
+      "status": {
+        "phase": "Running",
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True"
+          }
+        ],
+        "message": "unsafe-fixture-marker"
+      }
+    }
+  ]
+}

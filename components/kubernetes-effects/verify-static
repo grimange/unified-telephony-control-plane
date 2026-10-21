@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""Task-owned isolation, contract, documentation and hygiene checks; no network."""
+import json
+import re
+from pathlib import Path
+
+root = Path(__file__).resolve().parents[2]
+paths = [root / 'components/kubernetes-effects', root / 'tests/gn-g2-effects',
+         root / 'docs/architecture/proposals/gn-g2',
+         root / 'docs/architecture/proposals/UTCP_GN_G2_CONDITIONAL_KUBERNETES_DEPLOYMENT_EFFECTS.md']
+files = sorted(p for base in paths for p in (base.rglob('*') if base.is_dir() else [base]) if p.is_file())
+errors = [f'missing artifact: {base.relative_to(root)}' for base in paths if not base.exists()]
+for path in files:
+    if not path.exists():
+        continue
+    text = path.read_text(encoding='utf-8')
+    if not text.endswith('\n') or any(line.rstrip() != line for line in text.splitlines()):
+        errors.append(f'whitespace: {path.relative_to(root)}')
+    if any('-----BEGIN ' + kind + '-----' in text for kind in ['PRIVATE KEY', 'RSA PRIVATE KEY']):
+        errors.append(f'private key payload: {path.relative_to(root)}')
+    if path.suffix == '.json':
+        json.loads(text)
+    if path.suffix == '.md':
+        for target in re.findall(r'\[[^\]]*\]\(([^)]+)\)', text):
+            if re.match(r'^[a-z]+://', target) or target.startswith('#'):
+                continue
+            target = target.split('#')[0]
+            if not (path.parent / target).exists():
+                errors.append(f'broken local link in {path.relative_to(root)}: {target}')
+    if path.suffix == '.go' and not path.name.endswith('_test.go'):
+        for pattern in [r'package main\b', r'InClusterConfig|BuildConfigFromFlags|ListenAndServe',
+                        r'database/sql|go-redis|os\.Getenv\(']:
+            if re.search(pattern, text):
+                errors.append(f'isolation boundary: {path.relative_to(root)}: {pattern}')
+        lifecycle_file = path.relative_to(root).as_posix() in {
+            'components/kubernetes-effects/lifecycle/engine.go',
+            'components/kubernetes-effects/lifecycle/kubernetes.go'}
+        mutation_pattern = r'\.(?:Put|Watch)\(' if lifecycle_file else r'\.(?:Post|Put|Delete|Watch)\('
+        if re.search(mutation_pattern, text):
+            errors.append(f'isolation mutation boundary: {path.relative_to(root)}')
+        if '.Patch(' in text and path.name not in ('engine.go', 'kubernetes.go'):
+            errors.append(f'unexpected mutation seam: {path.relative_to(root)}')
+if errors:
+    raise SystemExit('\n'.join(errors))
+print(f'GN-G2 static/document validation: PASS ({len(files)} task-owned files; UTF-8, whitespace, JSON, local links, isolation guards)')

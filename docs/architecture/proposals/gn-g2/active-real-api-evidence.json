@@ -1,0 +1,868 @@
+{
+  "active": [
+    {
+      "adapter_verbs": [
+        "get",
+        "patch"
+      ],
+      "case": "environment",
+      "context": "k3d-gn-g2-proof-a395b9f6a516",
+      "endpoint": "https://127.0.0.1:32773",
+      "fixture_execution": "fixed harmless pause image only",
+      "kubernetes": "v1.35.3+k3s1",
+      "provider_execution": false,
+      "run": "gn-g2-proof-a395b9f6a516"
+    },
+    {
+      "atomic_markers": true,
+      "case": "asterisk_projection",
+      "idempotent": "already_satisfied",
+      "image": "127.0.0.1:5001/utcp/asterisk-ari@sha256:6027f3bc1464e4c7ed3485bb5a078a529e93ce3f04a2b3d3b0a03d5ac00598e9",
+      "paused": false,
+      "pods": 0,
+      "profile": "asterisk.managed.v1",
+      "provider_execution": false,
+      "replicas": 0,
+      "unrelated_fields": "preserved"
+    },
+    {
+      "atomic_markers": true,
+      "case": "freeswitch_projection",
+      "idempotent": "already_satisfied",
+      "image": "127.0.0.1:5001/utcp/freeswitch@sha256:3eedabc8afb2e3d1a4fc1e4ef8a6439bec2c7a30df4588566989dd9346ba3a11",
+      "paused": false,
+      "pods": 0,
+      "profile": "freeswitch.managed.v1",
+      "provider_execution": false,
+      "replicas": 0,
+      "unrelated_fields": "preserved"
+    },
+    {
+      "case": "activation_guards",
+      "denied_claim": "stale_generation",
+      "expired_claim": "stale_generation",
+      "no_dispatch_on_rejection": true,
+      "preparing": "invalid_request",
+      "retired_incarnation": "rejected",
+      "unbound_UID": "invalid_request",
+      "wrong_UID": "identity_mismatch"
+    },
+    {
+      "applied_generation": "10",
+      "atomic_markers": true,
+      "case": "concurrent_adapter_projection",
+      "rejected": 1,
+      "replicas": 0,
+      "resource_version": "1886",
+      "success": 1
+    },
+    {
+      "case": "older_after_retirement_barrier",
+      "conditional_rejection": "invalid_request",
+      "final_generation": "20",
+      "paused": true,
+      "replicas": 0,
+      "stale_recovery": "rejected"
+    },
+    {
+      "already_dispatched_can_apply": true,
+      "automatic_compensation": false,
+      "case": "older_before_retirement_barrier",
+      "provider_replicas": 0,
+      "retirement_convergence": "separately authorized newer barrier",
+      "temporary_stale_projection": true
+    },
+    {
+      "case": "suspended_zero_controller_observation",
+      "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+      "observed_generation": 1,
+      "paused": true,
+      "pods": 0,
+      "replica_sets": 0,
+      "replicas": 0
+    },
+    {
+      "ReplicaSet_replicas": 2,
+      "case": "paused_existing_ReplicaSet_scales",
+      "desired_replicas": 2,
+      "image": "registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a",
+      "paused": true,
+      "replica_sets": 1,
+      "rollout_pause_is_suspension": false,
+      "running_pods": 2
+    },
+    {
+      "case": "pause_fixture_zeroed",
+      "pods": 0,
+      "telephony_execution": false
+    },
+    {
+      "UID_changed": true,
+      "case": "replacement_UID",
+      "old_activation": "identity_mismatch",
+      "old_recovery": "identity_mismatch",
+      "replacement_unchanged": true
+    },
+    {
+      "case": "unknown_projection_applied",
+      "forwarded": 1,
+      "initial": "outcome_unknown",
+      "mutation_applied": true,
+      "mutation_requests": 1,
+      "newer_intent": "success",
+      "old_recovery": "stale_generation",
+      "recovered": "already_satisfied",
+      "retry": "observe_first",
+      "transport": "response interrupted"
+    },
+    {
+      "case": "unknown_projection_unapplied",
+      "forwarded": 0,
+      "initial": "outcome_unknown",
+      "mutation_applied": false,
+      "mutation_requests": 1,
+      "newer_intent": "success",
+      "old_recovery": "stale_generation",
+      "recovered": "drift",
+      "retry": "observe_first",
+      "transport": "response interrupted"
+    },
+    {
+      "case": "RBAC_Secret_read",
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_cross_namespace_GET",
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_unrelated_PATCH",
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_DELETE",
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_CREATE",
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_scale_PATCH",
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_Node_PATCH",
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "cleanup",
+      "deleted": true,
+      "namespace": "gn-g2-proof-a395b9f6a516-active"
+    },
+    {
+      "case": "cleanup",
+      "deleted": true,
+      "namespace": "gn-g2-proof-a395b9f6a516-active-other"
+    }
+  ],
+  "assignment": "UTCP_GN_G2_ACTIVE_RUNTIME_PROJECTION_PROFILES_AND_FIVE_CORRIDOR_PARITY",
+  "cleanup": {
+    "cluster": "gn-g2-proof-a395b9f6a516",
+    "deleted": true,
+    "kubeconfig_removed": true,
+    "owned_containers_remaining": 0,
+    "owned_image_volume_remaining": false,
+    "owned_network_remaining": false,
+    "preexisting_clusters_preserved": true
+  },
+  "commands": [
+    "go test -p 1 -tags realapi -run TestRealAPI -count=1 -v -timeout=360s ./...",
+    "go test -p 1 -race -tags realapi -run TestRealAPI -count=1 -timeout=360s ./...",
+    "go vet -tags realapi ./..."
+  ],
+  "conditional_v1_regression": [
+    {
+      "adapter_resource_names": [
+        "managed"
+      ],
+      "adapter_verbs": [
+        "get",
+        "patch"
+      ],
+      "api_endpoint": "https://127.0.0.1:32773",
+      "case": "environment",
+      "context": "k3d-gn-g2-proof-a395b9f6a516",
+      "kube_system_uid": "e379fc1d-d445-43d7-b2f6-ec7f763f1dd9",
+      "kubernetes": "v1.35.3+k3s1",
+      "run": "gn-g2-proof-a395b9f6a516"
+    },
+    {
+      "annotations_initially_absent": true,
+      "case": "initial_admission",
+      "generation": "10",
+      "outcome": "success",
+      "resource_version": "1645",
+      "uid": "82447c88-fba5-402c-aa54-2f540bd6399a"
+    },
+    {
+      "annotations_initially_absent": false,
+      "case": "initial_admission",
+      "generation": "10",
+      "outcome": "success",
+      "resource_version": "1652",
+      "uid": "4d8d1559-413c-454d-a98c-9ae6c5c942aa"
+    },
+    {
+      "annotations_initially_absent": false,
+      "case": "initial_admission",
+      "generation": "10",
+      "outcome": "success",
+      "resource_version": "1658",
+      "uid": "d009006b-00d2-4ff1-87a6-389162c04854"
+    },
+    {
+      "case": "wrong_fingerprint_current_UID_RV_generation",
+      "causes": null,
+      "code": 422,
+      "reason": "Invalid"
+    },
+    {
+      "case": "marker_identity",
+      "conflicting_fingerprint_rejected": true,
+      "immutable_and_label_conflicts_rejected": true,
+      "independent_server_fingerprint_test": true,
+      "older_rejected": true
+    },
+    {
+      "case": "wrong_uid",
+      "causes": null,
+      "code": 422,
+      "reason": "Invalid"
+    },
+    {
+      "case": "wire_wrong_uid",
+      "causes": null,
+      "client_projection_matches_wire": true,
+      "http_code": 422,
+      "kind": "Status",
+      "reason": "Invalid",
+      "status_code": 422
+    },
+    {
+      "case": "wrong_resource_version",
+      "causes": null,
+      "code": 422,
+      "reason": "Invalid"
+    },
+    {
+      "case": "wire_wrong_resource_version",
+      "causes": null,
+      "client_projection_matches_wire": true,
+      "http_code": 422,
+      "kind": "Status",
+      "reason": "Invalid",
+      "status_code": 422
+    },
+    {
+      "case": "missing_marker_test",
+      "causes": null,
+      "code": 422,
+      "reason": "Invalid"
+    },
+    {
+      "case": "wire_missing_marker_test",
+      "causes": null,
+      "client_projection_matches_wire": true,
+      "http_code": 422,
+      "kind": "Status",
+      "reason": "Invalid",
+      "status_code": 422
+    },
+    {
+      "case": "invalid_patch_syntax",
+      "causes": null,
+      "code": 400,
+      "reason": "BadRequest"
+    },
+    {
+      "case": "wire_invalid_patch_syntax",
+      "causes": null,
+      "client_projection_matches_wire": true,
+      "http_code": 400,
+      "kind": "Status",
+      "reason": "BadRequest",
+      "status_code": 400
+    },
+    {
+      "case": "invalid_replica_value",
+      "causes": [
+        {
+          "field": "spec.replicas",
+          "type": "FieldValueInvalid"
+        }
+      ],
+      "code": 422,
+      "reason": "Invalid"
+    },
+    {
+      "case": "wire_invalid_replica_value",
+      "causes": [
+        {
+          "field": "spec.replicas",
+          "type": "FieldValueInvalid"
+        }
+      ],
+      "client_projection_matches_wire": true,
+      "http_code": 422,
+      "kind": "Status",
+      "reason": "Invalid",
+      "status_code": 422
+    },
+    {
+      "case": "late_test_atomic_rollback",
+      "causes": null,
+      "code": 422,
+      "reason": "Invalid"
+    },
+    {
+      "case": "missing_target_forbidden_by_resource_name",
+      "causes": null,
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "missing_target_admin",
+      "causes": null,
+      "code": 404,
+      "reason": "NotFound"
+    },
+    {
+      "case": "invalid_token",
+      "causes": null,
+      "code": 401,
+      "reason": "Unauthorized"
+    },
+    {
+      "admitted": "10",
+      "applied": "10",
+      "case": "set_replicas",
+      "outcome": "success",
+      "replicas": 3,
+      "resource_version": "1697",
+      "unrelated_preserved": true
+    },
+    {
+      "admitted": "10",
+      "applied": "",
+      "case": "concurrent_adapters",
+      "distinct_service_accounts": 2,
+      "outcomes": [
+        "success",
+        "invalid_request"
+      ],
+      "rejected": 1,
+      "replicas": 0,
+      "resource_version": "1703",
+      "success": 1
+    },
+    {
+      "admitted": "10",
+      "applied": "10",
+      "case": "concurrent_replica_effects",
+      "outcomes": [
+        "success",
+        "invalid_request"
+      ],
+      "rejected": 1,
+      "replicas": 3,
+      "resource_version": "1711",
+      "success": 1
+    },
+    {
+      "case": "older_after_newer_raw_predicates",
+      "causes": null,
+      "code": 422,
+      "reason": "Invalid"
+    },
+    {
+      "case": "older_generation_current_RV",
+      "causes": null,
+      "code": 422,
+      "reason": "Invalid"
+    },
+    {
+      "applied_generation": "11",
+      "case": "older_before_barrier",
+      "converged_replicas": 4,
+      "database_expiry_retracts_dispatch": false,
+      "temporary_old_effect": 2
+    },
+    {
+      "case": "expired_claim",
+      "claim_denial_before_dispatch": true,
+      "resource_version_unchanged": true
+    },
+    {
+      "case": "name_reuse",
+      "old_execute_and_recover_rejected": true,
+      "old_uid": "05314635-be4c-45c2-884d-37581fffea17",
+      "replacement_uid": "9b39ed3d-038a-46e2-9ab4-0770d5a5eef2"
+    },
+    {
+      "applied": true,
+      "case": "unknown_outcome",
+      "downstream_patch_attempts": 1,
+      "initial_outcome": "outcome_unknown",
+      "recovery_mutations": 0,
+      "recovery_outcome": "already_satisfied",
+      "replacement_recovery": "identity_mismatch",
+      "upstream_patches": 1
+    },
+    {
+      "applied": false,
+      "case": "unknown_outcome",
+      "downstream_patch_attempts": 1,
+      "initial_outcome": "outcome_unknown",
+      "recovery_mutations": 0,
+      "recovery_outcome": "drift",
+      "replacement_recovery": "identity_mismatch",
+      "upstream_patches": 0
+    },
+    {
+      "case": "RBAC_delete",
+      "causes": null,
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_create",
+      "causes": null,
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_read_secret",
+      "causes": null,
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_other_namespace_get",
+      "causes": null,
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_other_namespace_patch",
+      "causes": null,
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_mutate_node",
+      "causes": null,
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_list_namespaces",
+      "causes": null,
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_list_deployments",
+      "causes": null,
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_unrelated_deployment",
+      "causes": null,
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_scale_patch",
+      "causes": null,
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "adapter_uses_admin_credentials": false,
+      "case": "RBAC",
+      "denials": 10,
+      "get_named_allowed": true,
+      "patch_named_allowed": true
+    },
+    {
+      "adapter_scale_permission": false,
+      "case": "scale_boundary",
+      "external_scale_can_change_replicas_without_markers": true,
+      "external_writer_exclusivity_required": true,
+      "recovery_detected_drift": true,
+      "unrelated_metadata_CAS_outcome": "invalid_request"
+    },
+    {
+      "case": "second_adapter_identity",
+      "claim_authority": "test-only verifier",
+      "distinct_service_accounts": 2,
+      "same_bounded_RBAC": true,
+      "same_intent_idempotent": true
+    },
+    {
+      "cancelled_before_dispatch": true,
+      "case": "claim_fail_closed",
+      "denied_or_unavailable_cases": 6,
+      "production_PHP_callback": false,
+      "resource_version_unchanged": true
+    },
+    {
+      "case": "inert_fixtures",
+      "namespace": "gn-g2-proof-a395b9f6a516-effects",
+      "pods": 0,
+      "replica_sets": 0
+    },
+    {
+      "case": "cleanup",
+      "deleted": true,
+      "namespace": "gn-g2-proof-a395b9f6a516-effects",
+      "uid": "38a474d3-0de6-4eea-8add-e79cd10a2ca2"
+    },
+    {
+      "case": "inert_fixtures",
+      "namespace": "gn-g2-proof-a395b9f6a516-other",
+      "pods": 0,
+      "replica_sets": 0
+    },
+    {
+      "case": "cleanup",
+      "deleted": true,
+      "namespace": "gn-g2-proof-a395b9f6a516-other",
+      "uid": "1c35d2dc-8a0f-4f7b-9e9f-087bd813ef68"
+    }
+  ],
+  "date": "2026-10-21",
+  "environment": {
+    "context": "k3d-gn-g2-proof-a395b9f6a516",
+    "endpoint": "https://127.0.0.1:32773",
+    "node": "k3d-gn-g2-proof-a395b9f6a516-server-0",
+    "node_image": "rancher/k3s@sha256:4607083d3cac07e1ccde7317297271d13ed5f60f35a78f33fcef84858a9f1d69",
+    "run": "gn-g2-proof-a395b9f6a516",
+    "sdk_image": "golang@sha256:4557cf171e3cdf5053a298d5171b1a5f5734d920260c25f22c79e94760eb2084",
+    "system_uid": "e379fc1d-d445-43d7-b2f6-ec7f763f1dd9",
+    "version": "v1.35.3+k3s1"
+  },
+  "lifecycle_v2_regression": [
+    {
+      "bound_verbs": [
+        "get",
+        "patch",
+        "delete"
+      ],
+      "case": "environment",
+      "context": "k3d-gn-g2-proof-a395b9f6a516",
+      "create_scope": "run namespace; RBAC resourceNames cannot restrict CREATE",
+      "endpoint": "https://127.0.0.1:32773",
+      "kubernetes": "v1.35.3+k3s1",
+      "run": "gn-g2-proof-a395b9f6a516"
+    },
+    {
+      "case": "duplicate_create",
+      "code": 409,
+      "reason": "AlreadyExists"
+    },
+    {
+      "case": "create_suspended",
+      "default_strategy": "RollingUpdate",
+      "duplicate": "already_satisfied",
+      "ownership_conflict": "rejected",
+      "paused": true,
+      "replicas": 0,
+      "resource_version": "2079",
+      "uid": "21597728-ade8-49ed-a9fe-3717f6880ecd"
+    },
+    {
+      "case": "projection_predicate_UID",
+      "code": 422,
+      "reason": "Invalid"
+    },
+    {
+      "case": "projection_predicate_resourceVersion",
+      "code": 422,
+      "reason": "Invalid"
+    },
+    {
+      "case": "projection_predicate_generation",
+      "code": 422,
+      "reason": "Invalid"
+    },
+    {
+      "case": "projection_predicate_fingerprint",
+      "code": 422,
+      "reason": "Invalid"
+    },
+    {
+      "admitted": "11",
+      "applied": "11",
+      "atomic_marker_projection": true,
+      "case": "projection",
+      "older": "stale_generation",
+      "preserved_unrelated": true,
+      "stale_RV": "resource_version_conflict",
+      "wrong_UID": "identity_mismatch"
+    },
+    {
+      "RV": "2095",
+      "case": "two_adapter_CAS",
+      "generation": "10",
+      "outcomes": [
+        "invalid_request",
+        "success"
+      ],
+      "rejections": 1,
+      "replicas": 1,
+      "successes": 1
+    },
+    {
+      "UID": "57b1e908-f19c-44e3-9dc6-754a211cb7b8",
+      "case": "create_race",
+      "competing_intent": false,
+      "loser_observe_first": "already_satisfied",
+      "server_name_conflicts": 1,
+      "successes": 1
+    },
+    {
+      "UID": "f37190af-1c3b-424b-8b36-faeb46f46f4c",
+      "case": "create_race",
+      "competing_intent": true,
+      "loser_observe_first": "ownership_conflict",
+      "server_name_conflicts": 1,
+      "successes": 1
+    },
+    {
+      "case": "delete_wrong_UID",
+      "code": 409,
+      "reason": "Conflict"
+    },
+    {
+      "case": "delete_wrong_RV",
+      "code": 409,
+      "reason": "Conflict"
+    },
+    {
+      "UID_RV_delete_preconditions": "409",
+      "case": "retire_delete",
+      "completion": "observed_absent",
+      "finalizer_release": "fixture administrator only",
+      "held": "terminating",
+      "request": "deletion_accepted"
+    },
+    {
+      "barrier_preserved": true,
+      "case": "retirement_intervening_RV",
+      "delete_applied": false,
+      "outcome": "resource_version_conflict",
+      "retry": "canonical reauthorization required; adapter does not refresh"
+    },
+    {
+      "UID_changed": true,
+      "case": "same_name_replacement",
+      "old_delete": "identity_mismatch",
+      "old_projection": "identity_mismatch",
+      "old_recovery": "identity_mismatch"
+    },
+    {
+      "case": "claim_rejection",
+      "created": false,
+      "expired_before_dispatch": true,
+      "superseded_before_dispatch": true
+    },
+    {
+      "activation": false,
+      "already_dispatched_can_apply": true,
+      "case": "delayed_create_after_modeled_retirement",
+      "cleanup": "fresh authorized exact UID retirement",
+      "stale_recovery": "rejected",
+      "suspended": true
+    },
+    {
+      "applied": true,
+      "attempts": 1,
+      "case": "unknown_create",
+      "effect": "observed_suspended",
+      "forwarded": 1,
+      "outcome": "outcome_unknown",
+      "recovery": "already_satisfied",
+      "recovery_writes": 0
+    },
+    {
+      "applied": false,
+      "attempts": 1,
+      "case": "unknown_create",
+      "effect": "unknown",
+      "forwarded": 0,
+      "outcome": "outcome_unknown",
+      "recovery": "outcome_unknown",
+      "recovery_writes": 0
+    },
+    {
+      "applied": true,
+      "attempts": 1,
+      "case": "unknown_patch",
+      "effect": "projection_applied",
+      "forwarded": 1,
+      "outcome": "outcome_unknown",
+      "recovery": "already_satisfied",
+      "recovery_writes": 0
+    },
+    {
+      "applied": false,
+      "attempts": 1,
+      "case": "unknown_patch",
+      "effect": "none",
+      "forwarded": 0,
+      "outcome": "outcome_unknown",
+      "recovery": "drift",
+      "recovery_writes": 0
+    },
+    {
+      "applied": true,
+      "attempts": 1,
+      "case": "unknown_delete",
+      "effect": "observed_absent",
+      "forwarded": 1,
+      "outcome": "outcome_unknown",
+      "recovery": "already_satisfied",
+      "recovery_writes": 0
+    },
+    {
+      "applied": false,
+      "attempts": 1,
+      "case": "unknown_delete",
+      "effect": "none",
+      "forwarded": 0,
+      "outcome": "outcome_unknown",
+      "recovery": "drift",
+      "recovery_writes": 0
+    },
+    {
+      "case": "RBAC_Secrets_GET",
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_Nodes_PATCH",
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_cross_namespace_CREATE",
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_cross_namespace_GET",
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_cross_namespace_DELETE",
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_unrelated_name_PATCH",
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_scale_PATCH",
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_Services_CREATE",
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "case": "RBAC_Deployment_LIST",
+      "code": 403,
+      "reason": "Forbidden"
+    },
+    {
+      "adapter_credential_not_cluster_admin": true,
+      "case": "RBAC_boundary",
+      "create_resource_names_limitation": "namespace-only create RBAC; application envelope remains required",
+      "denials": 9
+    },
+    {
+      "case": "inertness_observation",
+      "namespace": "gn-g2-proof-a395b9f6a516-lifecycle",
+      "pods": 0,
+      "replica_sets": 0
+    },
+    {
+      "case": "cleanup",
+      "deleted": true,
+      "namespace": "gn-g2-proof-a395b9f6a516-lifecycle"
+    },
+    {
+      "case": "inertness_observation",
+      "namespace": "gn-g2-proof-a395b9f6a516-lifecycle-other",
+      "pods": 0,
+      "replica_sets": 0
+    },
+    {
+      "case": "cleanup",
+      "deleted": true,
+      "namespace": "gn-g2-proof-a395b9f6a516-lifecycle-other"
+    }
+  ],
+  "limitations": [
+    "Provider images were projected at zero replicas; startup/readiness/SIP/media not exercised.",
+    "Only the harmless digest-pinned pause fixture ran Pods.",
+    "Claim callbacks and canonical incarnation state remain test-only; no production PostgreSQL integration.",
+    "Existing PHP FreeSWITCH fence/restore domain parity is unsupported.",
+    "API evidence arrays contain the final race-run observations; verbose counts and package timings are from the preceding verbose run and subsequent race run."
+  ],
+  "offline_verification": {
+    "active_go_pass_entries": 96,
+    "active_go_top_level": 18,
+    "active_php_assertions": 267,
+    "active_php_tests": 20,
+    "command": "tests/gn-g2-active-projection/verify offline",
+    "exit_code": 0,
+    "focused_php_parity_skips": 0,
+    "module_integrity": "PASS",
+    "observer_and_lifecycle_and_conditional_regression": "PASS",
+    "race": "PASS",
+    "vet": "PASS"
+  },
+  "proof_classification": "real Kubernetes API-server integration and harmless controller fixtures; no provider execution or production acceptance",
+  "results": {
+    "exit_code": 0,
+    "package_results": [
+      "ok  \tutcp.invalid/components/kubernetes-effects\t55.675s",
+      "ok  \tutcp.invalid/components/kubernetes-effects/active\t81.558s",
+      "ok  \tutcp.invalid/components/kubernetes-effects/lifecycle\t55.247s",
+      "ok  \tutcp.invalid/components/kubernetes-effects\t57.751s",
+      "ok  \tutcp.invalid/components/kubernetes-effects/active\t76.626s",
+      "ok  \tutcp.invalid/components/kubernetes-effects/lifecycle\t52.793s"
+    ],
+    "race": "PASS",
+    "skipped": 0,
+    "top_level_suites": 3,
+    "verbose_pass_entries_including_subtests": 73,
+    "vet": "PASS"
+  }
+}

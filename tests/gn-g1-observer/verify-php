@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+OUTPUT="${UTCP_GN_G1_OUTPUT:-/tmp/utcp-gn-g1-output}"
+IMAGE='sha256:9efe210fb8c8e7c90d80fce2b6916b46824f0f0428d6037dd599ec5ef1dd4d7d'
+if [[ ! -f "$OUTPUT/scenarios/healthy/snapshot.json" ]]; then
+ echo 'Run the Go observer verification/export first; snapshots are missing.' >&2
+ exit 1
+fi
+# Only this sanitized disposable measurement file is writable by the image user.
+MEASUREMENTS="$OUTPUT/php-measurements.json"
+if [[ -L "$MEASUREMENTS" ]]; then
+ echo 'Refusing a symlink measurement output.' >&2
+ exit 1
+fi
+touch "$MEASUREMENTS"
+chmod 0666 "$MEASUREMENTS"
+args=(--rm --network none --entrypoint php
+ -e APP_ENV=testing -e DB_CONNECTION=sqlite -e DB_DATABASE=:memory: -e DB_URL=
+ -e CACHE_STORE=array -e QUEUE_CONNECTION=sync -e SESSION_DRIVER=array -e LOG_CHANNEL=null)
+for path in app tests config database routes; do
+ args+=(-v "$ROOT/apps/api/$path:/var/www/html/$path:ro")
+done
+for path in phpunit.xml bootstrap/app.php bootstrap/providers.php; do
+ args+=(-v "$ROOT/apps/api/$path:/var/www/html/$path:ro")
+done
+args+=(-v "$ROOT/tests/gn-g1-observer:/proof:ro" -v "$OUTPUT:/output:ro"
+ -v "$ROOT/docs/architecture/proposals/gn-g0/contracts/v1:/contracts:ro"
+ -v "$MEASUREMENTS:/output/php-measurements.json")
+docker run "${args[@]}" "$IMAGE" vendor/bin/phpunit --do-not-cache-result \
+ tests/Feature/Infrastructure/KubernetesHostVisibilityTest.php \
+ tests/Feature/Infrastructure/RuntimeFencingManifestTest.php \
+ /proof/ObservationParityTest.php

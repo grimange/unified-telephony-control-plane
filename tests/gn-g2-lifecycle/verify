@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""Pinned offline + one fresh owned cluster proof. Never selects ambient Kubernetes."""
+import os
+from pathlib import Path
+import subprocess
+import sys
+import types
+
+ROOT = Path(__file__).resolve().parents[2]
+SOURCE = ROOT / 'tests/gn-g2-real-api/verify'
+runner = types.ModuleType('owned_real_runner')
+runner.__file__ = str(SOURCE)
+exec(compile(SOURCE.read_text(), str(SOURCE), 'exec'), runner.__dict__)
+
+
+def offline():
+    subprocess.run([sys.executable, str(SOURCE.with_name('test_verify.py'))], check=True)
+    subprocess.run([sys.executable, str(Path(__file__).with_name('test_verify.py'))], check=True)
+    subprocess.run([str(Path(__file__).with_name('verify-php'))], check=True)
+    subprocess.run([str(ROOT / 'components/kubernetes-effects/verify')], check=True)
+    args = docker_args()
+    output = Path(os.environ.get('UTCP_GN_G2_LIFECYCLE_OUTPUT', '/tmp/utcp-gn-g2-lifecycle-output')).resolve()
+    args += ['-e', 'UTCP_GN_G2_LIFECYCLE_OUTPUT=/lifecycle-output',
+             '-v', str(output) + ':/lifecycle-output']
+    subprocess.run(args + [runner.SDK, 'sh', '-ec',
+        'go version; go mod verify; test -z "$(gofmt -l lifecycle/*.go)"; '
+        'go test -count=1 -v ./lifecycle; go test -race -count=1 ./lifecycle; go vet ./lifecycle'], check=True)
+    subprocess.run([str(Path(__file__).with_name('verify-php'))], check=True)
+    subprocess.run([sys.executable, str(Path(__file__).with_name('verify-static'))], check=True)
+
+
+def docker_args():
+    cache = os.environ.get('UTCP_GN_G2_CACHE', '/tmp/utcp-gn-g0-go-cache')
+    return ['docker', 'run', '--rm', '--network', 'none', '--user', f'{os.getuid()}:{os.getgid()}',
+        '-e', 'GOPATH=/cache', '-e', 'GOCACHE=/cache/build', '-e', 'GOTOOLCHAIN=local', '-e', 'GOPROXY=off',
+        '-v', cache + ':/cache', '-v', str(ROOT) + ':/repo:ro', '-w', '/repo/components/kubernetes-effects']
+
+
+def real(directory):
+    directory, data = runner.load(directory)
+    runner.check_identity(directory, data)
+    args = docker_args()
+    args[args.index('none')] = 'host'
+    args += ['-e', 'GN_G2_REAL_KUBECONFIG=/run-proof/kubeconfig',
+        '-e', 'GN_G2_REAL_CONTEXT=' + data['context'], '-e', 'GN_G2_REAL_RUN=' + data['run'],
+        '-e', 'GN_G2_REAL_SYSTEM_UID=' + data['system_uid'], '-e', 'GN_G2_REAL_EVIDENCE=/proof-output',
+        '-v', str(directory / 'kubeconfig') + ':/run-proof/kubeconfig:ro',
+        '-v', str(directory / 'evidence') + ':/proof-output']
+    with (directory / 'evidence/lifecycle-verification.log').open('w') as log:
+        result = subprocess.run(args + [runner.SDK, 'sh', '-ec',
+            'go version; go test -tags realapi -run TestRealAPI -count=1 -v -timeout=300s ./...; '
+            'go test -race -tags realapi -run TestRealAPI -count=1 -timeout=300s ./...; go vet -tags realapi ./...'],
+            stdout=log, stderr=subprocess.STDOUT)
+    print('Sanitized real verification log:', directory / 'evidence/lifecycle-verification.log', flush=True)
+    if result.returncode:
+        raise RuntimeError('real lifecycle proof failed; inspect log')
+
+
+if __name__ == '__main__':
+    mode = sys.argv[1] if len(sys.argv) > 1 else 'verify'
+    if mode == 'offline':
+        offline()
+    elif mode == 'execute' and len(sys.argv) == 3:
+        real(sys.argv[2])
+    elif mode == 'verify' and len(sys.argv) == 1:
+        offline()
+        directory = runner.prepare()
+        try:
+            real(directory)
+        finally:
+            runner.cleanup(directory)
+    else:
+        raise SystemExit('usage: verify [offline|execute OWNED_RUN_DIRECTORY]')

@@ -1,0 +1,14 @@
+{
+  "contract_version": "utcp.infrastructure.v1",
+  "request_id": "request-10",
+  "operation_id": "operation-10",
+  "outcome": "resource_version_conflict",
+  "effect": "none",
+  "retry": "reauthorize",
+  "dispatch": "not_sent",
+  "target_uid": null,
+  "resource_version": null,
+  "admitted_generation": null,
+  "applied_generation": null,
+  "finished_at": "2026-10-21T12:00:01Z"
+}

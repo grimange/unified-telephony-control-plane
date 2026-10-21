@@ -1,0 +1,24 @@
+{
+  "contract_version": "utcp.infrastructure.v1",
+  "php_exception_reasons": {
+    "success": null,
+    "already_satisfied": null,
+    "invalid_request": "invalid_request",
+    "unauthorized": "permission_denied",
+    "forbidden": "permission_denied",
+    "target_not_found": "target_mismatch",
+    "identity_mismatch": "target_mismatch",
+    "ownership_conflict": "ownership_conflict",
+    "resource_version_conflict": "fence_in_progress",
+    "stale_generation": "fence_in_progress",
+    "timeout": "unavailable_to_control",
+    "cancelled": "unavailable_to_control",
+    "transport_unavailable": "unavailable_to_control",
+    "retryable_failure": "unavailable_to_control",
+    "terminal_failure": "failed",
+    "outcome_unknown": "unavailable_to_control",
+    "drift": "fence_in_progress",
+    "busy": "unavailable_to_control"
+  },
+  "note": "PHP reason is compatibility projection only. Canonical engine must retain normalized dispatch/effect/outcome; conflict is not automatically retryable; outcome_unknown needs direct recovery, not blind failure or retry."
+}

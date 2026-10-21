@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Pinned active-profile proof; one fresh owned cluster, no ambient context."""
+import os
+from pathlib import Path
+import subprocess
+import sys
+import types
+
+ROOT = Path(__file__).resolve().parents[2]
+SOURCE = ROOT / 'tests/gn-g2-lifecycle/verify'
+base = types.ModuleType('lifecycle_runner')
+base.__file__ = str(SOURCE)
+exec(compile(SOURCE.read_text(), str(SOURCE), 'exec'), base.__dict__)
+PAUSE = 'registry.k8s.io/pause@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a'
+IMAGES = {
+    'asterisk': '127.0.0.1:5001/utcp/asterisk-ari@sha256:6027f3bc1464e4c7ed3485bb5a078a529e93ce3f04a2b3d3b0a03d5ac00598e9',
+    'freeswitch': '127.0.0.1:5001/utcp/freeswitch@sha256:3eedabc8afb2e3d1a4fc1e4ef8a6439bec2c7a30df4588566989dd9346ba3a11',
+}
+
+
+def offline():
+    subprocess.run([sys.executable, str(Path(__file__).with_name('test_verify.py'))], check=True)
+    base.offline()
+    subprocess.run([str(Path(__file__).with_name('verify-php'))], check=True)
+    output = Path(os.environ.get('UTCP_GN_G2_ACTIVE_OUTPUT', '/tmp/utcp-gn-g2-active-output')).resolve()
+    args = base.docker_args() + ['-e', 'UTCP_GN_G2_ACTIVE_OUTPUT=/active-output', '-v', str(output) + ':/active-output']
+    subprocess.run(args + [base.runner.SDK, 'sh', '-ec',
+        'go version; test -z "$(gofmt -l active/*.go)"; go mod verify; '
+        'go test -count=1 -v ./active; go test -race -count=1 ./active; go vet ./active'], check=True)
+    subprocess.run([str(Path(__file__).with_name('verify-php'))], check=True)
+    subprocess.run([sys.executable, str(Path(__file__).with_name('verify-static'))], check=True)
+
+
+def fixture_image(directory, data):
+    base.runner.check_identity(directory, data)
+    # Pull directly into the owned node: docker-save of a partially populated
+    # multi-platform image index can omit blobs required by containerd import.
+    subprocess.run(['docker', 'exec', data['node'], 'ctr', '-n', 'k8s.io', 'images',
+                    'pull', '--platform', 'linux/amd64', PAUSE], check=True,
+                   stdout=subprocess.DEVNULL, timeout=120)
+
+
+def real(directory):
+    directory, data = base.runner.load(directory)
+    base.runner.check_identity(directory, data)
+    fixture_image(directory, data)
+    args = base.docker_args()
+    args[args.index('none')] = 'host'
+    args += ['-e', 'GN_G2_REAL_KUBECONFIG=/run-proof/kubeconfig',
+        '-e', 'GN_G2_REAL_CONTEXT=' + data['context'], '-e', 'GN_G2_REAL_RUN=' + data['run'],
+        '-e', 'GN_G2_REAL_SYSTEM_UID=' + data['system_uid'], '-e', 'GN_G2_REAL_EVIDENCE=/proof-output',
+        '-v', str(directory / 'kubeconfig') + ':/run-proof/kubeconfig:ro',
+        '-v', str(directory / 'evidence') + ':/proof-output']
+    for family, image in IMAGES.items():
+        args += ['-e', 'GN_G2_ACTIVE_' + family.upper() + '_IMAGE=' + image]
+    log_path = directory / 'evidence/active-verification.log'
+    with log_path.open('w') as log:
+        result = subprocess.run(args + [base.runner.SDK, 'sh', '-ec',
+            'go version; go test -p 1 -tags realapi -run TestRealAPI -count=1 -v -timeout=360s ./...; '
+            'go test -p 1 -race -tags realapi -run TestRealAPI -count=1 -timeout=360s ./...; '
+            'go vet -tags realapi ./...'], stdout=log, stderr=subprocess.STDOUT)
+    print('Sanitized real verification log:', log_path, flush=True)
+    if result.returncode:
+        raise RuntimeError('real active proof failed; inspect log')
+
+
+if __name__ == '__main__':
+    mode = sys.argv[1] if len(sys.argv) > 1 else 'verify'
+    if mode == 'offline':
+        offline()
+    elif mode == 'execute' and len(sys.argv) == 3:
+        real(sys.argv[2])
+    elif mode == 'verify' and len(sys.argv) == 1:
+        offline()
+        directory = base.runner.prepare()
+        try:
+            real(directory)
+        finally:
+            base.runner.cleanup(directory)
+    else:
+        raise SystemExit('usage: verify [offline|execute OWNED_RUN_DIRECTORY]')

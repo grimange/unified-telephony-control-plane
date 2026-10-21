@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://utcp.invalid/contracts/v1/observation-request.schema.json",
+  "type": "object",
+  "properties": {
+    "contract_version": {
+      "const": "utcp.infrastructure.v1"
+    },
+    "request_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+    },
+    "cluster_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "pod_namespaces": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$",
+                "maxLength": 253
+              },
+              {
+                "const": "*"
+              }
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "pod_namespaces"
+      ],
+      "additionalProperties": false
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "contract_version",
+    "request_id",
+    "cluster_id",
+    "scope",
+    "deadline"
+  ],
+  "additionalProperties": false
+}
