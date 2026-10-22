@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+mode="${1:-all}"
+[[ "$mode" = all || "$mode" = postgres-only ]] || { echo 'usage: verify [all|postgres-only]' >&2; exit 2; }
+"$ROOT/scripts/control-plane/canonical-proof"
+if [[ "$mode" = all ]]; then
+ "$ROOT/tests/gn-g2-active-projection/verify" offline
+ make -C "$ROOT" repository-hygiene phase-status-consistency-check
+ git -C "$ROOT" diff --check
+fi
