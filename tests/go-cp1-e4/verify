@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# Isolated E4 developer proof. No Kubernetes client, context or credentials.
+set -euo pipefail
+# E4 runs the expanded whole module, including actual SIGKILL/fsync proofs.
+# The inherited entry points retain 240s unless this explicit override is set.
+export UTCP_CP1_GO_TIMEOUT="${UTCP_CP1_GO_TIMEOUT:-900s}"
+# Serialize packages to avoid unrelated journal/fsync and PostgreSQL contention;
+# tests retain their independent concurrent connections and subprocesses.
+export GOFLAGS='-p=1'
+case "$UTCP_CP1_GO_TIMEOUT" in 240s|600s|900s) ;; *) echo 'Unsupported bounded Go timeout.' >&2; exit 2 ;; esac
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+[[ $# = 0 || ( $# = 1 && "$1" = '--focused' ) ]] || { echo 'Usage: tests/go-cp1-e4/verify [--focused]' >&2; exit 2; }
+SDK='golang@sha256:4557cf171e3cdf5053a298d5171b1a5f5734d920260c25f22c79e94760eb2084'
+OUTPUT="${UTCP_CP1_E4_OUTPUT:-$(mktemp -d /tmp/utcp-go-cp1-e4-output.XXXXXX)}"
+[[ "$OUTPUT" = /tmp/* && ! -L "$OUTPUT" ]] || { echo 'E4 output must be a private /tmp directory.' >&2; exit 1; }
+mkdir -p "$OUTPUT"
+chmod 700 "$OUTPUT"
+CACHE="${UTCP_CP1_CACHE:-/tmp/utcp-gn-g0-go-cache}"
+mkdir -p "$CACHE"
+# Focused journal, synthetic transport and subprocess proofs run without a DB
+# configuration, network attachment, Kubernetes mount or host credentials.
+docker run --rm --user "$(id -u):$(id -g)" --network none \
+ -e GOTOOLCHAIN=local -e GOPATH=/cache -e GOCACHE=/cache/build -e GOFLAGS \
+ -v "$CACHE:/cache" -v "$ROOT:/repo:ro" -w /repo/apps/control-plane \
+ "$SDK" sh -ec '
+ go version
+ test -z "$(gofmt -l internal/executor integration/e4_*.go)"
+ go test -count=1 -v -timeout=240s ./integration -run "^TestE4(ExecutorGrantSchemaFixtures|SyntheticHTTPResponseMatrix)$"
+ echo E4_FOCUSED_BEGIN
+ go test -count=1 -v -timeout=240s ./internal/executor
+ echo E4_FOCUSED_RACE_BEGIN
+ go test -race -count=1 -timeout=240s ./internal/executor
+ go vet ./internal/executor
+ go mod verify
+ ' | tee "$OUTPUT/journal-verification.txt"
+# Compile the integration test executable once; the probe contains no database
+# connection string. Its explicit entrypoint uses only a mounted journal.
+STORAGE="$(mktemp -d /tmp/utcp-go-cp1-e4-storage.XXXXXX)"
+chmod 700 "$STORAGE"
+RUN="utcp-go-cp1-e4-journal-$(date -u +%Y%m%d%H%M%S)-$(od -An -N5 -tx1 /dev/urandom | tr -d ' \n')"
+CONTAINER_CREATED=0
+cleanup_storage() {
+ local status=$?
+ local container_removed=true
+ trap - EXIT
+ if [[ "$CONTAINER_CREATED" = 1 ]]; then docker rm -f "$RUN" >/dev/null || status=1; fi
+ if docker container inspect "$RUN" >/dev/null 2>&1; then status=1; container_removed=false; fi
+ rm -rf "$STORAGE"
+ printf '{"container_removed":%s,"temporary_storage_removed":%s}\n' "$container_removed" "$([[ ! -e "$STORAGE" ]] && echo true || echo false)" > "$OUTPUT/storage-cleanup.json"
+ exit "$status"
+}
+trap cleanup_storage EXIT
+if docker container inspect "$RUN" >/dev/null 2>&1; then echo 'Refusing existing journal-test container.' >&2; exit 1; fi
+docker run --rm --user "$(id -u):$(id -g)" --network none \
+ -e GOTOOLCHAIN=local -e GOPATH=/cache -e GOCACHE=/cache/build -e GOFLAGS \
+ -v "$CACHE:/cache" -v "$ROOT:/repo:ro" -v "$STORAGE:/proof" -w /repo/apps/control-plane \
+ "$SDK" go test -c -o /proof/e4-integration.test ./integration
+mkdir "$STORAGE/data"
+chmod 700 "$STORAGE/data"
+docker create --name "$RUN" --label "utcp.proof.run=$RUN" --user "$(id -u):$(id -g)" --network none \
+ -e UTCP_E4_STORAGE_PHASE=cycle -v "$STORAGE/data:/e4-storage" -v "$STORAGE/e4-integration.test:/probe:ro" \
+ "$SDK" /probe -test.run '^TestE4ContainerStorageProbe$' -test.v >/dev/null
+CONTAINER_CREATED=1
+docker start --attach "$RUN" | tee "$OUTPUT/container-first.txt"
+[[ "$(docker inspect --format '{{.State.ExitCode}}' "$RUN")" = 0 ]]
+docker start --attach "$RUN" | tee "$OUTPUT/container-restart.txt"
+[[ "$(docker inspect --format '{{.State.ExitCode}}' "$RUN")" = 0 ]]
+docker rm "$RUN" >/dev/null
+CONTAINER_CREATED=0
+docker run --rm --user "$(id -u):$(id -g)" --network none -e UTCP_E4_STORAGE_PHASE=recover \
+ -v "$STORAGE/data:/e4-storage" -v "$STORAGE/e4-integration.test:/probe:ro" \
+ "$SDK" /probe -test.run '^TestE4ContainerStorageProbe$' -test.v | tee "$OUTPUT/container-replacement.txt"
+printf 'corrupt fixture tail\n' >> "$STORAGE/data/journal/wal"
+docker run --rm --user "$(id -u):$(id -g)" --network none -e UTCP_E4_STORAGE_PHASE=damaged \
+ -v "$STORAGE/data:/e4-storage" -v "$STORAGE/e4-integration.test:/probe:ro" \
+ "$SDK" /probe -test.run '^TestE4ContainerStorageProbe$' -test.v | tee "$OUTPUT/container-corruption.txt"
+mv "$STORAGE/data/journal" "$STORAGE/data/missing-journal"
+docker run --rm --user "$(id -u):$(id -g)" --network none -e UTCP_E4_STORAGE_PHASE=missing \
+ -v "$STORAGE/data:/e4-storage" -v "$STORAGE/e4-integration.test:/probe:ro" \
+ "$SDK" /probe -test.run '^TestE4ContainerStorageProbe$' -test.v | tee "$OUTPUT/container-missing.txt"
+# E3 provisions its own PostgreSQL17.6, applies the complete Laravel migration
+# history and reviewed subordinate SQL, and runs ALL module integration tests,
+# including E4's separate executor process and PostgreSQL evidence acceptance.
+# Its full mode also chains E2, E1, PHP and existing infrastructure regressions.
+if [[ "${1:-}" = '--focused' ]]; then
+ "$ROOT/tests/go-cp1-e3/verify" --focused | tee "$OUTPUT/canonical-verification.txt"
+else
+ "$ROOT/tests/go-cp1-e3/verify" | tee "$OUTPUT/canonical-verification.txt"
+fi
+printf 'E4 developer verification passed; sanitized logs=%s\n' "$OUTPUT"

@@ -1,0 +1,33 @@
+{
+  "payload": {
+    "contract_version": "utcp.executor-grant.v1",
+    "issuer": "fixture-kernel",
+    "key_id": "fixture-public-key",
+    "audience": "fixture-executor",
+    "executor": "executor.example.test",
+    "grant_id": "fixture-grant",
+    "endpoint": "https://127.0.0.1:9443/effect",
+    "server_name": "fixture.example.test",
+    "dispatch_id": "fixture-dispatch",
+    "phase": "consumed",
+    "intent_id": "fixture-intent",
+    "operation_id": "fixture-operation",
+    "attempt": 1,
+    "tenant_id": "fixture-tenant",
+    "runtime_node_id": "fixture-node",
+    "cluster_id": "fixture-cluster",
+    "namespace": "fixture-namespace",
+    "name": "fixture-deployment",
+    "incarnation_id": "fixture-incarnation",
+    "expected_uid": "fixture-uid",
+    "generation": "9007199254740993",
+    "fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "action": "converge_projection",
+    "infrastructure_version": "utcp.infrastructure.v3",
+    "envelope_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "body_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "issued_at": "2026-10-22T00:00:00Z",
+    "deadline": "2026-10-22T00:01:00Z"
+  },
+  "signature": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+}

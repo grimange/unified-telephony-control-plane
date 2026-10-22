@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "payload",
+    "signature"
+  ],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "receipt_id",
+        "issuer",
+        "key_id",
+        "challenge_id",
+        "nonce",
+        "purpose",
+        "audience",
+        "intent_id",
+        "dispatch_id",
+        "envelope_hash",
+        "tenant_id",
+        "runtime_node_id",
+        "cluster_id",
+        "namespace",
+        "name",
+        "incarnation_id",
+        "expected_uid",
+        "observed_uid",
+        "resource_version",
+        "outcome",
+        "source",
+        "generation",
+        "fingerprint",
+        "effect_digest",
+        "complete",
+        "started_at",
+        "finished_at",
+        "expires_at",
+        "replicas",
+        "observed_tenant_id",
+        "observed_runtime_node_id",
+        "observed_incarnation_id",
+        "admitted_generation",
+        "admitted_fingerprint",
+        "applied_generation",
+        "applied_fingerprint",
+        "observed_projection_digest"
+      ],
+      "properties": {
+        "contract_version": {
+          "const": "utcp.observation-receipt.v1"
+        },
+        "receipt_id": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "issuer": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "key_id": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "challenge_id": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "nonce": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "purpose": {
+          "enum": [
+            "bind",
+            "effect",
+            "absence"
+          ]
+        },
+        "audience": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "intent_id": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "dispatch_id": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "envelope_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "tenant_id": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "runtime_node_id": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "cluster_id": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "namespace": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "incarnation_id": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "expected_uid": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "observed_uid": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "resource_version": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "outcome": {
+          "enum": [
+            "found",
+            "absent"
+          ]
+        },
+        "source": {
+          "const": "exact_get"
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "effect_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "complete": {
+          "const": true
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "replicas": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "observed_tenant_id": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "observed_runtime_node_id": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "observed_incarnation_id": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "admitted_generation": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "admitted_fingerprint": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "applied_generation": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "applied_fingerprint": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "observed_projection_digest": {
+          "type": "string",
+          "maxLength": 512
+        }
+      }
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{86}$"
+    }
+  }
+}

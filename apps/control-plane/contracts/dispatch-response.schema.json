@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "reservation_id",
+    "state",
+    "granted",
+    "retry"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "utcp.dispatch.v1"
+    },
+    "reservation_id": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "state": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "granted": {
+      "type": "boolean"
+    },
+    "retry": {
+      "type": "string",
+      "maxLength": 128
+    }
+  }
+}

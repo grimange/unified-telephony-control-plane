@@ -1,0 +1,265 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "utcp.executor-grant.v1",
+  "title": "Private authenticated synthetic executor handoff",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "payload",
+    "signature"
+  ],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "issuer",
+        "key_id",
+        "audience",
+        "executor",
+        "grant_id",
+        "journal_id",
+        "endpoint",
+        "server_name",
+        "dispatch_id",
+        "phase",
+        "intent_id",
+        "operation_id",
+        "attempt",
+        "tenant_id",
+        "runtime_node_id",
+        "cluster_id",
+        "namespace",
+        "name",
+        "incarnation_id",
+        "expected_uid",
+        "generation",
+        "fingerprint",
+        "action",
+        "infrastructure_version",
+        "envelope_hash",
+        "body_hash",
+        "issued_at",
+        "deadline"
+      ],
+      "properties": {
+        "contract_version": {
+          "const": "utcp.executor-grant.v1"
+        },
+        "issuer": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "key_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "audience": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "executor": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "grant_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "journal_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "endpoint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "format": "uri",
+          "pattern": "^https://(127\\.[0-9.]+|\\[::1\\])(:[0-9]+)?(/[^?#]*)?$"
+        },
+        "server_name": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "dispatch_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "phase": {
+          "enum": [
+            "reserved",
+            "consumed"
+          ]
+        },
+        "intent_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "operation_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tenant_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "runtime_node_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "cluster_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "namespace": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "incarnation_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "expected_uid": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "action": {
+          "enum": [
+            "admit_generation",
+            "set_replicas",
+            "create_suspended",
+            "converge_projection",
+            "retire_delete"
+          ]
+        },
+        "infrastructure_version": {
+          "enum": [
+            "utcp.infrastructure.v1",
+            "utcp.infrastructure.v2",
+            "utcp.infrastructure.v3"
+          ]
+        },
+        "envelope_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "body_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "issued_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "deadline": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "infrastructure_version": {
+                "const": "utcp.infrastructure.v1"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "action": {
+                "enum": [
+                  "admit_generation",
+                  "set_replicas"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "infrastructure_version": {
+                "const": "utcp.infrastructure.v2"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "action": {
+                "enum": [
+                  "create_suspended",
+                  "converge_projection",
+                  "retire_delete"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "infrastructure_version": {
+                "const": "utcp.infrastructure.v3"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "action": {
+                "enum": [
+                  "converge_projection"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{86}$"
+    }
+  }
+}

@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "request_id",
+    "operation",
+    "reservation_id",
+    "capability",
+    "envelope",
+    "deadline",
+    "recovery",
+    "blocked_ids",
+    "result"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "utcp.dispatch.v1"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "operation": {
+      "enum": [
+        "reserve",
+        "consume",
+        "result",
+        "status"
+      ]
+    },
+    "reservation_id": {
+      "type": "string",
+      "maxLength": 128
+    },
+    "capability": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "envelope": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "recovery": {
+      "type": "boolean"
+    },
+    "blocked_ids": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "maxItems": 32,
+      "items": {
+        "type": "string",
+        "maxLength": 128
+      }
+    },
+    "result": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "outcome",
+            "receipt_id"
+          ],
+          "properties": {
+            "outcome": {
+              "enum": [
+                "unknown",
+                "applied",
+                "not_applied"
+              ]
+            },
+            "receipt_id": {
+              "type": "string",
+              "maxLength": 512
+            }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "enum": [
+              "reserve",
+              "consume"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "envelope": {
+            "type": "object"
+          },
+          "capability": {
+            "minLength": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "type": "object"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "result": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

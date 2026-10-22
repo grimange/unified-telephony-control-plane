@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# Isolated GO-CP1 proof; never reads a developer database or Kubernetes context.
+set -euo pipefail
+# The growing aggregate module needs a bounded override under race/fsync load.
+# Preserve the historical default for callers outside the E4 complete suite.
+UTCP_CP1_GO_TIMEOUT="${UTCP_CP1_GO_TIMEOUT:-240s}"
+case "$UTCP_CP1_GO_TIMEOUT" in 240s|600s|900s) ;; *) echo 'Unsupported bounded Go timeout.' >&2; exit 2 ;; esac
+export UTCP_CP1_GO_TIMEOUT
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+[[ $# = 0 || ( $# = 1 && "$1" = '--kernel-only' ) ]] || { echo 'Usage: tests/go-cp1/verify [--kernel-only]' >&2; exit 2; }
+PHP_IMAGE='sha256:9efe210fb8c8e7c90d80fce2b6916b46824f0f0428d6037dd599ec5ef1dd4d7d'
+# The complete immutable digest is deliberately checked rather than trusting a tag.
+PG_IMAGE='postgres@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94'
+RUN="utcp-go-cp1-$(date -u +%Y%m%d%H%M%S)-$(od -An -N5 -tx1 /dev/urandom | tr -d ' \n')"
+OUTPUT="${UTCP_CP1_OUTPUT:-$(mktemp -d /tmp/utcp-go-cp1-output.XXXXXX)}"
+[[ "$OUTPUT" = /tmp/* && ! -L "$OUTPUT" ]] || { echo 'Canonical proof output must be a private /tmp directory.' >&2; exit 1; }
+mkdir -p "$OUTPUT"
+chmod 700 "$OUTPUT"
+PRIVATE="$(mktemp -d /tmp/utcp-go-cp1-private.XXXXXX)"
+chmod 700 "$PRIVATE"
+NETWORK="$RUN-net"; PG="$RUN-pg"; VOLUME="$RUN-data"; BRIDGE="$RUN-bridge"
+NET_CREATED=0; VOLUME_CREATED=0; PG_CREATED=0; BRIDGE_CREATED=0
+cleanup() {
+ local status=$?
+ local cleanup_ok=true
+ trap - EXIT
+ if [[ "$BRIDGE_CREATED" = 1 ]]; then docker rm -f "$BRIDGE" >/dev/null || status=1; fi
+ if [[ "$PG_CREATED" = 1 ]]; then docker rm -f "$PG" >/dev/null || status=1; fi
+ if [[ "$VOLUME_CREATED" = 1 ]]; then docker volume rm "$VOLUME" >/dev/null || status=1; fi
+ if [[ "$NET_CREATED" = 1 ]]; then docker network rm "$NETWORK" >/dev/null || status=1; fi
+ rm -f "$PRIVATE/environment" "$PRIVATE/postgres-environment"
+ rmdir "$PRIVATE"
+ for owned in "$PG" "$BRIDGE"; do
+  if docker container inspect "$owned" >/dev/null 2>&1; then echo "Cleanup failed for owned container $owned" >&2; status=1; cleanup_ok=false; fi
+ done
+ if docker volume inspect "$VOLUME" >/dev/null 2>&1 || docker network inspect "$NETWORK" >/dev/null 2>&1; then
+  echo 'Cleanup failed for the owned network or volume.' >&2; status=1; cleanup_ok=false
+ fi
+ printf '{"run":"%s","containers_removed":%s,"volume_removed":%s,"network_removed":%s}\n' "$RUN" "$cleanup_ok" "$cleanup_ok" "$cleanup_ok" > "$OUTPUT/cleanup.json"
+ printf 'canonical-proof: cleanup verified; output=%s\n' "$OUTPUT"
+ exit "$status"
+}
+trap cleanup EXIT
+for candidate in "$PG" "$BRIDGE"; do
+ if docker container inspect "$candidate" >/dev/null 2>&1; then echo 'Refusing pre-existing container identity.' >&2; exit 1; fi
+done
+if docker network inspect "$NETWORK" >/dev/null 2>&1 || docker volume inspect "$VOLUME" >/dev/null 2>&1; then echo 'Refusing pre-existing proof storage/network.' >&2; exit 1; fi
+PASSWORD="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')"
+cat > "$PRIVATE/postgres-environment" <<ENV
+POSTGRES_DB=utcp_canonical_proof
+POSTGRES_USER=utcp_canonical_proof
+POSTGRES_PASSWORD=$PASSWORD
+ENV
+cat > "$PRIVATE/environment" <<ENV
+APP_ENV=testing
+APP_KEY=base64:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+APP_DEBUG=false
+DB_CONNECTION=pgsql
+DB_HOST=$PG
+DB_PORT=5432
+DB_DATABASE=utcp_canonical_proof
+DB_USERNAME=utcp_canonical_proof
+DB_PASSWORD=$PASSWORD
+DB_URL=
+DB_SSLMODE=disable
+CACHE_STORE=array
+QUEUE_CONNECTION=sync
+SESSION_DRIVER=array
+LOG_CHANNEL=null
+BROADCAST_CONNECTION=null
+UTCP_READINESS_REQUIRED_DEPENDENCIES=
+UTCP_MANAGED_ASTERISK_IMAGE=registry.example.test/utcp/asterisk-ari@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+UTCP_CANONICAL_PROOF_RUN=$RUN
+UTCP_CP1_RUN=$RUN
+UTCP_CP1_DSN=postgres://utcp_canonical_proof:$PASSWORD@$PG:5432/utcp_canonical_proof?sslmode=disable
+UTCP_CP1_ORACLE=/output/oracle.json
+UTCP_CP1_ROOT=/repo
+ENV
+unset PASSWORD
+chmod 600 "$PRIVATE/environment" "$PRIVATE/postgres-environment"
+# PostgreSQL has no published port and remains reachable only by explicitly
+# attached proof clients; the mTLS test listener exists inside the SDK container.
+docker network create --label "utcp.proof.run=$RUN" "$NETWORK" >/dev/null; NET_CREATED=1
+docker volume create --label "utcp.proof.run=$RUN" "$VOLUME" >/dev/null; VOLUME_CREATED=1
+docker run --detach --name "$PG" --label "utcp.proof.run=$RUN" --network "$NETWORK" \
+ --env-file "$PRIVATE/postgres-environment" -v "$VOLUME:/var/lib/postgresql/data" "$PG_IMAGE" >/dev/null; PG_CREATED=1
+ready=0
+for ((attempt=0;attempt<180;attempt++)); do
+ if docker exec "$PG" sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" exec psql -h 127.0.0.1 -U utcp_canonical_proof -d utcp_canonical_proof -Atc "SELECT 1"' >/dev/null 2>&1; then ready=1; break; fi
+ sleep 1
+done
+[[ "$ready" = 1 ]] || {
+ docker logs --tail 30 "$PG" > "$OUTPUT/postgres-startup.txt" 2>&1 || true
+ echo 'Disposable PostgreSQL did not become ready within 180 readiness attempts.' >&2
+ exit 1
+}
+docker exec "$PG" psql -U utcp_canonical_proof -d utcp_canonical_proof -Atc "SELECT current_database(), current_user, version();" | tee "$OUTPUT/postgres-version.txt"
+mounts=()
+for path in app tests config database routes; do mounts+=(-v "$ROOT/apps/api/$path:/var/www/html/$path:ro"); done
+for path in phpunit.xml bootstrap/app.php bootstrap/providers.php; do mounts+=(-v "$ROOT/apps/api/$path:/var/www/html/$path:ro"); done
+mounts+=(-v "$ROOT/tests/go-cp1:/cp1:ro" -v "$ROOT/tests/gn-g2-canonical:/prior-proof:ro" -v "$ROOT/tests/gn-g2-canonical:/proof:ro" -v "$ROOT/docs/architecture/proposals:/proposals:ro" -v "$ROOT/tests:/project-tests:ro" -v "$OUTPUT:/output")
+run_php() {
+ docker run --rm --user "$(id -u):$(id -g)" --network "$NETWORK" --env-file "$PRIVATE/environment" --tmpfs /var/www/html/bootstrap/cache:rw,mode=1777 "${mounts[@]}" --entrypoint php "$PHP_IMAGE" "$@"
+}
+run_php -v | sed -n '1p' | tee "$OUTPUT/php-version.txt"
+run_php artisan migrate --force | tee "$OUTPUT/migration-first.txt"
+run_php artisan migrate --force | tee "$OUTPUT/migration-repeat.txt"
+# Baseline catalog is captured before reviewed additive Goose SQL. No baseline DDL is replayed.
+run_php /cp1/oracle.php | tee "$OUTPUT/php-oracle.txt"
+docker exec -i "$PG" psql -U utcp_canonical_proof -d utcp_canonical_proof -At < "$ROOT/tests/go-cp1/catalog.sql" > "$OUTPUT/catalog-before.json"
+docker exec "$PG" psql -U utcp_canonical_proof -d utcp_canonical_proof -Atc 'SELECT count(*) FROM migrations;' | tee "$OUTPUT/laravel-migration-count.txt"
+SDK='golang@sha256:4557cf171e3cdf5053a298d5171b1a5f5734d920260c25f22c79e94760eb2084'
+CACHE="${UTCP_CP1_CACHE:-/tmp/utcp-gn-g0-go-cache}"
+mkdir -p "$CACHE"
+go_args=(--rm --user "$(id -u):$(id -g)" --network "$NETWORK" --env-file "$PRIVATE/environment"
+ -e GOTOOLCHAIN=local -e GOPATH=/cache -e GOCACHE=/cache/build -e UTCP_CP1_GO_TIMEOUT -e GOFLAGS
+ -v "$CACHE:/cache" -v "$ROOT:/repo:ro" -v "$OUTPUT:/output" -w /repo/apps/control-plane)
+docker run "${go_args[@]}" "$SDK" go run ./cmd/utcp migrate-test | tee "$OUTPUT/goose-migration.txt"
+docker exec -i "$PG" psql -U utcp_canonical_proof -d utcp_canonical_proof -At < "$ROOT/tests/go-cp1/catalog.sql" > "$OUTPUT/catalog-after.json"
+cmp "$OUTPUT/catalog-before.json" "$OUTPUT/catalog-after.json"
+printf 'Protected Laravel catalog unchanged\n' | tee "$OUTPUT/catalog-comparison.txt"
+docker run "${go_args[@]}" "$SDK" sh -ec '
+ go version
+ go list -m github.com/jackc/pgx/v5 github.com/pressly/goose/v3
+ test -z "$(gofmt -l .)"
+ go test -count=1 -v -timeout="$UTCP_CP1_GO_TIMEOUT" ./...
+ go test -race -count=1 -timeout="$UTCP_CP1_GO_TIMEOUT" ./...
+ go vet ./...
+ go mod verify
+' | tee "$OUTPUT/go-verification.txt"
+run_php vendor/bin/phpunit --do-not-cache-result --stop-on-error --stop-on-failure tests/Feature/ControlPlane/CanonicalInfrastructureTest.php \
+ tests/Feature/ControlPlane/RuntimeOperationRepositoryTest.php \
+ tests/Feature/ControlPlane/MessagingAndAuditTest.php \
+ tests/Feature/ControlPlane/IdempotencyStoreTest.php | tee "$OUTPUT/php-regression.txt"
+printf 'go-cp1: PostgreSQL and protocol verification passed\n'
+if [[ "${1:-}" != '--kernel-only' ]]; then
+ "$ROOT/tests/gn-g2-canonical/verify" postgres-only | tee "$OUTPUT/laravel-canonical-proof.txt"
+ "$ROOT/tests/gn-g2-active-projection/verify" offline | tee "$OUTPUT/infrastructure-offline.txt"
+ make -C "$ROOT" repository-hygiene phase-status-consistency-check
+ git -C "$ROOT" diff --check
+fi

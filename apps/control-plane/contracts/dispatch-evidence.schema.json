@@ -1,0 +1,328 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "UTCP Dispatch Evidence V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "payload",
+    "signature"
+  ],
+  "properties": {
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "receipt_id",
+        "issuer",
+        "key_id",
+        "challenge_id",
+        "nonce",
+        "audience",
+        "purpose",
+        "tenant_id",
+        "runtime_node_id",
+        "cluster_id",
+        "namespace",
+        "name",
+        "incarnation_id",
+        "expected_uid",
+        "intent_id",
+        "dispatch_id",
+        "operation_id",
+        "attempt",
+        "executor",
+        "envelope_hash",
+        "generation",
+        "fingerprint",
+        "action",
+        "evidence_type",
+        "outcome",
+        "journal_id",
+        "final",
+        "complete",
+        "submissions",
+        "api_code",
+        "api_reason",
+        "started_at",
+        "finished_at",
+        "expires_at"
+      ],
+      "properties": {
+        "contract_version": {
+          "const": "utcp.dispatch-evidence.v1"
+        },
+        "receipt_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1
+        },
+        "issuer": {
+          "type": "string",
+          "maxLength": 256,
+          "minLength": 1
+        },
+        "key_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "challenge_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "nonce": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "audience": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "purpose": {
+          "const": "dispatch_evidence"
+        },
+        "tenant_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "runtime_node_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "cluster_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "namespace": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "incarnation_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "expected_uid": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "intent_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "dispatch_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "operation_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "executor": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "envelope_hash": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "generation": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,18}$"
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "action": {
+          "enum": [
+            "admit_generation",
+            "set_replicas",
+            "create_suspended",
+            "converge_projection",
+            "retire_delete"
+          ]
+        },
+        "evidence_type": {
+          "enum": [
+            "pre_dispatch_rejected",
+            "definitive_non_delivery",
+            "api_rejected"
+          ]
+        },
+        "outcome": {
+          "const": "confirmed_not_applied"
+        },
+        "journal_id": {
+          "type": "string",
+          "maxLength": 512,
+          "minLength": 1
+        },
+        "final": {
+          "const": true
+        },
+        "complete": {
+          "const": true
+        },
+        "submissions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "api_code": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "api_reason": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "finished_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "evidence_type": {
+                "enum": [
+                  "pre_dispatch_rejected",
+                  "definitive_non_delivery"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "submissions": {
+                "const": 0
+              },
+              "api_code": {
+                "const": 0
+              },
+              "api_reason": {
+                "const": ""
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "submissions": {
+                "const": 1
+              }
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "api_code": {
+                    "const": 400
+                  },
+                  "api_reason": {
+                    "enum": [
+                      "BadRequest"
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "api_code": {
+                    "const": 401
+                  },
+                  "api_reason": {
+                    "enum": [
+                      "Unauthorized"
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "api_code": {
+                    "const": 403
+                  },
+                  "api_reason": {
+                    "enum": [
+                      "Forbidden"
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "api_code": {
+                    "const": 404
+                  },
+                  "api_reason": {
+                    "enum": [
+                      "NotFound"
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "api_code": {
+                    "const": 409
+                  },
+                  "api_reason": {
+                    "enum": [
+                      "Conflict",
+                      "AlreadyExists"
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "api_code": {
+                    "const": 422
+                  },
+                  "api_reason": {
+                    "enum": [
+                      "Invalid"
+                    ]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "signature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{86}$"
+    }
+  }
+}
