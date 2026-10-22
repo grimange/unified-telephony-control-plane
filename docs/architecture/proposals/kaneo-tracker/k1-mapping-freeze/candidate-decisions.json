@@ -1,0 +1,80 @@
+[
+  {
+    "migration_key": "utcp:checker",
+    "decision": "INCLUDE",
+    "target_key": "utcp:checker",
+    "reason": "Distinct operational scope with a concrete outcome; source-backed visibility without new execution authority."
+  },
+  {
+    "migration_key": "utcp:go-cp0",
+    "decision": "INCLUDE",
+    "target_key": "utcp:go-cp0",
+    "reason": "Distinct operational scope with a concrete outcome; source-backed visibility without new execution authority."
+  },
+  {
+    "migration_key": "utcp:go-cp1",
+    "decision": "INCLUDE",
+    "target_key": "utcp:go-cp1",
+    "reason": "Distinct operational scope with a concrete outcome; source-backed visibility without new execution authority."
+  },
+  {
+    "migration_key": "utcp:go-cp1-review",
+    "decision": "MERGE INTO PARENT",
+    "target_key": "utcp:go-cp1",
+    "reason": "MERGE INTO PARENT: make independent review and scope acceptance the GO-CP1 task outcome; avoid a second review queue record."
+  },
+  {
+    "migration_key": "utcp:go-cp2",
+    "decision": "DEFER",
+    "target_key": null,
+    "reason": "DEFER: broad HTTP/realtime stage remains linked in the modernization parent; import only bounded identity/tenancy E1 now, with that parent."
+  },
+  {
+    "migration_key": "utcp:go-cp2-e1",
+    "decision": "INCLUDE",
+    "target_key": "utcp:go-cp2-e1",
+    "reason": "Distinct operational scope with a concrete outcome; source-backed visibility without new execution authority."
+  },
+  {
+    "migration_key": "utcp:go-native",
+    "decision": "INCLUDE",
+    "target_key": "utcp:go-native",
+    "reason": "Distinct operational scope with a concrete outcome; source-backed visibility without new execution authority."
+  },
+  {
+    "migration_key": "utcp:history-go-cp1",
+    "decision": "MERGE INTO PARENT",
+    "target_key": "utcp:go-cp1",
+    "reason": "MERGE INTO PARENT: the GO-CP1 In Review task already needs this exact developer-evidence summary; no separate historical task."
+  },
+  {
+    "migration_key": "utcp:preservation",
+    "decision": "INCLUDE",
+    "target_key": "utcp:preservation",
+    "reason": "Distinct operational scope with a concrete outcome; source-backed visibility without new execution authority."
+  },
+  {
+    "migration_key": "utcp:rma",
+    "decision": "INCLUDE",
+    "target_key": "utcp:rma",
+    "reason": "Distinct operational scope with a concrete outcome; source-backed visibility without new execution authority."
+  },
+  {
+    "migration_key": "utcp:rma-e",
+    "decision": "INCLUDE",
+    "target_key": "utcp:rma-e",
+    "reason": "Distinct operational scope with a concrete outcome; source-backed visibility without new execution authority."
+  },
+  {
+    "migration_key": "utcp:roadmap-residue",
+    "decision": "INCLUDE",
+    "target_key": "utcp:roadmap-residue",
+    "reason": "Distinct operational scope with a concrete outcome; source-backed visibility without new execution authority."
+  },
+  {
+    "migration_key": "utcp:vue-scanner",
+    "decision": "INCLUDE",
+    "target_key": "utcp:vue-scanner",
+    "reason": "Distinct operational scope with a concrete outcome; source-backed visibility without new execution authority."
+  }
+]

@@ -1,0 +1,260 @@
+{
+  "assignment": "UTCP_KANEO_TRACKER_K2_CONTROLLED_INITIAL_IMPORT",
+  "final_proposed_root_sha256": "d093be6eb0f9d8c96d7485456610f153e30614114f9bfe59ced03097ba3c1efb",
+  "approved_root_sha256": null,
+  "writes": 0,
+  "operations": [
+    {
+      "operation_id": "create:utcp:rma",
+      "migration_key": "utcp:rma",
+      "mutation_type": "create_task",
+      "approved_payload_sha256": "6468db530ce07b75b8239f114aca7b6084bfc0ca2ccb154a4a32933cc37551e2",
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_task_id": null,
+      "read_after_write_result": "NOT_APPLICABLE_NO_WRITES",
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "create:utcp:go-native",
+      "migration_key": "utcp:go-native",
+      "mutation_type": "create_task",
+      "approved_payload_sha256": "a2bffbeaa3f675cf451561c5f89112419759ccf84d36f58a33b5530e8c175935",
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_task_id": null,
+      "read_after_write_result": "NOT_APPLICABLE_NO_WRITES",
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "create:utcp:rma-e",
+      "migration_key": "utcp:rma-e",
+      "mutation_type": "create_task",
+      "approved_payload_sha256": "c71be8b8255b3429f77698006f3b4282f89576848d16c03c1c9ea626e8c6e664",
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_task_id": null,
+      "read_after_write_result": "NOT_APPLICABLE_NO_WRITES",
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "create:utcp:go-cp0",
+      "migration_key": "utcp:go-cp0",
+      "mutation_type": "create_task",
+      "approved_payload_sha256": "23f6724cbb914b823a57e4cdcb3f77c6ceaa078ab5406630c8eda7504fb0e309",
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_task_id": null,
+      "read_after_write_result": "NOT_APPLICABLE_NO_WRITES",
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "create:utcp:go-cp1",
+      "migration_key": "utcp:go-cp1",
+      "mutation_type": "create_task",
+      "approved_payload_sha256": "1171f1dcef264429f5b84e82d7432438c862b3ece94aaa2715ce0a91efb52350",
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_task_id": null,
+      "read_after_write_result": "NOT_APPLICABLE_NO_WRITES",
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "create:utcp:go-cp2-e1",
+      "migration_key": "utcp:go-cp2-e1",
+      "mutation_type": "create_task",
+      "approved_payload_sha256": "be02d0f4db8af3aaa0c6c260a9963a2333961d435324287336c1fc749e48720f",
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_task_id": null,
+      "read_after_write_result": "NOT_APPLICABLE_NO_WRITES",
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "create:utcp:checker",
+      "migration_key": "utcp:checker",
+      "mutation_type": "create_task",
+      "approved_payload_sha256": "19a7154af25a4895a219bc09d8491916d368333ac10e4c76ac6f2028b3755c81",
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_task_id": null,
+      "read_after_write_result": "NOT_APPLICABLE_NO_WRITES",
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "create:utcp:vue-scanner",
+      "migration_key": "utcp:vue-scanner",
+      "mutation_type": "create_task",
+      "approved_payload_sha256": "6c63bc9247d98430b15c0cc637d33e8d4915b930fa88906fc4f694fc7fe78f3a",
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_task_id": null,
+      "read_after_write_result": "NOT_APPLICABLE_NO_WRITES",
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "create:utcp:preservation",
+      "migration_key": "utcp:preservation",
+      "mutation_type": "create_task",
+      "approved_payload_sha256": "7e67001f65c57f398e919994df46793b3d8e77ad7cdcac54957481db41011257",
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_task_id": null,
+      "read_after_write_result": "NOT_APPLICABLE_NO_WRITES",
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "create:utcp:roadmap-residue",
+      "migration_key": "utcp:roadmap-residue",
+      "mutation_type": "create_task",
+      "approved_payload_sha256": "b9f2a0729d4e5d1fcfde6a4325ab4b16d8b5f3ad58c715ef19ae7fe9e6cffd4d",
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_task_id": null,
+      "read_after_write_result": "NOT_APPLICABLE_NO_WRITES",
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "label:1",
+      "mutation_type": "attach_label_to_task",
+      "argument_template": {
+        "labelId": "a3t3bjpr1m3ffixpo1bowf3n",
+        "taskId": {
+          "resolve_verified_task_id": "utcp:go-native"
+        }
+      },
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_id": null,
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "label:2",
+      "mutation_type": "attach_label_to_task",
+      "argument_template": {
+        "labelId": "dhnherobkdmq3q46x82728pl",
+        "taskId": {
+          "resolve_verified_task_id": "utcp:go-native"
+        }
+      },
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_id": null,
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "label:3",
+      "mutation_type": "attach_label_to_task",
+      "argument_template": {
+        "labelId": "dhnherobkdmq3q46x82728pl",
+        "taskId": {
+          "resolve_verified_task_id": "utcp:go-cp0"
+        }
+      },
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_id": null,
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "label:4",
+      "mutation_type": "attach_label_to_task",
+      "argument_template": {
+        "labelId": "dhnherobkdmq3q46x82728pl",
+        "taskId": {
+          "resolve_verified_task_id": "utcp:go-cp2-e1"
+        }
+      },
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_id": null,
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "relation:1",
+      "mutation_type": "create_task_relation",
+      "argument_template": {
+        "relationType": "related",
+        "sourceTaskId": {
+          "resolve_verified_task_id": "utcp:go-cp1"
+        },
+        "targetTaskId": {
+          "resolve_verified_task_id": "utcp:go-cp2-e1"
+        }
+      },
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_id": null,
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "relation:2",
+      "mutation_type": "create_task_relation",
+      "argument_template": {
+        "relationType": "subtask",
+        "sourceTaskId": {
+          "resolve_verified_task_id": "utcp:go-native"
+        },
+        "targetTaskId": {
+          "resolve_verified_task_id": "utcp:go-cp0"
+        }
+      },
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_id": null,
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "relation:3",
+      "mutation_type": "create_task_relation",
+      "argument_template": {
+        "relationType": "subtask",
+        "sourceTaskId": {
+          "resolve_verified_task_id": "utcp:go-native"
+        },
+        "targetTaskId": {
+          "resolve_verified_task_id": "utcp:go-cp1"
+        }
+      },
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_id": null,
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "relation:4",
+      "mutation_type": "create_task_relation",
+      "argument_template": {
+        "relationType": "subtask",
+        "sourceTaskId": {
+          "resolve_verified_task_id": "utcp:go-native"
+        },
+        "targetTaskId": {
+          "resolve_verified_task_id": "utcp:go-cp2-e1"
+        }
+      },
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_id": null,
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    },
+    {
+      "operation_id": "relation:5",
+      "mutation_type": "create_task_relation",
+      "argument_template": {
+        "relationType": "subtask",
+        "sourceTaskId": {
+          "resolve_verified_task_id": "utcp:rma"
+        },
+        "targetTaskId": {
+          "resolve_verified_task_id": "utcp:rma-e"
+        }
+      },
+      "attempt_number": 0,
+      "invocation_result": "NOT_INVOKED",
+      "returned_id": null,
+      "reconciliation_status": "NOT_ATTEMPTED_PENDING_GATES"
+    }
+  ],
+  "uncertain_outcomes": []
+}

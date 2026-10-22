@@ -1,0 +1,21 @@
+{
+  "verdict": "UTCP_KANEO_K2_INITIAL_IMPORT_VERIFIED",
+  "created": 10,
+  "reused": 0,
+  "tasks_verified": 10,
+  "labels_verified": 4,
+  "relations_verified": 5,
+  "failed": 0,
+  "unknown": 0,
+  "duplicate": 0,
+  "missing": 0,
+  "mismatched": 0,
+  "unexpected": 0,
+  "kaneo_writes": 19,
+  "governance": "MIGRATING",
+  "preserved_entry_files": 1740,
+  "authorized_changed_entry_files": 1,
+  "frozen_source_hashes_current": 504,
+  "frozen_policy_snapshot_preserved": true,
+  "approved_manifest_digest": "d093be6eb0f9d8c96d7485456610f153e30614114f9bfe59ced03097ba3c1efb"
+}

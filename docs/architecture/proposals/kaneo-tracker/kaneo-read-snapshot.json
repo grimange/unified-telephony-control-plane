@@ -1,0 +1,343 @@
+{
+  "server": "kaneo_local",
+  "observed_at": "2026-10-22 08:26:26 UTC",
+  "version": "not exposed",
+  "workspace": {
+    "id": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il",
+    "name": "Personal Projects"
+  },
+  "project": {
+    "id": "hrilr4371g33s0iw6lth3o7v",
+    "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il",
+    "slug": "UTCP",
+    "icon": "Layout",
+    "name": "Unified Telephony Control Plane",
+    "description": "",
+    "createdAt": "2026-10-22T06:06:32.447Z",
+    "isPublic": false,
+    "archivedAt": null,
+    "lastTaskNumber": 0,
+    "position": 1,
+    "backgroundVersion": null
+  },
+  "columns": [
+    {
+      "id": "r16urlwjums6jbklrdjetnjp",
+      "projectId": "hrilr4371g33s0iw6lth3o7v",
+      "name": "To Do",
+      "slug": "to-do",
+      "position": 0,
+      "icon": null,
+      "color": null,
+      "isFinal": false,
+      "createdAt": "2026-10-22T06:06:32.447Z",
+      "updatedAt": "2026-10-22T06:06:32.447Z"
+    },
+    {
+      "id": "e35qmx2pn4pftmlhxr203ew4",
+      "projectId": "hrilr4371g33s0iw6lth3o7v",
+      "name": "In Progress",
+      "slug": "in-progress",
+      "position": 1,
+      "icon": null,
+      "color": null,
+      "isFinal": false,
+      "createdAt": "2026-10-22T06:06:32.447Z",
+      "updatedAt": "2026-10-22T06:06:32.447Z"
+    },
+    {
+      "id": "y2bbz674rhx96k0c3jr35v5y",
+      "projectId": "hrilr4371g33s0iw6lth3o7v",
+      "name": "In Review",
+      "slug": "in-review",
+      "position": 2,
+      "icon": null,
+      "color": null,
+      "isFinal": false,
+      "createdAt": "2026-10-22T06:06:32.447Z",
+      "updatedAt": "2026-10-22T06:06:32.447Z"
+    },
+    {
+      "id": "s7fid10ah44k6ie6txo6v53t",
+      "projectId": "hrilr4371g33s0iw6lth3o7v",
+      "name": "Done",
+      "slug": "done",
+      "position": 3,
+      "icon": null,
+      "color": null,
+      "isFinal": true,
+      "createdAt": "2026-10-22T06:06:32.447Z",
+      "updatedAt": "2026-10-22T06:06:32.447Z"
+    }
+  ],
+  "tasks": {
+    "data": {
+      "id": "hrilr4371g33s0iw6lth3o7v",
+      "name": "Unified Telephony Control Plane",
+      "slug": "UTCP",
+      "icon": "Layout",
+      "description": "",
+      "descriptionDeferred": false,
+      "isPublic": false,
+      "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il",
+      "backgroundVersion": null,
+      "columns": [
+        {
+          "id": "to-do",
+          "slug": "to-do",
+          "name": "To Do",
+          "position": 0,
+          "icon": null,
+          "isFinal": false,
+          "tasks": []
+        },
+        {
+          "id": "in-progress",
+          "slug": "in-progress",
+          "name": "In Progress",
+          "position": 1,
+          "icon": null,
+          "isFinal": false,
+          "tasks": []
+        },
+        {
+          "id": "in-review",
+          "slug": "in-review",
+          "name": "In Review",
+          "position": 2,
+          "icon": null,
+          "isFinal": false,
+          "tasks": []
+        },
+        {
+          "id": "done",
+          "slug": "done",
+          "name": "Done",
+          "position": 3,
+          "icon": null,
+          "isFinal": true,
+          "tasks": []
+        }
+      ],
+      "archivedTasks": [],
+      "plannedTasks": []
+    },
+    "pagination": {
+      "total": 0,
+      "page": 1,
+      "pageSize": 100,
+      "totalPages": 1,
+      "relatedPage": 1,
+      "relatedPageSize": 100,
+      "relatedTotalPages": 1
+    }
+  },
+  "search": {
+    "results": [],
+    "totalCount": 0,
+    "searchQuery": "UTCP"
+  },
+  "workspace_labels": [
+    {
+      "id": "cyy7slg2a72t78knydb9tgpb",
+      "name": "Blocked",
+      "color": "#ef4444",
+      "createdAt": "2026-10-22T05:57:14.513Z",
+      "updatedAt": "2026-10-22T05:57:14.513Z",
+      "deletionStartedAt": null,
+      "taskId": null,
+      "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+    },
+    {
+      "id": "a3t3bjpr1m3ffixpo1bowf3n",
+      "name": "Roadmap planning",
+      "color": "#64748b",
+      "createdAt": "2026-10-22T06:35:42.607Z",
+      "updatedAt": "2026-10-22T06:35:42.607Z",
+      "deletionStartedAt": null,
+      "taskId": null,
+      "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+    },
+    {
+      "id": "dhnherobkdmq3q46x82728pl",
+      "name": "Proposed / not adopted",
+      "color": "#a855f7",
+      "createdAt": "2026-10-22T06:35:42.624Z",
+      "updatedAt": "2026-10-22T06:35:42.624Z",
+      "deletionStartedAt": null,
+      "taskId": null,
+      "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+    },
+    {
+      "id": "zhajh50z4ymwi8mfp8bnbsan",
+      "name": "Historical reference",
+      "color": "#22c55e",
+      "createdAt": "2026-10-22T06:35:42.646Z",
+      "updatedAt": "2026-10-22T06:35:42.646Z",
+      "deletionStartedAt": null,
+      "taskId": null,
+      "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+    }
+  ],
+  "authentication": {
+    "whoami_succeeded": true,
+    "mode": "not exposed by inspected responses",
+    "member_read_succeeded": true,
+    "member_count": 4
+  },
+  "other_project_count": 1,
+  "tools": [
+    {
+      "name": "mcp__kaneo_local__attach_label_to_task",
+      "description": "Attach an existing label to a task.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__attach_label_to_task(args: { labelId: string; taskId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__create_label",
+      "description": "Create a label in a workspace (optionally attach to a task).\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__create_label(args: { color: string; name: string; taskId?: string; workspaceId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__create_project",
+      "description": "Create a project in a workspace.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__create_project(args: { icon: string; name: string; slug: string; workspaceId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__create_task",
+      "description": "Create a task in a project.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__create_task(args: { description: string; dueDate?: string; priority: \"no-priority\" | \"low\" | \"medium\" | \"high\" | \"urgent\"; projectId: string; startDate?: string; status: string; title: string; userId?: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__create_task_comment",
+      "description": "Add a comment to a task.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__create_task_comment(args: { content: string; taskId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__create_task_relation",
+      "description": "Create a relation between two tasks. relationType: 'subtask' (sourceTaskId is the parent, targetTaskId the child), 'blocks' (sourceTaskId blocks targetTaskId), or 'related' (bidirectional).\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__create_task_relation(args: { relationType: \"subtask\" | \"blocks\" | \"related\"; sourceTaskId: string; targetTaskId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__create_time_entry",
+      "description": "Log time against a task. Omit endTime to leave the entry running.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__create_time_entry(args: { description?: string; endTime?: string; startTime: string; taskId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__delete_label",
+      "description": "Delete a task or workspace label by ID. Workspace-label cascades resume automatically; repeat the tool if pendingDeletion remains true.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__delete_label(args: { id: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__delete_task",
+      "description": "Delete a task by ID.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__delete_task(args: { taskId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__delete_task_comment",
+      "description": "Delete one of your comments from a task.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__delete_task_comment(args: { commentId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__delete_task_relation",
+      "description": "Delete a task relation by its relation ID.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__delete_task_relation(args: { id: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__detach_label_from_task",
+      "description": "Detach a label from its current task.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__detach_label_from_task(args: { labelId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__duplicate_task",
+      "description": "Duplicate a task in the same project, copying its fields and labels. Pass title to rename the copy.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__duplicate_task(args: { taskId: string; title?: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__get_project",
+      "description": "Get a single project by ID.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__get_project(args: { id: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__get_task",
+      "description": "Get a task by ID.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__get_task(args: { taskId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__get_task_by_ticket_id",
+      "description": "Get one task by its ticket ID (project key and number, e.g. KAN-12). If multiple accessible tasks share the ID, provide workspaceId or projectId.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__get_task_by_ticket_id(args: { projectId?: string; ticketId: string; workspaceId?: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__get_task_relations",
+      "description": "List all relations (subtask/blocks/related) involving a task.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__get_task_relations(args: { taskId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__get_time_entry",
+      "description": "Get a single time entry by ID.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__get_time_entry(args: { id: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__list_notifications",
+      "description": "List the signed-in user's notifications.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__list_notifications(args: { [key: string]: unknown; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__list_project_columns",
+      "description": "List a project's columns. Their slugs are the values update_task_status and create_task accept as a status.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__list_project_columns(args: { projectId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__list_projects",
+      "description": "List projects in a workspace.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__list_projects(args: {\n  // Include archived projects\n  includeArchived?: boolean;\n  // Workspace ID\n  workspaceId: string;\n}): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__list_task_activity",
+      "description": "List a task's activity history.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__list_task_activity(args: { taskId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__list_task_comments",
+      "description": "List comments on a task.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__list_task_comments(args: { taskId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__list_task_time_entries",
+      "description": "List the time entries logged against a task.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__list_task_time_entries(args: { taskId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__list_tasks",
+      "description": "List a bounded page of tasks for a project (50 by default, maximum 100). Use pagination.totalPages and page to retrieve the rest; filters and sorting apply before pagination. For every task page, also follow relatedPage through pagination.relatedTotalPages for complete labels, links and column metadata.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__list_tasks(args: { assigneeId?: string; dueAfter?: string; dueBefore?: string; limit?: number; page?: number; priority?: \"no-priority\" | \"low\" | \"medium\" | \"high\" | \"urgent\"; projectId: string; relatedPage?: number; sortBy?: \"createdAt\" | \"priority\" | \"dueDate\" | \"position\" | \"title\" | \"number\"; sortOrder?: \"asc\" | \"desc\"; status?: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__list_workspace_labels",
+      "description": "List labels defined in a workspace.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__list_workspace_labels(args: { workspaceId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__list_workspace_members",
+      "description": "List the members of a workspace. Use this to resolve the user ID an assignee tool expects.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__list_workspace_members(args: { workspaceId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__list_workspaces",
+      "description": "List workspaces (Better Auth organizations) the signed-in user can access.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__list_workspaces(args: { [key: string]: unknown; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__move_task",
+      "description": "Move a task to another project (and optional column status).\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__move_task(args: { destinationProjectId: string; destinationStatus?: string; taskId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__search",
+      "description": "Search across tasks, projects, workspaces, comments, and activities.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__search(args: {\n  // Maximum results, 1 to 50. Defaults to 20.\n  limit?: number;\n  // Limit to one project\n  projectId?: string;\n  // Search query\n  q: string;\n  // Restrict results to one kind. Defaults to all.\n  type?: \"all\" | \"tasks\" | \"projects\" | \"workspaces\" | \"comments\" | \"activities\";\n  // Limit to one workspace\n  workspaceId?: string;\n}): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__update_project",
+      "description": "Update project metadata (PATCH-style: only provided fields are changed).\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__update_project(args: { description?: string; icon?: string; id: string; isPublic?: boolean; name?: string; slug?: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__update_task",
+      "description": "Update a task (fetches current task, merges fields, then full update).\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__update_task(args: { description?: string | null; dueDate?: string | null; position?: number; priority?: \"no-priority\" | \"low\" | \"medium\" | \"high\" | \"urgent\"; projectId?: string; startDate?: string | null; status?: string; taskId: string; title?: string; userId?: string | null; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__update_task_assignee",
+      "description": "Assign a task to a workspace member, or pass a null userId to unassign it.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__update_task_assignee(args: {\n  taskId: string;\n  // Member user ID, or null to unassign\n  userId: string | null;\n}): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__update_task_comment",
+      "description": "Update one of your comments on a task.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__update_task_comment(args: { commentId: string; content: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__update_task_due_date",
+      "description": "Set a task's due date. Omit dueDate to clear it.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__update_task_due_date(args: { dueDate?: string; taskId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__update_task_status",
+      "description": "Update only the status (column) of a task.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__update_task_status(args: { status: string; taskId: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__update_time_entry",
+      "description": "Update a time entry. startTime is required; omitting endTime keeps the stored one. startTime cannot be later than the end time.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__update_time_entry(args: { description?: string; endTime?: string; id: string; startTime: string; }): Promise<CallToolResult>; };\n```"
+    },
+    {
+      "name": "mcp__kaneo_local__whoami",
+      "description": "Return the current Kaneo user for the configured authentication method.\n\nexec tool declaration:\n```ts\ndeclare const tools: { mcp__kaneo_local__whoami(args: { [key: string]: unknown; }): Promise<CallToolResult>; };\n```"
+    }
+  ]
+}

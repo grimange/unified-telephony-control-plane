@@ -1,0 +1,4548 @@
+[
+  {
+    "source_id": "F0",
+    "migration_key": "utcp:f0",
+    "title": "Repository Contract and Governance",
+    "type": "milestone",
+    "description": "Repository Contract and Governance",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "F1",
+    "migration_key": "utcp:f1",
+    "title": "Minimal Application Skeleton",
+    "type": "milestone",
+    "description": "Minimal Application Skeleton",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "F2",
+    "migration_key": "utcp:f2",
+    "title": "Container Build Foundation",
+    "type": "milestone",
+    "description": "Container Build Foundation",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "F3",
+    "migration_key": "utcp:f3",
+    "title": "Docker Compose Core Platform",
+    "type": "milestone",
+    "description": "Docker Compose Core Platform",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "F4",
+    "migration_key": "utcp:f4",
+    "title": "CI Quality Baseline",
+    "type": "milestone",
+    "description": "CI Quality Baseline",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "K0",
+    "migration_key": "utcp:k0",
+    "title": "Local k3d Cluster Foundation",
+    "type": "milestone",
+    "description": "Local k3d Cluster Foundation",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "K1",
+    "migration_key": "utcp:k1",
+    "title": "Kubernetes Application Base",
+    "type": "milestone",
+    "description": "Kubernetes Application Base",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "K2",
+    "migration_key": "utcp:k2",
+    "title": "Traefik and Gateway API",
+    "type": "milestone",
+    "description": "Traefik and Gateway API",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "K3",
+    "migration_key": "utcp:k3",
+    "title": "Kubernetes Security Boundaries",
+    "type": "milestone",
+    "description": "Kubernetes Security Boundaries",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "K4",
+    "migration_key": "utcp:k4",
+    "title": "Initial Observability",
+    "type": "milestone",
+    "description": "Initial Observability",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "C0",
+    "migration_key": "utcp:c0",
+    "title": "Control-Plane Application Kernel",
+    "type": "milestone",
+    "description": "Control-Plane Application Kernel",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "C1",
+    "migration_key": "utcp:c1",
+    "title": "Identity, Tenancy, and Authorization",
+    "type": "milestone",
+    "description": "Identity, Tenancy, and Authorization",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "C2",
+    "migration_key": "utcp:c2",
+    "title": "Runtime Registry and Runtime-Node Management",
+    "type": "milestone",
+    "description": "Runtime Registry and Runtime-Node Management",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "C3",
+    "migration_key": "utcp:c3",
+    "title": "Command, Event, Projection, and Reconciliation Engine",
+    "type": "milestone",
+    "description": "Command, Event, Projection, and Reconciliation Engine",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "C4",
+    "migration_key": "utcp:c4",
+    "title": "Deterministic Simulator Adapter",
+    "type": "milestone",
+    "description": "Deterministic Simulator Adapter",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "C5",
+    "migration_key": "utcp:c5",
+    "title": "Telephony Identity, Session, and Registration Domain",
+    "type": "milestone",
+    "description": "Telephony Identity, Session, and Registration Domain",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "T0",
+    "migration_key": "utcp:t0",
+    "title": "Asterisk ARI Adapter",
+    "type": "milestone",
+    "description": "Asterisk ARI Adapter",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "T1",
+    "migration_key": "utcp:t1",
+    "title": "Kamailio Signaling Edge and SIP-over-WSS",
+    "type": "milestone",
+    "description": "Kamailio Signaling Edge and SIP-over-WSS",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "T2",
+    "migration_key": "utcp:t2",
+    "title": "rtpengine Media Plane",
+    "type": "milestone",
+    "description": "rtpengine Media Plane",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "T3",
+    "migration_key": "utcp:t3",
+    "title": "External Trunk Integration and Live Route Projection",
+    "type": "milestone",
+    "description": "External Trunk Integration and Live Route Projection",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "T4",
+    "migration_key": "utcp:t4",
+    "title": "FreeSWITCH Runtime Adapter Parity",
+    "type": "milestone",
+    "description": "FreeSWITCH Runtime Adapter Parity",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "T5",
+    "migration_key": "utcp:t5",
+    "title": "Multi-Runtime Convergence, Failover, and Recovery",
+    "type": "milestone",
+    "description": "Multi-Runtime Convergence, Failover, and Recovery",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "T6",
+    "migration_key": "utcp:t6",
+    "title": "T6",
+    "type": "milestone",
+    "description": "T6",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "V0",
+    "migration_key": "utcp:v0",
+    "title": "Natural Login, SIP Registration, and Conference Admission Vertical Slice",
+    "type": "milestone",
+    "description": "Natural Login, SIP Registration, and Conference Admission Vertical Slice",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "RT-1",
+    "migration_key": "utcp:rt-1",
+    "title": "Runtime control-plane notifications",
+    "type": "milestone",
+    "description": "Runtime control-plane notifications",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "RNM",
+    "migration_key": "utcp:rnm",
+    "title": "RuntimeNode lifecycle",
+    "type": "milestone",
+    "description": "RuntimeNode lifecycle",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "RNP",
+    "migration_key": "utcp:rnp",
+    "title": "Managed runtime provisioning",
+    "type": "milestone",
+    "description": "Managed runtime provisioning",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Ledger completed phase; summarized once. Exact historical proof stays in Git; no new operator acceptance inferred."
+  },
+  {
+    "source_id": "C6",
+    "migration_key": "utcp:c6",
+    "title": "Canonical Call lifecycle and normalized control",
+    "type": "milestone",
+    "description": "Canonical Call lifecycle and normalized control",
+    "workstream": "telephony",
+    "source_status": "Complete / live-proven / frozen",
+    "evidence_classification": "ledger-recorded-live-proof",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "C7A",
+    "migration_key": "utcp:c7a",
+    "title": "External connectivity, telephony addressing and caller identity",
+    "type": "milestone",
+    "description": "External connectivity, telephony addressing and caller identity",
+    "workstream": "telephony",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "C7B",
+    "migration_key": "utcp:c7b",
+    "title": "Inbound/outbound route and destination authority",
+    "type": "milestone",
+    "description": "Inbound/outbound route and destination authority",
+    "workstream": "telephony",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "V1",
+    "migration_key": "utcp:v1",
+    "title": "Bidirectional external call routing and control",
+    "type": "milestone",
+    "description": "Bidirectional external call routing and control",
+    "workstream": "telephony",
+    "source_status": "Complete; Gap A–F closed; no acceptance blocker",
+    "evidence_classification": "ledger-recorded-live-proof",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-v1",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "V1-GAP-A",
+    "migration_key": "utcp:v1-gap-a",
+    "title": "V1 acceptance Gap A",
+    "type": "acceptance-gate",
+    "description": "V1 acceptance Gap A",
+    "workstream": "telephony",
+    "source_status": "Closed",
+    "evidence_classification": "ledger-recorded-closed",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-v1",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "V1-GAP-B",
+    "migration_key": "utcp:v1-gap-b",
+    "title": "V1 acceptance Gap B",
+    "type": "acceptance-gate",
+    "description": "V1 acceptance Gap B",
+    "workstream": "telephony",
+    "source_status": "Closed",
+    "evidence_classification": "ledger-recorded-closed",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-v1",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "V1-GAP-C",
+    "migration_key": "utcp:v1-gap-c",
+    "title": "V1 acceptance Gap C",
+    "type": "acceptance-gate",
+    "description": "V1 acceptance Gap C",
+    "workstream": "telephony",
+    "source_status": "Closed",
+    "evidence_classification": "ledger-recorded-closed",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-v1",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "V1-GAP-D",
+    "migration_key": "utcp:v1-gap-d",
+    "title": "V1 acceptance Gap D",
+    "type": "acceptance-gate",
+    "description": "V1 acceptance Gap D",
+    "workstream": "telephony",
+    "source_status": "Closed",
+    "evidence_classification": "ledger-recorded-closed",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-v1",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "V1-GAP-E",
+    "migration_key": "utcp:v1-gap-e",
+    "title": "V1 acceptance Gap E",
+    "type": "acceptance-gate",
+    "description": "V1 acceptance Gap E",
+    "workstream": "telephony",
+    "source_status": "Closed",
+    "evidence_classification": "ledger-recorded-closed",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-v1",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "V1-GAP-F",
+    "migration_key": "utcp:v1-gap-f",
+    "title": "V1 acceptance Gap F",
+    "type": "acceptance-gate",
+    "description": "V1 acceptance Gap F",
+    "workstream": "telephony",
+    "source_status": "Closed",
+    "evidence_classification": "ledger-recorded-closed",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-v1",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "V1-PUBLIC-EDGE",
+    "migration_key": "utcp:v1-public-edge",
+    "title": "Stable public-edge acceptance under ADR-031",
+    "type": "acceptance-gate",
+    "description": "Stable public-edge acceptance under ADR-031",
+    "workstream": "telephony",
+    "source_status": "DEFERRED_BY_ENVIRONMENT",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [
+      "Stable public-edge environment"
+    ],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/decisions/ADR-031-native-k3s-provider-facing-sip-signaling-authority.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/decisions/ADR-031-native-k3s-provider-facing-sip-signaling-authority.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/decisions/ADR-031-native-k3s-provider-facing-sip-signaling-authority.md": "a12a918aaaf0fe0664d2576803bac7c77d23f101a342d8d3d198ef560e32715d"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Separate deferred corridor; does not reopen V1 or registration/NAT acceptance."
+  },
+  {
+    "source_id": "V1-ORPHAN-CHANNEL",
+    "migration_key": "utcp:v1-orphan-channel",
+    "title": "Orphaned runtime-channel reclamation after timeout",
+    "type": "decision",
+    "description": "Orphaned runtime-channel reclamation after timeout",
+    "workstream": "telephony",
+    "source_status": "Separate deferred decision",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Gap A precedence is closed. No new repair task without adopted reclamation scope."
+  },
+  {
+    "source_id": "K5",
+    "migration_key": "utcp:k5",
+    "title": "Distributed telephony infrastructure, placement and host lifecycle",
+    "type": "milestone",
+    "description": "Distributed telephony infrastructure, placement and host lifecycle",
+    "workstream": "infrastructure",
+    "source_status": "K5A–E complete; K5F planned",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": "R0-Critical (A–E satisfied)",
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M2",
+    "target_key": "utcp:k5",
+    "justification": "Multi-assignment workstream or release boundary; use parent task."
+  },
+  {
+    "source_id": "K5A",
+    "migration_key": "utcp:k5a",
+    "title": "Host / Kubernetes Node visibility",
+    "type": "milestone",
+    "description": "Host / Kubernetes Node visibility",
+    "workstream": "infrastructure",
+    "source_status": "Complete / natural-live-proven",
+    "evidence_classification": "ledger-recorded-live-proof",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": "R0-Critical (satisfied)",
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-k5",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "K5B",
+    "migration_key": "utcp:k5b",
+    "title": "Telephony placement awareness",
+    "type": "milestone",
+    "description": "Telephony placement awareness",
+    "workstream": "infrastructure",
+    "source_status": "Complete / natural-live-proven",
+    "evidence_classification": "ledger-recorded-live-proof",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": "R0-Critical (satisfied)",
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-k5",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "K5C",
+    "migration_key": "utcp:k5c",
+    "title": "Capacity and failure-domain policy",
+    "type": "milestone",
+    "description": "Capacity and failure-domain policy",
+    "workstream": "infrastructure",
+    "source_status": "Complete / natural-live-proven",
+    "evidence_classification": "ledger-recorded-live-proof",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": "R0-Critical (satisfied)",
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-k5",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "K5D",
+    "migration_key": "utcp:k5d",
+    "title": "Telephony-aware host maintenance",
+    "type": "milestone",
+    "description": "Telephony-aware host maintenance",
+    "workstream": "infrastructure",
+    "source_status": "Complete / natural-live-proven",
+    "evidence_classification": "ledger-recorded-live-proof",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": "R0-Critical (satisfied)",
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-k5",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "K5E",
+    "migration_key": "utcp:k5e",
+    "title": "Distributed infrastructure live proof",
+    "type": "milestone",
+    "description": "Distributed infrastructure live proof",
+    "workstream": "infrastructure",
+    "source_status": "Complete / natural-live-proven",
+    "evidence_classification": "ledger-recorded-live-proof",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": "R0-Critical (satisfied)",
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-k5",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "K5F",
+    "migration_key": "utcp:k5f",
+    "title": "Guided existing-cluster host enrollment",
+    "type": "milestone",
+    "description": "Guided existing-cluster host enrollment",
+    "workstream": "infrastructure",
+    "source_status": "Planned / not implemented / not R0 gate",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [
+      "K5E"
+    ],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M1",
+    "target_key": "utcp:k5f",
+    "justification": "Identifiable actionable outcome; import does not authorize execution."
+  },
+  {
+    "source_id": "RMA",
+    "migration_key": "utcp:rma",
+    "title": "Recording & Media Archive",
+    "type": "milestone",
+    "description": "Recording & Media Archive",
+    "workstream": "recording",
+    "source_status": "In progress / UTCP Core / R0-Critical",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [
+      "V1",
+      "K5E"
+    ],
+    "blockers": [],
+    "priority": "R0-Critical",
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M2",
+    "target_key": "utcp:rma",
+    "justification": "Multi-assignment workstream or release boundary; use parent task."
+  },
+  {
+    "source_id": "RMA-A",
+    "migration_key": "utcp:rma-a",
+    "title": "Recording Authority and Lifecycle",
+    "type": "milestone",
+    "description": "Recording Authority and Lifecycle",
+    "workstream": "recording",
+    "source_status": "Complete / natural-live-proven",
+    "evidence_classification": "ledger-recorded-acceptance-proof",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": "R0-Critical (satisfied)",
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-rma-ad",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "RMA-B",
+    "migration_key": "utcp:rma-b",
+    "title": "Runtime-Neutral Capture Contract",
+    "type": "milestone",
+    "description": "Runtime-Neutral Capture Contract",
+    "workstream": "recording",
+    "source_status": "Complete / acceptance-proven",
+    "evidence_classification": "ledger-recorded-acceptance-proof",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": "R0-Critical (satisfied)",
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-rma-ad",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "RMA-C",
+    "migration_key": "utcp:rma-c",
+    "title": "Recording Artifact Authority",
+    "type": "milestone",
+    "description": "Recording Artifact Authority",
+    "workstream": "recording",
+    "source_status": "Complete / natural-live-proven",
+    "evidence_classification": "ledger-recorded-acceptance-proof",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": "R0-Critical (satisfied)",
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-rma-ad",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "RMA-D",
+    "migration_key": "utcp:rma-d",
+    "title": "Archive Target and Secret-Reference Authority",
+    "type": "milestone",
+    "description": "Archive Target and Secret-Reference Authority",
+    "workstream": "recording",
+    "source_status": "Complete / authenticated-API-proven",
+    "evidence_classification": "ledger-recorded-acceptance-proof",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": "R0-Critical (satisfied)",
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-rma-ad",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "RMA-E",
+    "migration_key": "utcp:rma-e",
+    "title": "S3-Compatible Archive Adapter and Deterministic MinIO Proof",
+    "type": "workstream",
+    "description": "Run RMA_E_S3_COMPATIBLE_ARCHIVE_ADAPTER_AND_DETERMINISTIC_MINIO_PROOF_IMPLEMENTATION_DESIGN; implementation/live writes need their own scope.",
+    "workstream": "recording",
+    "source_status": "Not started; canonical next action is implementation design",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [
+      "RMA-C",
+      "RMA-D",
+      "K5E",
+      "V1"
+    ],
+    "blockers": [],
+    "priority": "R0-Critical / canonical next action",
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M1",
+    "target_key": "utcp:rma-e",
+    "justification": "Identifiable actionable outcome; import does not authorize execution."
+  },
+  {
+    "source_id": "RMA-F",
+    "migration_key": "utcp:rma-f",
+    "title": "BYO Storage Credentials and Rotation",
+    "type": "milestone",
+    "description": "BYO Storage Credentials and Rotation",
+    "workstream": "recording",
+    "source_status": "Not started",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": "R0-Critical",
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Preserve named release slice in parent acceptance checklist; defer individual task expansion until bounded assignments are designed."
+  },
+  {
+    "source_id": "RMA-G",
+    "migration_key": "utcp:rma-g",
+    "title": "Retention and Deletion Lifecycle",
+    "type": "milestone",
+    "description": "Retention and Deletion Lifecycle",
+    "workstream": "recording",
+    "source_status": "Not started",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": "R0-Critical",
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Preserve named release slice in parent acceptance checklist; defer individual task expansion until bounded assignments are designed."
+  },
+  {
+    "source_id": "RMA-H",
+    "migration_key": "utcp:rma-h",
+    "title": "Distributed Recording and Archive Natural Live Proof",
+    "type": "milestone",
+    "description": "Distributed Recording and Archive Natural Live Proof",
+    "workstream": "recording",
+    "source_status": "Not started",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": "R0-Critical",
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Preserve named release slice in parent acceptance checklist; defer individual task expansion until bounded assignments are designed."
+  },
+  {
+    "source_id": "A0",
+    "migration_key": "utcp:a0",
+    "title": "Minimal outbound, inbound and IVR-style reference consumers",
+    "type": "milestone",
+    "description": "Minimal outbound, inbound and IVR-style reference consumers",
+    "workstream": "reference-consumers",
+    "source_status": "Eligible (ledger); planned scope",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [
+      "V1"
+    ],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M1",
+    "target_key": "utcp:a0",
+    "justification": "May progress in parallel; RMA is preferred sequencing, not a technical prerequisite."
+  },
+  {
+    "source_id": "R0",
+    "migration_key": "utcp:r0",
+    "title": "Finite core release acceptance boundary",
+    "type": "milestone",
+    "description": "Finite core release acceptance boundary",
+    "workstream": "platform-governance",
+    "source_status": "Planned",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [
+      "A0",
+      "K5E",
+      "RMA"
+    ],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M2",
+    "target_key": "utcp:r0",
+    "justification": "Multi-assignment workstream or release boundary; use parent task."
+  },
+  {
+    "source_id": "C8",
+    "migration_key": "utcp:c8",
+    "title": "Unified call transfer and inter-runtime handoff",
+    "type": "milestone",
+    "description": "Unified call transfer and inter-runtime handoff",
+    "workstream": "telephony",
+    "source_status": "Planned; advanced handoff post-R0/R1 by default",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "REPORTING",
+    "migration_key": "utcp:reporting",
+    "title": "Operational Reporting & Insights",
+    "type": "milestone",
+    "description": "Operational Reporting & Insights",
+    "workstream": "future-core",
+    "source_status": "Future / post-current-R0 / not implemented",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md",
+      "docs/decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md",
+      "docs/decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a",
+      "docs/decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md": "d133dec53e65fc66c49ef14daa278b16ea21542c1384c8851e10b895469c0cdd"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "MEDIA-PLANE",
+    "migration_key": "utcp:media-plane",
+    "title": "Future Media Processing Plane",
+    "type": "milestone",
+    "description": "Future Media Processing Plane",
+    "workstream": "future-core",
+    "source_status": "Architecture only / not R0 gate",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/implementation-roadmap.md",
+      "docs/decisions/ADR-026-future-media-processing-plane-and-ai-integration-boundary.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/implementation-roadmap.md",
+      "docs/decisions/ADR-026-future-media-processing-plane-and-ai-integration-boundary.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a",
+      "docs/decisions/ADR-026-future-media-processing-plane-and-ai-integration-boundary.md": "2923fc02c3ada460646579d24c67550239b4fd20787b47375f8c75ade3e5324a"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "APPLICATION-EXTENSIONS",
+    "migration_key": "utcp:application-extensions",
+    "title": "Queue/ACD, campaigns, CRM, advanced IVR, billing, numbering and messaging",
+    "type": "scope-boundary",
+    "description": "Queue/ACD, campaigns, CRM, advanced IVR, billing, numbering and messaging",
+    "workstream": "application-extensions",
+    "source_status": "Future/outside R0 core",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M6",
+    "target_key": null,
+    "justification": "Outside current operational migration; preserve source without task creation."
+  },
+  {
+    "source_id": "UI-A",
+    "migration_key": "utcp:ui-a",
+    "title": "UI A foundation",
+    "type": "milestone",
+    "description": "UI A foundation",
+    "workstream": "ui",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/ui-foundations.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/ui-foundations.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/ui-foundations.md": "e7624634366c30d66a3660ab89459ab30b5c1ff9ccec95612f0bb4cffeedba4b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "UI-B",
+    "migration_key": "utcp:ui-b",
+    "title": "UI B foundation",
+    "type": "milestone",
+    "description": "UI B foundation",
+    "workstream": "ui",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/ui-foundations.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/ui-foundations.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/ui-foundations.md": "e7624634366c30d66a3660ab89459ab30b5c1ff9ccec95612f0bb4cffeedba4b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "UI-C",
+    "migration_key": "utcp:ui-c",
+    "title": "UI C foundation",
+    "type": "milestone",
+    "description": "UI C foundation",
+    "workstream": "ui",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/ui-foundations.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/ui-foundations.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/ui-foundations.md": "e7624634366c30d66a3660ab89459ab30b5c1ff9ccec95612f0bb4cffeedba4b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "UI-D",
+    "migration_key": "utcp:ui-d",
+    "title": "UI D foundation",
+    "type": "milestone",
+    "description": "UI D foundation",
+    "workstream": "ui",
+    "source_status": "Complete (T1-achievable scope; later evidence retained)",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/ui-foundations.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/ui-foundations.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/ui-foundations.md": "e7624634366c30d66a3660ab89459ab30b5c1ff9ccec95612f0bb4cffeedba4b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "UI-E",
+    "migration_key": "utcp:ui-e",
+    "title": "UI E foundation",
+    "type": "milestone",
+    "description": "UI E foundation",
+    "workstream": "ui",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/ui-foundations.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/ui-foundations.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/ui-foundations.md": "e7624634366c30d66a3660ab89459ab30b5c1ff9ccec95612f0bb4cffeedba4b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Essential historical context; aggregate rather than one task per report."
+  },
+  {
+    "source_id": "WAC",
+    "migration_key": "utcp:wac",
+    "title": "Workload-aware capacity & placement",
+    "type": "milestone",
+    "description": "Workload-aware capacity & placement",
+    "workstream": "future-infrastructure",
+    "source_status": "Future / post-core / not started / not R0-gating",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/workload-aware-capacity-placement.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/workload-aware-capacity-placement.md",
+      "docs/roadmap/implementation-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/workload-aware-capacity-placement.md": "f402c718ea7851c4979fe1629011edd16f7efee94aba24fe93300b1cd5162cdf",
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "WAC-0",
+    "migration_key": "utcp:wac-0",
+    "title": "Capacity Authority and Evidence Model",
+    "type": "milestone",
+    "description": "Capacity Authority and Evidence Model",
+    "workstream": "future-infrastructure",
+    "source_status": "Future / unscheduled / not implemented",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/workload-aware-capacity-placement.md": "f402c718ea7851c4979fe1629011edd16f7efee94aba24fe93300b1cd5162cdf"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "WAC-1",
+    "migration_key": "utcp:wac-1",
+    "title": "Workload Classification Foundation",
+    "type": "milestone",
+    "description": "Workload Classification Foundation",
+    "workstream": "future-infrastructure",
+    "source_status": "Future / unscheduled / not implemented",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/workload-aware-capacity-placement.md": "f402c718ea7851c4979fe1629011edd16f7efee94aba24fe93300b1cd5162cdf"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "WAC-2",
+    "migration_key": "utcp:wac-2",
+    "title": "Runtime Capacity Observation",
+    "type": "milestone",
+    "description": "Runtime Capacity Observation",
+    "workstream": "future-infrastructure",
+    "source_status": "Future / unscheduled / not implemented",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/workload-aware-capacity-placement.md": "f402c718ea7851c4979fe1629011edd16f7efee94aba24fe93300b1cd5162cdf"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "WAC-3",
+    "migration_key": "utcp:wac-3",
+    "title": "Workload Cost Profiles",
+    "type": "milestone",
+    "description": "Workload Cost Profiles",
+    "workstream": "future-infrastructure",
+    "source_status": "Future / unscheduled / not implemented",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/workload-aware-capacity-placement.md": "f402c718ea7851c4979fe1629011edd16f7efee94aba24fe93300b1cd5162cdf"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "WAC-4",
+    "migration_key": "utcp:wac-4",
+    "title": "Runtime Headroom Model",
+    "type": "milestone",
+    "description": "Runtime Headroom Model",
+    "workstream": "future-infrastructure",
+    "source_status": "Future / unscheduled / not implemented",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/workload-aware-capacity-placement.md": "f402c718ea7851c4979fe1629011edd16f7efee94aba24fe93300b1cd5162cdf"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "WAC-5",
+    "migration_key": "utcp:wac-5",
+    "title": "Workload-Aware Admission",
+    "type": "milestone",
+    "description": "Workload-Aware Admission",
+    "workstream": "future-infrastructure",
+    "source_status": "Future / unscheduled / not implemented",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/workload-aware-capacity-placement.md": "f402c718ea7851c4979fe1629011edd16f7efee94aba24fe93300b1cd5162cdf"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "WAC-6",
+    "migration_key": "utcp:wac-6",
+    "title": "Workload-Aware Candidate Ranking",
+    "type": "milestone",
+    "description": "Workload-Aware Candidate Ranking",
+    "workstream": "future-infrastructure",
+    "source_status": "Future / unscheduled / not implemented",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/workload-aware-capacity-placement.md": "f402c718ea7851c4979fe1629011edd16f7efee94aba24fe93300b1cd5162cdf"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "WAC-7",
+    "migration_key": "utcp:wac-7",
+    "title": "Placement Diversity and Failure-Domain Optimization",
+    "type": "milestone",
+    "description": "Placement Diversity and Failure-Domain Optimization",
+    "workstream": "future-infrastructure",
+    "source_status": "Future / unscheduled / not implemented",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/workload-aware-capacity-placement.md": "f402c718ea7851c4979fe1629011edd16f7efee94aba24fe93300b1cd5162cdf"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "WAC-8",
+    "migration_key": "utcp:wac-8",
+    "title": "Capacity Calibration and Benchmark Evidence",
+    "type": "milestone",
+    "description": "Capacity Calibration and Benchmark Evidence",
+    "workstream": "future-infrastructure",
+    "source_status": "Future / unscheduled / not implemented",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/workload-aware-capacity-placement.md": "f402c718ea7851c4979fe1629011edd16f7efee94aba24fe93300b1cd5162cdf"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "WAC-9",
+    "migration_key": "utcp:wac-9",
+    "title": "Adaptive Capacity Recommendations",
+    "type": "milestone",
+    "description": "Adaptive Capacity Recommendations",
+    "workstream": "future-infrastructure",
+    "source_status": "Future / unscheduled / not implemented",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/workload-aware-capacity-placement.md": "f402c718ea7851c4979fe1629011edd16f7efee94aba24fe93300b1cd5162cdf"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "WAC-10",
+    "migration_key": "utcp:wac-10",
+    "title": "Autoscaling Integration",
+    "type": "milestone",
+    "description": "Autoscaling Integration",
+    "workstream": "future-infrastructure",
+    "source_status": "Future / unscheduled / not implemented",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/workload-aware-capacity-placement.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/workload-aware-capacity-placement.md": "f402c718ea7851c4979fe1629011edd16f7efee94aba24fe93300b1cd5162cdf"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "GN-READINESS",
+    "migration_key": "utcp:gn-readiness",
+    "title": "UTCP Go-Native Infrastructure Migration Readiness E1",
+    "type": "assignment",
+    "description": "UTCP Go-Native Infrastructure Migration Readiness E1",
+    "workstream": "go-infrastructure",
+    "source_status": "Architecture readiness proposal",
+    "evidence_classification": "architecture-proposal",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "No production transfer claimed",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_INFRASTRUCTURE_MIGRATION_READINESS_E1.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_INFRASTRUCTURE_MIGRATION_READINESS_E1.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GO_NATIVE_INFRASTRUCTURE_MIGRATION_READINESS_E1.md": "b542798ee269fd6552a3f801c3bd9a092aabf8bfc4d2cfe53977d2e7132a5fc4"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Link exact report and subsequent proof; do not turn historical limitations into currently reopened defects."
+  },
+  {
+    "source_id": "GN-G0",
+    "migration_key": "utcp:gn-g0",
+    "title": "UTCP GN-G0 — Infrastructure adapter contract and executable fake proof",
+    "type": "assignment",
+    "description": "UTCP GN-G0 — Infrastructure adapter contract and executable fake proof",
+    "workstream": "go-infrastructure",
+    "source_status": "Contract/fake proof complete; deferred real proof",
+    "evidence_classification": "reported-developer-verification",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "No production transfer claimed",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GN_G0_INFRASTRUCTURE_ADAPTER_CONTRACT_AND_FAKE_PROOF.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GN_G0_INFRASTRUCTURE_ADAPTER_CONTRACT_AND_FAKE_PROOF.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GN_G0_INFRASTRUCTURE_ADAPTER_CONTRACT_AND_FAKE_PROOF.md": "38ec0faf1fabf446644d8cb6c490c4cd99092b46d6e4ce08b60cceb5bd06b4b7"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-gn",
+    "justification": "Link exact report and subsequent proof; do not turn historical limitations into currently reopened defects."
+  },
+  {
+    "source_id": "GN-G1",
+    "migration_key": "utcp:gn-g1",
+    "title": "UTCP GN-G1 — Read-only Go Kubernetes infrastructure observation parity",
+    "type": "assignment",
+    "description": "UTCP GN-G1 — Read-only Go Kubernetes infrastructure observation parity",
+    "workstream": "go-infrastructure",
+    "source_status": "Implemented/developer-tested; baseline acceptance dependency",
+    "evidence_classification": "reported-developer-verification",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "No production transfer claimed",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GN_G1_READ_ONLY_GO_INFRASTRUCTURE_OBSERVATION_PARITY.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GN_G1_READ_ONLY_GO_INFRASTRUCTURE_OBSERVATION_PARITY.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GN_G1_READ_ONLY_GO_INFRASTRUCTURE_OBSERVATION_PARITY.md": "c8711bb45c2efe4805485fb76a1ec06ca403ff3ee41b489fde19e99423dd6a65"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-gn",
+    "justification": "Link exact report and subsequent proof; do not turn historical limitations into currently reopened defects."
+  },
+  {
+    "source_id": "GN-G2-EFFECTS",
+    "migration_key": "utcp:gn-g2-effects",
+    "title": "UTCP GN-G2 — Conditional Kubernetes Deployment Effects",
+    "type": "assignment",
+    "description": "UTCP GN-G2 — Conditional Kubernetes Deployment Effects",
+    "workstream": "go-infrastructure",
+    "source_status": "Implemented; historical simulated proof only",
+    "evidence_classification": "reported-developer-verification",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "No production transfer claimed",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GN_G2_CONDITIONAL_KUBERNETES_DEPLOYMENT_EFFECTS.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GN_G2_CONDITIONAL_KUBERNETES_DEPLOYMENT_EFFECTS.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GN_G2_CONDITIONAL_KUBERNETES_DEPLOYMENT_EFFECTS.md": "9a9d8837b9939909831f37e0f485950a89e989ddacbbe6149ddb6c5f15758b85"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-gn",
+    "justification": "Link exact report and subsequent proof; do not turn historical limitations into currently reopened defects."
+  },
+  {
+    "source_id": "GN-G2-REAL-API",
+    "migration_key": "utcp:gn-g2-real-api",
+    "title": "UTCP GN-G2 — Real Kubernetes API conditional-effect verification",
+    "type": "assignment",
+    "description": "UTCP GN-G2 — Real Kubernetes API conditional-effect verification",
+    "workstream": "go-infrastructure",
+    "source_status": "Isolated real API verification recorded",
+    "evidence_classification": "reported-developer-verification",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "No production transfer claimed",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GN_G2_REAL_KUBERNETES_API_CONDITIONAL_EFFECT_VERIFICATION.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GN_G2_REAL_KUBERNETES_API_CONDITIONAL_EFFECT_VERIFICATION.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GN_G2_REAL_KUBERNETES_API_CONDITIONAL_EFFECT_VERIFICATION.md": "02466928f0dd068a8766f1bce3ac5eec60547c34e7c5c962b5c80405203edcbc"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-gn",
+    "justification": "Link exact report and subsequent proof; do not turn historical limitations into currently reopened defects."
+  },
+  {
+    "source_id": "GN-G2-LIFECYCLE",
+    "migration_key": "utcp:gn-g2-lifecycle",
+    "title": "GN-G2 Lifecycle V2 — Conditional Deployment Management",
+    "type": "assignment",
+    "description": "GN-G2 Lifecycle V2 — Conditional Deployment Management",
+    "workstream": "go-infrastructure",
+    "source_status": "Lifecycle v2 implemented with limitations",
+    "evidence_classification": "reported-developer-verification",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "No production transfer claimed",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GN_G2_LIFECYCLE_V2_CONDITIONAL_DEPLOYMENT_MANAGEMENT.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GN_G2_LIFECYCLE_V2_CONDITIONAL_DEPLOYMENT_MANAGEMENT.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GN_G2_LIFECYCLE_V2_CONDITIONAL_DEPLOYMENT_MANAGEMENT.md": "0f26357ad67d56e3b8080e0f409d2daa0e8204f6775df9adc660f7d03967ca08"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-gn",
+    "justification": "Link exact report and subsequent proof; do not turn historical limitations into currently reopened defects."
+  },
+  {
+    "source_id": "GN-G2-ACTIVE",
+    "migration_key": "utcp:gn-g2-active",
+    "title": "GN-G2 Active Runtime Projection Profiles and Five-Corridor Parity",
+    "type": "assignment",
+    "description": "GN-G2 Active Runtime Projection Profiles and Five-Corridor Parity",
+    "workstream": "go-infrastructure",
+    "source_status": "Active profiles implemented with limitations; zero replicas",
+    "evidence_classification": "reported-developer-verification",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "No production transfer claimed",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GN_G2_ACTIVE_RUNTIME_PROJECTION_PROFILES_AND_FIVE_CORRIDOR_PARITY.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GN_G2_ACTIVE_RUNTIME_PROJECTION_PROFILES_AND_FIVE_CORRIDOR_PARITY.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GN_G2_ACTIVE_RUNTIME_PROJECTION_PROFILES_AND_FIVE_CORRIDOR_PARITY.md": "fec2f7577fbb14b756ee2b733b5630c5b0fdef5cb45fa06e38245ee29646b0ee"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-gn",
+    "justification": "Link exact report and subsequent proof; do not turn historical limitations into currently reopened defects."
+  },
+  {
+    "source_id": "GN-G2-CANONICAL",
+    "migration_key": "utcp:gn-g2-canonical",
+    "title": "GN-G2 Canonical Lifecycle and Claim Foundation",
+    "type": "assignment",
+    "description": "GN-G2 Canonical Lifecycle and Claim Foundation",
+    "workstream": "go-infrastructure",
+    "source_status": "Canonical PostgreSQL foundation developer verified",
+    "evidence_classification": "reported-developer-verification",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "No production transfer claimed",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GN_G2_CANONICAL_LIFECYCLE_AND_CLAIM_FOUNDATION.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GN_G2_CANONICAL_LIFECYCLE_AND_CLAIM_FOUNDATION.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GN_G2_CANONICAL_LIFECYCLE_AND_CLAIM_FOUNDATION.md": "21f17461c9148e8ac3f96119d59ac6e992fa89f0cd0e9d5f1bb9679b6880c48e"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-gn",
+    "justification": "Link exact report and subsequent proof; do not turn historical limitations into currently reopened defects."
+  },
+  {
+    "source_id": "GN-G3",
+    "migration_key": "utcp:gn-g3",
+    "title": "Exclusive application Deployment writer cutover",
+    "type": "milestone",
+    "description": "Exclusive application Deployment writer cutover",
+    "workstream": "go-infrastructure",
+    "source_status": "Proposal only / not authorized",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [
+      "GN-G2-CANONICAL",
+      "GN-G2-ACTIVE",
+      "GN-G2-REAL-API"
+    ],
+    "blockers": [
+      "Adopted adapter ADR",
+      "Independent acceptance",
+      "Explicit environment and cutover authorization",
+      "Baseline checker disposition",
+      "Real integration and exclusive writer controls"
+    ],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/gn-g2/GN-G3-implementation-assignment.md",
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/gn-g2/GN-G3-implementation-assignment.md",
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/gn-g2/GN-G3-implementation-assignment.md": "c2751a2a9bda62b1d72152836b2a71bbe6064242ec803094088793d6afbc8b31",
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Keep as linked alternate extraction strategy; GO-CP6 broader transfer must reconcile it before any live cutover. Do not create a second active writer-transfer program."
+  },
+  {
+    "source_id": "GN-G4",
+    "migration_key": "utcp:gn-g4",
+    "title": "Separate runtime integration evaluation",
+    "type": "milestone",
+    "description": "Separate runtime integration evaluation",
+    "workstream": "go-infrastructure",
+    "source_status": "Original proposal; reassessed by broader Go-native pivot",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_INFRASTRUCTURE_MIGRATION_READINESS_E1.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_INFRASTRUCTURE_MIGRATION_READINESS_E1.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GO_NATIVE_INFRASTRUCTURE_MIGRATION_READINESS_E1.md": "b542798ee269fd6552a3f801c3bd9a092aabf8bfc4d2cfe53977d2e7132a5fc4"
+    },
+    "disposition": "M6",
+    "target_key": null,
+    "justification": "Retain proposal history; current GO-CP roadmap supplies backend planning, without asserting formal supersession."
+  },
+  {
+    "source_id": "GN-G5",
+    "migration_key": "utcp:gn-g5",
+    "title": "Backend modernization decision",
+    "type": "milestone",
+    "description": "Backend modernization decision",
+    "workstream": "go-infrastructure",
+    "source_status": "Original proposal; reassessed by broader Go-native pivot",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_INFRASTRUCTURE_MIGRATION_READINESS_E1.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_INFRASTRUCTURE_MIGRATION_READINESS_E1.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GO_NATIVE_INFRASTRUCTURE_MIGRATION_READINESS_E1.md": "b542798ee269fd6552a3f801c3bd9a092aabf8bfc4d2cfe53977d2e7132a5fc4"
+    },
+    "disposition": "M6",
+    "target_key": null,
+    "justification": "Retain proposal history; current GO-CP roadmap supplies backend planning, without asserting formal supersession."
+  },
+  {
+    "source_id": "GO-NATIVE",
+    "migration_key": "utcp:go-native",
+    "title": "Go-native control-plane modernization",
+    "type": "milestone",
+    "description": "Go-native control-plane modernization",
+    "workstream": "go-backend",
+    "source_status": "Operator-selected target; architecture ADR proposed",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md",
+      "docs/architecture/proposals/go-native-control-plane-adr-proposed.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md",
+      "docs/architecture/proposals/go-native-control-plane-adr-proposed.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546",
+      "docs/architecture/proposals/go-native-control-plane-adr-proposed.md": "b0a5639cc67674c6d43b966eac9ebe49e1bf26de3b1850c47a0c1872297f8663"
+    },
+    "disposition": "M2",
+    "target_key": "utcp:go-native",
+    "justification": "Multi-assignment workstream or release boundary; use parent task."
+  },
+  {
+    "source_id": "GO-CP0",
+    "migration_key": "utcp:go-cp0",
+    "title": "Architecture review and formal Go-native ADR adoption",
+    "type": "decision",
+    "description": "Architecture review and formal Go-native ADR adoption",
+    "workstream": "go-backend",
+    "source_status": "Proposed / awaiting operator adoption",
+    "evidence_classification": "proposed-architecture",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [
+      "Independent architecture/security review",
+      "Explicit operator adoption"
+    ],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/go-native-control-plane-adr-proposed.md",
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/go-native-control-plane-adr-proposed.md",
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/go-native-control-plane-adr-proposed.md": "b0a5639cc67674c6d43b966eac9ebe49e1bf26de3b1850c47a0c1872297f8663",
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+    },
+    "disposition": "M1",
+    "target_key": "utcp:go-cp0",
+    "justification": "Identifiable actionable outcome; import does not authorize execution."
+  },
+  {
+    "source_id": "GO-CP1",
+    "migration_key": "utcp:go-cp1",
+    "title": "Isolated canonical kernel and infrastructure authority stores",
+    "type": "milestone",
+    "description": "Isolated canonical kernel and infrastructure authority stores",
+    "workstream": "go-backend",
+    "source_status": "E1–E4 developer verified; independent acceptance not established",
+    "evidence_classification": "reported-developer-verification",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "Isolated only; no authority transfer",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+    },
+    "disposition": "M2",
+    "target_key": "utcp:go-cp1",
+    "justification": "Multi-assignment workstream or release boundary; use parent task."
+  },
+  {
+    "source_id": "GO-CP1-E1",
+    "migration_key": "utcp:go-cp1-e1",
+    "title": "Canonical kernel",
+    "type": "assignment",
+    "description": "Canonical kernel",
+    "workstream": "go-backend",
+    "source_status": "IMPLEMENTED_WITH_LIMITATIONS",
+    "evidence_classification": "reported-developer-verification",
+    "independent_review": "Not established; reports prepare independent review",
+    "operator_acceptance": "Not established",
+    "production_state": "No deployed integration or production readiness",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E1.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E1.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E1.md": "f10d2f6061dfc4e59da13d56ef2cf9640f6fed8760d753868ae4e122e9c895ad"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-go-cp1",
+    "justification": "Preserve developer attribution. E2/E3 address E1 scoped gaps; E4 adds isolated journal. Aggregate four reports in one in-review summary, never autoaccept."
+  },
+  {
+    "source_id": "GO-CP1-E2",
+    "migration_key": "utcp:go-cp1-e2",
+    "title": "Asterisk policy parity",
+    "type": "assignment",
+    "description": "Asterisk policy parity",
+    "workstream": "go-backend",
+    "source_status": "ASTERISK_POLICY_PARITY_VERIFIED",
+    "evidence_classification": "reported-developer-verification",
+    "independent_review": "Not established; reports prepare independent review",
+    "operator_acceptance": "Not established",
+    "production_state": "No deployed integration or production readiness",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E2_ASTERISK_DOMAIN_POLICY_PARITY.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E2_ASTERISK_DOMAIN_POLICY_PARITY.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E2_ASTERISK_DOMAIN_POLICY_PARITY.md": "b5dba11c57e70d0ea114f3f20c3508ca0e52c7263456cbfe443935e54bccc780"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-go-cp1",
+    "justification": "Preserve developer attribution. E2/E3 address E1 scoped gaps; E4 adds isolated journal. Aggregate four reports in one in-review summary, never autoaccept."
+  },
+  {
+    "source_id": "GO-CP1-E3",
+    "migration_key": "utcp:go-cp1-e3",
+    "title": "Trusted recovery evidence",
+    "type": "assignment",
+    "description": "Trusted recovery evidence",
+    "workstream": "go-backend",
+    "source_status": "TRUSTED_RECOVERY_VERIFIED",
+    "evidence_classification": "reported-developer-verification",
+    "independent_review": "Not established; reports prepare independent review",
+    "operator_acceptance": "Not established",
+    "production_state": "No deployed integration or production readiness",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E3_TRUSTED_RECOVERY_EVIDENCE.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E3_TRUSTED_RECOVERY_EVIDENCE.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E3_TRUSTED_RECOVERY_EVIDENCE.md": "2d829eeaf2fc971a1bd115f1eeee195727931c9612d9eed09e6b0ddeecfcd023"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-go-cp1",
+    "justification": "Preserve developer attribution. E2/E3 address E1 scoped gaps; E4 adds isolated journal. Aggregate four reports in one in-review summary, never autoaccept."
+  },
+  {
+    "source_id": "GO-CP1-E4",
+    "migration_key": "utcp:go-cp1-e4",
+    "title": "Durable executor journal",
+    "type": "assignment",
+    "description": "Durable executor journal",
+    "workstream": "go-backend",
+    "source_status": "EXECUTOR_JOURNAL_VERIFIED",
+    "evidence_classification": "reported-developer-verification",
+    "independent_review": "Not established; reports prepare independent review",
+    "operator_acceptance": "Not established",
+    "production_state": "No deployed integration or production readiness",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md": "039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-go-cp1",
+    "justification": "Preserve developer attribution. E2/E3 address E1 scoped gaps; E4 adds isolated journal. Aggregate four reports in one in-review summary, never autoaccept."
+  },
+  {
+    "source_id": "GO-CP1-REVIEW",
+    "migration_key": "utcp:go-cp1-review",
+    "title": "Independent review of canonical kernel E1–E4 evidence",
+    "type": "review-gate",
+    "description": "Independent review of canonical kernel E1–E4 evidence",
+    "workstream": "go-backend",
+    "source_status": "Ready for independent review per reports; review not established",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [
+      "GO-CP1-E4"
+    ],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E1.md",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E2_ASTERISK_DOMAIN_POLICY_PARITY.md",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E3_TRUSTED_RECOVERY_EVIDENCE.md",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E1.md",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E2_ASTERISK_DOMAIN_POLICY_PARITY.md",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E3_TRUSTED_RECOVERY_EVIDENCE.md",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E1.md": "f10d2f6061dfc4e59da13d56ef2cf9640f6fed8760d753868ae4e122e9c895ad",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E2_ASTERISK_DOMAIN_POLICY_PARITY.md": "b5dba11c57e70d0ea114f3f20c3508ca0e52c7263456cbfe443935e54bccc780",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E3_TRUSTED_RECOVERY_EVIDENCE.md": "2d829eeaf2fc971a1bd115f1eeee195727931c9612d9eed09e6b0ddeecfcd023",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md": "039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891"
+    },
+    "disposition": "M1",
+    "target_key": "utcp:go-cp1-review",
+    "justification": "Identifiable actionable outcome; import does not authorize execution."
+  },
+  {
+    "source_id": "GO-CP2",
+    "migration_key": "utcp:go-cp2",
+    "title": "Identity, HTTP and realtime compatibility",
+    "type": "milestone",
+    "description": "Identity, HTTP and realtime compatibility",
+    "workstream": "go-backend",
+    "source_status": "Proposed future stage; no authority transfer authorized",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [
+      "GO-CP1"
+    ],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+    },
+    "disposition": "M2",
+    "target_key": "utcp:go-cp2",
+    "justification": "Multi-assignment workstream or release boundary; use parent task."
+  },
+  {
+    "source_id": "GO-CP3",
+    "migration_key": "utcp:go-cp3",
+    "title": "Registry and infrastructure integration",
+    "type": "milestone",
+    "description": "Registry and infrastructure integration",
+    "workstream": "go-backend",
+    "source_status": "Proposed future stage; no authority transfer authorized",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [
+      "GO-CP2"
+    ],
+    "blockers": [
+      "Stage-specific acceptance and separately authorized live work"
+    ],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+    },
+    "disposition": "M2",
+    "target_key": "utcp:go-cp3",
+    "justification": "Multi-assignment workstream or release boundary; use parent task."
+  },
+  {
+    "source_id": "GO-CP4",
+    "migration_key": "utcp:go-cp4",
+    "title": "Telephony and signaling migration",
+    "type": "milestone",
+    "description": "Telephony and signaling migration",
+    "workstream": "go-backend",
+    "source_status": "Proposed future stage; no authority transfer authorized",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [
+      "GO-CP3"
+    ],
+    "blockers": [
+      "Stage-specific acceptance and separately authorized live work"
+    ],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+    },
+    "disposition": "M2",
+    "target_key": "utcp:go-cp4",
+    "justification": "Multi-assignment workstream or release boundary; use parent task."
+  },
+  {
+    "source_id": "GO-CP5",
+    "migration_key": "utcp:go-cp5",
+    "title": "Recording and remaining domain/API parity",
+    "type": "milestone",
+    "description": "Recording and remaining domain/API parity",
+    "workstream": "go-backend",
+    "source_status": "Proposed future stage; no authority transfer authorized",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [
+      "GO-CP4"
+    ],
+    "blockers": [
+      "Stage-specific acceptance and separately authorized live work"
+    ],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+    },
+    "disposition": "M2",
+    "target_key": "utcp:go-cp5",
+    "justification": "Multi-assignment workstream or release boundary; use parent task."
+  },
+  {
+    "source_id": "GO-CP6",
+    "migration_key": "utcp:go-cp6",
+    "title": "Controlled authority handover and Laravel retirement",
+    "type": "milestone",
+    "description": "Controlled authority handover and Laravel retirement",
+    "workstream": "go-backend",
+    "source_status": "Proposed future stage; no authority transfer authorized",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [
+      "GO-CP5"
+    ],
+    "blockers": [
+      "Stage-specific acceptance and separately authorized live work"
+    ],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+    },
+    "disposition": "M2",
+    "target_key": "utcp:go-cp6",
+    "justification": "Multi-assignment workstream or release boundary; use parent task."
+  },
+  {
+    "source_id": "GO-CP2-E1",
+    "migration_key": "utcp:go-cp2-e1",
+    "title": "Isolated identity and tenancy compatibility",
+    "type": "assignment",
+    "description": "Isolated identity and tenancy compatibility",
+    "workstream": "go-backend",
+    "source_status": "Recommended next backend implementation; not execution authorization",
+    "evidence_classification": "planned",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [
+      "GO-CP1-E4"
+    ],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/go-cp1-e4/next-assignment.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/go-cp1-e4/next-assignment.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/go-cp1-e4/next-assignment.md": "ebf1cb09419b24c6e70f32da5ca1e1187209322893c68023c811149962fdd9d7"
+    },
+    "disposition": "M1",
+    "target_key": "utcp:go-cp2-e1",
+    "justification": "Identifiable actionable outcome; import does not authorize execution."
+  },
+  {
+    "source_id": "CHECKER",
+    "migration_key": "utcp:checker",
+    "title": "Repair runtime-engine checker / accepted K5 API-client label mismatch",
+    "type": "concern",
+    "description": "Repair runtime-engine checker / accepted K5 API-client label mismatch",
+    "workstream": "governance-and-debt",
+    "source_status": "Reproduced baseline failure",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "scripts/runtime-engine/config-check",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+    ],
+    "evidence_links": [
+      "scripts/runtime-engine/config-check",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+    ],
+    "source_hashes": {
+      "scripts/runtime-engine/config-check": "84aba8dcccfb32255fca8f3930aafac477a574c39d5a7d8526afa951335a878e",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md": "039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891"
+    },
+    "disposition": "M1",
+    "target_key": "utcp:checker",
+    "justification": "Baseline acceptance dependency; relevant before CP3 production integration / CP6, not evidence that K5 is incomplete."
+  },
+  {
+    "source_id": "VUE-SCANNER",
+    "migration_key": "utcp:vue-scanner",
+    "title": "Repair precise Vue credential-form scanner false positive",
+    "type": "concern",
+    "description": "Repair precise Vue credential-form scanner false positive",
+    "workstream": "governance-and-debt",
+    "source_status": "Reproduced scanner finding",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "scripts/ci/secret-scan",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+    ],
+    "evidence_links": [
+      "scripts/ci/secret-scan",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+    ],
+    "source_hashes": {
+      "scripts/ci/secret-scan": "70ff179bfcdf0a71b3c845419010fc8a5c462a710fb4b44b20194aeb12531e8b",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md": "039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891"
+    },
+    "disposition": "M1",
+    "target_key": "utcp:vue-scanner",
+    "justification": "Retain literal-secret negative tests; CP2/CP6 security acceptance dependency. No broad Vue exclusions."
+  },
+  {
+    "source_id": "PRESERVATION",
+    "migration_key": "utcp:preservation",
+    "title": "Review and preserve untracked modernization artifacts in source control",
+    "type": "concern",
+    "description": "Review and preserve untracked modernization artifacts in source control",
+    "workstream": "governance-and-debt",
+    "source_status": "122 untracked files; no staging/commit authorized",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md": "039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891"
+    },
+    "disposition": "M1",
+    "target_key": "utcp:preservation",
+    "justification": "Reviewable preservation assignment only; a future commit requires explicit authority. Baseline is not a source-loss defect."
+  },
+  {
+    "source_id": "EXTERNAL-WRITER",
+    "migration_key": "utcp:external-writer",
+    "title": "External replica-writer policy",
+    "type": "concern",
+    "description": "External replica-writer policy",
+    "workstream": "governance-and-debt",
+    "source_status": "Future CP3/CP6 prerequisite",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Checklist under production integration; RV collision detection alone does not exclude later HPA overrides."
+  },
+  {
+    "source_id": "IMMUTABLE-CONFIG",
+    "migration_key": "utcp:immutable-config",
+    "title": "Immutable configuration/image publication",
+    "type": "concern",
+    "description": "Immutable configuration/image publication",
+    "workstream": "governance-and-debt",
+    "source_status": "Future CP3 integration prerequisite",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546",
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md": "039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Versioned Secret/ConfigMap and image provenance requirements; not an adopted implementation task."
+  },
+  {
+    "source_id": "EXECUTOR-STORAGE",
+    "migration_key": "utcp:executor-storage",
+    "title": "Durable executor storage and deployment prerequisites",
+    "type": "concern",
+    "description": "Durable executor storage and deployment prerequisites",
+    "workstream": "governance-and-debt",
+    "source_status": "Process/container retained-store proof only",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md": "039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Exclusive storage, filesystem sync/locking, archival, clone/rollback fencing remain production gates."
+  },
+  {
+    "source_id": "REAL-K8S",
+    "migration_key": "utcp:real-k8s",
+    "title": "Real executor Kubernetes authenticity/admission integration",
+    "type": "concern",
+    "description": "Real executor Kubernetes authenticity/admission integration",
+    "workstream": "governance-and-debt",
+    "source_status": "Isolated API tests exist; production executor integration not proven",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md",
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md",
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md": "039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891",
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Do not conflate GN disposable API proof with end-to-end canonical execution or telephony readiness."
+  },
+  {
+    "source_id": "SESSION-COMPAT",
+    "migration_key": "utcp:session-compat",
+    "title": "Identity/session compatibility and realtime contracts",
+    "type": "concern",
+    "description": "Identity/session compatibility and realtime contracts",
+    "workstream": "governance-and-debt",
+    "source_status": "CP2 planned",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md",
+      "docs/architecture/proposals/go-cp1-e4/next-assignment.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md",
+      "docs/architecture/proposals/go-cp1-e4/next-assignment.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546",
+      "docs/architecture/proposals/go-cp1-e4/next-assignment.md": "ebf1cb09419b24c6e70f32da5ca1e1187209322893c68023c811149962fdd9d7"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Contained by GO-CP2 and E1; no duplicate compatibility task."
+  },
+  {
+    "source_id": "PRODUCTION-CUTOVER",
+    "migration_key": "utcp:production-cutover",
+    "title": "Production authority transfer acceptance checklist",
+    "type": "concern",
+    "description": "Production authority transfer acceptance checklist",
+    "workstream": "governance-and-debt",
+    "source_status": "CP6 proposed",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md",
+      "docs/architecture/proposals/go-native-control-plane-adr-proposed.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md",
+      "docs/architecture/proposals/go-native-control-plane-adr-proposed.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546",
+      "docs/architecture/proposals/go-native-control-plane-adr-proposed.md": "b0a5639cc67674c6d43b966eac9ebe49e1bf26de3b1850c47a0c1872297f8663"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Adopted ADR, independent CP1–5 acceptance, old-writer cutoff, credential/process/route transfer and rollback are explicit gates."
+  },
+  {
+    "source_id": "ROADMAP-RESIDUE",
+    "migration_key": "utcp:roadmap-residue",
+    "title": "Reconcile stale descriptive RMA/K5 roadmap summaries",
+    "type": "concern",
+    "description": "Reconcile stale descriptive RMA/K5 roadmap summaries",
+    "workstream": "governance-and-debt",
+    "source_status": "Observed descriptive status residue",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/implementation-roadmap.md",
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/implementation-roadmap.md",
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a",
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M1",
+    "target_key": "utcp:roadmap-residue",
+    "justification": "Future bounded documentation correction must use ledger, preserve historical evidence and retain RMA-E priority."
+  },
+  {
+    "source_id": "ADR-001",
+    "migration_key": "utcp:adr-001",
+    "title": "ADR-001: Modular Monolith as the Initial Application Architecture",
+    "type": "architecture-decision",
+    "description": "ADR-001: Modular Monolith as the Initial Application Architecture",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-001-modular-monolith.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-001-modular-monolith.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-001-modular-monolith.md": "acac6322dd8fab9e70e35df201f6a88d4d93881831de75d70503ad6b0964f700"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-002",
+    "migration_key": "utcp:adr-002",
+    "title": "ADR-002: Docker Compose and Kubernetes Are Both Supported",
+    "type": "architecture-decision",
+    "description": "ADR-002: Docker Compose and Kubernetes Are Both Supported",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-002-compose-and-kubernetes.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-002-compose-and-kubernetes.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-002-compose-and-kubernetes.md": "80f9ac0fd1942f5548faad770208c7c6bc96a0a7a4382c70810ffaf3914245a0"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-003",
+    "migration_key": "utcp:adr-003",
+    "title": "ADR-003: Kustomize for UTCP Resources and Helm for Third-Party Infrastructure",
+    "type": "architecture-decision",
+    "description": "ADR-003: Kustomize for UTCP Resources and Helm for Third-Party Infrastructure",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-003-kustomize-and-helm.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-003-kustomize-and-helm.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-003-kustomize-and-helm.md": "868baed9ca014b2e0a75ce597460c6af67a2e211729e2c4aa33482bc6c9a6203"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-004",
+    "migration_key": "utcp:adr-004",
+    "title": "ADR-004: Traefik Handles Web Ingress but Not Primary SIP or RTP",
+    "type": "architecture-decision",
+    "description": "ADR-004: Traefik Handles Web Ingress but Not Primary SIP or RTP",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-004-traefik-web-ingress.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-004-traefik-web-ingress.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-004-traefik-web-ingress.md": "f396708c9c4ff5cfab3e083bd74b76c4cfce12a026437eb47108544a84d00b04"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-005",
+    "migration_key": "utcp:adr-005",
+    "title": "ADR-005: Simulator-First Runtime Integration",
+    "type": "architecture-decision",
+    "description": "ADR-005: Simulator-First Runtime Integration",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted; refined by ADR-013",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-005-simulator-first.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-005-simulator-first.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-005-simulator-first.md": "46a1c8e703e42c16ad549fa4d382e6aeb4231cae07aaa4d48c41cf7784ce7852"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-006",
+    "migration_key": "utcp:adr-006",
+    "title": "ADR-006: Hybrid Deployment Targets",
+    "type": "architecture-decision",
+    "description": "ADR-006: Hybrid Deployment Targets",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-006-hybrid-deployment-targets.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-006-hybrid-deployment-targets.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-006-hybrid-deployment-targets.md": "4c95eada5ae0d0ce248377f6f6985a32ca1e99c60ab9f9d480f6382afc0c6d3b"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-007",
+    "migration_key": "utcp:adr-007",
+    "title": "ADR-007: PostgreSQL Is Canonical and Redis Is Transient",
+    "type": "architecture-decision",
+    "description": "ADR-007: PostgreSQL Is Canonical and Redis Is Transient",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-007-postgresql-canonical-redis-transient.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-007-postgresql-canonical-redis-transient.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-007-postgresql-canonical-redis-transient.md": "e58a73d59e715cd979cdb135f70a9e82afd1b646f5a8216927f71f74f075dcc9"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-008",
+    "migration_key": "utcp:adr-008",
+    "title": "ADR-008: Container Process Role Contract and Static Web Runtime",
+    "type": "architecture-decision",
+    "description": "ADR-008: Container Process Role Contract and Static Web Runtime",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-008-container-process-contract.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-008-container-process-contract.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-008-container-process-contract.md": "ec3f3e74617f67b46ba482e7759380ae3adda45dc40a0e65dfcebcaea5d75079"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-009",
+    "migration_key": "utcp:adr-009",
+    "title": "ADR-009: Local Compose Gateway Topology",
+    "type": "architecture-decision",
+    "description": "ADR-009: Local Compose Gateway Topology",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-009-local-compose-gateway-topology.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-009-local-compose-gateway-topology.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-009-local-compose-gateway-topology.md": "6c803ee6769428c5d0c4cc54f1b57431f0e760420d5ed97fa9067d616c59722e"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-010",
+    "migration_key": "utcp:adr-010",
+    "title": "ADR-010: Local Traefik Gateway Edge Ports",
+    "type": "architecture-decision",
+    "description": "ADR-010: Local Traefik Gateway Edge Ports",
+    "workstream": "architecture-governance",
+    "source_status": "Superseded by ADR-011.",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-010-local-traefik-gateway-edge-ports.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-010-local-traefik-gateway-edge-ports.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-010-local-traefik-gateway-edge-ports.md": "b1a6f7721a905b1679c985b48679904897f700d1e32ac8777384efef35855d47"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-011",
+    "migration_key": "utcp:adr-011",
+    "title": "ADR-011: One-Cluster Standard Local Edge",
+    "type": "architecture-decision",
+    "description": "ADR-011: One-Cluster Standard Local Edge",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-011-one-cluster-standard-local-edge.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-011-one-cluster-standard-local-edge.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-011-one-cluster-standard-local-edge.md": "e29e5e71755b2aac027620cecd222bb35d7537e7b74f8d9c148e4ab27c431b41"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-012",
+    "migration_key": "utcp:adr-012",
+    "title": "ADR-012: Kubernetes Observability Foundation",
+    "type": "architecture-decision",
+    "description": "ADR-012: Kubernetes Observability Foundation",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-012-kubernetes-observability-foundation.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-012-kubernetes-observability-foundation.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-012-kubernetes-observability-foundation.md": "0443901402f1d413b03ee69ea5dc1d20615d95e4886b3e1510244455942a7a83"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-013",
+    "migration_key": "utcp:adr-013",
+    "title": "ADR-013: PostgreSQL-Backed Control-Plane Application Kernel",
+    "type": "architecture-decision",
+    "description": "ADR-013: PostgreSQL-Backed Control-Plane Application Kernel",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-013-control-plane-application-kernel.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-013-control-plane-application-kernel.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-013-control-plane-application-kernel.md": "83b7f251c891dca1f37a1bd985889a76c3a28c294803ab8205299ba0def87a75"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-014",
+    "migration_key": "utcp:adr-014",
+    "title": "ADR-014: PostgreSQL Identity, Tenancy, and Session Authentication",
+    "type": "architecture-decision",
+    "description": "ADR-014: PostgreSQL Identity, Tenancy, and Session Authentication",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-014-postgresql-identity-tenancy-and-session-authentication.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-014-postgresql-identity-tenancy-and-session-authentication.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-014-postgresql-identity-tenancy-and-session-authentication.md": "b7e506c8d5ab9808bcb886eaad0f89e3f9ea04fa7869a0e083ab05a1481fe18b"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-015",
+    "migration_key": "utcp:adr-015",
+    "title": "ADR-015: Runtime-Node Registry Authority",
+    "type": "architecture-decision",
+    "description": "ADR-015: Runtime-Node Registry Authority",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-015-runtime-node-registry-authority.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-015-runtime-node-registry-authority.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-015-runtime-node-registry-authority.md": "97a5630bed8cb001fc6fb32d77e372570022772197ef205a8f1c97f50ace1654"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-016",
+    "migration_key": "utcp:adr-016",
+    "title": "ADR-016: Runtime Engine Authority",
+    "type": "architecture-decision",
+    "description": "ADR-016: Runtime Engine Authority",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-016-runtime-engine-authority.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-016-runtime-engine-authority.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-016-runtime-engine-authority.md": "6af4d547256dd8dee4b7acfa63abdb4fe0a1da9fbee612a9848c09bb96a1ccbc"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-017",
+    "migration_key": "utcp:adr-017",
+    "title": "ADR-017: Telephony Session and Conference Domain Authority",
+    "type": "architecture-decision",
+    "description": "ADR-017: Telephony Session and Conference Domain Authority",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted and live-proven for C5.",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-017-telephony-session-conference-domain-authority.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-017-telephony-session-conference-domain-authority.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-017-telephony-session-conference-domain-authority.md": "4ca3250de4eb1afdc895eaf50e6892b2ccfd984d87be9f5be6b83558408ee64d"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-018",
+    "migration_key": "utcp:adr-018",
+    "title": "ADR-018: Asterisk ARI Adapter Boundary",
+    "type": "architecture-decision",
+    "description": "ADR-018: Asterisk ARI Adapter Boundary",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted for the T0 implementation corridor.",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-018-asterisk-ari-adapter-boundary.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-018-asterisk-ari-adapter-boundary.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-018-asterisk-ari-adapter-boundary.md": "b48decec905cc78dd408838a91b12803e62dff8f32ac5605dfc898b021610764"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-019",
+    "migration_key": "utcp:adr-019",
+    "title": "ADR-019: Kamailio Signaling Registration Authority",
+    "type": "architecture-decision",
+    "description": "ADR-019: Kamailio Signaling Registration Authority",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted for the T1 implementation corridor.",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-019-kamailio-signaling-registration-authority.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-019-kamailio-signaling-registration-authority.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-019-kamailio-signaling-registration-authority.md": "3625503bfb24891b725c962069a4249181982fe0622dac6da65572c628343bf7"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-020",
+    "migration_key": "utcp:adr-020",
+    "title": "ADR-020 — T3 RTP Media-Plane Architecture (rtpengine)",
+    "type": "architecture-decision",
+    "description": "ADR-020 — T3 RTP Media-Plane Architecture (rtpengine)",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-020-t3-rtp-media-plane.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-020-t3-rtp-media-plane.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-020-t3-rtp-media-plane.md": "3716ca533c791a8b847a3a3ba1b76ceb43c3f6cd37c60501c89b69afcd32b867"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-021",
+    "migration_key": "utcp:adr-021",
+    "title": "ADR-021: Runtime Lifecycle Management and Managed Runtime Provisioning",
+    "type": "architecture-decision",
+    "description": "ADR-021: Runtime Lifecycle Management and Managed Runtime Provisioning",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted as product direction; provisioning is deferred.",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-021-runtime-lifecycle-and-provisioning.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-021-runtime-lifecycle-and-provisioning.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-021-runtime-lifecycle-and-provisioning.md": "c9ed2cd7616b30008be16f95f8618ccccf71275d07f857fe0b53f2dd43742759"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-022",
+    "migration_key": "utcp:adr-022",
+    "title": "ADR-022: Conference SIP Routing and Browser Participant Leg Authority",
+    "type": "architecture-decision",
+    "description": "ADR-022: Conference SIP Routing and Browser Participant Leg Authority",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted for the V0 conference-admission corridor. Extends ADR-017 (telephony session and conference domain authority), ADR-019 (Kamailio signaling registration authority), and ADR-020 (T3 RTP media plane), and discharges the ADR-020 deferral \"Kamailio INVITE route authority consuming the canonical RuntimeNode eligibility projection\".",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-022-conference-sip-routing-and-browser-participant-leg.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-022-conference-sip-routing-and-browser-participant-leg.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-022-conference-sip-routing-and-browser-participant-leg.md": "45a3045d201ca7329715018050186b854efd6a13993f6fad2f36cf9379f5c005"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-023",
+    "migration_key": "utcp:adr-023",
+    "title": "ADR-023: Canonical Call Lifecycle and Call-Control Authority",
+    "type": "architecture-decision",
+    "description": "ADR-023: Canonical Call Lifecycle and Call-Control Authority",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted and implemented for C6A. This decision establishes the Wave-1 canonical model; execution, observation ingress, API projection, and runtime adapter work remain bounded C6B-C6E slices.",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-023-canonical-call-lifecycle-and-call-control-authority.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-023-canonical-call-lifecycle-and-call-control-authority.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-023-canonical-call-lifecycle-and-call-control-authority.md": "1bc92a58f7b8949f1efa09a1a71b6ea65b837da877f854527d417fb79df83819"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-024",
+    "migration_key": "utcp:adr-024",
+    "title": "ADR-024: Kubernetes Host Awareness and Telephony-Aware Infrastructure Operations",
+    "type": "architecture-decision",
+    "description": "ADR-024: Kubernetes Host Awareness and Telephony-Aware Infrastructure Operations",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted as a future architecture and roadmap direction. K5 is planned in parallel with the telephony mainline and is R0-critical; no functionality in this ADR is implemented by this documentation packet.",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-024-kubernetes-host-awareness-and-telephony-aware-infrastructure-operations.md": "3e8557fc444a6b2a3bb091d4a30b20d7ad1ec5ce2579705d39c3e28cc59fdfee"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-025",
+    "migration_key": "utcp:adr-025",
+    "title": "ADR-025: Unified Call Transfer and Inter-Runtime Handoff Authority",
+    "type": "architecture-decision",
+    "description": "ADR-025: Unified Call Transfer and Inter-Runtime Handoff Authority",
+    "workstream": "architecture-governance",
+    "source_status": "Planned / roadmap defined. This ADR records a future architecture direction; it does not claim that transfer or handoff orchestration is implemented.",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-025-unified-call-transfer-and-inter-runtime-handoff.md": "29c2b8ff8439c00e3f6e512ac303fdf2a49121966b29ca7a40502e429988a0d0"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-026",
+    "migration_key": "utcp:adr-026",
+    "title": "ADR-026 — Future Media Processing Plane and AI Integration Boundary",
+    "type": "architecture-decision",
+    "description": "ADR-026 — Future Media Processing Plane and AI Integration Boundary",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted as a future architecture boundary; not implemented",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-026-future-media-processing-plane-and-ai-integration-boundary.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-026-future-media-processing-plane-and-ai-integration-boundary.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-026-future-media-processing-plane-and-ai-integration-boundary.md": "2923fc02c3ada460646579d24c67550239b4fd20787b47375f8c75ade3e5324a"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-027",
+    "migration_key": "utcp:adr-027",
+    "title": "ADR-027: Canonical Inbound External Call Admission and Execution Target",
+    "type": "architecture-decision",
+    "description": "ADR-027: Canonical Inbound External Call Admission and Execution Target",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted as the canonical V1 inbound architecture. No runtime behavior, migration, manifest, or provider configuration is implemented by this documentation packet. It resolves the single architectural gap recorded by the preceding narrow audit verdict `V1_INBOUND_AUTHORITY_REMAINS_UNRESOLVED` and makes the next bounded implementation packet unambiguous. This ADR decides exactly one question: **where an admitted external inbound SIP INVITE is relayed, and what canonical authority governs that execution target.** Ingress identity authority, trusted correlation transport, anti-spoofing, route authority, ordering, C6 adoption timing, and failure semantics were resolved by prior evidence and are restated here only where this decision depends on them.",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-027-canonical-inbound-external-call-admission-and-execution-target.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-027-canonical-inbound-external-call-admission-and-execution-target.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-027-canonical-inbound-external-call-admission-and-execution-target.md": "5c2fb71525310c91c0ab516dd691dafd51de7372f5ff505c359bf3b2f934fd74"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-028",
+    "migration_key": "utcp:adr-028",
+    "title": "ADR-028: Native k3s Current Development and V1 Acceptance Topology",
+    "type": "architecture-decision",
+    "description": "ADR-028: Native k3s Current Development and V1 Acceptance Topology",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted as the current development and V1 acceptance topology. This ADR realigns current repository authority; it does not mutate Kubernetes, change host resolution, or claim that external SIP acceptance has passed.",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-028-native-k3s-current-development-and-v1-acceptance-topology.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-028-native-k3s-current-development-and-v1-acceptance-topology.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-028-native-k3s-current-development-and-v1-acceptance-topology.md": "1b0bf4a762b6863664ee9892b47b8278bf336a74ef05e8d5bf0a54a77dbb4486"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-029",
+    "migration_key": "utcp:adr-029",
+    "title": "ADR-029 — Recording, Media Artifact, and Archive Authority",
+    "type": "architecture-decision",
+    "description": "ADR-029 — Recording, Media Artifact, and Archive Authority",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted as a planned UTCP core capability and R0-critical roadmap track. This ADR defines a future boundary only; it does not claim Recording & Media Archive implementation or live proof.",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-029-recording-media-artifact-and-archive-authority.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-029-recording-media-artifact-and-archive-authority.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-029-recording-media-artifact-and-archive-authority.md": "09ad1ae9cdfaf5ee734aa1474e314bf7a630461e57efbc0905048b82e690c2a6"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-030",
+    "migration_key": "utcp:adr-030",
+    "title": "ADR-030: Canonical Call Termination Reason and Intent Authority",
+    "type": "architecture-decision",
+    "description": "ADR-030: Canonical Call Termination Reason and Intent Authority",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted as the canonical UTCP call-termination semantic authority. No runtime behavior, adapter code, migration, or test is changed by this documentation packet. It resolves the narrow audit verdict `TERMINATION_INTENT_AUTHORITY_UNRESOLVED` and makes the next bounded implementation packet unambiguous. This ADR decides exactly one question: **what canonical meaning UTCP assigns to the end of a Call or CallLeg, and which layer owns each part of that meaning.** Call lifecycle authority (ADR-023), runtime-engine observation authority (ADR-016), and the Asterisk adapter boundary (ADR-018) are restated here only where this decision depends on them.",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-030-canonical-call-termination-reason-and-intent-authority.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-030-canonical-call-termination-reason-and-intent-authority.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-030-canonical-call-termination-reason-and-intent-authority.md": "2406fd3a20d25672a193e7ccbdca2bf12f86ae406c1214ab17987be0cf734724"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-031",
+    "migration_key": "utcp:adr-031",
+    "title": "ADR-031: Native-k3s Provider-Facing SIP Signaling Authority",
+    "type": "architecture-decision",
+    "description": "ADR-031: Native-k3s Provider-Facing SIP Signaling Authority",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted as the canonical authority for UTCP's provider-facing SIP signaling identity on the current native-k3s environment. No runtime behavior, Kamailio configuration, Kubernetes manifest, router configuration, or DNS record is changed by this documentation packet. It resolves the narrow audit verdict `POLICY_OR_TOPOLOGY_AUTHORITY_UNRESOLVED` recorded against Gap B and makes the next bounded implementation packet unambiguous. This ADR decides exactly one question: **which layer owns the SIP address and port that external providers use to reach UTCP, and how that identity is represented, validated, and consumed.** Environment authority (native k3s / `default` / `utcp-dev01`) is settled by the canonical environment cutover and is restated here only where this decision depends on it.",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-031-native-k3s-provider-facing-sip-signaling-authority.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-031-native-k3s-provider-facing-sip-signaling-authority.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-031-native-k3s-provider-facing-sip-signaling-authority.md": "a12a918aaaf0fe0664d2576803bac7c77d23f101a342d8d3d198ef560e32715d"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-032",
+    "migration_key": "utcp:adr-032",
+    "title": "ADR-032: Canonical Management Authority and Break-Glass CLI Boundary",
+    "type": "architecture-decision",
+    "description": "ADR-032: Canonical Management Authority and Break-Glass CLI Boundary",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted. This ADR defines the management-plane boundary for UTCP-managed desired configuration and the permitted role of Artisan/CLI operations. It does not change an existing product phase or runtime behavior.",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-032-canonical-management-authority-and-break-glass-cli-boundary.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-032-canonical-management-authority-and-break-glass-cli-boundary.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-032-canonical-management-authority-and-break-glass-cli-boundary.md": "32f1086605d459c1b5efdb5df18cf58bf6cbf79405dd4fc3ad94d4f859a02825"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-033",
+    "migration_key": "utcp:adr-033",
+    "title": "ADR-033 — Operational Reporting, Insights, and Business-Reporting Boundary",
+    "type": "architecture-decision",
+    "description": "ADR-033 — Operational Reporting, Insights, and Business-Reporting Boundary",
+    "workstream": "architecture-governance",
+    "source_status": "Accepted as a future UTCP core capability and product-boundary decision. This ADR defines authority and scope only; it does not claim reporting projections, tables, APIs, exports, an Insights UI, a warehouse, or a reporting worker.",
+    "evidence_classification": "versioned-governance-record",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md"
+    ],
+    "evidence_links": [
+      "docs/decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md"
+    ],
+    "source_hashes": {
+      "docs/decisions/ADR-033-operational-reporting-insights-and-business-reporting-boundary.md": "d133dec53e65fc66c49ef14daa278b16ea21542c1384c8851e10b895469c0cdd"
+    },
+    "disposition": "M5",
+    "target_key": null,
+    "justification": "Decision remains in Git; imported task column cannot adopt, amend or supersede it."
+  },
+  {
+    "source_id": "ADR-GO-PROPOSED",
+    "migration_key": "utcp:adr-go-proposed",
+    "title": "Proposed ADR-GO-PROPOSED",
+    "type": "architecture-proposal",
+    "description": "Proposed ADR-GO-PROPOSED",
+    "workstream": "architecture-governance",
+    "source_status": "Proposed / not adopted",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/go-native-control-plane-adr-proposed.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/go-native-control-plane-adr-proposed.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/go-native-control-plane-adr-proposed.md": "b0a5639cc67674c6d43b966eac9ebe49e1bf26de3b1850c47a0c1872297f8663"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "ADR-INFRA-PROPOSED",
+    "migration_key": "utcp:adr-infra-proposed",
+    "title": "Proposed ADR-INFRA-PROPOSED",
+    "type": "architecture-proposal",
+    "description": "Proposed ADR-INFRA-PROPOSED",
+    "workstream": "architecture-governance",
+    "source_status": "Proposed / not adopted",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/go-kubernetes-infrastructure-adapter-adr-proposed.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/go-kubernetes-infrastructure-adapter-adr-proposed.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/go-kubernetes-infrastructure-adapter-adr-proposed.md": "af6a85257a504a6c0452d67c97faa3609672c55aed4fe590cf34f3ca8f5fa962"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Technical/future contract retained in Git; link when scope becomes actionable."
+  },
+  {
+    "source_id": "RT-1A",
+    "migration_key": "utcp:rt-1a",
+    "title": "Runtime notifications browser proof",
+    "type": "milestone",
+    "description": "Runtime notifications browser proof",
+    "workstream": "platform-foundation",
+    "source_status": "Complete",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M3",
+    "target_key": "utcp:history-platform",
+    "justification": "Preserve scoped source boundary; historical or deferred context does not justify a new active import."
+  },
+  {
+    "source_id": "V1-FIXTURE-CLEANUP",
+    "migration_key": "utcp:v1-fixture-cleanup",
+    "title": "Synthetic V1 fixture cleanup debt",
+    "type": "concern",
+    "description": "Synthetic V1 fixture cleanup debt",
+    "workstream": "telephony",
+    "source_status": "Deferred cleanup / separate bounded authorization",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "evidence_links": [
+      "docs/roadmap/phase-status.md"
+    ],
+    "source_hashes": {
+      "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Preserve scoped source boundary; historical or deferred context does not justify a new active import."
+  },
+  {
+    "source_id": "FREESWITCH-DOMAIN",
+    "migration_key": "utcp:freeswitch-domain",
+    "title": "FreeSWITCH domain fencing/restoration capability boundary",
+    "type": "concern",
+    "description": "FreeSWITCH domain fencing/restoration capability boundary",
+    "workstream": "telephony",
+    "source_status": "Unsupported; infrastructure effects do not establish domain policy",
+    "evidence_classification": "source-recorded",
+    "independent_review": "not established",
+    "operator_acceptance": "not established",
+    "production_state": "not established",
+    "dependencies": [],
+    "blockers": [],
+    "priority": null,
+    "owner": null,
+    "source_paths": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+    ],
+    "evidence_links": [
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+    ],
+    "source_hashes": {
+      "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md": "039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891"
+    },
+    "disposition": "M4",
+    "target_key": null,
+    "justification": "Preserve scoped source boundary; historical or deferred context does not justify a new active import."
+  }
+]

@@ -1,0 +1,176 @@
+{
+  "serialization": "UTF-8 JSON, sort_keys=True, separators=(comma,colon), ensure_ascii=False; no trailing newline in digest input; arrays retain frozen order",
+  "project_id": "hrilr4371g33s0iw6lth3o7v",
+  "payload_packet_sha256": "c7970de27e40fd9befd0bd92a94a60176d8512618a6c64f7e2cfde805adca29f",
+  "source_manifest_sha256": "10a8dbcf960bbfc8e859315652d1f30c843606bac8da8d54931486a5540ce00e",
+  "mapping_sha256": "76c25e54c0ec594c7dac1115337727cfffd80e7f9e8df18559a891f65420b25f",
+  "candidate_decisions_sha256": "2c53dfff8c05753179ec4cf4f5186dd3188225285c4e606e37ded26d3ff850ad",
+  "tasks": [
+    {
+      "migration_key": "utcp:rma",
+      "import_order": 1,
+      "source_set_sha256": "2d779740077dade93f08b03520992923bd1aae1820b88ef055db3601ccdcb281",
+      "payload_sha256": "6468db530ce07b75b8239f114aca7b6084bfc0ca2ccb154a4a32933cc37551e2",
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "column_id": "e35qmx2pn4pftmlhxr203ew4",
+      "status": "in-progress",
+      "parent_key": null,
+      "relationship_keys": [
+        {
+          "relationType": "subtask",
+          "source_key": "utcp:rma",
+          "target_key": "utcp:rma-e"
+        }
+      ]
+    },
+    {
+      "migration_key": "utcp:go-native",
+      "import_order": 2,
+      "source_set_sha256": "ff6db98bbb5a4354ecabb1d401269e65212f2b0598af3ec4ecaf0364f636458f",
+      "payload_sha256": "a2bffbeaa3f675cf451561c5f89112419759ccf84d36f58a33b5530e8c175935",
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "column_id": "e35qmx2pn4pftmlhxr203ew4",
+      "status": "in-progress",
+      "parent_key": null,
+      "relationship_keys": [
+        {
+          "relationType": "subtask",
+          "source_key": "utcp:go-native",
+          "target_key": "utcp:go-cp0"
+        },
+        {
+          "relationType": "subtask",
+          "source_key": "utcp:go-native",
+          "target_key": "utcp:go-cp1"
+        },
+        {
+          "relationType": "subtask",
+          "source_key": "utcp:go-native",
+          "target_key": "utcp:go-cp2-e1"
+        }
+      ]
+    },
+    {
+      "migration_key": "utcp:rma-e",
+      "import_order": 3,
+      "source_set_sha256": "2d779740077dade93f08b03520992923bd1aae1820b88ef055db3601ccdcb281",
+      "payload_sha256": "c71be8b8255b3429f77698006f3b4282f89576848d16c03c1c9ea626e8c6e664",
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "column_id": "r16urlwjums6jbklrdjetnjp",
+      "status": "to-do",
+      "parent_key": "utcp:rma",
+      "relationship_keys": [
+        {
+          "relationType": "subtask",
+          "source_key": "utcp:rma",
+          "target_key": "utcp:rma-e"
+        }
+      ]
+    },
+    {
+      "migration_key": "utcp:go-cp0",
+      "import_order": 4,
+      "source_set_sha256": "ff6db98bbb5a4354ecabb1d401269e65212f2b0598af3ec4ecaf0364f636458f",
+      "payload_sha256": "23f6724cbb914b823a57e4cdcb3f77c6ceaa078ab5406630c8eda7504fb0e309",
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "column_id": "r16urlwjums6jbklrdjetnjp",
+      "status": "to-do",
+      "parent_key": "utcp:go-native",
+      "relationship_keys": [
+        {
+          "relationType": "subtask",
+          "source_key": "utcp:go-native",
+          "target_key": "utcp:go-cp0"
+        }
+      ]
+    },
+    {
+      "migration_key": "utcp:go-cp1",
+      "import_order": 5,
+      "source_set_sha256": "7b84c54cab800f6ca67999aca6a1edd242dbfb3ede784ff18467ed229b5c7d65",
+      "payload_sha256": "1171f1dcef264429f5b84e82d7432438c862b3ece94aaa2715ce0a91efb52350",
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "column_id": "y2bbz674rhx96k0c3jr35v5y",
+      "status": "in-review",
+      "parent_key": "utcp:go-native",
+      "relationship_keys": [
+        {
+          "relationType": "related",
+          "source_key": "utcp:go-cp1",
+          "target_key": "utcp:go-cp2-e1"
+        },
+        {
+          "relationType": "subtask",
+          "source_key": "utcp:go-native",
+          "target_key": "utcp:go-cp1"
+        }
+      ]
+    },
+    {
+      "migration_key": "utcp:go-cp2-e1",
+      "import_order": 6,
+      "source_set_sha256": "4e1a97bbf146ee70e79687edf2223e49ea04e755cfe5c227ae63733d4bdd4b45",
+      "payload_sha256": "be02d0f4db8af3aaa0c6c260a9963a2333961d435324287336c1fc749e48720f",
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "column_id": "r16urlwjums6jbklrdjetnjp",
+      "status": "to-do",
+      "parent_key": "utcp:go-native",
+      "relationship_keys": [
+        {
+          "relationType": "related",
+          "source_key": "utcp:go-cp1",
+          "target_key": "utcp:go-cp2-e1"
+        },
+        {
+          "relationType": "subtask",
+          "source_key": "utcp:go-native",
+          "target_key": "utcp:go-cp2-e1"
+        }
+      ]
+    },
+    {
+      "migration_key": "utcp:checker",
+      "import_order": 7,
+      "source_set_sha256": "028fd4e712d9007bb432d2f75cbc91698ca750a9601d841e92f9a186f971a2f2",
+      "payload_sha256": "19a7154af25a4895a219bc09d8491916d368333ac10e4c76ac6f2028b3755c81",
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "column_id": "r16urlwjums6jbklrdjetnjp",
+      "status": "to-do",
+      "parent_key": null,
+      "relationship_keys": []
+    },
+    {
+      "migration_key": "utcp:vue-scanner",
+      "import_order": 8,
+      "source_set_sha256": "d8b3b029e671f36189f570df6a26695b64b953b275902f9d766ef54e3c274e7f",
+      "payload_sha256": "6c63bc9247d98430b15c0cc637d33e8d4915b930fa88906fc4f694fc7fe78f3a",
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "column_id": "r16urlwjums6jbklrdjetnjp",
+      "status": "to-do",
+      "parent_key": null,
+      "relationship_keys": []
+    },
+    {
+      "migration_key": "utcp:preservation",
+      "import_order": 9,
+      "source_set_sha256": "3cf69d4886341ba8aab7a41f76a6c4016a9f00e9d081f3f77209875a70c3d5e2",
+      "payload_sha256": "7e67001f65c57f398e919994df46793b3d8e77ad7cdcac54957481db41011257",
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "column_id": "r16urlwjums6jbklrdjetnjp",
+      "status": "to-do",
+      "parent_key": null,
+      "relationship_keys": []
+    },
+    {
+      "migration_key": "utcp:roadmap-residue",
+      "import_order": 10,
+      "source_set_sha256": "2d779740077dade93f08b03520992923bd1aae1820b88ef055db3601ccdcb281",
+      "payload_sha256": "b9f2a0729d4e5d1fcfde6a4325ab4b16d8b5f3ad58c715ef19ae7fe9e6cffd4d",
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "column_id": "r16urlwjums6jbklrdjetnjp",
+      "status": "to-do",
+      "parent_key": null,
+      "relationship_keys": []
+    }
+  ]
+}

@@ -5,10 +5,16 @@ program-control, runbooks, evidence, and status material.
 
 Use the canonical source for each claim: `docs/architecture/` and
 `docs/decisions/` establish ownership and accepted design; the phase-status
-ledger establishes current status and next action; program-control documents,
-milestone ledgers, authority maps, and debt registers govern their declared
-scope; `docs/evidence/` records concise sanitized proof at a point in time;
+ledger establishes current phase/release status and next action; program-control
+documents, milestone ledgers, authority maps, and debt registers govern their
+declared scope; `docs/evidence/` records concise sanitized proof at a point in time;
 runbooks describe approved operations and environments.
+
+The [canonical tracker policy](governance/KANEO_CANONICAL_TRACKER_POLICY.md)
+governs task authority and activation across workers. Current activation is
+**ACTIVE**: Kaneo owns operational task progress while Git retains
+engineering decisions/evidence and formal phase/release acceptance. Reports may
+record dated observations or pending updates, never a competing task-status ledger.
 
 Resolve conflicts using current accepted ADRs, current status, and implemented
 behavior as applicable. Do not create duplicate roadmaps, competing status

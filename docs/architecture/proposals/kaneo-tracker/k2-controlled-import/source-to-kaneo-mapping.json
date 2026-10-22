@@ -1,0 +1,123 @@
+{
+  "project_id": "hrilr4371g33s0iw6lth3o7v",
+  "proposed_manifest_digest": "d093be6eb0f9d8c96d7485456610f153e30614114f9bfe59ced03097ba3c1efb",
+  "approved_manifest_digest": null,
+  "records": [
+    {
+      "migration_key": "utcp:rma",
+      "source_ids": [
+        "RMA"
+      ],
+      "payload_sha256": "6468db530ce07b75b8239f114aca7b6084bfc0ca2ccb154a4a32933cc37551e2",
+      "kaneo_task_id": null,
+      "proposed_status": "in-progress",
+      "action": "CREATE_AFTER_APPROVAL",
+      "reconciliation_state": "CONFIRMED_ABSENT_NOT_IMPORTED"
+    },
+    {
+      "migration_key": "utcp:go-native",
+      "source_ids": [
+        "GO-NATIVE"
+      ],
+      "payload_sha256": "a2bffbeaa3f675cf451561c5f89112419759ccf84d36f58a33b5530e8c175935",
+      "kaneo_task_id": null,
+      "proposed_status": "in-progress",
+      "action": "CREATE_AFTER_APPROVAL",
+      "reconciliation_state": "CONFIRMED_ABSENT_NOT_IMPORTED"
+    },
+    {
+      "migration_key": "utcp:rma-e",
+      "source_ids": [
+        "RMA-E"
+      ],
+      "payload_sha256": "c71be8b8255b3429f77698006f3b4282f89576848d16c03c1c9ea626e8c6e664",
+      "kaneo_task_id": null,
+      "proposed_status": "to-do",
+      "action": "CREATE_AFTER_APPROVAL",
+      "reconciliation_state": "CONFIRMED_ABSENT_NOT_IMPORTED"
+    },
+    {
+      "migration_key": "utcp:go-cp0",
+      "source_ids": [
+        "GO-CP0"
+      ],
+      "payload_sha256": "23f6724cbb914b823a57e4cdcb3f77c6ceaa078ab5406630c8eda7504fb0e309",
+      "kaneo_task_id": null,
+      "proposed_status": "to-do",
+      "action": "CREATE_AFTER_APPROVAL",
+      "reconciliation_state": "CONFIRMED_ABSENT_NOT_IMPORTED"
+    },
+    {
+      "migration_key": "utcp:go-cp1",
+      "source_ids": [
+        "GO-CP1",
+        "GO-CP1-E1",
+        "GO-CP1-E2",
+        "GO-CP1-E3",
+        "GO-CP1-E4",
+        "GO-CP1-REVIEW"
+      ],
+      "payload_sha256": "1171f1dcef264429f5b84e82d7432438c862b3ece94aaa2715ce0a91efb52350",
+      "kaneo_task_id": null,
+      "proposed_status": "in-review",
+      "action": "CREATE_AFTER_APPROVAL",
+      "reconciliation_state": "CONFIRMED_ABSENT_NOT_IMPORTED"
+    },
+    {
+      "migration_key": "utcp:go-cp2-e1",
+      "source_ids": [
+        "GO-CP2-E1"
+      ],
+      "payload_sha256": "be02d0f4db8af3aaa0c6c260a9963a2333961d435324287336c1fc749e48720f",
+      "kaneo_task_id": null,
+      "proposed_status": "to-do",
+      "action": "CREATE_AFTER_APPROVAL",
+      "reconciliation_state": "CONFIRMED_ABSENT_NOT_IMPORTED"
+    },
+    {
+      "migration_key": "utcp:checker",
+      "source_ids": [
+        "CHECKER"
+      ],
+      "payload_sha256": "19a7154af25a4895a219bc09d8491916d368333ac10e4c76ac6f2028b3755c81",
+      "kaneo_task_id": null,
+      "proposed_status": "to-do",
+      "action": "CREATE_AFTER_APPROVAL",
+      "reconciliation_state": "CONFIRMED_ABSENT_NOT_IMPORTED"
+    },
+    {
+      "migration_key": "utcp:vue-scanner",
+      "source_ids": [
+        "VUE-SCANNER"
+      ],
+      "payload_sha256": "6c63bc9247d98430b15c0cc637d33e8d4915b930fa88906fc4f694fc7fe78f3a",
+      "kaneo_task_id": null,
+      "proposed_status": "to-do",
+      "action": "CREATE_AFTER_APPROVAL",
+      "reconciliation_state": "CONFIRMED_ABSENT_NOT_IMPORTED"
+    },
+    {
+      "migration_key": "utcp:preservation",
+      "source_ids": [
+        "PRESERVATION"
+      ],
+      "payload_sha256": "7e67001f65c57f398e919994df46793b3d8e77ad7cdcac54957481db41011257",
+      "kaneo_task_id": null,
+      "proposed_status": "to-do",
+      "action": "CREATE_AFTER_APPROVAL",
+      "reconciliation_state": "CONFIRMED_ABSENT_NOT_IMPORTED"
+    },
+    {
+      "migration_key": "utcp:roadmap-residue",
+      "source_ids": [
+        "ROADMAP-RESIDUE"
+      ],
+      "payload_sha256": "b9f2a0729d4e5d1fcfde6a4325ab4b16d8b5f3ad58c715ef19ae7fe9e6cffd4d",
+      "kaneo_task_id": null,
+      "proposed_status": "to-do",
+      "action": "CREATE_AFTER_APPROVAL",
+      "reconciliation_state": "CONFIRMED_ABSENT_NOT_IMPORTED"
+    }
+  ],
+  "all_source_identity_mapping": "../k1-mapping-freeze/source-task-mapping.json"
+}

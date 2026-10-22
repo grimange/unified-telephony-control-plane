@@ -1,0 +1,181 @@
+{
+  "workspaces": [
+    {
+      "name": "Personal Projects",
+      "slug": "personal-projects",
+      "logo": null,
+      "createdAt": "2026-10-22T04:35:48.807Z",
+      "metadata": null,
+      "description": null,
+      "id": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+    }
+  ],
+  "project": {
+    "id": "hrilr4371g33s0iw6lth3o7v",
+    "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il",
+    "slug": "UTCP",
+    "icon": "Layout",
+    "name": "Unified Telephony Control Plane",
+    "description": "",
+    "createdAt": "2026-10-22T06:06:32.447Z",
+    "isPublic": false,
+    "archivedAt": null,
+    "lastTaskNumber": 0,
+    "position": 1,
+    "backgroundVersion": null
+  },
+  "columns": [
+    {
+      "id": "r16urlwjums6jbklrdjetnjp",
+      "projectId": "hrilr4371g33s0iw6lth3o7v",
+      "name": "To Do",
+      "slug": "to-do",
+      "position": 0,
+      "icon": null,
+      "color": null,
+      "isFinal": false,
+      "createdAt": "2026-10-22T06:06:32.447Z",
+      "updatedAt": "2026-10-22T06:06:32.447Z"
+    },
+    {
+      "id": "e35qmx2pn4pftmlhxr203ew4",
+      "projectId": "hrilr4371g33s0iw6lth3o7v",
+      "name": "In Progress",
+      "slug": "in-progress",
+      "position": 1,
+      "icon": null,
+      "color": null,
+      "isFinal": false,
+      "createdAt": "2026-10-22T06:06:32.447Z",
+      "updatedAt": "2026-10-22T06:06:32.447Z"
+    },
+    {
+      "id": "y2bbz674rhx96k0c3jr35v5y",
+      "projectId": "hrilr4371g33s0iw6lth3o7v",
+      "name": "In Review",
+      "slug": "in-review",
+      "position": 2,
+      "icon": null,
+      "color": null,
+      "isFinal": false,
+      "createdAt": "2026-10-22T06:06:32.447Z",
+      "updatedAt": "2026-10-22T06:06:32.447Z"
+    },
+    {
+      "id": "s7fid10ah44k6ie6txo6v53t",
+      "projectId": "hrilr4371g33s0iw6lth3o7v",
+      "name": "Done",
+      "slug": "done",
+      "position": 3,
+      "icon": null,
+      "color": null,
+      "isFinal": true,
+      "createdAt": "2026-10-22T06:06:32.447Z",
+      "updatedAt": "2026-10-22T06:06:32.447Z"
+    }
+  ],
+  "labels": [
+    {
+      "id": "cyy7slg2a72t78knydb9tgpb",
+      "name": "Blocked",
+      "color": "#ef4444",
+      "createdAt": "2026-10-22T05:57:14.513Z",
+      "updatedAt": "2026-10-22T05:57:14.513Z",
+      "deletionStartedAt": null,
+      "taskId": null,
+      "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+    },
+    {
+      "id": "a3t3bjpr1m3ffixpo1bowf3n",
+      "name": "Roadmap planning",
+      "color": "#64748b",
+      "createdAt": "2026-10-22T06:35:42.607Z",
+      "updatedAt": "2026-10-22T06:35:42.607Z",
+      "deletionStartedAt": null,
+      "taskId": null,
+      "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+    },
+    {
+      "id": "dhnherobkdmq3q46x82728pl",
+      "name": "Proposed / not adopted",
+      "color": "#a855f7",
+      "createdAt": "2026-10-22T06:35:42.624Z",
+      "updatedAt": "2026-10-22T06:35:42.624Z",
+      "deletionStartedAt": null,
+      "taskId": null,
+      "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+    },
+    {
+      "id": "zhajh50z4ymwi8mfp8bnbsan",
+      "name": "Historical reference",
+      "color": "#22c55e",
+      "createdAt": "2026-10-22T06:35:42.646Z",
+      "updatedAt": "2026-10-22T06:35:42.646Z",
+      "deletionStartedAt": null,
+      "taskId": null,
+      "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+    }
+  ],
+  "tasks": {
+    "data": {
+      "id": "hrilr4371g33s0iw6lth3o7v",
+      "name": "Unified Telephony Control Plane",
+      "slug": "UTCP",
+      "icon": "Layout",
+      "description": "",
+      "descriptionDeferred": false,
+      "isPublic": false,
+      "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il",
+      "backgroundVersion": null,
+      "columns": [
+        {
+          "id": "to-do",
+          "slug": "to-do",
+          "name": "To Do",
+          "position": 0,
+          "icon": null,
+          "isFinal": false,
+          "tasks": []
+        },
+        {
+          "id": "in-progress",
+          "slug": "in-progress",
+          "name": "In Progress",
+          "position": 1,
+          "icon": null,
+          "isFinal": false,
+          "tasks": []
+        },
+        {
+          "id": "in-review",
+          "slug": "in-review",
+          "name": "In Review",
+          "position": 2,
+          "icon": null,
+          "isFinal": false,
+          "tasks": []
+        },
+        {
+          "id": "done",
+          "slug": "done",
+          "name": "Done",
+          "position": 3,
+          "icon": null,
+          "isFinal": true,
+          "tasks": []
+        }
+      ],
+      "archivedTasks": [],
+      "plannedTasks": []
+    },
+    "pagination": {
+      "total": 0,
+      "page": 1,
+      "pageSize": 100,
+      "totalPages": 1,
+      "relatedPage": 1,
+      "relatedPageSize": 100,
+      "relatedTotalPages": 1
+    }
+  }
+}

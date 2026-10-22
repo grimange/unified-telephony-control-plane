@@ -1,0 +1,2249 @@
+{
+  "schema_version": 1,
+  "assignment": "UTCP_KANEO_TRACKER_MIGRATION_READINESS_AUDIT_E1",
+  "dry_run": true,
+  "kaneo_writes": 0,
+  "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+  "source_identity": "HEAD plus exact file SHA-256; untracked sources included",
+  "existing_task_count": 0,
+  "existing_matches": [],
+  "dependencies": [
+    {
+      "source_id": "V1",
+      "target_id": "A0",
+      "type": "hard-prerequisite",
+      "rationale": "Explicit roadmap scope/sequence; completed predecessors remain contextual once satisfied."
+    },
+    {
+      "source_id": "V1",
+      "target_id": "RMA",
+      "type": "hard-prerequisite",
+      "rationale": "Explicit roadmap scope/sequence; completed predecessors remain contextual once satisfied."
+    },
+    {
+      "source_id": "K5E",
+      "target_id": "RMA",
+      "type": "hard-prerequisite",
+      "rationale": "Explicit roadmap scope/sequence; completed predecessors remain contextual once satisfied."
+    },
+    {
+      "source_id": "RMA-C",
+      "target_id": "RMA-E",
+      "type": "hard-prerequisite",
+      "rationale": "Explicit roadmap scope/sequence; completed predecessors remain contextual once satisfied."
+    },
+    {
+      "source_id": "RMA-D",
+      "target_id": "RMA-E",
+      "type": "hard-prerequisite",
+      "rationale": "Explicit roadmap scope/sequence; completed predecessors remain contextual once satisfied."
+    },
+    {
+      "source_id": "A0",
+      "target_id": "R0",
+      "type": "hard-prerequisite",
+      "rationale": "Explicit roadmap scope/sequence; completed predecessors remain contextual once satisfied."
+    },
+    {
+      "source_id": "K5E",
+      "target_id": "R0",
+      "type": "hard-prerequisite",
+      "rationale": "Explicit roadmap scope/sequence; completed predecessors remain contextual once satisfied."
+    },
+    {
+      "source_id": "RMA",
+      "target_id": "R0",
+      "type": "hard-prerequisite",
+      "rationale": "Explicit roadmap scope/sequence; completed predecessors remain contextual once satisfied."
+    },
+    {
+      "source_id": "K5E",
+      "target_id": "K5F",
+      "type": "hard-prerequisite",
+      "rationale": "Explicit roadmap scope/sequence; completed predecessors remain contextual once satisfied."
+    },
+    {
+      "source_id": "GO-CP1",
+      "target_id": "GO-CP2",
+      "type": "hard-prerequisite",
+      "rationale": "Explicit roadmap scope/sequence; completed predecessors remain contextual once satisfied."
+    },
+    {
+      "source_id": "GO-CP2",
+      "target_id": "GO-CP3",
+      "type": "hard-prerequisite",
+      "rationale": "Explicit roadmap scope/sequence; completed predecessors remain contextual once satisfied."
+    },
+    {
+      "source_id": "GO-CP3",
+      "target_id": "GO-CP4",
+      "type": "hard-prerequisite",
+      "rationale": "Explicit roadmap scope/sequence; completed predecessors remain contextual once satisfied."
+    },
+    {
+      "source_id": "GO-CP4",
+      "target_id": "GO-CP5",
+      "type": "hard-prerequisite",
+      "rationale": "Explicit roadmap scope/sequence; completed predecessors remain contextual once satisfied."
+    },
+    {
+      "source_id": "GO-CP1",
+      "target_id": "GO-CP6",
+      "type": "independent-acceptance-gate",
+      "rationale": "CP6 requires independent CP1–5 acceptance, not just implementation."
+    },
+    {
+      "source_id": "GO-CP2",
+      "target_id": "GO-CP6",
+      "type": "independent-acceptance-gate",
+      "rationale": "CP6 requires independent CP1–5 acceptance, not just implementation."
+    },
+    {
+      "source_id": "GO-CP3",
+      "target_id": "GO-CP6",
+      "type": "independent-acceptance-gate",
+      "rationale": "CP6 requires independent CP1–5 acceptance, not just implementation."
+    },
+    {
+      "source_id": "GO-CP4",
+      "target_id": "GO-CP6",
+      "type": "independent-acceptance-gate",
+      "rationale": "CP6 requires independent CP1–5 acceptance, not just implementation."
+    },
+    {
+      "source_id": "GO-CP5",
+      "target_id": "GO-CP6",
+      "type": "independent-acceptance-gate",
+      "rationale": "CP6 requires independent CP1–5 acceptance, not just implementation."
+    },
+    {
+      "source_id": "CHECKER",
+      "target_id": "GO-CP3",
+      "type": "production-or-security-acceptance-gate",
+      "rationale": "Applies at named acceptance boundary; does not block isolated implementation automatically."
+    },
+    {
+      "source_id": "CHECKER",
+      "target_id": "GO-CP6",
+      "type": "production-or-security-acceptance-gate",
+      "rationale": "Applies at named acceptance boundary; does not block isolated implementation automatically."
+    },
+    {
+      "source_id": "VUE-SCANNER",
+      "target_id": "GO-CP2",
+      "type": "production-or-security-acceptance-gate",
+      "rationale": "Applies at named acceptance boundary; does not block isolated implementation automatically."
+    },
+    {
+      "source_id": "VUE-SCANNER",
+      "target_id": "GO-CP6",
+      "type": "production-or-security-acceptance-gate",
+      "rationale": "Applies at named acceptance boundary; does not block isolated implementation automatically."
+    },
+    {
+      "source_id": "IMMUTABLE-CONFIG",
+      "target_id": "GO-CP3",
+      "type": "production-or-security-acceptance-gate",
+      "rationale": "Applies at named acceptance boundary; does not block isolated implementation automatically."
+    },
+    {
+      "source_id": "EXECUTOR-STORAGE",
+      "target_id": "GO-CP6",
+      "type": "production-or-security-acceptance-gate",
+      "rationale": "Applies at named acceptance boundary; does not block isolated implementation automatically."
+    },
+    {
+      "source_id": "EXTERNAL-WRITER",
+      "target_id": "GO-CP6",
+      "type": "production-or-security-acceptance-gate",
+      "rationale": "Applies at named acceptance boundary; does not block isolated implementation automatically."
+    },
+    {
+      "source_id": "REAL-K8S",
+      "target_id": "GO-CP6",
+      "type": "production-or-security-acceptance-gate",
+      "rationale": "Applies at named acceptance boundary; does not block isolated implementation automatically."
+    },
+    {
+      "source_id": "GO-CP0",
+      "target_id": "GO-CP6",
+      "type": "operator-decision-gate",
+      "rationale": "Formal ADR adoption required before handover."
+    },
+    {
+      "source_id": "GO-CP1-E4",
+      "target_id": "GO-CP2-E1",
+      "type": "implementation-baseline",
+      "rationale": "E4 next assignment explicitly recommends isolated CP2 E1; no GN-G3 dependency."
+    },
+    {
+      "source_id": "GN-G3",
+      "target_id": "GO-CP6",
+      "type": "alternative-authority-strategy",
+      "rationale": "Not a blocking link; reconcile extraction-only transfer with broader backend cohort before live authorization."
+    },
+    {
+      "source_id": "RMA",
+      "target_id": "A0",
+      "type": "preferred-sequencing",
+      "rationale": "Canonical priority; explicitly not a technical dependency."
+    },
+    {
+      "source_id": "K5C",
+      "target_id": "WAC-0",
+      "type": "future-prerequisite",
+      "rationale": "Existing deterministic admission remains baseline."
+    },
+    {
+      "source_id": "WAC-0",
+      "target_id": "WAC-1",
+      "type": "future-prerequisite",
+      "rationale": "WAC roadmap dependency graph; no current operational task."
+    },
+    {
+      "source_id": "WAC-1",
+      "target_id": "WAC-2",
+      "type": "future-prerequisite",
+      "rationale": "WAC roadmap dependency graph; no current operational task."
+    },
+    {
+      "source_id": "WAC-1",
+      "target_id": "WAC-3",
+      "type": "future-prerequisite",
+      "rationale": "WAC roadmap dependency graph; no current operational task."
+    },
+    {
+      "source_id": "WAC-2",
+      "target_id": "WAC-4",
+      "type": "future-prerequisite",
+      "rationale": "WAC roadmap dependency graph; no current operational task."
+    },
+    {
+      "source_id": "WAC-3",
+      "target_id": "WAC-4",
+      "type": "future-prerequisite",
+      "rationale": "WAC roadmap dependency graph; no current operational task."
+    },
+    {
+      "source_id": "WAC-4",
+      "target_id": "WAC-5",
+      "type": "future-prerequisite",
+      "rationale": "WAC roadmap dependency graph; no current operational task."
+    },
+    {
+      "source_id": "WAC-5",
+      "target_id": "WAC-6",
+      "type": "future-prerequisite",
+      "rationale": "WAC roadmap dependency graph; no current operational task."
+    },
+    {
+      "source_id": "WAC-6",
+      "target_id": "WAC-7",
+      "type": "future-prerequisite",
+      "rationale": "WAC roadmap dependency graph; no current operational task."
+    },
+    {
+      "source_id": "WAC-6",
+      "target_id": "WAC-8",
+      "type": "future-prerequisite",
+      "rationale": "WAC roadmap dependency graph; no current operational task."
+    },
+    {
+      "source_id": "WAC-7",
+      "target_id": "WAC-9",
+      "type": "future-prerequisite",
+      "rationale": "WAC roadmap dependency graph; no current operational task."
+    },
+    {
+      "source_id": "WAC-8",
+      "target_id": "WAC-9",
+      "type": "future-prerequisite",
+      "rationale": "WAC roadmap dependency graph; no current operational task."
+    },
+    {
+      "source_id": "WAC-9",
+      "target_id": "WAC-10",
+      "type": "future-prerequisite",
+      "rationale": "WAC roadmap dependency graph; no current operational task."
+    }
+  ],
+  "workspace": {
+    "id": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il",
+    "name": "Personal Projects"
+  },
+  "project": {
+    "id": "hrilr4371g33s0iw6lth3o7v",
+    "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il",
+    "slug": "UTCP",
+    "icon": "Layout",
+    "name": "Unified Telephony Control Plane",
+    "description": "",
+    "createdAt": "2026-10-22T06:06:32.447Z",
+    "isPublic": false,
+    "archivedAt": null,
+    "lastTaskNumber": 0,
+    "position": 1,
+    "backgroundVersion": null
+  },
+  "columns": [
+    {
+      "id": "r16urlwjums6jbklrdjetnjp",
+      "projectId": "hrilr4371g33s0iw6lth3o7v",
+      "name": "To Do",
+      "slug": "to-do",
+      "position": 0,
+      "icon": null,
+      "color": null,
+      "isFinal": false,
+      "createdAt": "2026-10-22T06:06:32.447Z",
+      "updatedAt": "2026-10-22T06:06:32.447Z"
+    },
+    {
+      "id": "e35qmx2pn4pftmlhxr203ew4",
+      "projectId": "hrilr4371g33s0iw6lth3o7v",
+      "name": "In Progress",
+      "slug": "in-progress",
+      "position": 1,
+      "icon": null,
+      "color": null,
+      "isFinal": false,
+      "createdAt": "2026-10-22T06:06:32.447Z",
+      "updatedAt": "2026-10-22T06:06:32.447Z"
+    },
+    {
+      "id": "y2bbz674rhx96k0c3jr35v5y",
+      "projectId": "hrilr4371g33s0iw6lth3o7v",
+      "name": "In Review",
+      "slug": "in-review",
+      "position": 2,
+      "icon": null,
+      "color": null,
+      "isFinal": false,
+      "createdAt": "2026-10-22T06:06:32.447Z",
+      "updatedAt": "2026-10-22T06:06:32.447Z"
+    },
+    {
+      "id": "s7fid10ah44k6ie6txo6v53t",
+      "projectId": "hrilr4371g33s0iw6lth3o7v",
+      "name": "Done",
+      "slug": "done",
+      "position": 3,
+      "icon": null,
+      "color": null,
+      "isFinal": true,
+      "createdAt": "2026-10-22T06:06:32.447Z",
+      "updatedAt": "2026-10-22T06:06:32.447Z"
+    }
+  ],
+  "units": [
+    {
+      "migration_key": "utcp:a0",
+      "title": "Minimal outbound, inbound and IVR-style reference consumers",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": null,
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": false,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "A0"
+      ],
+      "dispositions": [
+        "M1"
+      ],
+      "source_paths": [
+        "docs/roadmap/implementation-roadmap.md",
+        "docs/roadmap/phase-status.md"
+      ],
+      "source_hashes": {
+        "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a",
+        "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "A0",
+          "source_status": "Eligible (ledger); planned scope",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Minimal outbound, inbound and IVR-style reference consumers"
+    },
+    {
+      "migration_key": "utcp:checker",
+      "title": "Repair runtime-engine checker / accepted K5 API-client label mismatch",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": null,
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": true,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "CHECKER"
+      ],
+      "dispositions": [
+        "M1"
+      ],
+      "source_paths": [
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md",
+        "scripts/runtime-engine/config-check"
+      ],
+      "source_hashes": {
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md": "039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891",
+        "scripts/runtime-engine/config-check": "84aba8dcccfb32255fca8f3930aafac477a574c39d5a7d8526afa951335a878e"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "CHECKER",
+          "source_status": "Reproduced baseline failure",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Repair runtime-engine checker / accepted K5 API-client label mismatch"
+    },
+    {
+      "migration_key": "utcp:go-cp0",
+      "title": "Architecture review and formal Go-native ADR adoption",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": "utcp:go-native",
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": true,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "GO-CP0"
+      ],
+      "dispositions": [
+        "M1"
+      ],
+      "source_paths": [
+        "docs/architecture/proposals/go-native-control-plane-adr-proposed.md",
+        "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+      ],
+      "source_hashes": {
+        "docs/architecture/proposals/go-native-control-plane-adr-proposed.md": "b0a5639cc67674c6d43b966eac9ebe49e1bf26de3b1850c47a0c1872297f8663",
+        "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "GO-CP0",
+          "source_status": "Proposed / awaiting operator adoption",
+          "evidence_classification": "proposed-architecture",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Architecture review and formal Go-native ADR adoption"
+    },
+    {
+      "migration_key": "utcp:go-cp1",
+      "title": "Isolated canonical kernel and infrastructure authority stores",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "in-review",
+      "parent_key": "utcp:go-native",
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": true,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "GO-CP1"
+      ],
+      "dispositions": [
+        "M2"
+      ],
+      "source_paths": [
+        "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+      ],
+      "source_hashes": {
+        "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "GO-CP1",
+          "source_status": "E1–E4 developer verified; independent acceptance not established",
+          "evidence_classification": "reported-developer-verification",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "Isolated only; no authority transfer"
+        }
+      ],
+      "engineering_objective": "Isolated canonical kernel and infrastructure authority stores"
+    },
+    {
+      "migration_key": "utcp:go-cp1-review",
+      "title": "Independent review of canonical kernel E1–E4 evidence",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": "utcp:go-cp1",
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": true,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "GO-CP1-REVIEW"
+      ],
+      "dispositions": [
+        "M1"
+      ],
+      "source_paths": [
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E1.md",
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E2_ASTERISK_DOMAIN_POLICY_PARITY.md",
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E3_TRUSTED_RECOVERY_EVIDENCE.md",
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+      ],
+      "source_hashes": {
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E1.md": "f10d2f6061dfc4e59da13d56ef2cf9640f6fed8760d753868ae4e122e9c895ad",
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E2_ASTERISK_DOMAIN_POLICY_PARITY.md": "b5dba11c57e70d0ea114f3f20c3508ca0e52c7263456cbfe443935e54bccc780",
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E3_TRUSTED_RECOVERY_EVIDENCE.md": "2d829eeaf2fc971a1bd115f1eeee195727931c9612d9eed09e6b0ddeecfcd023",
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md": "039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "GO-CP1-REVIEW",
+          "source_status": "Ready for independent review per reports; review not established",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Independent review of canonical kernel E1–E4 evidence"
+    },
+    {
+      "migration_key": "utcp:go-cp2",
+      "title": "Identity, HTTP and realtime compatibility",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": "utcp:go-native",
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": true,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "GO-CP2"
+      ],
+      "dispositions": [
+        "M2"
+      ],
+      "source_paths": [
+        "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+      ],
+      "source_hashes": {
+        "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "GO-CP2",
+          "source_status": "Proposed future stage; no authority transfer authorized",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Identity, HTTP and realtime compatibility"
+    },
+    {
+      "migration_key": "utcp:go-cp2-e1",
+      "title": "Isolated identity and tenancy compatibility",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": "utcp:go-cp2",
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": true,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "GO-CP2-E1"
+      ],
+      "dispositions": [
+        "M1"
+      ],
+      "source_paths": [
+        "docs/architecture/proposals/go-cp1-e4/next-assignment.md"
+      ],
+      "source_hashes": {
+        "docs/architecture/proposals/go-cp1-e4/next-assignment.md": "ebf1cb09419b24c6e70f32da5ca1e1187209322893c68023c811149962fdd9d7"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "GO-CP2-E1",
+          "source_status": "Recommended next backend implementation; not execution authorization",
+          "evidence_classification": "planned",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Isolated identity and tenancy compatibility"
+    },
+    {
+      "migration_key": "utcp:go-cp3",
+      "title": "Registry and infrastructure integration",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": "utcp:go-native",
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": false,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "GO-CP3"
+      ],
+      "dispositions": [
+        "M2"
+      ],
+      "source_paths": [
+        "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+      ],
+      "source_hashes": {
+        "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "GO-CP3",
+          "source_status": "Proposed future stage; no authority transfer authorized",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Registry and infrastructure integration"
+    },
+    {
+      "migration_key": "utcp:go-cp4",
+      "title": "Telephony and signaling migration",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": "utcp:go-native",
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": false,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "GO-CP4"
+      ],
+      "dispositions": [
+        "M2"
+      ],
+      "source_paths": [
+        "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+      ],
+      "source_hashes": {
+        "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "GO-CP4",
+          "source_status": "Proposed future stage; no authority transfer authorized",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Telephony and signaling migration"
+    },
+    {
+      "migration_key": "utcp:go-cp5",
+      "title": "Recording and remaining domain/API parity",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": "utcp:go-native",
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": false,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "GO-CP5"
+      ],
+      "dispositions": [
+        "M2"
+      ],
+      "source_paths": [
+        "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+      ],
+      "source_hashes": {
+        "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "GO-CP5",
+          "source_status": "Proposed future stage; no authority transfer authorized",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Recording and remaining domain/API parity"
+    },
+    {
+      "migration_key": "utcp:go-cp6",
+      "title": "Controlled authority handover and Laravel retirement",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": "utcp:go-native",
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": false,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "GO-CP6"
+      ],
+      "dispositions": [
+        "M2"
+      ],
+      "source_paths": [
+        "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+      ],
+      "source_hashes": {
+        "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "GO-CP6",
+          "source_status": "Proposed future stage; no authority transfer authorized",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Controlled authority handover and Laravel retirement"
+    },
+    {
+      "migration_key": "utcp:go-native",
+      "title": "Go-native control-plane modernization",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": null,
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": true,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "GO-NATIVE"
+      ],
+      "dispositions": [
+        "M2"
+      ],
+      "source_paths": [
+        "docs/architecture/proposals/go-native-control-plane-adr-proposed.md",
+        "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md"
+      ],
+      "source_hashes": {
+        "docs/architecture/proposals/go-native-control-plane-adr-proposed.md": "b0a5639cc67674c6d43b966eac9ebe49e1bf26de3b1850c47a0c1872297f8663",
+        "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "GO-NATIVE",
+          "source_status": "Operator-selected target; architecture ADR proposed",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Go-native control-plane modernization"
+    },
+    {
+      "migration_key": "utcp:history-gn",
+      "title": "GN-G0–G2 isolated foundation and proof summary",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "in-review",
+      "parent_key": null,
+      "history_policy": "Source completion retained in description; closure requires import policy approval",
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": false,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "GN-G0",
+        "GN-G1",
+        "GN-G2-EFFECTS",
+        "GN-G2-REAL-API",
+        "GN-G2-LIFECYCLE",
+        "GN-G2-ACTIVE",
+        "GN-G2-CANONICAL"
+      ],
+      "dispositions": [
+        "M3"
+      ],
+      "source_paths": [
+        "docs/architecture/proposals/UTCP_GN_G0_INFRASTRUCTURE_ADAPTER_CONTRACT_AND_FAKE_PROOF.md",
+        "docs/architecture/proposals/UTCP_GN_G1_READ_ONLY_GO_INFRASTRUCTURE_OBSERVATION_PARITY.md",
+        "docs/architecture/proposals/UTCP_GN_G2_ACTIVE_RUNTIME_PROJECTION_PROFILES_AND_FIVE_CORRIDOR_PARITY.md",
+        "docs/architecture/proposals/UTCP_GN_G2_CANONICAL_LIFECYCLE_AND_CLAIM_FOUNDATION.md",
+        "docs/architecture/proposals/UTCP_GN_G2_CONDITIONAL_KUBERNETES_DEPLOYMENT_EFFECTS.md",
+        "docs/architecture/proposals/UTCP_GN_G2_LIFECYCLE_V2_CONDITIONAL_DEPLOYMENT_MANAGEMENT.md",
+        "docs/architecture/proposals/UTCP_GN_G2_REAL_KUBERNETES_API_CONDITIONAL_EFFECT_VERIFICATION.md"
+      ],
+      "source_hashes": {
+        "docs/architecture/proposals/UTCP_GN_G0_INFRASTRUCTURE_ADAPTER_CONTRACT_AND_FAKE_PROOF.md": "38ec0faf1fabf446644d8cb6c490c4cd99092b46d6e4ce08b60cceb5bd06b4b7",
+        "docs/architecture/proposals/UTCP_GN_G1_READ_ONLY_GO_INFRASTRUCTURE_OBSERVATION_PARITY.md": "c8711bb45c2efe4805485fb76a1ec06ca403ff3ee41b489fde19e99423dd6a65",
+        "docs/architecture/proposals/UTCP_GN_G2_ACTIVE_RUNTIME_PROJECTION_PROFILES_AND_FIVE_CORRIDOR_PARITY.md": "fec2f7577fbb14b756ee2b733b5630c5b0fdef5cb45fa06e38245ee29646b0ee",
+        "docs/architecture/proposals/UTCP_GN_G2_CANONICAL_LIFECYCLE_AND_CLAIM_FOUNDATION.md": "21f17461c9148e8ac3f96119d59ac6e992fa89f0cd0e9d5f1bb9679b6880c48e",
+        "docs/architecture/proposals/UTCP_GN_G2_CONDITIONAL_KUBERNETES_DEPLOYMENT_EFFECTS.md": "9a9d8837b9939909831f37e0f485950a89e989ddacbbe6149ddb6c5f15758b85",
+        "docs/architecture/proposals/UTCP_GN_G2_LIFECYCLE_V2_CONDITIONAL_DEPLOYMENT_MANAGEMENT.md": "0f26357ad67d56e3b8080e0f409d2daa0e8204f6775df9adc660f7d03967ca08",
+        "docs/architecture/proposals/UTCP_GN_G2_REAL_KUBERNETES_API_CONDITIONAL_EFFECT_VERIFICATION.md": "02466928f0dd068a8766f1bce3ac5eec60547c34e7c5c962b5c80405203edcbc"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "GN-G0",
+          "source_status": "Contract/fake proof complete; deferred real proof",
+          "evidence_classification": "reported-developer-verification",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "No production transfer claimed"
+        },
+        {
+          "source_id": "GN-G1",
+          "source_status": "Implemented/developer-tested; baseline acceptance dependency",
+          "evidence_classification": "reported-developer-verification",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "No production transfer claimed"
+        },
+        {
+          "source_id": "GN-G2-EFFECTS",
+          "source_status": "Implemented; historical simulated proof only",
+          "evidence_classification": "reported-developer-verification",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "No production transfer claimed"
+        },
+        {
+          "source_id": "GN-G2-REAL-API",
+          "source_status": "Isolated real API verification recorded",
+          "evidence_classification": "reported-developer-verification",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "No production transfer claimed"
+        },
+        {
+          "source_id": "GN-G2-LIFECYCLE",
+          "source_status": "Lifecycle v2 implemented with limitations",
+          "evidence_classification": "reported-developer-verification",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "No production transfer claimed"
+        },
+        {
+          "source_id": "GN-G2-ACTIVE",
+          "source_status": "Active profiles implemented with limitations; zero replicas",
+          "evidence_classification": "reported-developer-verification",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "No production transfer claimed"
+        },
+        {
+          "source_id": "GN-G2-CANONICAL",
+          "source_status": "Canonical PostgreSQL foundation developer verified",
+          "evidence_classification": "reported-developer-verification",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "No production transfer claimed"
+        }
+      ],
+      "engineering_objective": "UTCP GN-G0 — Infrastructure adapter contract and executable fake proof; UTCP GN-G1 — Read-only Go Kubernetes infrastructure observation parity; UTCP GN-G2 — Conditional Kubernetes Deployment Effects; UTCP GN-G2 — Real Kubernetes API conditional-effect verification; GN-G2 Lifecycle V2 — Conditional Deployment Management; GN-G2 Active Runtime Projection Profiles and Five-Corridor Parity; GN-G2 Canonical Lifecycle and Claim Foundation"
+    },
+    {
+      "migration_key": "utcp:history-go-cp1",
+      "title": "GO-CP1 E1–E4 developer verification summary",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "in-review",
+      "parent_key": "utcp:go-cp1",
+      "history_policy": "Source completion retained in description; closure requires import policy approval",
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": true,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "GO-CP1-E1",
+        "GO-CP1-E2",
+        "GO-CP1-E3",
+        "GO-CP1-E4"
+      ],
+      "dispositions": [
+        "M3"
+      ],
+      "source_paths": [
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E1.md",
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E2_ASTERISK_DOMAIN_POLICY_PARITY.md",
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E3_TRUSTED_RECOVERY_EVIDENCE.md",
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+      ],
+      "source_hashes": {
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E1.md": "f10d2f6061dfc4e59da13d56ef2cf9640f6fed8760d753868ae4e122e9c895ad",
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E2_ASTERISK_DOMAIN_POLICY_PARITY.md": "b5dba11c57e70d0ea114f3f20c3508ca0e52c7263456cbfe443935e54bccc780",
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E3_TRUSTED_RECOVERY_EVIDENCE.md": "2d829eeaf2fc971a1bd115f1eeee195727931c9612d9eed09e6b0ddeecfcd023",
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md": "039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "GO-CP1-E1",
+          "source_status": "IMPLEMENTED_WITH_LIMITATIONS",
+          "evidence_classification": "reported-developer-verification",
+          "independent_review": "Not established; reports prepare independent review",
+          "operator_acceptance": "Not established",
+          "production_state": "No deployed integration or production readiness"
+        },
+        {
+          "source_id": "GO-CP1-E2",
+          "source_status": "ASTERISK_POLICY_PARITY_VERIFIED",
+          "evidence_classification": "reported-developer-verification",
+          "independent_review": "Not established; reports prepare independent review",
+          "operator_acceptance": "Not established",
+          "production_state": "No deployed integration or production readiness"
+        },
+        {
+          "source_id": "GO-CP1-E3",
+          "source_status": "TRUSTED_RECOVERY_VERIFIED",
+          "evidence_classification": "reported-developer-verification",
+          "independent_review": "Not established; reports prepare independent review",
+          "operator_acceptance": "Not established",
+          "production_state": "No deployed integration or production readiness"
+        },
+        {
+          "source_id": "GO-CP1-E4",
+          "source_status": "EXECUTOR_JOURNAL_VERIFIED",
+          "evidence_classification": "reported-developer-verification",
+          "independent_review": "Not established; reports prepare independent review",
+          "operator_acceptance": "Not established",
+          "production_state": "No deployed integration or production readiness"
+        }
+      ],
+      "engineering_objective": "Canonical kernel; Asterisk policy parity; Trusted recovery evidence; Durable executor journal"
+    },
+    {
+      "migration_key": "utcp:history-k5",
+      "title": "K5A–E completed infrastructure summary",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": "utcp:k5",
+      "history_policy": "Source completion retained in description; closure requires import policy approval",
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": false,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "K5A",
+        "K5B",
+        "K5C",
+        "K5D",
+        "K5E"
+      ],
+      "dispositions": [
+        "M3"
+      ],
+      "source_paths": [
+        "docs/roadmap/implementation-roadmap.md",
+        "docs/roadmap/phase-status.md"
+      ],
+      "source_hashes": {
+        "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a",
+        "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "K5A",
+          "source_status": "Complete / natural-live-proven",
+          "evidence_classification": "ledger-recorded-live-proof",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "K5B",
+          "source_status": "Complete / natural-live-proven",
+          "evidence_classification": "ledger-recorded-live-proof",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "K5C",
+          "source_status": "Complete / natural-live-proven",
+          "evidence_classification": "ledger-recorded-live-proof",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "K5D",
+          "source_status": "Complete / natural-live-proven",
+          "evidence_classification": "ledger-recorded-live-proof",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "K5E",
+          "source_status": "Complete / natural-live-proven",
+          "evidence_classification": "ledger-recorded-live-proof",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Host / Kubernetes Node visibility; Telephony placement awareness; Capacity and failure-domain policy; Telephony-aware host maintenance; Distributed infrastructure live proof"
+    },
+    {
+      "migration_key": "utcp:history-platform",
+      "title": "Completed platform, telephony and UI foundation summary",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": null,
+      "history_policy": "Source completion retained in description; closure requires import policy approval",
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": false,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "F0",
+        "F1",
+        "F2",
+        "F3",
+        "F4",
+        "K0",
+        "K1",
+        "K2",
+        "K3",
+        "K4",
+        "C0",
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "T0",
+        "T1",
+        "T2",
+        "T3",
+        "T4",
+        "T5",
+        "T6",
+        "V0",
+        "RT-1",
+        "RNM",
+        "RNP",
+        "C6",
+        "C7A",
+        "C7B",
+        "UI-A",
+        "UI-B",
+        "UI-C",
+        "UI-D",
+        "UI-E",
+        "RT-1A"
+      ],
+      "dispositions": [
+        "M3"
+      ],
+      "source_paths": [
+        "docs/roadmap/phase-status.md",
+        "docs/roadmap/ui-foundations.md"
+      ],
+      "source_hashes": {
+        "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b",
+        "docs/roadmap/ui-foundations.md": "e7624634366c30d66a3660ab89459ab30b5c1ff9ccec95612f0bb4cffeedba4b"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "F0",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "F1",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "F2",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "F3",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "F4",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "K0",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "K1",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "K2",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "K3",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "K4",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "C0",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "C1",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "C2",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "C3",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "C4",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "C5",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "T0",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "T1",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "T2",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "T3",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "T4",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "T5",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "T6",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "V0",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "RT-1",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "RNM",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "RNP",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "C6",
+          "source_status": "Complete / live-proven / frozen",
+          "evidence_classification": "ledger-recorded-live-proof",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "C7A",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "C7B",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "UI-A",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "UI-B",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "UI-C",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "UI-D",
+          "source_status": "Complete (T1-achievable scope; later evidence retained)",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "UI-E",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "RT-1A",
+          "source_status": "Complete",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Repository Contract and Governance; Minimal Application Skeleton; Container Build Foundation; Docker Compose Core Platform; CI Quality Baseline; Local k3d Cluster Foundation; Kubernetes Application Base; Traefik and Gateway API; Kubernetes Security Boundaries; Initial Observability; Control-Plane Application Kernel; Identity, Tenancy, and Authorization; Runtime Registry and Runtime-Node Management; Command, Event, Projection, and Reconciliation Engine; Deterministic Simulator Adapter; Telephony Identity, Session, and Registration Domain; Asterisk ARI Adapter; Kamailio Signaling Edge and SIP-over-WSS; rtpengine Media Plane; External Trunk Integration and Live Route Projection; FreeSWITCH Runtime Adapter Parity; Multi-Runtime Convergence, Failover, and Recovery; T6; Natural Login, SIP Registration, and Conference Admission Vertical Slice; Runtime control-plane notifications; RuntimeNode lifecycle; Managed runtime provisioning; Canonical Call lifecycle and normalized control; External connectivity, telephony addressing and caller identity; Inbound/outbound route and destination authority; UI A foundation; UI B foundation; UI C foundation; UI D foundation; UI E foundation; Runtime notifications browser proof"
+    },
+    {
+      "migration_key": "utcp:history-rma-ad",
+      "title": "RMA-A–D completed recording authority summary",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": "utcp:rma",
+      "history_policy": "Source completion retained in description; closure requires import policy approval",
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": false,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "RMA-A",
+        "RMA-B",
+        "RMA-C",
+        "RMA-D"
+      ],
+      "dispositions": [
+        "M3"
+      ],
+      "source_paths": [
+        "docs/roadmap/implementation-roadmap.md",
+        "docs/roadmap/phase-status.md"
+      ],
+      "source_hashes": {
+        "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a",
+        "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "RMA-A",
+          "source_status": "Complete / natural-live-proven",
+          "evidence_classification": "ledger-recorded-acceptance-proof",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "RMA-B",
+          "source_status": "Complete / acceptance-proven",
+          "evidence_classification": "ledger-recorded-acceptance-proof",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "RMA-C",
+          "source_status": "Complete / natural-live-proven",
+          "evidence_classification": "ledger-recorded-acceptance-proof",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "RMA-D",
+          "source_status": "Complete / authenticated-API-proven",
+          "evidence_classification": "ledger-recorded-acceptance-proof",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Recording Authority and Lifecycle; Runtime-Neutral Capture Contract; Recording Artifact Authority; Archive Target and Secret-Reference Authority"
+    },
+    {
+      "migration_key": "utcp:history-v1",
+      "title": "V1 closure summary with six closed gaps",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": null,
+      "history_policy": "Source completion retained in description; closure requires import policy approval",
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": false,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "V1",
+        "V1-GAP-A",
+        "V1-GAP-B",
+        "V1-GAP-C",
+        "V1-GAP-D",
+        "V1-GAP-E",
+        "V1-GAP-F"
+      ],
+      "dispositions": [
+        "M3"
+      ],
+      "source_paths": [
+        "docs/roadmap/phase-status.md"
+      ],
+      "source_hashes": {
+        "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "V1",
+          "source_status": "Complete; Gap A–F closed; no acceptance blocker",
+          "evidence_classification": "ledger-recorded-live-proof",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "V1-GAP-A",
+          "source_status": "Closed",
+          "evidence_classification": "ledger-recorded-closed",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "V1-GAP-B",
+          "source_status": "Closed",
+          "evidence_classification": "ledger-recorded-closed",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "V1-GAP-C",
+          "source_status": "Closed",
+          "evidence_classification": "ledger-recorded-closed",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "V1-GAP-D",
+          "source_status": "Closed",
+          "evidence_classification": "ledger-recorded-closed",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "V1-GAP-E",
+          "source_status": "Closed",
+          "evidence_classification": "ledger-recorded-closed",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        },
+        {
+          "source_id": "V1-GAP-F",
+          "source_status": "Closed",
+          "evidence_classification": "ledger-recorded-closed",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Bidirectional external call routing and control; V1 acceptance Gap A; V1 acceptance Gap B; V1 acceptance Gap C; V1 acceptance Gap D; V1 acceptance Gap E; V1 acceptance Gap F"
+    },
+    {
+      "migration_key": "utcp:k5",
+      "title": "Distributed telephony infrastructure, placement and host lifecycle",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": null,
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": false,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "K5"
+      ],
+      "dispositions": [
+        "M2"
+      ],
+      "source_paths": [
+        "docs/roadmap/implementation-roadmap.md",
+        "docs/roadmap/phase-status.md"
+      ],
+      "source_hashes": {
+        "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a",
+        "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "K5",
+          "source_status": "K5A–E complete; K5F planned",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Distributed telephony infrastructure, placement and host lifecycle"
+    },
+    {
+      "migration_key": "utcp:k5f",
+      "title": "Guided existing-cluster host enrollment",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": "utcp:k5",
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": false,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "K5F"
+      ],
+      "dispositions": [
+        "M1"
+      ],
+      "source_paths": [
+        "docs/roadmap/implementation-roadmap.md",
+        "docs/roadmap/phase-status.md"
+      ],
+      "source_hashes": {
+        "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a",
+        "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "K5F",
+          "source_status": "Planned / not implemented / not R0 gate",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Guided existing-cluster host enrollment"
+    },
+    {
+      "migration_key": "utcp:preservation",
+      "title": "Review and preserve untracked modernization artifacts in source control",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": null,
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": true,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "PRESERVATION"
+      ],
+      "dispositions": [
+        "M1"
+      ],
+      "source_paths": [
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md"
+      ],
+      "source_hashes": {
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md": "039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "PRESERVATION",
+          "source_status": "122 untracked files; no staging/commit authorized",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Review and preserve untracked modernization artifacts in source control"
+    },
+    {
+      "migration_key": "utcp:r0",
+      "title": "Finite core release acceptance boundary",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": null,
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": false,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "R0"
+      ],
+      "dispositions": [
+        "M2"
+      ],
+      "source_paths": [
+        "docs/roadmap/implementation-roadmap.md",
+        "docs/roadmap/phase-status.md"
+      ],
+      "source_hashes": {
+        "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a",
+        "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "R0",
+          "source_status": "Planned",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Finite core release acceptance boundary"
+    },
+    {
+      "migration_key": "utcp:rma",
+      "title": "Recording & Media Archive",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": null,
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": true,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "RMA"
+      ],
+      "dispositions": [
+        "M2"
+      ],
+      "source_paths": [
+        "docs/roadmap/implementation-roadmap.md",
+        "docs/roadmap/phase-status.md"
+      ],
+      "source_hashes": {
+        "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a",
+        "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "RMA",
+          "source_status": "In progress / UTCP Core / R0-Critical",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Recording & Media Archive"
+    },
+    {
+      "migration_key": "utcp:rma-e",
+      "title": "S3-Compatible Archive Adapter and Deterministic MinIO Proof",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": "utcp:rma",
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": true,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "RMA-E"
+      ],
+      "dispositions": [
+        "M1"
+      ],
+      "source_paths": [
+        "docs/roadmap/implementation-roadmap.md",
+        "docs/roadmap/phase-status.md"
+      ],
+      "source_hashes": {
+        "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a",
+        "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "RMA-E",
+          "source_status": "Not started; canonical next action is implementation design",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Run RMA_E_S3_COMPATIBLE_ARCHIVE_ADAPTER_AND_DETERMINISTIC_MINIO_PROOF_IMPLEMENTATION_DESIGN; implementation/live writes need their own scope."
+    },
+    {
+      "migration_key": "utcp:roadmap-residue",
+      "title": "Reconcile stale descriptive RMA/K5 roadmap summaries",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": null,
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": true,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "ROADMAP-RESIDUE"
+      ],
+      "dispositions": [
+        "M1"
+      ],
+      "source_paths": [
+        "docs/roadmap/implementation-roadmap.md",
+        "docs/roadmap/phase-status.md"
+      ],
+      "source_hashes": {
+        "docs/roadmap/implementation-roadmap.md": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a",
+        "docs/roadmap/phase-status.md": "8a58734b603362c31f630630262b234b798aa4cb9cefeb51c70f472db892828b"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "ROADMAP-RESIDUE",
+          "source_status": "Observed descriptive status residue",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Reconcile stale descriptive RMA/K5 roadmap summaries"
+    },
+    {
+      "migration_key": "utcp:vue-scanner",
+      "title": "Repair precise Vue credential-form scanner false positive",
+      "existing_task_id": null,
+      "match_confidence": "confirmed absent in complete scoped snapshot; refresh before create",
+      "proposed_action": "would_create_after_approval",
+      "priority": "no-priority",
+      "assignee": null,
+      "due_date": null,
+      "operator_approval_required": true,
+      "reconciliation_state": "dry-run-only",
+      "status": "to-do",
+      "parent_key": null,
+      "history_policy": null,
+      "project_id": "hrilr4371g33s0iw6lth3o7v",
+      "source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "initial_import_candidate": true,
+      "operator_decision_needed": "Approve exact import policy and allowlisted records; execution/adoption/acceptance require separate scoped authority.",
+      "acceptance_criteria": "Source IDs and hashes match; description preserves all status dimensions; no inferred acceptance; remote read-after-write equals approved payload; native dependency relation only when typed hard gate and endpoints exist.",
+      "last_reconciled_source_revision": "5e028b9ab3d96f3430bf715f89d66ab19a758761",
+      "source_ids": [
+        "VUE-SCANNER"
+      ],
+      "dispositions": [
+        "M1"
+      ],
+      "source_paths": [
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md",
+        "scripts/ci/secret-scan"
+      ],
+      "source_hashes": {
+        "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md": "039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891",
+        "scripts/ci/secret-scan": "70ff179bfcdf0a71b3c845419010fc8a5c462a710fb4b44b20194aeb12531e8b"
+      },
+      "status_dimensions": [
+        {
+          "source_id": "VUE-SCANNER",
+          "source_status": "Reproduced scanner finding",
+          "evidence_classification": "source-recorded",
+          "independent_review": "not established",
+          "operator_acceptance": "not established",
+          "production_state": "not established"
+        }
+      ],
+      "engineering_objective": "Repair precise Vue credential-form scanner false positive"
+    }
+  ],
+  "excluded_from_remote_creation": [
+    "utcp:v1-public-edge",
+    "utcp:v1-orphan-channel",
+    "utcp:rma-f",
+    "utcp:rma-g",
+    "utcp:rma-h",
+    "utcp:c8",
+    "utcp:reporting",
+    "utcp:media-plane",
+    "utcp:application-extensions",
+    "utcp:wac",
+    "utcp:wac-0",
+    "utcp:wac-1",
+    "utcp:wac-2",
+    "utcp:wac-3",
+    "utcp:wac-4",
+    "utcp:wac-5",
+    "utcp:wac-6",
+    "utcp:wac-7",
+    "utcp:wac-8",
+    "utcp:wac-9",
+    "utcp:wac-10",
+    "utcp:gn-readiness",
+    "utcp:gn-g3",
+    "utcp:gn-g4",
+    "utcp:gn-g5",
+    "utcp:external-writer",
+    "utcp:immutable-config",
+    "utcp:executor-storage",
+    "utcp:real-k8s",
+    "utcp:session-compat",
+    "utcp:production-cutover",
+    "utcp:adr-001",
+    "utcp:adr-002",
+    "utcp:adr-003",
+    "utcp:adr-004",
+    "utcp:adr-005",
+    "utcp:adr-006",
+    "utcp:adr-007",
+    "utcp:adr-008",
+    "utcp:adr-009",
+    "utcp:adr-010",
+    "utcp:adr-011",
+    "utcp:adr-012",
+    "utcp:adr-013",
+    "utcp:adr-014",
+    "utcp:adr-015",
+    "utcp:adr-016",
+    "utcp:adr-017",
+    "utcp:adr-018",
+    "utcp:adr-019",
+    "utcp:adr-020",
+    "utcp:adr-021",
+    "utcp:adr-022",
+    "utcp:adr-023",
+    "utcp:adr-024",
+    "utcp:adr-025",
+    "utcp:adr-026",
+    "utcp:adr-027",
+    "utcp:adr-028",
+    "utcp:adr-029",
+    "utcp:adr-030",
+    "utcp:adr-031",
+    "utcp:adr-032",
+    "utcp:adr-033",
+    "utcp:adr-go-proposed",
+    "utcp:adr-infra-proposed",
+    "utcp:v1-fixture-cleanup",
+    "utcp:freeswitch-domain"
+  ],
+  "counts": {
+    "records": 151,
+    "sources": 499,
+    "dispositions": {
+      "M3": 63,
+      "M4": 32,
+      "M2": 10,
+      "M1": 10,
+      "M6": 3,
+      "M5": 33
+    },
+    "task_units": 26,
+    "initial_task_units": 13,
+    "record_types": {
+      "milestone": 79,
+      "acceptance-gate": 7,
+      "decision": 2,
+      "workstream": 1,
+      "scope-boundary": 1,
+      "assignment": 13,
+      "review-gate": 1,
+      "concern": 12,
+      "architecture-decision": 33,
+      "architecture-proposal": 2
+    },
+    "workstreams": {
+      "platform-foundation": 28,
+      "telephony": 15,
+      "infrastructure": 7,
+      "recording": 9,
+      "reference-consumers": 1,
+      "platform-governance": 1,
+      "future-core": 2,
+      "application-extensions": 1,
+      "ui": 5,
+      "future-infrastructure": 12,
+      "go-infrastructure": 11,
+      "go-backend": 14,
+      "governance-and-debt": 10,
+      "architecture-governance": 35
+    },
+    "evidence": {
+      "source-recorded": 86,
+      "ledger-recorded-live-proof": 7,
+      "ledger-recorded-closed": 6,
+      "ledger-recorded-acceptance-proof": 4,
+      "architecture-proposal": 1,
+      "reported-developer-verification": 12,
+      "proposed-architecture": 1,
+      "planned": 1,
+      "versioned-governance-record": 33
+    },
+    "source_statuses": {
+      "Complete": 34,
+      "Complete / live-proven / frozen": 1,
+      "Complete; Gap A–F closed; no acceptance blocker": 1,
+      "Closed": 6,
+      "DEFERRED_BY_ENVIRONMENT": 1,
+      "Separate deferred decision": 1,
+      "K5A–E complete; K5F planned": 1,
+      "Complete / natural-live-proven": 7,
+      "Planned / not implemented / not R0 gate": 1,
+      "In progress / UTCP Core / R0-Critical": 1,
+      "Complete / acceptance-proven": 1,
+      "Complete / authenticated-API-proven": 1,
+      "Not started; canonical next action is implementation design": 1,
+      "Not started": 3,
+      "Eligible (ledger); planned scope": 1,
+      "Planned": 1,
+      "Planned; advanced handoff post-R0/R1 by default": 1,
+      "Future / post-current-R0 / not implemented": 1,
+      "Architecture only / not R0 gate": 1,
+      "Future/outside R0 core": 1,
+      "Complete (T1-achievable scope; later evidence retained)": 1,
+      "Future / post-core / not started / not R0-gating": 1,
+      "Future / unscheduled / not implemented": 11,
+      "Architecture readiness proposal": 1,
+      "Contract/fake proof complete; deferred real proof": 1,
+      "Implemented/developer-tested; baseline acceptance dependency": 1,
+      "Implemented; historical simulated proof only": 1,
+      "Isolated real API verification recorded": 1,
+      "Lifecycle v2 implemented with limitations": 1,
+      "Active profiles implemented with limitations; zero replicas": 1,
+      "Canonical PostgreSQL foundation developer verified": 1,
+      "Proposal only / not authorized": 1,
+      "Original proposal; reassessed by broader Go-native pivot": 2,
+      "Operator-selected target; architecture ADR proposed": 1,
+      "Proposed / awaiting operator adoption": 1,
+      "E1–E4 developer verified; independent acceptance not established": 1,
+      "IMPLEMENTED_WITH_LIMITATIONS": 1,
+      "ASTERISK_POLICY_PARITY_VERIFIED": 1,
+      "TRUSTED_RECOVERY_VERIFIED": 1,
+      "EXECUTOR_JOURNAL_VERIFIED": 1,
+      "Ready for independent review per reports; review not established": 1,
+      "Proposed future stage; no authority transfer authorized": 5,
+      "Recommended next backend implementation; not execution authorization": 1,
+      "Reproduced baseline failure": 1,
+      "Reproduced scanner finding": 1,
+      "122 untracked files; no staging/commit authorized": 1,
+      "Future CP3/CP6 prerequisite": 1,
+      "Future CP3 integration prerequisite": 1,
+      "Process/container retained-store proof only": 1,
+      "Isolated API tests exist; production executor integration not proven": 1,
+      "CP2 planned": 1,
+      "CP6 proposed": 1,
+      "Observed descriptive status residue": 1,
+      "Accepted": 15,
+      "Accepted; refined by ADR-013": 1,
+      "Superseded by ADR-011.": 1,
+      "Accepted and live-proven for C5.": 1,
+      "Accepted for the T0 implementation corridor.": 1,
+      "Accepted for the T1 implementation corridor.": 1,
+      "Accepted as product direction; provisioning is deferred.": 1,
+      "Accepted for the V0 conference-admission corridor. Extends ADR-017 (telephony session and conference domain authority), ADR-019 (Kamailio signaling registration authority), and ADR-020 (T3 RTP media plane), and discharges the ADR-020 deferral \"Kamailio INVITE route authority consuming the canonical RuntimeNode eligibility projection\".": 1,
+      "Accepted and implemented for C6A. This decision establishes the Wave-1 canonical model; execution, observation ingress, API projection, and runtime adapter work remain bounded C6B-C6E slices.": 1,
+      "Accepted as a future architecture and roadmap direction. K5 is planned in parallel with the telephony mainline and is R0-critical; no functionality in this ADR is implemented by this documentation packet.": 1,
+      "Planned / roadmap defined. This ADR records a future architecture direction; it does not claim that transfer or handoff orchestration is implemented.": 1,
+      "Accepted as a future architecture boundary; not implemented": 1,
+      "Accepted as the canonical V1 inbound architecture. No runtime behavior, migration, manifest, or provider configuration is implemented by this documentation packet. It resolves the single architectural gap recorded by the preceding narrow audit verdict `V1_INBOUND_AUTHORITY_REMAINS_UNRESOLVED` and makes the next bounded implementation packet unambiguous. This ADR decides exactly one question: **where an admitted external inbound SIP INVITE is relayed, and what canonical authority governs that execution target.** Ingress identity authority, trusted correlation transport, anti-spoofing, route authority, ordering, C6 adoption timing, and failure semantics were resolved by prior evidence and are restated here only where this decision depends on them.": 1,
+      "Accepted as the current development and V1 acceptance topology. This ADR realigns current repository authority; it does not mutate Kubernetes, change host resolution, or claim that external SIP acceptance has passed.": 1,
+      "Accepted as a planned UTCP core capability and R0-critical roadmap track. This ADR defines a future boundary only; it does not claim Recording & Media Archive implementation or live proof.": 1,
+      "Accepted as the canonical UTCP call-termination semantic authority. No runtime behavior, adapter code, migration, or test is changed by this documentation packet. It resolves the narrow audit verdict `TERMINATION_INTENT_AUTHORITY_UNRESOLVED` and makes the next bounded implementation packet unambiguous. This ADR decides exactly one question: **what canonical meaning UTCP assigns to the end of a Call or CallLeg, and which layer owns each part of that meaning.** Call lifecycle authority (ADR-023), runtime-engine observation authority (ADR-016), and the Asterisk adapter boundary (ADR-018) are restated here only where this decision depends on them.": 1,
+      "Accepted as the canonical authority for UTCP's provider-facing SIP signaling identity on the current native-k3s environment. No runtime behavior, Kamailio configuration, Kubernetes manifest, router configuration, or DNS record is changed by this documentation packet. It resolves the narrow audit verdict `POLICY_OR_TOPOLOGY_AUTHORITY_UNRESOLVED` recorded against Gap B and makes the next bounded implementation packet unambiguous. This ADR decides exactly one question: **which layer owns the SIP address and port that external providers use to reach UTCP, and how that identity is represented, validated, and consumed.** Environment authority (native k3s / `default` / `utcp-dev01`) is settled by the canonical environment cutover and is restated here only where this decision depends on it.": 1,
+      "Accepted. This ADR defines the management-plane boundary for UTCP-managed desired configuration and the permitted role of Artisan/CLI operations. It does not change an existing product phase or runtime behavior.": 1,
+      "Accepted as a future UTCP core capability and product-boundary decision. This ADR defines authority and scope only; it does not claim reporting projections, tables, APIs, exports, an Insights UI, a warehouse, or a reporting worker.": 1,
+      "Proposed / not adopted": 2,
+      "Deferred cleanup / separate bounded authorization": 1,
+      "Unsupported; infrastructure effects do not establish domain policy": 1
+    }
+  }
+}

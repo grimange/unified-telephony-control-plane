@@ -1,0 +1,47 @@
+{
+  "semantic_change": "One operational parent status: utcp:go-native To Do -> In Progress",
+  "old_root_sha256": "ee7432eb43ab8380532c4a33ef9d1f8a91e12fce6a71ae7664fdcf1e0c721a05",
+  "successor_root_sha256": "d093be6eb0f9d8c96d7485456610f153e30614114f9bfe59ced03097ba3c1efb",
+  "approved": false,
+  "actual_mcp_field_changes": [
+    "create_arguments.status",
+    "create_arguments.description (matching operational_execution line only)"
+  ],
+  "mirrored_metadata": [
+    "column_id",
+    "status_dimensions.operational_execution",
+    "payload_sha256"
+  ],
+  "unchanged": "Other nine tasks, source sets, source mapping, candidate decisions, labels, hierarchy, priorities, owners/dates and acceptance dimensions",
+  "supporting_evidence": {
+    "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md": "039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891",
+    "docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md": "a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef"
+  },
+  "payload_diff": [
+    {
+      "path": "/tasks/1/column_id",
+      "before": "r16urlwjums6jbklrdjetnjp",
+      "after": "e35qmx2pn4pftmlhxr203ew4"
+    },
+    {
+      "path": "/tasks/1/status_dimensions/operational_execution",
+      "before": "backlog / proposed; execution not granted by import",
+      "after": "in progress: isolated GO-CP1 E1–E4 implemented and developer-verified; workstream incomplete; further execution not granted by import"
+    },
+    {
+      "path": "/tasks/1/create_arguments/description",
+      "before": "UTCP-Migration-Key: utcp:go-native\nSource IDs: GO-NATIVE\nTask type: workstream parent\n\nEngineering objective and scope\nTrack CP0–CP6 as proposed migration stages. Laravel remains live authority; Go target selection is separate from ADR adoption. CP3–CP6 remain Git-linked future scope.\n\nAcceptance criteria and closure role\nNo parent closure until independently accepted CP1–5, adopted ADR and separately authorized/proven CP6 handover and operator scope acceptance.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: backlog / proposed; execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: Go-native ADR PROPOSED / AWAITING OPERATOR ADOPTION\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A–E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nOperational hierarchy is not a blocking edge. RMA-E remains canonical next action. Formal adoption, deployment and phase acceptance remain Git decisions.\n\nOriginal source classifications\n[{\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"GO-NATIVE\", \"source_status\": \"Operator-selected target; architecture ADR proposed\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: ff6db98bbb5a4354ecabb1d401269e65212f2b0598af3ec4ecaf0364f636458f\nRepository locator (publication prerequisite): docs/architecture/proposals/go-native-control-plane-adr-proposed.md | SHA-256 b0a5639cc67674c6d43b966eac9ebe49e1bf26de3b1850c47a0c1872297f8663\nRepository locator (publication prerequisite): docs/architecture/proposals/go-native-control-plane/migration-roadmap.md | SHA-256 2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+      "after": "UTCP-Migration-Key: utcp:go-native\nSource IDs: GO-NATIVE\nTask type: workstream parent\n\nEngineering objective and scope\nTrack CP0–CP6 as proposed migration stages. Laravel remains live authority; Go target selection is separate from ADR adoption. CP3–CP6 remain Git-linked future scope.\n\nAcceptance criteria and closure role\nNo parent closure until independently accepted CP1–5, adopted ADR and separately authorized/proven CP6 handover and operator scope acceptance.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: in progress: isolated GO-CP1 E1–E4 implemented and developer-verified; workstream incomplete; further execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: Go-native ADR PROPOSED / AWAITING OPERATOR ADOPTION\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A–E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nOperational hierarchy is not a blocking edge. RMA-E remains canonical next action. Formal adoption, deployment and phase acceptance remain Git decisions.\n\nOriginal source classifications\n[{\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"GO-NATIVE\", \"source_status\": \"Operator-selected target; architecture ADR proposed\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: ff6db98bbb5a4354ecabb1d401269e65212f2b0598af3ec4ecaf0364f636458f\nRepository locator (publication prerequisite): docs/architecture/proposals/go-native-control-plane-adr-proposed.md | SHA-256 b0a5639cc67674c6d43b966eac9ebe49e1bf26de3b1850c47a0c1872297f8663\nRepository locator (publication prerequisite): docs/architecture/proposals/go-native-control-plane/migration-roadmap.md | SHA-256 2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n"
+    },
+    {
+      "path": "/tasks/1/create_arguments/status",
+      "before": "to-do",
+      "after": "in-progress"
+    },
+    {
+      "path": "/tasks/1/payload_sha256",
+      "before": "1f37d4251c4f08420df96551b8a798e8538ba7d2643846f0af05a11ecbe95cad",
+      "after": "a2bffbeaa3f675cf451561c5f89112419759ccf84d36f58a33b5530e8c175935"
+    }
+  ]
+}

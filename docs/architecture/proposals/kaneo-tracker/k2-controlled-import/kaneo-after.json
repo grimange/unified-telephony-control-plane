@@ -1,0 +1,67 @@
+{
+  "scope": "Fresh final task/related-page read only; workspace/project/label metadata in kaneo-before.json",
+  "tasks": {
+    "data": {
+      "id": "hrilr4371g33s0iw6lth3o7v",
+      "name": "Unified Telephony Control Plane",
+      "slug": "UTCP",
+      "icon": "Layout",
+      "description": "",
+      "descriptionDeferred": false,
+      "isPublic": false,
+      "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il",
+      "backgroundVersion": null,
+      "columns": [
+        {
+          "id": "to-do",
+          "slug": "to-do",
+          "name": "To Do",
+          "position": 0,
+          "icon": null,
+          "isFinal": false,
+          "tasks": []
+        },
+        {
+          "id": "in-progress",
+          "slug": "in-progress",
+          "name": "In Progress",
+          "position": 1,
+          "icon": null,
+          "isFinal": false,
+          "tasks": []
+        },
+        {
+          "id": "in-review",
+          "slug": "in-review",
+          "name": "In Review",
+          "position": 2,
+          "icon": null,
+          "isFinal": false,
+          "tasks": []
+        },
+        {
+          "id": "done",
+          "slug": "done",
+          "name": "Done",
+          "position": 3,
+          "icon": null,
+          "isFinal": true,
+          "tasks": []
+        }
+      ],
+      "archivedTasks": [],
+      "plannedTasks": []
+    },
+    "pagination": {
+      "total": 0,
+      "page": 1,
+      "pageSize": 100,
+      "totalPages": 1,
+      "relatedPage": 1,
+      "relatedPageSize": 100,
+      "relatedTotalPages": 1
+    }
+  },
+  "writes": 0,
+  "read_call": "list_tasks(projectId=hrilr4371g33s0iw6lth3o7v,limit=100,page=1,relatedPage=1)"
+}

@@ -1,0 +1,17 @@
+apps/api/app/ControlPlane/InfrastructureAuthority/ActionFingerprint.php
+apps/api/app/ControlPlane/InfrastructureAuthority/ActiveFingerprint.php
+apps/api/app/ControlPlane/InfrastructureAuthority/CanonicalInfrastructureService.php
+apps/api/app/ControlPlane/InfrastructureAuthority/LifecycleFingerprint.php
+apps/api/database/migrations/2026_10_21_100000_create_infrastructure_incarnation_authority.php
+apps/api/tests/Feature/ControlPlane/CanonicalInfrastructureTest.php
+components/kubernetes-effects/canonical_claim_integration_test.go
+docs/architecture/proposals/UTCP_GN_G2_CANONICAL_LIFECYCLE_AND_CLAIM_FOUNDATION.md
+docs/architecture/proposals/gn-g2/canonical-foundation-migration-and-handoff.md
+scripts/control-plane/canonical-proof
+tests/gn-g2-canonical/CanonicalIntegrationBridge.php
+tests/gn-g2-canonical/Fixture.php
+tests/gn-g2-canonical/PostgresProofTest.php
+tests/gn-g2-canonical/README.md
+tests/gn-g2-canonical/verify
+tests/gn-g2-canonical/verify-go-integration
+tests/gn-g2-canonical/worker.php

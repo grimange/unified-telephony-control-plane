@@ -1,0 +1,58 @@
+{
+  "assignment": "UTCP_KANEO_TRACKER_K2_EXECUTE_INITIAL_IMPORT",
+  "existing_changed": [
+    {
+      "path": "docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md",
+      "before_sha256": "a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef",
+      "after_sha256": "3ecce59f1f75435ae0dfc4d2c38e9027979eb5aa594991ce2c2a09022ca51d76",
+      "authority": "explicit operator MIGRATING transition"
+    }
+  ],
+  "new_files": [
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/EXECUTED_IMPORT.md",
+      "sha256": "81190c7330d97f10548dfc032bc7b37d37a48b0683d57db21472ac3bbfbcf5aa"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/K4_HANDOFF_PROMPT.md",
+      "sha256": "e066a1898bb660858c6fae47e2fdc228452ccc89155d502b1434fe144cfb4cb5"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/executed-task-mapping.json",
+      "sha256": "109616fec40c0823ebe30319700aa38561c2fa15de4e171c9fdd5959eee57e8a"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/execution-after.json",
+      "sha256": "e44cf6b8a3081398dd4dbd983e8cba3b81628c8c0d4e4e3f6a85344d6641e1dd"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/execution-authorization.json",
+      "sha256": "96ea3c493aaf888dbfe2d954115f29eb6faa9668d5c511440887d7c0ff1982a4"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/execution-baseline.json",
+      "sha256": "0fa3a6984a561ef06b6816fe261646b38997a5a2f7f1b29a81d3a21f2d2fd23c"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/execution-before.json",
+      "sha256": "723f0562b796da0de9a03d83959841b89ab11d5a01e777a96b81f2ad9b3b034a"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/execution-changes.json",
+      "sha256": null
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/execution-journal.json",
+      "sha256": "1fb608dedbea1ed9caf0b4a334734c96e08e46ee05e73328302205524db32380"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/execution-reconciliation.json",
+      "sha256": "02d69dd78d59be22d9cc9811a9f7c9cd249d84226dd5ca22423a3770b19da889"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/validate-execution.py",
+      "sha256": "8eb5372739402f1d62dc30411eb6b395ccef0a19385f6aaed6342d677a1762b6"
+    }
+  ],
+  "self_hash": "omitted to avoid recursion"
+}

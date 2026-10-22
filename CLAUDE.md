@@ -20,6 +20,16 @@ workflow guidance and shared principles that are not path-local.
 
 ---
 
+## Canonical task tracker
+
+Follow [the shared Kaneo policy](docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md)
+for tracker authority and all worker task updates. Activation is **ACTIVE**;
+Kaneo owns operational task progress. Use the configured Kaneo MCP with exact
+task keys/IDs under the policy's assignment-authorization, single-writer,
+role-separation and failure rules. Git retains engineering/formal acceptance
+evidence; self-tests do not authorize Done. Reconcile ambiguous writes before
+retrying; builds/tests remain independent of tracker availability.
+
 ## Mission
 
 Build UTCP as a vendor-neutral telephony control plane that dialers, contact centers, conferencing systems, IVR systems, and voice automation applications can build on.

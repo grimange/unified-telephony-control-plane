@@ -29,14 +29,30 @@ scope, and preservation of existing work.
 Before editing, identify the owner, current contract, implementation seam, and
 acceptance proof. Use the current repository, `docs/roadmap/phase-status.md`,
 applicable ADRs, and relevant evidence. The status ledger governs current
-status; ADRs establish accepted architecture; evidence records what was proven
-at a point in time. Historical evidence and Git history are not rewritten to
+phase status; ADRs establish accepted architecture; evidence records what was
+proven at a point in time. Historical evidence and Git history are not rewritten to
 make current behavior appear retroactively correct.
 
 Repository truth wins over stale comments, templates, and historical reports.
 If authority, intended behavior, or failure meaning is materially unclear,
 perform a narrow evidence audit. Once bounded, implement rather than repeating
 a broad audit.
+
+## Canonical operational tracker
+
+Kaneo is the canonical operational task/progress tracker; activation is **ACTIVE**.
+Follow the single cross-worker policy at
+[docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md](docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md).
+Authorized workers must use the configured Kaneo MCP for operational task
+progress: identify the exact task key/ID, read current state and dependencies,
+confirm assignment authority, and use one designated writer. Git retains
+engineering evidence, formal decisions,
+phase/release acceptance and ledger next-action authority. Developer verification
+may support In Review, never self-acceptance or automatic Done. Read before
+updates; ambiguous writes require read reconciliation and fail closed on
+unresolved identity/conflicts. Task presence never grants execution authority.
+Builds/tests/CI remain independent of Kaneo availability; preserve evidence and
+explicitly pending update intent during outages, then reconcile against Kaneo.
 
 ## Architecture invariants
 
@@ -150,7 +166,8 @@ List only genuine operator prerequisites, or write `None.`.
 
 ## Current-state ledger reconciliation
 
-`docs/roadmap/phase-status.md` is the sole canonical current-state ledger.
+`docs/roadmap/phase-status.md` is the sole canonical phase/release current-state
+ledger; operational task authority follows the activation policy above.
 Any bounded task that materially changes a current phase, gap, blocker,
 canonical topology or environment authority, implementation/test/live-proof
 classification, closure or deferred state, or canonical next action MUST

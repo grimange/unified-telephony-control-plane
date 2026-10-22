@@ -1,0 +1,131 @@
+{
+  "scope": "New K2 files only; no existing path changed",
+  "self_hash_policy": "Self hash excluded to avoid recursive hashing; all other files hashed after final validation documentation",
+  "files": [
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/EVIDENCE_PUBLICATION_REPORT.md",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "4d232ee37db657215de85688065875a5abf7df5388ae597ee9e22ee065584aa9"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/K2_EXECUTION_REPORT.md",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "511f60973778d44fcce6eb41b1746474a24778a591bba6e71c2545102e4eabf6"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/NEXT_ASSIGNMENT.md",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "c18ba7c038f79f2c7614efa0da1b3c7cebf3f721845d56951a8815d4ebf27062"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/OPERATOR_APPROVAL_PACKET.md",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "0fbf29ebed05ff0ada2951feff85c18ba6dc25860ed484b07db8fadf3a2253dc"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/RECONCILIATION_REPORT.md",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "012f475d03855e7e595f9a9f8d4a1413e0bec5be556ba0a766ce65310bf7a00a"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/approval-evidence-index.json",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "c46f1cf334ba43fb538a308a5f1cfa244ca3be5b47513b62570899f0110ea221"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/approved-scope-candidate-paths.txt",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "1ce7998739a4e5eebd95d2930a253488de771906722fc9254ced027dd67226a7"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/changed-files.json",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": null
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/foundation-candidate-paths.txt",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "152fc8dce0b3721b83b8f8d7a839bea13b453375dc1e6cf24497b73bec69c780"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/freeze-v2/FREEZE_SHA256",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "8cad2cd2f3b46e7392f00899be3f32a505bc8cd5ffacddd77378e2a28bbabbf3"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/freeze-v2/README.md",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "9a92103ef43532476a2a21141e23e3f7dd818a8352d17b6b610d1ed287a40160"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/freeze-v2/change-report.json",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "48451f981f56537c48fa9a7c695580abfc1510d649006448452278ced2851cd7"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/freeze-v2/payload-hashes.json",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "5c76e63d49698b3f0de1a12eaf9c13f7ad5c9dd59b1ad0a27f650b58d6db76f4"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/freeze-v2/payload-preview.json",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "9c363e0f7d1cc173fc2a698e03cf89a9f2d35ac0fdc742d910f6a9ee68e305ac"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/go-tracker-candidate-paths.txt",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "fd8c95fb98225872602af5f3fc2dd2ea01b98d228db2f9383198fc28dcd75472"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/import-journal.json",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "06a4a393414f9f394593b9e7fdfe01ea0780748be896a344ef3918d4fa5046f8"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/kaneo-after.json",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "734b831ebc90ef68ed5a27e45c1f73350c14ad64f6995b166c8a72dafba9d646"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/kaneo-before.json",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "e15ed33743e36a631535d6b0e01b756168ec82007415152a47cfc5f78ebe0a15"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/preservation-plan.json",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "5dece402e7fa5bf553f8363b69e7444bae9afd707555359672db51353589dd60"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/publication-inventory.json",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "a78c2cca0a50550db3d8da0d56f873c2c7f5bdd9d15307a42e4c93f74b74c0d3"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/repository-baseline.json",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "ab9bed4d01af2c0209dae457acbe3055b861717a9de4293c066d6327616ced3f"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/source-to-kaneo-mapping.json",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "28c9ad3feb2fe080d44ac6f533763acc0a97e4d0ac423157c56d1b27e37b83d5"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/task-reference-publication.json",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "5af98bdc19fd9913cf407ebcaf02feb5c7115a4d2b71566049e8d8e3951a27c0"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/validate-preflight.py",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "10db54fd81f1964500e504cad025f99f2c3398b8bd8f56f7a4b17f26a6553c8d"
+    },
+    {
+      "path": "docs/architecture/proposals/kaneo-tracker/k2-controlled-import/validation-results.md",
+      "action": "CREATE_LOCAL_AUDIT_ARTIFACT",
+      "sha256": "75d0f369ceec40749b23bbb0d7dd13fa7111e3a96489e2b338d2ae9f3e1a1bc5"
+    }
+  ]
+}

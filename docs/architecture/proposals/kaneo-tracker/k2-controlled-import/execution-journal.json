@@ -1,0 +1,1060 @@
+{
+  "assignment": "UTCP_KANEO_TRACKER_K2_EXECUTE_INITIAL_IMPORT",
+  "approved_manifest_digest": "d093be6eb0f9d8c96d7485456610f153e30614114f9bfe59ced03097ba3c1efb",
+  "operations": [
+    {
+      "kind": "create_task",
+      "key": "utcp:rma",
+      "arguments": {
+        "description": "UTCP-Migration-Key: utcp:rma\nSource IDs: RMA\nTask type: workstream parent\n\nEngineering objective and scope\nTrack RMA-A\u2013H scope without duplicating their detailed evidence. A\u2013D have the ledger classifications; E design is next; F\u2013H remain planned.\n\nAcceptance criteria and closure role\nWorkstream closure requires the governing RMA acceptance outcomes and explicit authorized phase decision in Git; no automatic rollup closure.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: recorded workstream in progress\nimplementation: RMA-A\u2013D complete in their ledger scopes; E\u2013H not implemented\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: existing accepted ADRs unchanged; no new adoption\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nOperational hierarchy is not a blocking edge. RMA-E remains canonical next action. Formal adoption, deployment and phase acceptance remain Git decisions.\n\nOriginal source classifications\n[{\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"RMA\", \"source_status\": \"In progress / UTCP Core / R0-Critical\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: 2d779740077dade93f08b03520992923bd1aae1820b88ef055db3601ccdcb281\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/docs/roadmap/implementation-roadmap.md | SHA-256 0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "priority": "no-priority",
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "status": "in-progress",
+        "title": "Recording and Media Archive \u2014 R0-Critical workstream"
+      },
+      "payload_sha256": "6468db530ce07b75b8239f114aca7b6084bfc0ca2ccb154a4a32933cc37551e2",
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "cgo6ggc6a60v3jhagc7a7g3w",
+      "read_back": {
+        "id": "cgo6ggc6a60v3jhagc7a7g3w",
+        "title": "Recording and Media Archive \u2014 R0-Critical workstream",
+        "number": 1,
+        "description": "UTCP-Migration-Key: utcp:rma\nSource IDs: RMA\nTask type: workstream parent\n\nEngineering objective and scope\nTrack RMA-A\u2013H scope without duplicating their detailed evidence. A\u2013D have the ledger classifications; E design is next; F\u2013H remain planned.\n\nAcceptance criteria and closure role\nWorkstream closure requires the governing RMA acceptance outcomes and explicit authorized phase decision in Git; no automatic rollup closure.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: recorded workstream in progress\nimplementation: RMA-A\u2013D complete in their ledger scopes; E\u2013H not implemented\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: existing accepted ADRs unchanged; no new adoption\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nOperational hierarchy is not a blocking edge. RMA-E remains canonical next action. Formal adoption, deployment and phase acceptance remain Git decisions.\n\nOriginal source classifications\n[{\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"RMA\", \"source_status\": \"In progress / UTCP Core / R0-Critical\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: 2d779740077dade93f08b03520992923bd1aae1820b88ef055db3601ccdcb281\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/docs/roadmap/implementation-roadmap.md | SHA-256 0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "status": "in-progress",
+        "columnId": "e35qmx2pn4pftmlhxr203ew4",
+        "priority": "no-priority",
+        "startDate": null,
+        "dueDate": null,
+        "position": 1,
+        "createdAt": "2026-10-22T10:16:50.240Z",
+        "userId": null,
+        "assigneeName": null,
+        "assigneeId": null,
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+      },
+      "arguments_sha256": "6468db530ce07b75b8239f114aca7b6084bfc0ca2ccb154a4a32933cc37551e2"
+    },
+    {
+      "kind": "create_task",
+      "key": "utcp:go-native",
+      "arguments": {
+        "description": "UTCP-Migration-Key: utcp:go-native\nSource IDs: GO-NATIVE\nTask type: workstream parent\n\nEngineering objective and scope\nTrack CP0\u2013CP6 as proposed migration stages. Laravel remains live authority; Go target selection is separate from ADR adoption. CP3\u2013CP6 remain Git-linked future scope.\n\nAcceptance criteria and closure role\nNo parent closure until independently accepted CP1\u20135, adopted ADR and separately authorized/proven CP6 handover and operator scope acceptance.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: in progress: isolated GO-CP1 E1\u2013E4 implemented and developer-verified; workstream incomplete; further execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: Go-native ADR PROPOSED / AWAITING OPERATOR ADOPTION\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nOperational hierarchy is not a blocking edge. RMA-E remains canonical next action. Formal adoption, deployment and phase acceptance remain Git decisions.\n\nOriginal source classifications\n[{\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"GO-NATIVE\", \"source_status\": \"Operator-selected target; architecture ADR proposed\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: ff6db98bbb5a4354ecabb1d401269e65212f2b0598af3ec4ecaf0364f636458f\nRepository locator (publication prerequisite): docs/architecture/proposals/go-native-control-plane-adr-proposed.md | SHA-256 b0a5639cc67674c6d43b966eac9ebe49e1bf26de3b1850c47a0c1872297f8663\nRepository locator (publication prerequisite): docs/architecture/proposals/go-native-control-plane/migration-roadmap.md | SHA-256 2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "priority": "no-priority",
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "status": "in-progress",
+        "title": "Go-native control-plane modernization"
+      },
+      "payload_sha256": "a2bffbeaa3f675cf451561c5f89112419759ccf84d36f58a33b5530e8c175935",
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "brwn7io6rcriqgmaurli0uj3",
+      "read_back": {
+        "id": "brwn7io6rcriqgmaurli0uj3",
+        "title": "Go-native control-plane modernization",
+        "number": 2,
+        "description": "UTCP-Migration-Key: utcp:go-native\nSource IDs: GO-NATIVE\nTask type: workstream parent\n\nEngineering objective and scope\nTrack CP0\u2013CP6 as proposed migration stages. Laravel remains live authority; Go target selection is separate from ADR adoption. CP3\u2013CP6 remain Git-linked future scope.\n\nAcceptance criteria and closure role\nNo parent closure until independently accepted CP1\u20135, adopted ADR and separately authorized/proven CP6 handover and operator scope acceptance.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: in progress: isolated GO-CP1 E1\u2013E4 implemented and developer-verified; workstream incomplete; further execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: Go-native ADR PROPOSED / AWAITING OPERATOR ADOPTION\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nOperational hierarchy is not a blocking edge. RMA-E remains canonical next action. Formal adoption, deployment and phase acceptance remain Git decisions.\n\nOriginal source classifications\n[{\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"GO-NATIVE\", \"source_status\": \"Operator-selected target; architecture ADR proposed\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: ff6db98bbb5a4354ecabb1d401269e65212f2b0598af3ec4ecaf0364f636458f\nRepository locator (publication prerequisite): docs/architecture/proposals/go-native-control-plane-adr-proposed.md | SHA-256 b0a5639cc67674c6d43b966eac9ebe49e1bf26de3b1850c47a0c1872297f8663\nRepository locator (publication prerequisite): docs/architecture/proposals/go-native-control-plane/migration-roadmap.md | SHA-256 2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "status": "in-progress",
+        "columnId": "e35qmx2pn4pftmlhxr203ew4",
+        "priority": "no-priority",
+        "startDate": null,
+        "dueDate": null,
+        "position": 2,
+        "createdAt": "2026-10-22T10:17:30.834Z",
+        "userId": null,
+        "assigneeName": null,
+        "assigneeId": null,
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+      },
+      "arguments_sha256": "a2bffbeaa3f675cf451561c5f89112419759ccf84d36f58a33b5530e8c175935"
+    },
+    {
+      "kind": "create_task",
+      "key": "utcp:rma-e",
+      "arguments": {
+        "description": "UTCP-Migration-Key: utcp:rma-e\nSource IDs: RMA-E\nTask type: bounded task / review scope\n\nEngineering objective and scope\nPrepare the canonical RMA-E implementation-design packet, using established artifact and archive-target contracts. This task does not implement an adapter, run MinIO or authorize live writes.\n\nAcceptance criteria and closure role\nA bounded design specifies vendor-neutral adapter contracts, idempotent transfer/failure semantics, credential boundaries, deterministic MinIO proof and the next implementation scope; authorized reviewer/operator accepts the design in Git.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: backlog / proposed; execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: existing accepted ADRs unchanged; no new adoption\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nCanonical next action: RMA_E_S3_COMPATIBLE_ARCHIVE_ADAPTER_AND_DETERMINISTIC_MINIO_PROOF_IMPLEMENTATION_DESIGN. R0-Critical is source text, not an invented Kaneo priority. RMA-C/D and V1/K5E prerequisites already satisfied within ledger scopes; no historical blocks relations.\n\nOriginal source classifications\n[{\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"RMA-E\", \"source_status\": \"Not started; canonical next action is implementation design\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: 2d779740077dade93f08b03520992923bd1aae1820b88ef055db3601ccdcb281\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/docs/roadmap/implementation-roadmap.md | SHA-256 0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "priority": "no-priority",
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "status": "to-do",
+        "title": "Design RMA-E S3 archive adapter and deterministic MinIO proof"
+      },
+      "payload_sha256": "c71be8b8255b3429f77698006f3b4282f89576848d16c03c1c9ea626e8c6e664",
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "r7rvvwsxhb5duikth8b6c51m",
+      "read_back": {
+        "id": "r7rvvwsxhb5duikth8b6c51m",
+        "title": "Design RMA-E S3 archive adapter and deterministic MinIO proof",
+        "number": 3,
+        "description": "UTCP-Migration-Key: utcp:rma-e\nSource IDs: RMA-E\nTask type: bounded task / review scope\n\nEngineering objective and scope\nPrepare the canonical RMA-E implementation-design packet, using established artifact and archive-target contracts. This task does not implement an adapter, run MinIO or authorize live writes.\n\nAcceptance criteria and closure role\nA bounded design specifies vendor-neutral adapter contracts, idempotent transfer/failure semantics, credential boundaries, deterministic MinIO proof and the next implementation scope; authorized reviewer/operator accepts the design in Git.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: backlog / proposed; execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: existing accepted ADRs unchanged; no new adoption\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nCanonical next action: RMA_E_S3_COMPATIBLE_ARCHIVE_ADAPTER_AND_DETERMINISTIC_MINIO_PROOF_IMPLEMENTATION_DESIGN. R0-Critical is source text, not an invented Kaneo priority. RMA-C/D and V1/K5E prerequisites already satisfied within ledger scopes; no historical blocks relations.\n\nOriginal source classifications\n[{\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"RMA-E\", \"source_status\": \"Not started; canonical next action is implementation design\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: 2d779740077dade93f08b03520992923bd1aae1820b88ef055db3601ccdcb281\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/docs/roadmap/implementation-roadmap.md | SHA-256 0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "status": "to-do",
+        "columnId": "r16urlwjums6jbklrdjetnjp",
+        "priority": "no-priority",
+        "startDate": null,
+        "dueDate": null,
+        "position": 1,
+        "createdAt": "2026-10-22T10:17:39.802Z",
+        "userId": null,
+        "assigneeName": null,
+        "assigneeId": null,
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+      },
+      "arguments_sha256": "c71be8b8255b3429f77698006f3b4282f89576848d16c03c1c9ea626e8c6e664"
+    },
+    {
+      "kind": "create_task",
+      "key": "utcp:go-cp0",
+      "arguments": {
+        "description": "UTCP-Migration-Key: utcp:go-cp0\nSource IDs: GO-CP0\nTask type: bounded task / review scope\n\nEngineering objective and scope\nReview architecture/security and record the operator adoption decision. The current ADR remains PROPOSED / AWAITING OPERATOR ADOPTION.\n\nAcceptance criteria and closure role\nIndependent architecture/security findings and an explicit durable operator adoption/rejection/defer decision. Import cannot adopt the ADR; any Done transition requires accepted task scope, not inferred adoption.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: backlog / proposed; execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: Go-native ADR PROPOSED / AWAITING OPERATOR ADOPTION\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Operator records the ADR decision after independent architecture/security review; Done scope must explicitly distinguish decision recorded from ADR adopted.\n\nDependencies and limitations\nOperational hierarchy is not a blocking edge. RMA-E remains canonical next action. Formal adoption, deployment and phase acceptance remain Git decisions.\n\nOriginal source classifications\n[{\"evidence_classification\": \"proposed-architecture\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"GO-CP0\", \"source_status\": \"Proposed / awaiting operator adoption\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: ff6db98bbb5a4354ecabb1d401269e65212f2b0598af3ec4ecaf0364f636458f\nRepository locator (publication prerequisite): docs/architecture/proposals/go-native-control-plane-adr-proposed.md | SHA-256 b0a5639cc67674c6d43b966eac9ebe49e1bf26de3b1850c47a0c1872297f8663\nRepository locator (publication prerequisite): docs/architecture/proposals/go-native-control-plane/migration-roadmap.md | SHA-256 2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "priority": "no-priority",
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "status": "to-do",
+        "title": "Review proposed Go-native ADR for formal operator adoption"
+      },
+      "payload_sha256": "23f6724cbb914b823a57e4cdcb3f77c6ceaa078ab5406630c8eda7504fb0e309",
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "lk2rjl7jqllau0m2ax5yam3f",
+      "read_back": {
+        "id": "lk2rjl7jqllau0m2ax5yam3f",
+        "title": "Review proposed Go-native ADR for formal operator adoption",
+        "number": 4,
+        "description": "UTCP-Migration-Key: utcp:go-cp0\nSource IDs: GO-CP0\nTask type: bounded task / review scope\n\nEngineering objective and scope\nReview architecture/security and record the operator adoption decision. The current ADR remains PROPOSED / AWAITING OPERATOR ADOPTION.\n\nAcceptance criteria and closure role\nIndependent architecture/security findings and an explicit durable operator adoption/rejection/defer decision. Import cannot adopt the ADR; any Done transition requires accepted task scope, not inferred adoption.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: backlog / proposed; execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: Go-native ADR PROPOSED / AWAITING OPERATOR ADOPTION\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Operator records the ADR decision after independent architecture/security review; Done scope must explicitly distinguish decision recorded from ADR adopted.\n\nDependencies and limitations\nOperational hierarchy is not a blocking edge. RMA-E remains canonical next action. Formal adoption, deployment and phase acceptance remain Git decisions.\n\nOriginal source classifications\n[{\"evidence_classification\": \"proposed-architecture\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"GO-CP0\", \"source_status\": \"Proposed / awaiting operator adoption\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: ff6db98bbb5a4354ecabb1d401269e65212f2b0598af3ec4ecaf0364f636458f\nRepository locator (publication prerequisite): docs/architecture/proposals/go-native-control-plane-adr-proposed.md | SHA-256 b0a5639cc67674c6d43b966eac9ebe49e1bf26de3b1850c47a0c1872297f8663\nRepository locator (publication prerequisite): docs/architecture/proposals/go-native-control-plane/migration-roadmap.md | SHA-256 2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "status": "to-do",
+        "columnId": "r16urlwjums6jbklrdjetnjp",
+        "priority": "no-priority",
+        "startDate": null,
+        "dueDate": null,
+        "position": 2,
+        "createdAt": "2026-10-22T10:17:46.749Z",
+        "userId": null,
+        "assigneeName": null,
+        "assigneeId": null,
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+      },
+      "arguments_sha256": "23f6724cbb914b823a57e4cdcb3f77c6ceaa078ab5406630c8eda7504fb0e309"
+    },
+    {
+      "kind": "create_task",
+      "key": "utcp:go-cp1",
+      "arguments": {
+        "description": "UTCP-Migration-Key: utcp:go-cp1\nSource IDs: GO-CP1, GO-CP1-E1, GO-CP1-E2, GO-CP1-E3, GO-CP1-E4, GO-CP1-REVIEW\nTask type: bounded task / review scope\n\nEngineering objective and scope\nConsolidate the reported isolated kernel, Asterisk policy parity, trusted recovery and executor-journal evidence, then obtain independent review and explicit scope acceptance. Preserve all four original reports.\n\nAcceptance criteria and closure role\nIndependent reviewer records findings, scope and any required corrections in Git; authorized operator records acceptance of the isolated CP1 scope before Done. Developer tests do not satisfy either role. No production integration or GN-G3 transfer is included.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: developer handoff awaiting independent review\nimplementation: E1\u2013E4 reported implemented in isolation\ndeveloper_verification: E1\u2013E4 developer verification passed in reported scopes; not rerun for K1\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: Go-native ADR PROPOSED / AWAITING OPERATOR ADOPTION\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nE1 had limitations; E2 addresses Asterisk parity, E3 trusted recovery, E4 synthetic executor journal. Retained-store process/container proof does not prove node/volume loss or Pod rescheduling. Review outcome and operator acceptance are pending.\n\nOriginal source classifications\n[{\"evidence_classification\": \"reported-developer-verification\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"Isolated only; no authority transfer\", \"source_id\": \"GO-CP1\", \"source_status\": \"E1\u2013E4 developer verified; independent acceptance not established\"}, {\"evidence_classification\": \"reported-developer-verification\", \"independent_review\": \"Not established; reports prepare independent review\", \"operator_acceptance\": \"Not established\", \"production_state\": \"No deployed integration or production readiness\", \"source_id\": \"GO-CP1-E1\", \"source_status\": \"IMPLEMENTED_WITH_LIMITATIONS\"}, {\"evidence_classification\": \"reported-developer-verification\", \"independent_review\": \"Not established; reports prepare independent review\", \"operator_acceptance\": \"Not established\", \"production_state\": \"No deployed integration or production readiness\", \"source_id\": \"GO-CP1-E2\", \"source_status\": \"ASTERISK_POLICY_PARITY_VERIFIED\"}, {\"evidence_classification\": \"reported-developer-verification\", \"independent_review\": \"Not established; reports prepare independent review\", \"operator_acceptance\": \"Not established\", \"production_state\": \"No deployed integration or production readiness\", \"source_id\": \"GO-CP1-E3\", \"source_status\": \"TRUSTED_RECOVERY_VERIFIED\"}, {\"evidence_classification\": \"reported-developer-verification\", \"independent_review\": \"Not established; reports prepare independent review\", \"operator_acceptance\": \"Not established\", \"production_state\": \"No deployed integration or production readiness\", \"source_id\": \"GO-CP1-E4\", \"source_status\": \"EXECUTOR_JOURNAL_VERIFIED\"}, {\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"GO-CP1-REVIEW\", \"source_status\": \"Ready for independent review per reports; review not established\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: 7b84c54cab800f6ca67999aca6a1edd242dbfb3ede784ff18467ed229b5c7d65\nRepository locator (publication prerequisite): docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E1.md | SHA-256 f10d2f6061dfc4e59da13d56ef2cf9640f6fed8760d753868ae4e122e9c895ad\nRepository locator (publication prerequisite): docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E2_ASTERISK_DOMAIN_POLICY_PARITY.md | SHA-256 b5dba11c57e70d0ea114f3f20c3508ca0e52c7263456cbfe443935e54bccc780\nRepository locator (publication prerequisite): docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E3_TRUSTED_RECOVERY_EVIDENCE.md | SHA-256 2d829eeaf2fc971a1bd115f1eeee195727931c9612d9eed09e6b0ddeecfcd023\nRepository locator (publication prerequisite): docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md | SHA-256 039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891\nRepository locator (publication prerequisite): docs/architecture/proposals/go-native-control-plane/migration-roadmap.md | SHA-256 2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "priority": "no-priority",
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "status": "in-review",
+        "title": "Review GO-CP1 E1\u2013E4 canonical kernel and executor evidence"
+      },
+      "payload_sha256": "1171f1dcef264429f5b84e82d7432438c862b3ece94aaa2715ce0a91efb52350",
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "fjuc8e6er7llzv4qlm43ucbo",
+      "read_back": {
+        "id": "fjuc8e6er7llzv4qlm43ucbo",
+        "title": "Review GO-CP1 E1\u2013E4 canonical kernel and executor evidence",
+        "number": 5,
+        "description": "UTCP-Migration-Key: utcp:go-cp1\nSource IDs: GO-CP1, GO-CP1-E1, GO-CP1-E2, GO-CP1-E3, GO-CP1-E4, GO-CP1-REVIEW\nTask type: bounded task / review scope\n\nEngineering objective and scope\nConsolidate the reported isolated kernel, Asterisk policy parity, trusted recovery and executor-journal evidence, then obtain independent review and explicit scope acceptance. Preserve all four original reports.\n\nAcceptance criteria and closure role\nIndependent reviewer records findings, scope and any required corrections in Git; authorized operator records acceptance of the isolated CP1 scope before Done. Developer tests do not satisfy either role. No production integration or GN-G3 transfer is included.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: developer handoff awaiting independent review\nimplementation: E1\u2013E4 reported implemented in isolation\ndeveloper_verification: E1\u2013E4 developer verification passed in reported scopes; not rerun for K1\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: Go-native ADR PROPOSED / AWAITING OPERATOR ADOPTION\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nE1 had limitations; E2 addresses Asterisk parity, E3 trusted recovery, E4 synthetic executor journal. Retained-store process/container proof does not prove node/volume loss or Pod rescheduling. Review outcome and operator acceptance are pending.\n\nOriginal source classifications\n[{\"evidence_classification\": \"reported-developer-verification\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"Isolated only; no authority transfer\", \"source_id\": \"GO-CP1\", \"source_status\": \"E1\u2013E4 developer verified; independent acceptance not established\"}, {\"evidence_classification\": \"reported-developer-verification\", \"independent_review\": \"Not established; reports prepare independent review\", \"operator_acceptance\": \"Not established\", \"production_state\": \"No deployed integration or production readiness\", \"source_id\": \"GO-CP1-E1\", \"source_status\": \"IMPLEMENTED_WITH_LIMITATIONS\"}, {\"evidence_classification\": \"reported-developer-verification\", \"independent_review\": \"Not established; reports prepare independent review\", \"operator_acceptance\": \"Not established\", \"production_state\": \"No deployed integration or production readiness\", \"source_id\": \"GO-CP1-E2\", \"source_status\": \"ASTERISK_POLICY_PARITY_VERIFIED\"}, {\"evidence_classification\": \"reported-developer-verification\", \"independent_review\": \"Not established; reports prepare independent review\", \"operator_acceptance\": \"Not established\", \"production_state\": \"No deployed integration or production readiness\", \"source_id\": \"GO-CP1-E3\", \"source_status\": \"TRUSTED_RECOVERY_VERIFIED\"}, {\"evidence_classification\": \"reported-developer-verification\", \"independent_review\": \"Not established; reports prepare independent review\", \"operator_acceptance\": \"Not established\", \"production_state\": \"No deployed integration or production readiness\", \"source_id\": \"GO-CP1-E4\", \"source_status\": \"EXECUTOR_JOURNAL_VERIFIED\"}, {\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"GO-CP1-REVIEW\", \"source_status\": \"Ready for independent review per reports; review not established\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: 7b84c54cab800f6ca67999aca6a1edd242dbfb3ede784ff18467ed229b5c7d65\nRepository locator (publication prerequisite): docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E1.md | SHA-256 f10d2f6061dfc4e59da13d56ef2cf9640f6fed8760d753868ae4e122e9c895ad\nRepository locator (publication prerequisite): docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E2_ASTERISK_DOMAIN_POLICY_PARITY.md | SHA-256 b5dba11c57e70d0ea114f3f20c3508ca0e52c7263456cbfe443935e54bccc780\nRepository locator (publication prerequisite): docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E3_TRUSTED_RECOVERY_EVIDENCE.md | SHA-256 2d829eeaf2fc971a1bd115f1eeee195727931c9612d9eed09e6b0ddeecfcd023\nRepository locator (publication prerequisite): docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md | SHA-256 039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891\nRepository locator (publication prerequisite): docs/architecture/proposals/go-native-control-plane/migration-roadmap.md | SHA-256 2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "status": "in-review",
+        "columnId": "y2bbz674rhx96k0c3jr35v5y",
+        "priority": "no-priority",
+        "startDate": null,
+        "dueDate": null,
+        "position": 1,
+        "createdAt": "2026-10-22T10:17:54.971Z",
+        "userId": null,
+        "assigneeName": null,
+        "assigneeId": null,
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+      },
+      "arguments_sha256": "1171f1dcef264429f5b84e82d7432438c862b3ece94aaa2715ce0a91efb52350"
+    },
+    {
+      "kind": "create_task",
+      "key": "utcp:go-cp2-e1",
+      "arguments": {
+        "description": "UTCP-Migration-Key: utcp:go-cp2-e1\nSource IDs: GO-CP2-E1\nTask type: bounded task / review scope\n\nEngineering objective and scope\nImplement only the isolated identity/tenancy slice if separately authorized. Use the E4 handoff for Laravel parity, sessions/CSRF, tenant/capability integrity and transactional audit/outbox. No live session transfer, broader realtime replacement or production deployment.\n\nAcceptance criteria and closure role\nThe separately authorized implementation meets the E4 next-assignment gate matrix and publishes developer evidence; independent security/parity review and authorized operator scope acceptance remain necessary for Done. This import grants no implementation authority.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: backlog / proposed; execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: Go-native ADR PROPOSED / AWAITING OPERATOR ADOPTION\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nUses E4 isolated implementation baseline. No GN-G3 blocker, no automatic CP1 independent-acceptance blocker for isolated E1. Vue scanner repair remains a later CP2/CP6 security acceptance gate, not a block on every isolated test. RMA-E remains canonical roadmap priority.\n\nOriginal source classifications\n[{\"evidence_classification\": \"planned\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"GO-CP2-E1\", \"source_status\": \"Recommended next backend implementation; not execution authorization\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: 4e1a97bbf146ee70e79687edf2223e49ea04e755cfe5c227ae63733d4bdd4b45\nRepository locator (publication prerequisite): docs/architecture/proposals/go-cp1-e4/next-assignment.md | SHA-256 ebf1cb09419b24c6e70f32da5ca1e1187209322893c68023c811149962fdd9d7\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "priority": "no-priority",
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "status": "to-do",
+        "title": "Proposed GO-CP2 E1 identity and tenancy compatibility"
+      },
+      "payload_sha256": "be02d0f4db8af3aaa0c6c260a9963a2333961d435324287336c1fc749e48720f",
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "teautbtlkefukprbmn3ai7od",
+      "read_back": {
+        "id": "teautbtlkefukprbmn3ai7od",
+        "title": "Proposed GO-CP2 E1 identity and tenancy compatibility",
+        "number": 6,
+        "description": "UTCP-Migration-Key: utcp:go-cp2-e1\nSource IDs: GO-CP2-E1\nTask type: bounded task / review scope\n\nEngineering objective and scope\nImplement only the isolated identity/tenancy slice if separately authorized. Use the E4 handoff for Laravel parity, sessions/CSRF, tenant/capability integrity and transactional audit/outbox. No live session transfer, broader realtime replacement or production deployment.\n\nAcceptance criteria and closure role\nThe separately authorized implementation meets the E4 next-assignment gate matrix and publishes developer evidence; independent security/parity review and authorized operator scope acceptance remain necessary for Done. This import grants no implementation authority.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: backlog / proposed; execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: Go-native ADR PROPOSED / AWAITING OPERATOR ADOPTION\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nUses E4 isolated implementation baseline. No GN-G3 blocker, no automatic CP1 independent-acceptance blocker for isolated E1. Vue scanner repair remains a later CP2/CP6 security acceptance gate, not a block on every isolated test. RMA-E remains canonical roadmap priority.\n\nOriginal source classifications\n[{\"evidence_classification\": \"planned\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"GO-CP2-E1\", \"source_status\": \"Recommended next backend implementation; not execution authorization\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: 4e1a97bbf146ee70e79687edf2223e49ea04e755cfe5c227ae63733d4bdd4b45\nRepository locator (publication prerequisite): docs/architecture/proposals/go-cp1-e4/next-assignment.md | SHA-256 ebf1cb09419b24c6e70f32da5ca1e1187209322893c68023c811149962fdd9d7\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "status": "to-do",
+        "columnId": "r16urlwjums6jbklrdjetnjp",
+        "priority": "no-priority",
+        "startDate": null,
+        "dueDate": null,
+        "position": 3,
+        "createdAt": "2026-10-22T10:18:02.586Z",
+        "userId": null,
+        "assigneeName": null,
+        "assigneeId": null,
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+      },
+      "arguments_sha256": "be02d0f4db8af3aaa0c6c260a9963a2333961d435324287336c1fc749e48720f"
+    },
+    {
+      "kind": "create_task",
+      "key": "utcp:checker",
+      "arguments": {
+        "description": "UTCP-Migration-Key: utcp:checker\nSource IDs: CHECKER\nTask type: bounded task / review scope\n\nEngineering objective and scope\nCorrect the checker classification against accepted K5 workload privileges, retaining positive and negative workload-label regressions. Do not alter accepted K5 permissions or classifications to make a static check pass.\n\nAcceptance criteria and closure role\nA separately authorized correction passes focused checker regressions and relevant repository checks with independent review and authorized scope acceptance.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: backlog / proposed; execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: existing accepted ADRs unchanged; no new adoption\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nKnown checker failure remains separate from accepted K5. This concern gates future CP3 production integration / CP6 acceptance, not current isolated identity work.\n\nOriginal source classifications\n[{\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"CHECKER\", \"source_status\": \"Reproduced baseline failure\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: 028fd4e712d9007bb432d2f75cbc91698ca750a9601d841e92f9a186f971a2f2\nRepository locator (publication prerequisite): docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md | SHA-256 039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/infrastructure/kubernetes/base/platform/api-deployment.yaml | SHA-256 c8bbddccbaea2ac25c5f18cc6d35ca3c84807fe310735deaca0ce155a9d6a300\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/infrastructure/kubernetes/base/platform/scheduler-deployment.yaml | SHA-256 25441abb2f8eb2aef5275c8f6db487676970da2aa03506c339d234d8832e491c\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/infrastructure/kubernetes/base/platform/telephony-reconciler-deployment.yaml | SHA-256 8b210b4d14ba7e5039f779b8666d01d42f4ab4c5a6ac2c3566b8e10ea7ef70f3\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/scripts/runtime-engine/config-check | SHA-256 84aba8dcccfb32255fca8f3930aafac477a574c39d5a7d8526afa951335a878e\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "priority": "no-priority",
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "status": "to-do",
+        "title": "Repair runtime-engine checker / accepted K5 API-client label mismatch"
+      },
+      "payload_sha256": "19a7154af25a4895a219bc09d8491916d368333ac10e4c76ac6f2028b3755c81",
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "ubclkkmuzmd5h7t0qd7ayrvh",
+      "read_back": {
+        "id": "ubclkkmuzmd5h7t0qd7ayrvh",
+        "title": "Repair runtime-engine checker / accepted K5 API-client label mismatch",
+        "number": 7,
+        "description": "UTCP-Migration-Key: utcp:checker\nSource IDs: CHECKER\nTask type: bounded task / review scope\n\nEngineering objective and scope\nCorrect the checker classification against accepted K5 workload privileges, retaining positive and negative workload-label regressions. Do not alter accepted K5 permissions or classifications to make a static check pass.\n\nAcceptance criteria and closure role\nA separately authorized correction passes focused checker regressions and relevant repository checks with independent review and authorized scope acceptance.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: backlog / proposed; execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: existing accepted ADRs unchanged; no new adoption\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nKnown checker failure remains separate from accepted K5. This concern gates future CP3 production integration / CP6 acceptance, not current isolated identity work.\n\nOriginal source classifications\n[{\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"CHECKER\", \"source_status\": \"Reproduced baseline failure\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: 028fd4e712d9007bb432d2f75cbc91698ca750a9601d841e92f9a186f971a2f2\nRepository locator (publication prerequisite): docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md | SHA-256 039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/infrastructure/kubernetes/base/platform/api-deployment.yaml | SHA-256 c8bbddccbaea2ac25c5f18cc6d35ca3c84807fe310735deaca0ce155a9d6a300\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/infrastructure/kubernetes/base/platform/scheduler-deployment.yaml | SHA-256 25441abb2f8eb2aef5275c8f6db487676970da2aa03506c339d234d8832e491c\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/infrastructure/kubernetes/base/platform/telephony-reconciler-deployment.yaml | SHA-256 8b210b4d14ba7e5039f779b8666d01d42f4ab4c5a6ac2c3566b8e10ea7ef70f3\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/scripts/runtime-engine/config-check | SHA-256 84aba8dcccfb32255fca8f3930aafac477a574c39d5a7d8526afa951335a878e\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "status": "to-do",
+        "columnId": "r16urlwjums6jbklrdjetnjp",
+        "priority": "no-priority",
+        "startDate": null,
+        "dueDate": null,
+        "position": 4,
+        "createdAt": "2026-10-22T10:18:10.562Z",
+        "userId": null,
+        "assigneeName": null,
+        "assigneeId": null,
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+      },
+      "arguments_sha256": "19a7154af25a4895a219bc09d8491916d368333ac10e4c76ac6f2028b3755c81"
+    },
+    {
+      "kind": "create_task",
+      "key": "utcp:vue-scanner",
+      "arguments": {
+        "description": "UTCP-Migration-Key: utcp:vue-scanner\nSource IDs: VUE-SCANNER\nTask type: bounded task / review scope\n\nEngineering objective and scope\nCorrect the specific form-expression false positive with parser-aware classification or a precisely reviewed fixture. Retain literal-secret detection; no broad Vue or variable-name exemption.\n\nAcceptance criteria and closure role\nA separately authorized repair passes scanner positive/negative regressions and independent security review; authorized scope acceptance is recorded.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: backlog / proposed; execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: existing accepted ADRs unchanged; no new adoption\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nFinding remains visible at ExternalTrunkDetailView.vue:292; no sensitive expression is copied here. Repair gates later CP2/CP6 security acceptance, not isolated implementation authorization.\n\nOriginal source classifications\n[{\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"VUE-SCANNER\", \"source_status\": \"Reproduced scanner finding\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: d8b3b029e671f36189f570df6a26695b64b953b275902f9d766ef54e3c274e7f\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/apps/web/src/views/ExternalTrunkDetailView.vue | SHA-256 ba62b668057c94614542ab93c121328a76a3238e79e39ba99d79c69c6c6d9f62\nRepository locator (publication prerequisite): docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md | SHA-256 039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/scripts/ci/secret-scan | SHA-256 70ff179bfcdf0a71b3c845419010fc8a5c462a710fb4b44b20194aeb12531e8b\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "priority": "no-priority",
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "status": "to-do",
+        "title": "Repair precise Vue credential-form scanner finding"
+      },
+      "payload_sha256": "6c63bc9247d98430b15c0cc637d33e8d4915b930fa88906fc4f694fc7fe78f3a",
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "m9353580s2n1f8pcn0hntkuz",
+      "read_back": {
+        "id": "m9353580s2n1f8pcn0hntkuz",
+        "title": "Repair precise Vue credential-form scanner finding",
+        "number": 8,
+        "description": "UTCP-Migration-Key: utcp:vue-scanner\nSource IDs: VUE-SCANNER\nTask type: bounded task / review scope\n\nEngineering objective and scope\nCorrect the specific form-expression false positive with parser-aware classification or a precisely reviewed fixture. Retain literal-secret detection; no broad Vue or variable-name exemption.\n\nAcceptance criteria and closure role\nA separately authorized repair passes scanner positive/negative regressions and independent security review; authorized scope acceptance is recorded.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: backlog / proposed; execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: existing accepted ADRs unchanged; no new adoption\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nFinding remains visible at ExternalTrunkDetailView.vue:292; no sensitive expression is copied here. Repair gates later CP2/CP6 security acceptance, not isolated implementation authorization.\n\nOriginal source classifications\n[{\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"VUE-SCANNER\", \"source_status\": \"Reproduced scanner finding\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: d8b3b029e671f36189f570df6a26695b64b953b275902f9d766ef54e3c274e7f\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/apps/web/src/views/ExternalTrunkDetailView.vue | SHA-256 ba62b668057c94614542ab93c121328a76a3238e79e39ba99d79c69c6c6d9f62\nRepository locator (publication prerequisite): docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md | SHA-256 039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/scripts/ci/secret-scan | SHA-256 70ff179bfcdf0a71b3c845419010fc8a5c462a710fb4b44b20194aeb12531e8b\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "status": "to-do",
+        "columnId": "r16urlwjums6jbklrdjetnjp",
+        "priority": "no-priority",
+        "startDate": null,
+        "dueDate": null,
+        "position": 5,
+        "createdAt": "2026-10-22T10:18:19.004Z",
+        "userId": null,
+        "assigneeName": null,
+        "assigneeId": null,
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+      },
+      "arguments_sha256": "6c63bc9247d98430b15c0cc637d33e8d4915b930fa88906fc4f694fc7fe78f3a"
+    },
+    {
+      "kind": "create_task",
+      "key": "utcp:preservation",
+      "arguments": {
+        "description": "UTCP-Migration-Key: utcp:preservation\nSource IDs: PRESERVATION\nTask type: bounded task / review scope\n\nEngineering objective and scope\nReview the existing 143 untracked files and four tracked governance edits, then account separately for new K1 files. Establish a scoped publication plan preserving all prior work. No stage, commit or push is authorized by this task import.\n\nAcceptance criteria and closure role\nAn independently reviewable artifact inventory/publication manifest accounts for all source/evidence, hashes and credential exclusions. Any stage/commit/push requires separate explicit authority, and publication is verified before accepted closure.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: backlog / proposed; execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: existing accepted ADRs unchanged; no new adoption\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nOperational hierarchy is not a blocking edge. RMA-E remains canonical next action. Formal adoption, deployment and phase acceptance remain Git decisions.\n\nOriginal source classifications\n[{\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"PRESERVATION\", \"source_status\": \"143 untracked files and four existing tracked documentation edits at K1 start; no staging/commit authorized\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: 3cf69d4886341ba8aab7a41f76a6c4016a9f00e9d081f3f77209875a70c3d5e2\nRepository locator (publication prerequisite): docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md | SHA-256 039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "priority": "no-priority",
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "status": "to-do",
+        "title": "Review and preserve modernization and tracker artifacts in source control"
+      },
+      "payload_sha256": "7e67001f65c57f398e919994df46793b3d8e77ad7cdcac54957481db41011257",
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "n9boiu42malfsz9oet1xgi91",
+      "read_back": {
+        "id": "n9boiu42malfsz9oet1xgi91",
+        "title": "Review and preserve modernization and tracker artifacts in source control",
+        "number": 9,
+        "description": "UTCP-Migration-Key: utcp:preservation\nSource IDs: PRESERVATION\nTask type: bounded task / review scope\n\nEngineering objective and scope\nReview the existing 143 untracked files and four tracked governance edits, then account separately for new K1 files. Establish a scoped publication plan preserving all prior work. No stage, commit or push is authorized by this task import.\n\nAcceptance criteria and closure role\nAn independently reviewable artifact inventory/publication manifest accounts for all source/evidence, hashes and credential exclusions. Any stage/commit/push requires separate explicit authority, and publication is verified before accepted closure.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: backlog / proposed; execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: existing accepted ADRs unchanged; no new adoption\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nOperational hierarchy is not a blocking edge. RMA-E remains canonical next action. Formal adoption, deployment and phase acceptance remain Git decisions.\n\nOriginal source classifications\n[{\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"PRESERVATION\", \"source_status\": \"143 untracked files and four existing tracked documentation edits at K1 start; no staging/commit authorized\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: 3cf69d4886341ba8aab7a41f76a6c4016a9f00e9d081f3f77209875a70c3d5e2\nRepository locator (publication prerequisite): docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md | SHA-256 039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "status": "to-do",
+        "columnId": "r16urlwjums6jbklrdjetnjp",
+        "priority": "no-priority",
+        "startDate": null,
+        "dueDate": null,
+        "position": 6,
+        "createdAt": "2026-10-22T10:18:26.936Z",
+        "userId": null,
+        "assigneeName": null,
+        "assigneeId": null,
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+      },
+      "arguments_sha256": "7e67001f65c57f398e919994df46793b3d8e77ad7cdcac54957481db41011257"
+    },
+    {
+      "kind": "create_task",
+      "key": "utcp:roadmap-residue",
+      "arguments": {
+        "description": "UTCP-Migration-Key: utcp:roadmap-residue\nSource IDs: ROADMAP-RESIDUE\nTask type: bounded task / review scope\n\nEngineering objective and scope\nUpdate only stale descriptive roadmap summaries in a separately authorized documentation packet. Use the current phase ledger, preserve historical evidence and retain RMA-E priority.\n\nAcceptance criteria and closure role\nCurrent summaries agree with the ledger; accepted milestone/proof scope and canonical next action are preserved; links/hygiene/phase checks pass and authorized scope review is recorded.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: backlog / proposed; execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: existing accepted ADRs unchanged; no new adoption\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nOperational hierarchy is not a blocking edge. RMA-E remains canonical next action. Formal adoption, deployment and phase acceptance remain Git decisions.\n\nOriginal source classifications\n[{\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"ROADMAP-RESIDUE\", \"source_status\": \"Observed descriptive status residue\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: 2d779740077dade93f08b03520992923bd1aae1820b88ef055db3601ccdcb281\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/docs/roadmap/implementation-roadmap.md | SHA-256 0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "priority": "no-priority",
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "status": "to-do",
+        "title": "Reconcile stale descriptive RMA/K5 roadmap summaries"
+      },
+      "payload_sha256": "b9f2a0729d4e5d1fcfde6a4325ab4b16d8b5f3ad58c715ef19ae7fe9e6cffd4d",
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "hokpmghpqp0pb859yutdd0zm",
+      "read_back": {
+        "id": "hokpmghpqp0pb859yutdd0zm",
+        "title": "Reconcile stale descriptive RMA/K5 roadmap summaries",
+        "number": 10,
+        "description": "UTCP-Migration-Key: utcp:roadmap-residue\nSource IDs: ROADMAP-RESIDUE\nTask type: bounded task / review scope\n\nEngineering objective and scope\nUpdate only stale descriptive roadmap summaries in a separately authorized documentation packet. Use the current phase ledger, preserve historical evidence and retain RMA-E priority.\n\nAcceptance criteria and closure role\nCurrent summaries agree with the ledger; accepted milestone/proof scope and canonical next action are preserved; links/hygiene/phase checks pass and authorized scope review is recorded.\n\nStatus dimensions (import snapshot; Git authority until ACTIVE)\noperational_execution: backlog / proposed; execution not granted by import\nimplementation: not complete for this task scope\ndeveloper_verification: not established for this task outcome\nindependent_review: not established for this task scope\noperator_acceptance: not established for this task scope\narchitecture_adoption: existing accepted ADRs unchanged; no new adoption\nproduction_deployment: no deployment or authority transfer for this task; historical deployed proof retains its original scope\nformal_phase_release: V1 and K5A\u2013E classifications unchanged; Git ledger remains formal authority\nexecution_authorization: K2 import approval alone does not authorize engineering execution; a scoped assignment is required\nclosure_authority: Independent reviewer plus explicit operator scope acceptance; implementer cannot self-accept\n\nDependencies and limitations\nOperational hierarchy is not a blocking edge. RMA-E remains canonical next action. Formal adoption, deployment and phase acceptance remain Git decisions.\n\nOriginal source classifications\n[{\"evidence_classification\": \"source-recorded\", \"independent_review\": \"not established\", \"operator_acceptance\": \"not established\", \"production_state\": \"not established\", \"source_id\": \"ROADMAP-RESIDUE\", \"source_status\": \"Observed descriptive status residue\"}]\n\nSource snapshot\nRevision: 5e028b9ab3d96f3430bf715f89d66ab19a758761 plus exact working-tree hashes; not all sources are published.\nSource-set SHA-256: 2d779740077dade93f08b03520992923bd1aae1820b88ef055db3601ccdcb281\nRepository locator (publication prerequisite): docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md | SHA-256 a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef\nhttps://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/docs/roadmap/implementation-roadmap.md | SHA-256 0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a\nRepository locator (publication prerequisite): docs/roadmap/phase-status.md | SHA-256 9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2\n\nOperator decision needed: approve exact K2 import only. Engineering execution, Done, ADR adoption and deployment remain separately governed. No owner or deadline is assigned.\n",
+        "status": "to-do",
+        "columnId": "r16urlwjums6jbklrdjetnjp",
+        "priority": "no-priority",
+        "startDate": null,
+        "dueDate": null,
+        "position": 7,
+        "createdAt": "2026-10-22T10:18:35.030Z",
+        "userId": null,
+        "assigneeName": null,
+        "assigneeId": null,
+        "projectId": "hrilr4371g33s0iw6lth3o7v",
+        "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+      },
+      "arguments_sha256": "b9f2a0729d4e5d1fcfde6a4325ab4b16d8b5f3ad58c715ef19ae7fe9e6cffd4d"
+    },
+    {
+      "kind": "attach_label_to_task",
+      "key": "utcp:go-native",
+      "arguments": {
+        "labelId": "a3t3bjpr1m3ffixpo1bowf3n",
+        "taskId": "brwn7io6rcriqgmaurli0uj3"
+      },
+      "state": "VERIFIED",
+      "attempt": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\n  \"id\": \"a9jc8uufb3igxihbeymky31g\",\n  \"name\": \"Roadmap planning\",\n  \"color\": \"#64748b\",\n  \"createdAt\": \"2026-10-22T10:18:49.741Z\",\n  \"updatedAt\": \"2026-10-22T10:18:49.741Z\",\n  \"deletionStartedAt\": null,\n  \"taskId\": \"brwn7io6rcriqgmaurli0uj3\",\n  \"workspaceId\": \"30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il\"\n}"
+          }
+        ],
+        "isError": false
+      },
+      "returned_id": "a9jc8uufb3igxihbeymky31g",
+      "read_back": [
+        {
+          "id": "a9jc8uufb3igxihbeymky31g",
+          "name": "Roadmap planning",
+          "color": "#64748b"
+        }
+      ],
+      "arguments_sha256": "5b9e6be12729600b2e7210b627ebd231adb2735ef270dc6e7c4b83b0abdc0209",
+      "argument_digest_recorded": "derived at final reconciliation from the exact arguments durably saved before invocation"
+    },
+    {
+      "kind": "attach_label_to_task",
+      "key": "utcp:go-native",
+      "arguments": {
+        "labelId": "dhnherobkdmq3q46x82728pl",
+        "taskId": "brwn7io6rcriqgmaurli0uj3"
+      },
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "qh8nsk0nv0gfef69lkjeivff",
+      "result": {
+        "id": "qh8nsk0nv0gfef69lkjeivff",
+        "name": "Proposed / not adopted",
+        "color": "#a855f7",
+        "createdAt": "2026-10-22T10:19:10.124Z",
+        "updatedAt": "2026-10-22T10:19:10.124Z",
+        "deletionStartedAt": null,
+        "taskId": "brwn7io6rcriqgmaurli0uj3",
+        "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+      },
+      "read_back": [
+        {
+          "id": "a9jc8uufb3igxihbeymky31g",
+          "name": "Roadmap planning",
+          "color": "#64748b"
+        },
+        {
+          "id": "qh8nsk0nv0gfef69lkjeivff",
+          "name": "Proposed / not adopted",
+          "color": "#a855f7"
+        }
+      ],
+      "arguments_sha256": "c52df255dc576246c74a924f039ff18e250550c70c29f192e91ecb6b8bf763a8",
+      "argument_digest_recorded": "derived at final reconciliation from the exact arguments durably saved before invocation"
+    },
+    {
+      "kind": "attach_label_to_task",
+      "key": "utcp:go-cp0",
+      "arguments": {
+        "labelId": "dhnherobkdmq3q46x82728pl",
+        "taskId": "lk2rjl7jqllau0m2ax5yam3f"
+      },
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "mhnyl85662e19azy9om8mjs8",
+      "result": {
+        "id": "mhnyl85662e19azy9om8mjs8",
+        "name": "Proposed / not adopted",
+        "color": "#a855f7",
+        "createdAt": "2026-10-22T10:19:15.434Z",
+        "updatedAt": "2026-10-22T10:19:15.434Z",
+        "deletionStartedAt": null,
+        "taskId": "lk2rjl7jqllau0m2ax5yam3f",
+        "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+      },
+      "read_back": [
+        {
+          "id": "mhnyl85662e19azy9om8mjs8",
+          "name": "Proposed / not adopted",
+          "color": "#a855f7"
+        }
+      ],
+      "arguments_sha256": "b3c6228f5be4a9572dc7f5520fd4162504dade5ef01cb9c72b4061c1969b2868",
+      "argument_digest_recorded": "derived at final reconciliation from the exact arguments durably saved before invocation"
+    },
+    {
+      "kind": "attach_label_to_task",
+      "key": "utcp:go-cp2-e1",
+      "arguments": {
+        "labelId": "dhnherobkdmq3q46x82728pl",
+        "taskId": "teautbtlkefukprbmn3ai7od"
+      },
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "bkgv7l9t1gk3x6xwwek7p2hq",
+      "result": {
+        "id": "bkgv7l9t1gk3x6xwwek7p2hq",
+        "name": "Proposed / not adopted",
+        "color": "#a855f7",
+        "createdAt": "2026-10-22T10:19:20.601Z",
+        "updatedAt": "2026-10-22T10:19:20.601Z",
+        "deletionStartedAt": null,
+        "taskId": "teautbtlkefukprbmn3ai7od",
+        "workspaceId": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il"
+      },
+      "read_back": [
+        {
+          "id": "bkgv7l9t1gk3x6xwwek7p2hq",
+          "name": "Proposed / not adopted",
+          "color": "#a855f7"
+        }
+      ],
+      "arguments_sha256": "bafa6e9228ad9bac3bb80e6f027050fa33eb1403127d53d296158931dc594edf",
+      "argument_digest_recorded": "derived at final reconciliation from the exact arguments durably saved before invocation"
+    },
+    {
+      "kind": "create_task_relation",
+      "source_key": "utcp:go-cp1",
+      "target_key": "utcp:go-cp2-e1",
+      "arguments": {
+        "relationType": "related",
+        "sourceTaskId": "fjuc8e6er7llzv4qlm43ucbo",
+        "targetTaskId": "teautbtlkefukprbmn3ai7od"
+      },
+      "state": "VERIFIED",
+      "attempt": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\n  \"id\": \"i6th6qjj9k5k7ob24xey4zk7\",\n  \"sourceTaskId\": \"fjuc8e6er7llzv4qlm43ucbo\",\n  \"targetTaskId\": \"teautbtlkefukprbmn3ai7od\",\n  \"relationType\": \"related\",\n  \"createdAt\": \"2026-10-22T10:19:42.428Z\"\n}"
+          }
+        ],
+        "isError": false
+      },
+      "returned_id": "i6th6qjj9k5k7ob24xey4zk7",
+      "read_back": {
+        "source": [
+          {
+            "id": "i6th6qjj9k5k7ob24xey4zk7",
+            "sourceTaskId": "fjuc8e6er7llzv4qlm43ucbo",
+            "targetTaskId": "teautbtlkefukprbmn3ai7od",
+            "relationType": "related",
+            "createdAt": "2026-10-22T10:19:42.428Z",
+            "sourceTask": {
+              "id": "fjuc8e6er7llzv4qlm43ucbo",
+              "title": "Review GO-CP1 E1\u2013E4 canonical kernel and executor evidence",
+              "status": "in-review",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 5,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            },
+            "targetTask": {
+              "id": "teautbtlkefukprbmn3ai7od",
+              "title": "Proposed GO-CP2 E1 identity and tenancy compatibility",
+              "status": "to-do",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 6,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            }
+          }
+        ],
+        "target": [
+          {
+            "id": "i6th6qjj9k5k7ob24xey4zk7",
+            "sourceTaskId": "fjuc8e6er7llzv4qlm43ucbo",
+            "targetTaskId": "teautbtlkefukprbmn3ai7od",
+            "relationType": "related",
+            "createdAt": "2026-10-22T10:19:42.428Z",
+            "sourceTask": {
+              "id": "fjuc8e6er7llzv4qlm43ucbo",
+              "title": "Review GO-CP1 E1\u2013E4 canonical kernel and executor evidence",
+              "status": "in-review",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 5,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            },
+            "targetTask": {
+              "id": "teautbtlkefukprbmn3ai7od",
+              "title": "Proposed GO-CP2 E1 identity and tenancy compatibility",
+              "status": "to-do",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 6,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            }
+          }
+        ]
+      },
+      "arguments_sha256": "171c8be2d4fb4f985f4437ec229c03692dcb9b9e11331957c2ad9d5e6bdbabd6",
+      "argument_digest_recorded": "derived at final reconciliation from the exact arguments durably saved before invocation"
+    },
+    {
+      "kind": "create_task_relation",
+      "source_key": "utcp:go-native",
+      "target_key": "utcp:go-cp0",
+      "arguments": {
+        "relationType": "subtask",
+        "sourceTaskId": "brwn7io6rcriqgmaurli0uj3",
+        "targetTaskId": "lk2rjl7jqllau0m2ax5yam3f"
+      },
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "d4g8sqsooa7v21eglivhjh2n",
+      "result": {
+        "id": "d4g8sqsooa7v21eglivhjh2n",
+        "sourceTaskId": "brwn7io6rcriqgmaurli0uj3",
+        "targetTaskId": "lk2rjl7jqllau0m2ax5yam3f",
+        "relationType": "subtask",
+        "createdAt": "2026-10-22T10:20:09.620Z"
+      },
+      "read_back": {
+        "source": [
+          {
+            "id": "d4g8sqsooa7v21eglivhjh2n",
+            "sourceTaskId": "brwn7io6rcriqgmaurli0uj3",
+            "targetTaskId": "lk2rjl7jqllau0m2ax5yam3f",
+            "relationType": "subtask",
+            "createdAt": "2026-10-22T10:20:09.620Z",
+            "sourceTask": {
+              "id": "brwn7io6rcriqgmaurli0uj3",
+              "title": "Go-native control-plane modernization",
+              "status": "in-progress",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 2,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            },
+            "targetTask": {
+              "id": "lk2rjl7jqllau0m2ax5yam3f",
+              "title": "Review proposed Go-native ADR for formal operator adoption",
+              "status": "to-do",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 4,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            }
+          }
+        ],
+        "target": [
+          {
+            "id": "d4g8sqsooa7v21eglivhjh2n",
+            "sourceTaskId": "brwn7io6rcriqgmaurli0uj3",
+            "targetTaskId": "lk2rjl7jqllau0m2ax5yam3f",
+            "relationType": "subtask",
+            "createdAt": "2026-10-22T10:20:09.620Z",
+            "sourceTask": {
+              "id": "brwn7io6rcriqgmaurli0uj3",
+              "title": "Go-native control-plane modernization",
+              "status": "in-progress",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 2,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            },
+            "targetTask": {
+              "id": "lk2rjl7jqllau0m2ax5yam3f",
+              "title": "Review proposed Go-native ADR for formal operator adoption",
+              "status": "to-do",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 4,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            }
+          }
+        ]
+      },
+      "arguments_sha256": "c8513e94f63fbb6d5e60aeb00f7061e7cf571703bccba1b8a93d9d213d8b3669",
+      "argument_digest_recorded": "derived at final reconciliation from the exact arguments durably saved before invocation"
+    },
+    {
+      "kind": "create_task_relation",
+      "source_key": "utcp:go-native",
+      "target_key": "utcp:go-cp1",
+      "arguments": {
+        "relationType": "subtask",
+        "sourceTaskId": "brwn7io6rcriqgmaurli0uj3",
+        "targetTaskId": "fjuc8e6er7llzv4qlm43ucbo"
+      },
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "idqanl21165iurav05o82bmn",
+      "result": {
+        "id": "idqanl21165iurav05o82bmn",
+        "sourceTaskId": "brwn7io6rcriqgmaurli0uj3",
+        "targetTaskId": "fjuc8e6er7llzv4qlm43ucbo",
+        "relationType": "subtask",
+        "createdAt": "2026-10-22T10:20:21.151Z"
+      },
+      "read_back": {
+        "source": [
+          {
+            "id": "d4g8sqsooa7v21eglivhjh2n",
+            "sourceTaskId": "brwn7io6rcriqgmaurli0uj3",
+            "targetTaskId": "lk2rjl7jqllau0m2ax5yam3f",
+            "relationType": "subtask",
+            "createdAt": "2026-10-22T10:20:09.620Z",
+            "sourceTask": {
+              "id": "brwn7io6rcriqgmaurli0uj3",
+              "title": "Go-native control-plane modernization",
+              "status": "in-progress",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 2,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            },
+            "targetTask": {
+              "id": "lk2rjl7jqllau0m2ax5yam3f",
+              "title": "Review proposed Go-native ADR for formal operator adoption",
+              "status": "to-do",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 4,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            }
+          },
+          {
+            "id": "idqanl21165iurav05o82bmn",
+            "sourceTaskId": "brwn7io6rcriqgmaurli0uj3",
+            "targetTaskId": "fjuc8e6er7llzv4qlm43ucbo",
+            "relationType": "subtask",
+            "createdAt": "2026-10-22T10:20:21.151Z",
+            "sourceTask": {
+              "id": "brwn7io6rcriqgmaurli0uj3",
+              "title": "Go-native control-plane modernization",
+              "status": "in-progress",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 2,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            },
+            "targetTask": {
+              "id": "fjuc8e6er7llzv4qlm43ucbo",
+              "title": "Review GO-CP1 E1\u2013E4 canonical kernel and executor evidence",
+              "status": "in-review",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 5,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            }
+          }
+        ],
+        "target": [
+          {
+            "id": "i6th6qjj9k5k7ob24xey4zk7",
+            "sourceTaskId": "fjuc8e6er7llzv4qlm43ucbo",
+            "targetTaskId": "teautbtlkefukprbmn3ai7od",
+            "relationType": "related",
+            "createdAt": "2026-10-22T10:19:42.428Z",
+            "sourceTask": {
+              "id": "fjuc8e6er7llzv4qlm43ucbo",
+              "title": "Review GO-CP1 E1\u2013E4 canonical kernel and executor evidence",
+              "status": "in-review",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 5,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            },
+            "targetTask": {
+              "id": "teautbtlkefukprbmn3ai7od",
+              "title": "Proposed GO-CP2 E1 identity and tenancy compatibility",
+              "status": "to-do",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 6,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            }
+          },
+          {
+            "id": "idqanl21165iurav05o82bmn",
+            "sourceTaskId": "brwn7io6rcriqgmaurli0uj3",
+            "targetTaskId": "fjuc8e6er7llzv4qlm43ucbo",
+            "relationType": "subtask",
+            "createdAt": "2026-10-22T10:20:21.151Z",
+            "sourceTask": {
+              "id": "brwn7io6rcriqgmaurli0uj3",
+              "title": "Go-native control-plane modernization",
+              "status": "in-progress",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 2,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            },
+            "targetTask": {
+              "id": "fjuc8e6er7llzv4qlm43ucbo",
+              "title": "Review GO-CP1 E1\u2013E4 canonical kernel and executor evidence",
+              "status": "in-review",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 5,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            }
+          }
+        ]
+      },
+      "arguments_sha256": "c6e2b72b56893172f1e362391d7cc6fc0e665967386c42a58d3fa711116a2472",
+      "argument_digest_recorded": "derived at final reconciliation from the exact arguments durably saved before invocation"
+    },
+    {
+      "kind": "create_task_relation",
+      "source_key": "utcp:go-native",
+      "target_key": "utcp:go-cp2-e1",
+      "arguments": {
+        "relationType": "subtask",
+        "sourceTaskId": "brwn7io6rcriqgmaurli0uj3",
+        "targetTaskId": "teautbtlkefukprbmn3ai7od"
+      },
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "njciyqcobiz3mi7ad7m90d8i",
+      "result": {
+        "id": "njciyqcobiz3mi7ad7m90d8i",
+        "sourceTaskId": "brwn7io6rcriqgmaurli0uj3",
+        "targetTaskId": "teautbtlkefukprbmn3ai7od",
+        "relationType": "subtask",
+        "createdAt": "2026-10-22T10:20:33.257Z"
+      },
+      "read_back": {
+        "source": [
+          {
+            "id": "d4g8sqsooa7v21eglivhjh2n",
+            "sourceTaskId": "brwn7io6rcriqgmaurli0uj3",
+            "targetTaskId": "lk2rjl7jqllau0m2ax5yam3f",
+            "relationType": "subtask",
+            "createdAt": "2026-10-22T10:20:09.620Z",
+            "sourceTask": {
+              "id": "brwn7io6rcriqgmaurli0uj3",
+              "title": "Go-native control-plane modernization",
+              "status": "in-progress",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 2,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            },
+            "targetTask": {
+              "id": "lk2rjl7jqllau0m2ax5yam3f",
+              "title": "Review proposed Go-native ADR for formal operator adoption",
+              "status": "to-do",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 4,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            }
+          },
+          {
+            "id": "idqanl21165iurav05o82bmn",
+            "sourceTaskId": "brwn7io6rcriqgmaurli0uj3",
+            "targetTaskId": "fjuc8e6er7llzv4qlm43ucbo",
+            "relationType": "subtask",
+            "createdAt": "2026-10-22T10:20:21.151Z",
+            "sourceTask": {
+              "id": "brwn7io6rcriqgmaurli0uj3",
+              "title": "Go-native control-plane modernization",
+              "status": "in-progress",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 2,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            },
+            "targetTask": {
+              "id": "fjuc8e6er7llzv4qlm43ucbo",
+              "title": "Review GO-CP1 E1\u2013E4 canonical kernel and executor evidence",
+              "status": "in-review",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 5,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            }
+          },
+          {
+            "id": "njciyqcobiz3mi7ad7m90d8i",
+            "sourceTaskId": "brwn7io6rcriqgmaurli0uj3",
+            "targetTaskId": "teautbtlkefukprbmn3ai7od",
+            "relationType": "subtask",
+            "createdAt": "2026-10-22T10:20:33.257Z",
+            "sourceTask": {
+              "id": "brwn7io6rcriqgmaurli0uj3",
+              "title": "Go-native control-plane modernization",
+              "status": "in-progress",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 2,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            },
+            "targetTask": {
+              "id": "teautbtlkefukprbmn3ai7od",
+              "title": "Proposed GO-CP2 E1 identity and tenancy compatibility",
+              "status": "to-do",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 6,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            }
+          }
+        ],
+        "target": [
+          {
+            "id": "i6th6qjj9k5k7ob24xey4zk7",
+            "sourceTaskId": "fjuc8e6er7llzv4qlm43ucbo",
+            "targetTaskId": "teautbtlkefukprbmn3ai7od",
+            "relationType": "related",
+            "createdAt": "2026-10-22T10:19:42.428Z",
+            "sourceTask": {
+              "id": "fjuc8e6er7llzv4qlm43ucbo",
+              "title": "Review GO-CP1 E1\u2013E4 canonical kernel and executor evidence",
+              "status": "in-review",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 5,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            },
+            "targetTask": {
+              "id": "teautbtlkefukprbmn3ai7od",
+              "title": "Proposed GO-CP2 E1 identity and tenancy compatibility",
+              "status": "to-do",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 6,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            }
+          },
+          {
+            "id": "njciyqcobiz3mi7ad7m90d8i",
+            "sourceTaskId": "brwn7io6rcriqgmaurli0uj3",
+            "targetTaskId": "teautbtlkefukprbmn3ai7od",
+            "relationType": "subtask",
+            "createdAt": "2026-10-22T10:20:33.257Z",
+            "sourceTask": {
+              "id": "brwn7io6rcriqgmaurli0uj3",
+              "title": "Go-native control-plane modernization",
+              "status": "in-progress",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 2,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            },
+            "targetTask": {
+              "id": "teautbtlkefukprbmn3ai7od",
+              "title": "Proposed GO-CP2 E1 identity and tenancy compatibility",
+              "status": "to-do",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 6,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            }
+          }
+        ]
+      },
+      "arguments_sha256": "c4ccddf642335624cd68b030143d1c40fa197284879cc1e37291291e14825d5d",
+      "argument_digest_recorded": "derived at final reconciliation from the exact arguments durably saved before invocation"
+    },
+    {
+      "kind": "create_task_relation",
+      "source_key": "utcp:rma",
+      "target_key": "utcp:rma-e",
+      "arguments": {
+        "relationType": "subtask",
+        "sourceTaskId": "cgo6ggc6a60v3jhagc7a7g3w",
+        "targetTaskId": "r7rvvwsxhb5duikth8b6c51m"
+      },
+      "arguments_sha256": "1bee3f36a5505e7a66535dbf08c16494f7f2ca88feeffb7be4b4dae2101a3738",
+      "state": "VERIFIED",
+      "attempt": 1,
+      "returned_id": "ls2bbadgptrymhkxy9q739o5",
+      "result": {
+        "id": "ls2bbadgptrymhkxy9q739o5",
+        "sourceTaskId": "cgo6ggc6a60v3jhagc7a7g3w",
+        "targetTaskId": "r7rvvwsxhb5duikth8b6c51m",
+        "relationType": "subtask",
+        "createdAt": "2026-10-22T10:21:25.102Z"
+      },
+      "read_back": {
+        "source": [
+          {
+            "id": "ls2bbadgptrymhkxy9q739o5",
+            "sourceTaskId": "cgo6ggc6a60v3jhagc7a7g3w",
+            "targetTaskId": "r7rvvwsxhb5duikth8b6c51m",
+            "relationType": "subtask",
+            "createdAt": "2026-10-22T10:21:25.102Z",
+            "sourceTask": {
+              "id": "cgo6ggc6a60v3jhagc7a7g3w",
+              "title": "Recording and Media Archive \u2014 R0-Critical workstream",
+              "status": "in-progress",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 1,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            },
+            "targetTask": {
+              "id": "r7rvvwsxhb5duikth8b6c51m",
+              "title": "Design RMA-E S3 archive adapter and deterministic MinIO proof",
+              "status": "to-do",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 3,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            }
+          }
+        ],
+        "target": [
+          {
+            "id": "ls2bbadgptrymhkxy9q739o5",
+            "sourceTaskId": "cgo6ggc6a60v3jhagc7a7g3w",
+            "targetTaskId": "r7rvvwsxhb5duikth8b6c51m",
+            "relationType": "subtask",
+            "createdAt": "2026-10-22T10:21:25.102Z",
+            "sourceTask": {
+              "id": "cgo6ggc6a60v3jhagc7a7g3w",
+              "title": "Recording and Media Archive \u2014 R0-Critical workstream",
+              "status": "in-progress",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 1,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            },
+            "targetTask": {
+              "id": "r7rvvwsxhb5duikth8b6c51m",
+              "title": "Design RMA-E S3 archive adapter and deterministic MinIO proof",
+              "status": "to-do",
+              "isCompleted": false,
+              "priority": "no-priority",
+              "number": 3,
+              "projectId": "hrilr4371g33s0iw6lth3o7v",
+              "userId": null,
+              "assigneeName": null
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "mapping": {
+    "utcp:rma": "cgo6ggc6a60v3jhagc7a7g3w",
+    "utcp:go-native": "brwn7io6rcriqgmaurli0uj3",
+    "utcp:rma-e": "r7rvvwsxhb5duikth8b6c51m",
+    "utcp:go-cp0": "lk2rjl7jqllau0m2ax5yam3f",
+    "utcp:go-cp1": "fjuc8e6er7llzv4qlm43ucbo",
+    "utcp:go-cp2-e1": "teautbtlkefukprbmn3ai7od",
+    "utcp:checker": "ubclkkmuzmd5h7t0qd7ayrvh",
+    "utcp:vue-scanner": "m9353580s2n1f8pcn0hntkuz",
+    "utcp:preservation": "n9boiu42malfsz9oet1xgi91",
+    "utcp:roadmap-residue": "hokpmghpqp0pb859yutdd0zm"
+  },
+  "governance": "MIGRATING",
+  "recovered_local_issue": "Journal command exceeded OS argument length after fourth relation verification; no subsequent write until complete in-memory journal persisted in chunks. No remote retry."
+}

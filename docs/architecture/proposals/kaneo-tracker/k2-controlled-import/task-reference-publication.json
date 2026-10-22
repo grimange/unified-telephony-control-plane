@@ -1,0 +1,118 @@
+{
+  "scope": "All 16 unique exact task source references; local identity verified, remote access not verified",
+  "sources": [
+    {
+      "path": "docs/governance/KANEO_CANONICAL_TRACKER_POLICY.md",
+      "sha256": "a23f794fd1f8b826b34c93d698c2505f14c85062a02f506756c42b0cb349feef",
+      "immutable_url": null,
+      "publication_required": true,
+      "availability": "WORKTREE_ONLY_REQUIRES_PUBLICATION"
+    },
+    {
+      "path": "docs/roadmap/implementation-roadmap.md",
+      "sha256": "0b78cea559481aa835da131aacbdb628ada8bd360a296032860c28188ddb082a",
+      "immutable_url": "https://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/docs/roadmap/implementation-roadmap.md",
+      "publication_required": false,
+      "availability": "HEAD_BYTES"
+    },
+    {
+      "path": "docs/roadmap/phase-status.md",
+      "sha256": "9894b3284c484b91b53ca71e8e15920e7c6e47756de5349082ca24339c8de8d2",
+      "immutable_url": null,
+      "publication_required": true,
+      "availability": "WORKTREE_ONLY_REQUIRES_PUBLICATION"
+    },
+    {
+      "path": "docs/architecture/proposals/go-native-control-plane-adr-proposed.md",
+      "sha256": "b0a5639cc67674c6d43b966eac9ebe49e1bf26de3b1850c47a0c1872297f8663",
+      "immutable_url": null,
+      "publication_required": true,
+      "availability": "WORKTREE_ONLY_REQUIRES_PUBLICATION"
+    },
+    {
+      "path": "docs/architecture/proposals/go-native-control-plane/migration-roadmap.md",
+      "sha256": "2eed81183259b9f3001dfff10b1c75cd9878e00dbc3b3ba555477e45ef742546",
+      "immutable_url": null,
+      "publication_required": true,
+      "availability": "WORKTREE_ONLY_REQUIRES_PUBLICATION"
+    },
+    {
+      "path": "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E1.md",
+      "sha256": "f10d2f6061dfc4e59da13d56ef2cf9640f6fed8760d753868ae4e122e9c895ad",
+      "immutable_url": null,
+      "publication_required": true,
+      "availability": "WORKTREE_ONLY_REQUIRES_PUBLICATION"
+    },
+    {
+      "path": "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E2_ASTERISK_DOMAIN_POLICY_PARITY.md",
+      "sha256": "b5dba11c57e70d0ea114f3f20c3508ca0e52c7263456cbfe443935e54bccc780",
+      "immutable_url": null,
+      "publication_required": true,
+      "availability": "WORKTREE_ONLY_REQUIRES_PUBLICATION"
+    },
+    {
+      "path": "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E3_TRUSTED_RECOVERY_EVIDENCE.md",
+      "sha256": "2d829eeaf2fc971a1bd115f1eeee195727931c9612d9eed09e6b0ddeecfcd023",
+      "immutable_url": null,
+      "publication_required": true,
+      "availability": "WORKTREE_ONLY_REQUIRES_PUBLICATION"
+    },
+    {
+      "path": "docs/architecture/proposals/UTCP_GO_NATIVE_CANONICAL_KERNEL_E4_DURABLE_EXECUTOR_JOURNAL.md",
+      "sha256": "039e26ca7926c6ca0ce493a5a837bb05dc9860811661f788f8323c6946f9f891",
+      "immutable_url": null,
+      "publication_required": true,
+      "availability": "WORKTREE_ONLY_REQUIRES_PUBLICATION"
+    },
+    {
+      "path": "docs/architecture/proposals/go-cp1-e4/next-assignment.md",
+      "sha256": "ebf1cb09419b24c6e70f32da5ca1e1187209322893c68023c811149962fdd9d7",
+      "immutable_url": null,
+      "publication_required": true,
+      "availability": "WORKTREE_ONLY_REQUIRES_PUBLICATION"
+    },
+    {
+      "path": "infrastructure/kubernetes/base/platform/api-deployment.yaml",
+      "sha256": "c8bbddccbaea2ac25c5f18cc6d35ca3c84807fe310735deaca0ce155a9d6a300",
+      "immutable_url": "https://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/infrastructure/kubernetes/base/platform/api-deployment.yaml",
+      "publication_required": false,
+      "availability": "HEAD_BYTES"
+    },
+    {
+      "path": "infrastructure/kubernetes/base/platform/scheduler-deployment.yaml",
+      "sha256": "25441abb2f8eb2aef5275c8f6db487676970da2aa03506c339d234d8832e491c",
+      "immutable_url": "https://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/infrastructure/kubernetes/base/platform/scheduler-deployment.yaml",
+      "publication_required": false,
+      "availability": "HEAD_BYTES"
+    },
+    {
+      "path": "infrastructure/kubernetes/base/platform/telephony-reconciler-deployment.yaml",
+      "sha256": "8b210b4d14ba7e5039f779b8666d01d42f4ab4c5a6ac2c3566b8e10ea7ef70f3",
+      "immutable_url": "https://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/infrastructure/kubernetes/base/platform/telephony-reconciler-deployment.yaml",
+      "publication_required": false,
+      "availability": "HEAD_BYTES"
+    },
+    {
+      "path": "scripts/runtime-engine/config-check",
+      "sha256": "84aba8dcccfb32255fca8f3930aafac477a574c39d5a7d8526afa951335a878e",
+      "immutable_url": "https://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/scripts/runtime-engine/config-check",
+      "publication_required": false,
+      "availability": "HEAD_BYTES"
+    },
+    {
+      "path": "apps/web/src/views/ExternalTrunkDetailView.vue",
+      "sha256": "ba62b668057c94614542ab93c121328a76a3238e79e39ba99d79c69c6c6d9f62",
+      "immutable_url": "https://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/apps/web/src/views/ExternalTrunkDetailView.vue",
+      "publication_required": false,
+      "availability": "HEAD_BYTES"
+    },
+    {
+      "path": "scripts/ci/secret-scan",
+      "sha256": "70ff179bfcdf0a71b3c845419010fc8a5c462a710fb4b44b20194aeb12531e8b",
+      "immutable_url": "https://github.com/grimange/unified-telephony-control-plane/blob/5e028b9ab3d96f3430bf715f89d66ab19a758761/scripts/ci/secret-scan",
+      "publication_required": false,
+      "availability": "HEAD_BYTES"
+    }
+  ],
+  "acceptance_of_locator_limitation": false
+}

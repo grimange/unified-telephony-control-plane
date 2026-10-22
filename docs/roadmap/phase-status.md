@@ -4,6 +4,13 @@ This is the definitive current-state ledger. Historical proof and defect
 chronology remain in `docs/evidence/` and Git history; they do not compete with
 the entries below.
 
+Tracker governance: the operator has activated Kaneo under the
+[canonical tracker policy](../governance/KANEO_CANONICAL_TRACKER_POLICY.md).
+Activation is **ACTIVE**; Kaneo owns operational task progress;
+this ledger retains formal phase/release classifications and canonical roadmap
+next-action authority until separately changed. This governance activation
+changes no milestone, proof classification, acceptance gate or next action below.
+
 **T1 Kamailio SIP-over-WSS signaling — Complete.** `UTCP_PHASE=T1` remains the
 CI-guarded repository phase marker for the original foundation sequence. It is
 not a competing current-roadmap status or a claim that T4 is incomplete.

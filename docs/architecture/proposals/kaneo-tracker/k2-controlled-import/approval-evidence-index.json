@@ -1,0 +1,36 @@
+{
+  "final_proposed_root_sha256": "d093be6eb0f9d8c96d7485456610f153e30614114f9bfe59ced03097ba3c1efb",
+  "approved_manifest_digest": null,
+  "workspace_id": "30VyoMQZ4LROnW3UUeAYGg8bIF9mj1il",
+  "project_id": "hrilr4371g33s0iw6lth3o7v",
+  "gates": {
+    "exact_write_approval": {
+      "state": "ABSENT",
+      "evidence": "Current operator prompt explicitly excludes mutation approval"
+    },
+    "evidence_locators": {
+      "state": "PENDING",
+      "evidence": "16 task source references include working-tree-only artifacts; no publication or frozen-locator limitation acceptance"
+    },
+    "write_permissions": {
+      "state": "NOT_VERIFIABLE_WITH_EXPOSED_READ_TOOLS",
+      "evidence": "Tools/successful reads do not establish create/label/relation authorization"
+    },
+    "integration_trigger_safety": {
+      "state": "UNCONFIRMED",
+      "evidence": "MCP has no integration-administration read API; no operator/admin record supplied"
+    },
+    "exclusive_writer_window": {
+      "state": "NOT_ESTABLISHED",
+      "evidence": "No remote writer used; future exclusive import window not designated"
+    },
+    "MIGRATING_transition": {
+      "state": "NOT_AUTHORIZED",
+      "evidence": "No activation-policy edit; SELECTED_NOT_ACTIVE preserved"
+    },
+    "local_commit_push": {
+      "state": "NOT_AUTHORIZED",
+      "evidence": "Scoped plan only; no publication permission"
+    }
+  }
+}
